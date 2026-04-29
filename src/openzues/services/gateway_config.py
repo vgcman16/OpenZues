@@ -121,10 +121,24 @@ class GatewayConfigService:
         return self._write_snapshot(next_snapshot, base_hash=base_hash)
 
     def patch_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, Any]:
-        self._require_config_path()
+        config_path = self._require_config_path()
         patch = self._parse_raw_object(raw, label="config.patch")
         current = self.build_snapshot()
         next_snapshot = self._validated_snapshot(_merge_config_patch(current, patch))
+        if next_snapshot == current:
+            current_hash = self._snapshot_hash(current)
+            if config_path.exists():
+                if not base_hash:
+                    raise ValueError("config base hash required; re-run config.get and retry")
+                if base_hash != current_hash:
+                    raise ValueError("config changed since last load; re-run config.get and retry")
+            return {
+                "ok": True,
+                "noop": True,
+                "path": str(config_path),
+                "config": current,
+                "hash": current_hash,
+            }
         return self._write_snapshot(next_snapshot, base_hash=base_hash)
 
     def apply_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, Any]:
@@ -599,7 +613,15 @@ def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:
 
 
 def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    omitted_null_sections = ("agents", "gateway", "session", "tools", "plugins", "channels")
+    omitted_null_sections = (
+        "agents",
+        "gateway",
+        "session",
+        "tools",
+        "acp",
+        "plugins",
+        "channels",
+    )
     if any(snapshot.get(section) is None for section in omitted_null_sections):
         snapshot = dict(snapshot)
         for section in omitted_null_sections:

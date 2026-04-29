@@ -3172,7 +3172,7 @@ def test_gateway_node_method_call_endpoint_supports_models_list(tmp_path) -> Non
     }
 
 
-def test_gateway_node_method_call_endpoint_returns_models_auth_status_unavailable_contract(
+def test_gateway_node_method_call_endpoint_returns_models_auth_status_snapshot(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -3188,10 +3188,10 @@ def test_gateway_node_method_call_endpoint_returns_models_auth_status_unavailabl
             json={"method": "models.authStatus", "params": {"refresh": True}},
         )
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "models.authStatus is unavailable until model auth health runtime is wired"
-    }
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["ts"], int)
+    assert payload["providers"] == []
 
 
 def test_gateway_node_method_call_endpoint_rejects_unknown_device_token_target(
@@ -9515,12 +9515,16 @@ def test_gateway_node_method_call_endpoint_supports_update_run(tmp_path) -> None
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["headline"] == "A newer repo revision is waiting for a safe boundary"
-    assert payload["pending_restart"] is True
-    assert payload["pending_revision"] == "rev-b"
-    assert payload["safe_to_restart"] is False
-    assert payload["restart_in_progress"] is False
-    assert payload["last_checked_at"]
+    snapshot = payload["result"]["snapshot"]
+    assert payload["ok"] is True
+    assert payload["restart"] is None
+    assert snapshot["headline"] == "A newer repo revision is waiting for a safe boundary"
+    assert snapshot["pending_restart"] is True
+    assert snapshot["pending_revision"] == "rev-b"
+    assert snapshot["safe_to_restart"] is False
+    assert snapshot["restart_in_progress"] is False
+    assert snapshot["last_checked_at"]
+    assert payload["sentinel"]["payload"]["kind"] == "update"
     assert restart_calls == []
 
 
@@ -9584,12 +9588,17 @@ def test_gateway_node_method_call_endpoint_update_run_accepts_optional_restart_r
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["headline"] == "A newer repo revision is waiting for a safe boundary"
-    assert payload["pending_restart"] is True
-    assert payload["pending_revision"] == "rev-b"
-    assert payload["safe_to_restart"] is False
-    assert payload["restart_in_progress"] is False
-    assert payload["last_checked_at"]
+    snapshot = payload["result"]["snapshot"]
+    assert payload["ok"] is True
+    assert payload["restart"] is None
+    assert payload["result"]["timeoutMs"] == 5_000
+    assert snapshot["headline"] == "A newer repo revision is waiting for a safe boundary"
+    assert snapshot["pending_restart"] is True
+    assert snapshot["pending_revision"] == "rev-b"
+    assert snapshot["safe_to_restart"] is False
+    assert snapshot["restart_in_progress"] is False
+    assert snapshot["last_checked_at"]
+    assert payload["sentinel"]["payload"]["threadId"] == "1771242986529939"
     assert restart_calls == []
 
 
@@ -21133,9 +21142,16 @@ def test_gateway_node_method_call_endpoint_supports_config_write_lifecycle(
     assert apply_response.status_code == 200
     assert set_response.json()["config"]["assistantName"] == "API Parity Builder"
     assert patch_response.json()["config"]["assistantName"] == "API Patched Builder"
+    patch_sentinel = patch_response.json()["sentinel"]
+    assert patch_sentinel["payload"]["kind"] == "config-patch"
+    assert patch_sentinel["payload"]["threadId"] == "demo"
     assert apply_response.json()["config"]["allowExternalEmbedUrls"] is True
     assert apply_response.json()["restart"] is None
-    assert apply_response.json()["sentinel"] is None
+    apply_sentinel = apply_response.json()["sentinel"]
+    assert apply_sentinel["payload"]["kind"] == "config-apply"
+    assert apply_sentinel["payload"]["sessionKey"] == "agent:main:thread:demo"
+    assert apply_sentinel["payload"]["threadId"] == "demo"
+    assert apply_sentinel["payload"]["message"] == "Apply the bounded config seam."
     assert get_response.json() == apply_response.json()["config"]
 
 

@@ -4,6 +4,12 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from openzues.services.codex_rpc import extract_turn_id
+from openzues.services.session_keys import normalize_agent_id
+
+_ACP_TARGET_AGENT_REQUIRED_ERROR = (
+    "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
+    "or set `acp.defaultAgent` in config."
+)
 
 
 class GatewayAcpSpawnService(Protocol):
@@ -43,6 +49,11 @@ def _optional_string(value: object) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _optional_agent_id(value: object) -> str | None:
+    normalized = _optional_string(value)
+    return normalize_agent_id(normalized) if normalized is not None else None
 
 
 def _read_thread_id(result: object) -> str | None:
@@ -90,6 +101,13 @@ class RuntimeManagerAcpSpawnService:
                     "bound to a thread."
                 ),
             }
+        target_agent_id = _optional_agent_id(params.get("agentId"))
+        if target_agent_id is None:
+            return {
+                "status": "error",
+                "errorCode": "target_agent_required",
+                "error": _ACP_TARGET_AGENT_REQUIRED_ERROR,
+            }
         instance_id = await self._select_instance_id()
         if instance_id is None:
             return {
@@ -132,7 +150,7 @@ class RuntimeManagerAcpSpawnService:
             }
 
         run_id = extract_turn_id(turn_result) or thread_id
-        child_session_key = f"agent:main:acp:{thread_id}"
+        child_session_key = f"agent:{target_agent_id}:acp:{thread_id}"
         return {
             "status": "accepted",
             "childSessionKey": child_session_key,

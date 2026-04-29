@@ -186,6 +186,10 @@ _SESSIONS_SPAWN_ACCEPTED_NOTE = (
 _SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound session stays active after this task; continue in-thread for follow-ups."
 )
+_ACP_TARGET_AGENT_REQUIRED_ERROR = (
+    "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
+    "or set `acp.defaultAgent` in config."
+)
 _SANDBOXED_REQUESTER_UNSANDBOXED_CHILD_ERROR = (
     "Sandboxed sessions cannot spawn unsandboxed subagents. Set a sandboxed target agent "
     "or use the same agent runtime."
@@ -279,6 +283,93 @@ _NODE_ONLY_METHODS = {
     "node.pending.ack",
     "node.pending.drain",
 }
+_OPENCLAW_SECRET_TARGET_IDS = frozenset(
+    {
+        "agents.defaults.memorySearch.remote.apiKey",
+        "agents.list[].memorySearch.remote.apiKey",
+        "auth-profiles.api_key.key",
+        "auth-profiles.token.token",
+        "channels.bluebubbles.accounts.*.password",
+        "channels.bluebubbles.password",
+        "channels.discord.accounts.*.pluralkit.token",
+        "channels.discord.accounts.*.token",
+        "channels.discord.accounts.*.voice.tts.providers.*.apiKey",
+        "channels.discord.pluralkit.token",
+        "channels.discord.token",
+        "channels.discord.voice.tts.providers.*.apiKey",
+        "channels.feishu.accounts.*.appSecret",
+        "channels.feishu.accounts.*.encryptKey",
+        "channels.feishu.accounts.*.verificationToken",
+        "channels.feishu.appSecret",
+        "channels.feishu.encryptKey",
+        "channels.feishu.verificationToken",
+        "channels.googlechat.accounts.*.serviceAccount",
+        "channels.googlechat.serviceAccount",
+        "channels.irc.accounts.*.nickserv.password",
+        "channels.irc.accounts.*.password",
+        "channels.irc.nickserv.password",
+        "channels.irc.password",
+        "channels.matrix.accounts.*.accessToken",
+        "channels.matrix.accounts.*.password",
+        "channels.matrix.accessToken",
+        "channels.matrix.password",
+        "channels.mattermost.accounts.*.botToken",
+        "channels.mattermost.botToken",
+        "channels.msteams.appPassword",
+        "channels.nextcloud-talk.accounts.*.apiPassword",
+        "channels.nextcloud-talk.accounts.*.botSecret",
+        "channels.nextcloud-talk.apiPassword",
+        "channels.nextcloud-talk.botSecret",
+        "channels.slack.accounts.*.appToken",
+        "channels.slack.accounts.*.botToken",
+        "channels.slack.accounts.*.signingSecret",
+        "channels.slack.accounts.*.userToken",
+        "channels.slack.appToken",
+        "channels.slack.botToken",
+        "channels.slack.signingSecret",
+        "channels.slack.userToken",
+        "channels.telegram.accounts.*.botToken",
+        "channels.telegram.accounts.*.webhookSecret",
+        "channels.telegram.botToken",
+        "channels.telegram.webhookSecret",
+        "channels.zalo.accounts.*.botToken",
+        "channels.zalo.accounts.*.webhookSecret",
+        "channels.zalo.botToken",
+        "channels.zalo.webhookSecret",
+        "cron.webhookToken",
+        "gateway.auth.password",
+        "gateway.auth.token",
+        "gateway.remote.password",
+        "gateway.remote.token",
+        "messages.tts.providers.*.apiKey",
+        "models.providers.*.apiKey",
+        "models.providers.*.headers.*",
+        "models.providers.*.request.auth.token",
+        "models.providers.*.request.auth.value",
+        "models.providers.*.request.headers.*",
+        "models.providers.*.request.proxy.tls.ca",
+        "models.providers.*.request.proxy.tls.cert",
+        "models.providers.*.request.proxy.tls.key",
+        "models.providers.*.request.proxy.tls.passphrase",
+        "models.providers.*.request.tls.ca",
+        "models.providers.*.request.tls.cert",
+        "models.providers.*.request.tls.key",
+        "models.providers.*.request.tls.passphrase",
+        "plugins.entries.brave.config.webSearch.apiKey",
+        "plugins.entries.exa.config.webSearch.apiKey",
+        "plugins.entries.firecrawl.config.webFetch.apiKey",
+        "plugins.entries.firecrawl.config.webSearch.apiKey",
+        "plugins.entries.google.config.webSearch.apiKey",
+        "plugins.entries.minimax.config.webSearch.apiKey",
+        "plugins.entries.moonshot.config.webSearch.apiKey",
+        "plugins.entries.perplexity.config.webSearch.apiKey",
+        "plugins.entries.tavily.config.webSearch.apiKey",
+        "plugins.entries.xai.config.webSearch.apiKey",
+        "skills.entries.*.apiKey",
+        "talk.providers.*.apiKey",
+        "tools.web.search.apiKey",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1154,6 +1245,7 @@ class GatewayNodeMethodService:
         send_channel_poll_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_apns_push_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_apns_wake_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        resolve_secrets_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_attachment_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         sandbox_chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
@@ -1257,6 +1349,7 @@ class GatewayNodeMethodService:
         self._send_channel_poll_service = send_channel_poll_service
         self._send_apns_push_service = send_apns_push_service
         self._send_apns_wake_service = send_apns_wake_service
+        self._resolve_secrets_service = resolve_secrets_service
         self._chat_send_service = chat_send_service
         self._chat_attachment_send_service = chat_attachment_send_service
         self._sandbox_chat_send_service = sandbox_chat_send_service
@@ -3977,8 +4070,50 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            await self._runtime_update_tick()
-            return await self._runtime_update_view()
+            timeout_ms = _normalized_update_run_timeout_ms(payload.get("timeoutMs"))
+            restart_delay_ms = _optional_min_int(
+                payload.get("restartDelayMs"),
+                label="restartDelayMs",
+                minimum=0,
+            )
+            started_at = time.monotonic()
+            try:
+                restarted = await self._runtime_update_tick()
+                update_view = await self._runtime_update_view()
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                update_result = _build_update_run_result(
+                    update_view,
+                    restarted=restarted,
+                    timeout_ms=timeout_ms,
+                    duration_ms=duration_ms,
+                )
+            except Exception as exc:
+                restarted = False
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                update_result = _build_update_run_error_result(
+                    exc,
+                    timeout_ms=timeout_ms,
+                    duration_ms=duration_ms,
+                )
+            restart_payload = _build_update_run_restart_payload(
+                update_result,
+                restarted=restarted,
+                restart_delay_ms=restart_delay_ms,
+            )
+            sentinel_payload = _build_update_run_sentinel_payload(payload, update_result)
+            sentinel_path = await _write_restart_sentinel(
+                self._database,
+                sentinel_payload,
+            )
+            return {
+                "ok": update_result.get("status") != "error",
+                "result": update_result,
+                "restart": restart_payload,
+                "sentinel": {
+                    "path": sentinel_path,
+                    "payload": sentinel_payload,
+                },
+            }
 
         if resolved_method == "wizard.start":
             _validate_exact_keys(
@@ -4110,14 +4245,22 @@ class GatewayNodeMethodService:
 
         if resolved_method == "models.authStatus":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("refresh",))
-            _optional_bool(payload.get("refresh"), label="refresh")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "models.authStatus is unavailable until model auth health runtime is wired"
-                ),
-                status_code=503,
+            refresh = (
+                bool(_optional_bool(payload.get("refresh"), label="refresh"))
+                if "refresh" in payload
+                else False
             )
+            try:
+                return await self._models_service.build_auth_status(
+                    refresh=refresh,
+                    now_ms=now_ms,
+                )
+            except Exception as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "cron.list":
             _validate_exact_keys(
@@ -5036,9 +5179,18 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return self._config_service.patch_raw(
+            patch_result = self._config_service.patch_raw(
                 raw,
                 base_hash=base_hash,
+            )
+            if patch_result.get("noop") is True:
+                return patch_result
+            return await _attach_config_restart_sentinel(
+                self._database,
+                patch_result,
+                payload,
+                kind="config-patch",
+                mode="config.patch",
             )
 
         if resolved_method == "config.apply":
@@ -5070,9 +5222,16 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return self._config_service.apply_raw(
+            apply_result = self._config_service.apply_raw(
                 raw,
                 base_hash=base_hash,
+            )
+            return await _attach_config_restart_sentinel(
+                self._database,
+                apply_result,
+                payload,
+                kind="config-apply",
+                mode="config.apply",
             )
 
         if resolved_method == "config.openFile":
@@ -5112,18 +5271,33 @@ class GatewayNodeMethodService:
             command_name = _require_string(payload.get("commandName"), label="commandName").strip()
             if not command_name:
                 raise ValueError("invalid secrets.resolve params: commandName")
-            _ = [
-                entry.strip()
-                for entry in _require_string_list(payload.get("targetIds"), label="targetIds")
-                if entry.strip()
-            ]
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "secrets.resolve is unavailable until command-target secret resolution is wired"
-                ),
-                status_code=503,
-            )
+            target_ids = _normalize_secrets_resolve_target_ids(payload.get("targetIds"))
+            for target_id in target_ids:
+                if not _is_known_openclaw_secret_target_id(target_id):
+                    raise ValueError(
+                        f'invalid secrets.resolve params: unknown target id "{target_id}"'
+                    )
+            if self._resolve_secrets_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "secrets.resolve is unavailable until command-target secret resolution "
+                        "is wired"
+                    ),
+                    status_code=503,
+                )
+            try:
+                resolved_secrets = await self._resolve_secrets_service(
+                    command_name=command_name,
+                    target_ids=target_ids,
+                )
+                return _normalize_secrets_resolve_result(resolved_secrets)
+            except Exception as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "channels.status":
             _validate_exact_keys(
@@ -7002,6 +7176,28 @@ class GatewayNodeMethodService:
                         message="sessions.spawn is unavailable until session inventory is wired",
                         status_code=503,
                     )
+                acp_agent_id = _sessions_spawn_acp_target_agent_id(
+                    requested_agent_id=agent_id,
+                    config_service=self._config_service,
+                )
+                if acp_agent_id is None:
+                    return {
+                        "status": "error",
+                        "errorCode": "target_agent_required",
+                        "error": _ACP_TARGET_AGENT_REQUIRED_ERROR,
+                        **role_context,
+                    }
+                acp_agent_policy_error = _sessions_spawn_acp_agent_policy_error(
+                    self._config_service,
+                    agent_id=acp_agent_id,
+                )
+                if acp_agent_policy_error is not None:
+                    return {
+                        "status": "forbidden",
+                        "errorCode": "agent_forbidden",
+                        "error": acp_agent_policy_error,
+                        **role_context,
+                    }
                 timestamp_ms = _timestamp_ms(now_ms)
                 requester_session_key = _optional_non_empty_string(
                     payload.get("requesterSessionKey"),
@@ -7076,7 +7272,7 @@ class GatewayNodeMethodService:
                     {
                         "task": task,
                         "label": _optional_session_label(payload.get("label"), label="label"),
-                        "agentId": agent_id,
+                        "agentId": acp_agent_id,
                         "resumeSessionId": resume_session_id,
                         "cwd": _optional_non_empty_string(payload.get("cwd"), label="cwd"),
                         "mode": mode,
@@ -7166,8 +7362,7 @@ class GatewayNodeMethodService:
                 label = _optional_session_label(payload.get("label"), label="label")
                 if label is not None:
                     acp_metadata["label"] = label
-                if agent_id is not None:
-                    acp_metadata["agentId"] = agent_id
+                acp_metadata["agentId"] = acp_agent_id
                 await self._database.upsert_gateway_session_metadata(
                     session_key=child_session_key,
                     metadata=acp_metadata,
@@ -8365,8 +8560,6 @@ class GatewayNodeMethodService:
                 any(
                     value is not None
                     for value in (
-                        requested_provider,
-                        requested_model,
                         requested_to,
                         requested_reply_to,
                         requested_channel,
@@ -8454,6 +8647,37 @@ class GatewayNodeMethodService:
                         resolved_session.get("key"),
                         label="key",
                     )
+                )
+            if requested_model is not None:
+                existing_metadata_row = await self._database.get_gateway_session_metadata(
+                    target_session_key
+                )
+                model_session_metadata: dict[str, Any] = {}
+                if isinstance(existing_metadata_row, dict):
+                    existing_metadata_value = existing_metadata_row.get("metadata")
+                    if isinstance(existing_metadata_value, dict):
+                        model_session_metadata.update(existing_metadata_value)
+                if requested_provider is None:
+                    model_session_metadata["model"] = requested_model
+                    model_session_metadata.pop("providerOverride", None)
+                    model_session_metadata.pop("modelOverride", None)
+                    model_session_metadata.pop("modelOverrideSource", None)
+                else:
+                    model_session_metadata["providerOverride"] = requested_provider
+                    model_session_metadata["modelOverride"] = requested_model
+                    model_session_metadata["modelOverrideSource"] = "user"
+                    model_session_metadata.pop("model", None)
+                    model_session_metadata.pop("modelProvider", None)
+                for stale_field in (
+                    "contextTokens",
+                    "fallbackNoticeSelectedModel",
+                    "fallbackNoticeActiveModel",
+                    "fallbackNoticeReason",
+                ):
+                    model_session_metadata.pop(stale_field, None)
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=target_session_key,
+                    metadata=model_session_metadata,
                 )
             if agent_id is not None and agent_id != DEFAULT_AGENT_ID:
                 existing_metadata_row = await self._database.get_gateway_session_metadata(
@@ -12250,6 +12474,48 @@ def _sessions_spawn_allowed_agent_policy(
     return allow_any, tuple(sorted(allowed))
 
 
+def _sessions_spawn_acp_config(
+    config_service: GatewayConfigService | None,
+) -> dict[str, Any]:
+    if config_service is None:
+        return {}
+    snapshot = config_service.build_snapshot()
+    acp_config = snapshot.get("acp")
+    return acp_config if isinstance(acp_config, dict) else {}
+
+
+def _sessions_spawn_acp_target_agent_id(
+    *,
+    requested_agent_id: str | None,
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if requested_agent_id is not None:
+        return normalize_agent_id(requested_agent_id)
+    configured_default = _string_or_none(
+        _sessions_spawn_acp_config(config_service).get("defaultAgent")
+    )
+    return normalize_agent_id(configured_default) if configured_default is not None else None
+
+
+def _sessions_spawn_acp_agent_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    agent_id: str,
+) -> str | None:
+    acp_config = _sessions_spawn_acp_config(config_service)
+    raw_allowed_agents = acp_config.get("allowedAgents")
+    if not isinstance(raw_allowed_agents, list):
+        return None
+    allowed_agents = {
+        normalize_agent_id(agent)
+        for raw_agent in raw_allowed_agents
+        if (agent := _string_or_none(raw_agent)) is not None
+    }
+    if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
+        return None
+    return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
 def _sessions_spawn_sandbox_runtime_status(
     config_service: GatewayConfigService | None,
     *,
@@ -13832,6 +14098,233 @@ def _validate_optional_restart_request_fields(
         )
 
 
+def _normalized_update_run_timeout_ms(value: object) -> int | None:
+    timeout_ms = _optional_min_int(value, label="timeoutMs", minimum=1)
+    if timeout_ms is None:
+        return None
+    return max(1000, timeout_ms)
+
+
+def _build_update_run_result(
+    view: dict[str, object],
+    *,
+    restarted: bool,
+    timeout_ms: int | None,
+    duration_ms: int,
+) -> dict[str, object]:
+    reason = _string_or_none(view.get("last_error"))
+    result: dict[str, object] = {
+        "status": "error" if reason is not None else "ok",
+        "mode": "openzues-runtime",
+        "root": view.get("repo_root"),
+        "before": view.get("startup_revision"),
+        "after": view.get("current_revision"),
+        "steps": [
+            {
+                "name": "runtime_update.tick",
+                "command": None,
+                "cwd": view.get("repo_root"),
+                "durationMs": duration_ms,
+                "log": {
+                    "stdoutTail": None,
+                    "stderrTail": reason,
+                    "exitCode": 1 if reason is not None else 0,
+                },
+            }
+        ],
+        "durationMs": duration_ms,
+        "snapshot": dict(view),
+        "restartScheduled": restarted,
+    }
+    if timeout_ms is not None:
+        result["timeoutMs"] = timeout_ms
+    if reason is not None:
+        result["reason"] = reason
+    return result
+
+
+def _build_update_run_error_result(
+    exc: Exception,
+    *,
+    timeout_ms: int | None,
+    duration_ms: int,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "status": "error",
+        "mode": "openzues-runtime",
+        "reason": str(exc),
+        "steps": [],
+        "durationMs": duration_ms,
+        "restartScheduled": False,
+    }
+    if timeout_ms is not None:
+        result["timeoutMs"] = timeout_ms
+    return result
+
+
+def _build_update_run_restart_payload(
+    result: dict[str, object],
+    *,
+    restarted: bool,
+    restart_delay_ms: int | None,
+) -> dict[str, object] | None:
+    if result.get("status") == "error" or not restarted:
+        return None
+    return {
+        "scheduled": True,
+        "delayMs": restart_delay_ms,
+        "reason": "update.run",
+        "coalesced": False,
+    }
+
+
+def _build_update_run_sentinel_payload(
+    payload: dict[str, Any],
+    result: dict[str, object],
+) -> dict[str, object]:
+    session_key = _string_or_none(payload.get("sessionKey"))
+    requested_delivery_context, requested_thread_id = _restart_delivery_context_from_payload(
+        payload.get("deliveryContext")
+    )
+    session_delivery_context, session_thread_id = _restart_delivery_context_from_session_key(
+        session_key
+    )
+    delivery_context = requested_delivery_context or session_delivery_context
+    thread_id = requested_thread_id or session_thread_id
+    stats_steps = []
+    raw_steps = result.get("steps")
+    if isinstance(raw_steps, list):
+        stats_steps = [dict(step) for step in raw_steps if isinstance(step, dict)]
+    stats: dict[str, object] = {
+        "mode": result.get("mode"),
+        "root": result.get("root"),
+        "before": result.get("before"),
+        "after": result.get("after"),
+        "steps": stats_steps,
+        "reason": result.get("reason"),
+        "durationMs": result.get("durationMs"),
+    }
+    return {
+        "kind": "update",
+        "status": result.get("status"),
+        "ts": _timestamp_ms(None),
+        "sessionKey": session_key,
+        "deliveryContext": delivery_context,
+        "threadId": thread_id,
+        "message": _string_or_none(payload.get("note")),
+        "doctorHint": "Run `openzues doctor` for restart diagnostics.",
+        "stats": stats,
+    }
+
+
+async def _attach_config_restart_sentinel(
+    database: Database | None,
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    kind: Literal["config-apply", "config-patch"],
+    mode: Literal["config.apply", "config.patch"],
+) -> dict[str, Any]:
+    sentinel_payload = _build_config_restart_sentinel_payload(
+        result,
+        payload,
+        kind=kind,
+        mode=mode,
+    )
+    sentinel_path = await _write_restart_sentinel(database, sentinel_payload)
+    updated = dict(result)
+    updated["restart"] = None
+    updated["sentinel"] = {
+        "path": sentinel_path,
+        "payload": sentinel_payload,
+    }
+    return updated
+
+
+def _build_config_restart_sentinel_payload(
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    kind: Literal["config-apply", "config-patch"],
+    mode: Literal["config.apply", "config.patch"],
+) -> dict[str, object]:
+    session_key = _string_or_none(payload.get("sessionKey"))
+    requested_delivery_context, requested_thread_id = _restart_delivery_context_from_payload(
+        payload.get("deliveryContext")
+    )
+    session_delivery_context, session_thread_id = _restart_delivery_context_from_session_key(
+        session_key
+    )
+    return {
+        "kind": kind,
+        "status": "ok",
+        "ts": _timestamp_ms(None),
+        "sessionKey": session_key,
+        "deliveryContext": requested_delivery_context or session_delivery_context,
+        "threadId": requested_thread_id or session_thread_id,
+        "message": _string_or_none(payload.get("note")),
+        "doctorHint": "Run `openzues doctor` for restart diagnostics.",
+        "stats": {
+            "mode": mode,
+            "root": _string_or_none(result.get("path")),
+        },
+    }
+
+
+def _restart_delivery_context_from_payload(
+    value: object,
+) -> tuple[dict[str, str] | None, str | None]:
+    if not isinstance(value, dict):
+        return None, None
+    delivery_context: dict[str, str] = {}
+    for source_key, target_key in (
+        ("channel", "channel"),
+        ("to", "to"),
+        ("accountId", "accountId"),
+    ):
+        normalized = _string_or_none(value.get(source_key))
+        if normalized is not None:
+            delivery_context[target_key] = normalized
+    thread_id = _stringified_route_id(value.get("threadId"))
+    return delivery_context or None, thread_id
+
+
+def _restart_delivery_context_from_session_key(
+    session_key: str | None,
+) -> tuple[dict[str, str] | None, str | None]:
+    if session_key is None:
+        return None, None
+    target = _sessions_send_announce_target_from_key(session_key)
+    thread_id = parse_thread_session_suffix(session_key).thread_id
+    if target is None:
+        return None, thread_id
+    delivery_context = dict(target)
+    target_thread_id = delivery_context.pop("threadId", None)
+    return delivery_context or None, thread_id or target_thread_id
+
+
+async def _write_restart_sentinel(
+    database: Database | None,
+    payload: dict[str, object],
+) -> str | None:
+    if database is None:
+        return None
+    path = database.path.parent / "runtime" / "restart-sentinel.json"
+
+    def write_payload() -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return str(path)
+
+    try:
+        return await asyncio.to_thread(write_payload)
+    except OSError:
+        return None
+
+
 def _validate_optional_restart_delivery_context(value: object, *, label: str) -> None:
     if value is None:
         return
@@ -14076,6 +14569,86 @@ def _build_doctor_memory_status_payload() -> dict[str, object]:
             "ok": False,
             "error": "memory search unavailable",
         },
+    }
+
+
+def _is_known_openclaw_secret_target_id(value: str) -> bool:
+    return value in _OPENCLAW_SECRET_TARGET_IDS
+
+
+def _raise_invalid_secrets_resolve_payload() -> NoReturn:
+    raise ValueError("secrets.resolve returned invalid payload.")
+
+
+def _normalize_secrets_resolve_target_ids(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("invalid secrets.resolve params: targetIds")
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError("invalid secrets.resolve params: targetIds")
+        trimmed = entry.strip()
+        if trimmed:
+            normalized.append(trimmed)
+    return normalized
+
+
+def _normalize_secrets_resolve_string_array(
+    value: object,
+    *,
+    require_entries: bool,
+) -> list[str]:
+    if not isinstance(value, list):
+        _raise_invalid_secrets_resolve_payload()
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            _raise_invalid_secrets_resolve_payload()
+        if require_entries and not entry:
+            _raise_invalid_secrets_resolve_payload()
+        normalized.append(entry)
+    return normalized
+
+
+def _normalize_secrets_resolve_result(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        _raise_invalid_secrets_resolve_payload()
+    raw_assignments = value.get("assignments")
+    if not isinstance(raw_assignments, list):
+        _raise_invalid_secrets_resolve_payload()
+    assignments: list[dict[str, object]] = []
+    for entry in raw_assignments:
+        if not isinstance(entry, dict):
+            _raise_invalid_secrets_resolve_payload()
+        if set(entry) - {"path", "pathSegments", "value"}:
+            _raise_invalid_secrets_resolve_payload()
+        path_segments = _normalize_secrets_resolve_string_array(
+            entry.get("pathSegments"),
+            require_entries=True,
+        )
+        if "value" not in entry:
+            _raise_invalid_secrets_resolve_payload()
+        assignment: dict[str, object] = {
+            "pathSegments": path_segments,
+            "value": entry["value"],
+        }
+        if "path" in entry:
+            path = entry.get("path")
+            if not isinstance(path, str) or not path:
+                _raise_invalid_secrets_resolve_payload()
+            assignment["path"] = path
+        assignments.append(assignment)
+    return {
+        "ok": True,
+        "assignments": assignments,
+        "diagnostics": _normalize_secrets_resolve_string_array(
+            value.get("diagnostics"),
+            require_entries=True,
+        ),
+        "inactiveRefPaths": _normalize_secrets_resolve_string_array(
+            value.get("inactiveRefPaths"),
+            require_entries=True,
+        ),
     }
 
 

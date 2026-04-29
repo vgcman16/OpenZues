@@ -35,6 +35,13 @@ best-effort interrupts active Codex app-server turns during cancel, while the
 local metadata/transcript mutation remains native to OpenZues. Remaining ACP
 parity is the standalone ACP bridge server/client harness and deeper protocol
 session presentation, permission, and replay breadth.
+ACP `sessions.spawn` now also resolves OpenClaw's target-agent policy before
+runtime dispatch: explicit `agentId` wins, `acp.defaultAgent` supplies the
+default, missing targets return `errorCode="target_agent_required"`, and
+`acp.allowedAgents` rejects forbidden targets with
+`errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
+now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
+resolved target agent id in session metadata.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
@@ -135,9 +142,12 @@ yet exist. Text-mode `status --all` now renders the OpenClaw-shaped
 pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model
-auth/probe inspection, provider usage/security-audit runtime adapters,
+auth/probe inspection, production provider usage/security-audit adapter wiring,
 plugin/runtime inspection, doctor readiness checks, non-metadata external
-sandbox container cleanup, and broader TUI ergonomics. The existing
+sandbox container cleanup, and broader TUI ergonomics. `status --json --usage
+--all` now consumes fakeable native provider-usage and security-audit runtime
+adapters when registered while keeping the honest unavailable placeholders
+when they are absent. The existing
 `sandbox list` human output now also mirrors OpenClaw's total/running summary
 line and config-mismatch recreate hint after listing native saved sandbox
 runtimes. The top-level `acp` and `acp client` command surfaces now accept the
@@ -194,17 +204,58 @@ catalog commands now also cover `run`, `list`, `inspect --model`, `providers`,
 and `auth status`, using the native control-chat, `agent`, `models.list`, and
 model-status gateway method owners while preserving OpenClaw's model-run
 capability envelope, raw catalog-array, provider-summary, and model-auth status
-JSON shapes. Remaining `infer` parity is deeper `model run` final-wait/provider
-override behavior in the gateway `agent` method, model auth login/logout
-mutation, image/audio/video/web/embedding runtime commands, deeper TTS
-provider/runtime breadth beyond the now-landed CLI family, and any
+JSON shapes. The gateway `agent` method now accepts model-only and
+provider/model `model run` overrides and persists them through the native
+session metadata path before dispatch; gateway model runs now wait for the
+final `agent.wait` result before projecting OpenClaw-style provider/model
+output envelopes. Model auth login/logout CLI commands now dispatch through a
+fakeable native model-auth runtime hook and keep a precise unavailable boundary
+when that runtime is absent. `models status --probe` now also consumes a
+fakeable native model-auth status/probe runtime when one is registered, while
+keeping the honest unavailable probe posture when it is absent. `models status
+--check` now mirrors OpenClaw's non-zero exit behavior for known auth failures
+or expired/missing OAuth profiles. Remaining `infer` parity is production
+model-auth backend wiring, deeper TTS provider/runtime breadth beyond the
+now-landed CLI family, and any
 gateway-backed capability transports not already covered by native OpenZues
 command families. The first TTS slices now project the native
 `tts.providers`, `tts.status`, `tts.enable`, `tts.disable`, and
 `tts.setProvider` method owners plus the native `tts.convert` runtime into
 OpenClaw-shaped provider objects, gateway-tagged status JSON, raw
 state-mutation payloads, provider voice lists, and `tts.convert` capability
-envelopes for the `infer` / `capability` alias family.
+envelopes for the `infer` / `capability` alias family. `image providers` now
+projects a fakeable native image-generation registry into OpenClaw's provider
+summary shape and returns an empty list when no provider registry is wired;
+`image describe` now wraps a fakeable native media-understanding runtime in
+OpenClaw's normalized image-description envelope, and `image describe-many`
+now repeats that envelope output for each requested image file. `image generate`
+now wraps a fakeable native image-generation runtime in OpenClaw's saved-output
+envelope, and `image edit` reuses that runtime with repeated input files.
+`audio providers` now filters the fakeable native media-understanding registry
+to audio-capable providers and preserves OpenClaw's provider summary shape.
+`audio transcribe` now wraps the same fakeable native media-understanding
+runtime with language/prompt/model hints and returns OpenClaw's
+`audio.transcription` envelope.
+`video providers` now exposes the registered `infer` / `capability video`
+group and projects fakeable native generation plus media-understanding provider
+registries into OpenClaw's generation/description provider shape.
+`video describe` now wraps the fakeable native media-understanding runtime in
+OpenClaw's `video.description` envelope with provider/model attribution.
+`video generate` now wraps the fakeable native video-generation runtime in
+OpenClaw's saved video output envelope with provider/model attempts.
+`web providers` now exposes the registered `infer` / `capability web` group
+and projects fakeable native search/fetch provider registries into OpenClaw's
+provider summary shape.
+`web search` now wraps the fakeable native web runtime in OpenClaw's
+single-result local envelope with provider attribution.
+`web fetch` now wraps the fakeable native web runtime in the same OpenClaw
+single-result local envelope while preserving provider and format hints.
+`embedding providers` now exposes the registered `infer` / `capability
+embedding` group and projects the fakeable native embedding registry into
+OpenClaw's provider summary shape.
+`embedding create` now wraps the fakeable native embedding runtime in OpenClaw's
+provider/model/attempts envelope and maps repeated `--text` values to vector
+outputs with dimensions.
 Discord native routes now have the first production live resolver slice:
 channel-id inputs and channel mentions call `/users/@me/guilds` plus
 `/channels/{id}` with the stored route token and return OpenClaw-shaped
@@ -247,8 +298,9 @@ load errors from the same projection and preserves OpenClaw's
 `No plugin issues detected.` clean snapshot behavior. `plugins inspect` and
 its `plugins info` alias now return OpenClaw-shaped JSON reports with
 `plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
-install placeholders projected from the same inventory, and `inspect --all`
-returns all records. `plugins enable` / `plugins disable` now write through the
+install metadata projected from the same inventory, and `inspect --all` returns
+all records with top-level saved install metadata when present. `plugins enable`
+/ `plugins disable` now write through the
 existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
 append configured allowlists on enable, and mirror built-in channel plugin
@@ -274,7 +326,8 @@ OpenClaw-shaped compatibility notices for legacy `before_agent_start` and
 hook-only plugin inventory signals. `plugins list` now also merges saved
 OpenClaw-shaped `plugins.entries` / `plugins.installs` records from the native
 gateway config owner, so config-installed marketplace plugins are visible even
-when the live platform deck has not loaded them yet.
+when the live platform deck has not loaded them yet; `plugins inspect --all --json`
+now preserves those saved install records in the report-level `install` field.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
@@ -1779,6 +1832,37 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   spawned child runs by consuming `parentSessionKey` and
   `expectsCompletionMessage` metadata.
 - Verified the wait-consumed completion announcement seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion_to_parent_session or agent_wait_skips_spawn_completion_announcement_when_not_expected"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `update.run` now returns the OpenClaw-shaped runtime-control envelope
+  (`ok`, `result`, `restart`, `sentinel`) instead of the flat update view,
+  clamps tiny `timeoutMs` values to the upstream 1000ms minimum, writes a
+  data-dir restart sentinel payload with session delivery/note/thread context,
+  and only reports a restart object when the native update tick actually
+  requested one.
+- Verified the `update.run` envelope/sentinel seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, endpoint proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `config.patch` and `config.apply` now consume the same OpenClaw restart
+  request fields they already validated, returning `config-patch` /
+  `config-apply` restart sentinels with session delivery context, note,
+  thread id, config path stats, and a written data-dir sentinel file while
+  preserving the native no-direct-restart posture.
+- Verified the config restart-sentinel seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods_persist_control_ui_config_with_base_hash"`, endpoint proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "config_write_lifecycle"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "config_write_methods_persist_control_ui_config_with_base_hash or config_write_lifecycle or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `config.patch` now also matches OpenClaw's no-op branch: patches that
+  validate but do not change the native config return `noop=true`, preserve the
+  current hash/config/path payload, and skip restart/sentinel decoration while
+  still enforcing the existing base-hash guard.
+- Verified the config no-op seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash or config_write_lifecycle or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py`.
+- `secrets.resolve` now has the upstream-shaped command-target resolver seam:
+  OpenZues trims the command and target ids, filters empty targets, rejects
+  unknown OpenClaw secret target ids before dispatch, calls a fakeable native
+  resolver, and validates the returned assignments/diagnostics/inactive refs
+  into the OpenClaw `{ok, assignments, diagnostics, inactiveRefPaths}` result.
+- Verified the `secrets.resolve` resolver seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "secrets_resolve or secrets_reload"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "secrets_resolve or secrets_reload or config_patch_noop_skips_restart_sentinel or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `models.authStatus` now returns a native OpenClaw-shaped auth snapshot
+  instead of the placeholder unavailable response. The `GatewayModelsService`
+  owner supports a fakeable auth-status runtime, TTL caching with
+  `refresh=true` bypass, sanitized provider/profile projection, empty native
+  snapshots when no instances are present, and missing-provider synthesis for
+  refreshable configured providers without env-backed API keys.
+- Verified the `models.authStatus` seam with `python -m pytest tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status"`, adjacent `python -m pytest tests\test_gateway_models.py -q`, `python -m pytest tests\test_cli.py -q -k "model_auth_status or models_status or infer_model_auth"`, `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status or models_list or secrets_resolve or secrets_reload"`, `ruff check src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

@@ -2583,6 +2583,72 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
     ]
 
 
+def test_plugins_inspect_all_json_includes_saved_install_records(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    install_record = {
+        "source": "marketplace",
+        "installPath": str(plugin_dir),
+        "version": "0.2.0",
+        "marketplaceSource": str(tmp_path / "marketplace.json"),
+        "marketplacePlugin": "frontend-design",
+        "installedAt": "2026-04-29T12:00:00Z",
+    }
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"frontend-design": {"enabled": True}},
+                    "installs": {"frontend-design": install_record},
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "--all", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload[0]["plugin"]["id"] == "frontend-design"
+    assert payload[0]["install"] == install_record
+
+
 def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
@@ -3276,6 +3342,138 @@ def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     assert calls == [("models.list", {})]
 
 
+def test_models_status_probe_json_uses_model_auth_runtime(monkeypatch) -> None:
+    gateway_calls: list[tuple[str, dict[str, object]]] = []
+    auth_calls: list[dict[str, object]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            gateway_calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    class FakeModelAuth:
+        async def status(
+            self,
+            *,
+            providers: list[str],
+            probe: bool,
+        ) -> dict[str, object]:
+            auth_calls.append({"providers": providers, "probe": probe})
+            return {
+                "status": "ok",
+                "storePath": r"C:\agents\main\auth.json",
+                "providersWithOAuth": ["openai"],
+                "missingProvidersInUse": [],
+                "providers": [{"id": "openai", "status": "ok"}],
+                "unusableProfiles": [],
+                "oauth": {
+                    "profiles": [{"id": "openai-default", "status": "ok"}],
+                    "providers": [{"id": "openai", "profiles": 1}],
+                },
+                "probes": {"openai": {"status": "ok", "latencyMs": 12}},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                model_auth=FakeModelAuth(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--probe", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["auth"] == {
+        "status": "ok",
+        "storePath": r"C:\agents\main\auth.json",
+        "providersWithOAuth": ["openai"],
+        "missingProvidersInUse": [],
+        "providers": [{"id": "openai", "status": "ok"}],
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": [{"id": "openai-default", "status": "ok"}],
+            "providers": [{"id": "openai", "profiles": 1}],
+        },
+        "probes": {"openai": {"status": "ok", "latencyMs": 12}},
+    }
+    assert gateway_calls == [("models.list", {})]
+    assert auth_calls == [{"providers": ["openai"], "probe": True}]
+
+
+def test_models_status_check_exits_nonzero_for_known_auth_problem(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    class FakeModelAuth:
+        async def status(
+            self,
+            *,
+            providers: list[str],
+            probe: bool,
+        ) -> dict[str, object]:
+            return {
+                "status": "error",
+                "providersWithOAuth": [],
+                "missingProvidersInUse": providers,
+                "providers": [],
+                "unusableProfiles": [],
+                "oauth": {
+                    "profiles": [{"id": "openai-default", "status": "missing"}],
+                    "providers": [],
+                },
+                "probes": None if not probe else {"openai": {"status": "auth"}},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                model_auth=FakeModelAuth(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--check", "--json"])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auth"]["status"] == "error"
+    assert payload["auth"]["missingProvidersInUse"] == ["openai"]
+
+
 def test_infer_model_list_json_uses_openclaw_catalog_shape(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -3443,6 +3641,1078 @@ def test_infer_model_auth_status_json_reuses_model_status_payload(monkeypatch) -
     assert calls == [("models.list", {})]
 
 
+def test_infer_model_auth_login_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeModelAuth:
+        async def login(self, provider: str) -> dict[str, object]:
+            calls.append(("login", provider))
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Login started for {provider}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["infer", "model", "auth", "login", "--provider", "openai-codex"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Login started for openai-codex." in result.stdout
+    assert calls == [("login", "openai-codex")]
+
+
+def test_capability_model_auth_logout_json_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeModelAuth:
+        async def logout(self, provider: str) -> dict[str, object]:
+            calls.append(("logout", provider))
+            return {
+                "provider": provider,
+                "removedProfiles": ["openai-codex:default", "openai-codex:work"],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "model", "auth", "logout", "--provider", "openai-codex", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "provider": "openai-codex",
+        "removedProfiles": ["openai-codex:default", "openai-codex:work"],
+    }
+    assert calls == [("logout", "openai-codex")]
+
+
+def test_infer_image_providers_json_projects_native_image_registry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeImageGeneration:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("list_providers")
+            return [
+                {
+                    "id": "vision-one",
+                    "label": "Vision One",
+                    "defaultModel": "paint-v1",
+                    "models": ["paint-v1", "paint-v2"],
+                    "capabilities": {"generate": {"sizes": ["1024x1024"]}},
+                    "configured": True,
+                    "selected": True,
+                },
+                {
+                    "id": "vision-two",
+                    "label": "Vision Two",
+                    "defaultModel": "draw-v1",
+                    "models": ["draw-v1"],
+                    "capabilities": {"generate": {}, "edit": {}},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_generation=FakeImageGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "image", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "available": True,
+            "configured": True,
+            "selected": True,
+            "id": "vision-one",
+            "label": "Vision One",
+            "defaultModel": "paint-v1",
+            "models": ["paint-v1", "paint-v2"],
+            "capabilities": {"generate": {"sizes": ["1024x1024"]}},
+        },
+        {
+            "available": True,
+            "configured": False,
+            "selected": False,
+            "id": "vision-two",
+            "label": "Vision Two",
+            "defaultModel": "draw-v1",
+            "models": ["draw-v1"],
+            "capabilities": {"generate": {}, "edit": {}},
+        },
+    ]
+    assert calls == ["list_providers"]
+
+
+def test_infer_image_describe_json_wraps_native_media_understanding(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageUnderstanding:
+        async def describe_image_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+        ) -> dict[str, object]:
+            calls.append({"file_path": file_path, "active_model": active_model})
+            return {
+                "text": "A small painted moon.",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_understanding=FakeImageUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "image",
+            "describe",
+            "--file",
+            "moon.png",
+            "--model",
+            "openai/gpt-5.4-vision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "ok": True,
+        "capability": "image.describe",
+        "transport": "local",
+        "provider": "openai",
+        "model": "gpt-5.4-vision",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": calls[0]["file_path"],
+                "text": "A small painted moon.",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+                "kind": "image.description",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "moon.png").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        }
+    ]
+
+
+def test_capability_image_describe_many_json_wraps_each_image(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageUnderstanding:
+        async def describe_image_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+        ) -> dict[str, object]:
+            calls.append({"file_path": file_path, "active_model": active_model})
+            return {
+                "text": f"Description for {Path(file_path).name}",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_understanding=FakeImageUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "image",
+            "describe-many",
+            "--file",
+            "moon.png",
+            "--file",
+            "sun.png",
+            "--model",
+            "openai/gpt-5.4-vision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["capability"] == "image.describe-many"
+    assert payload["transport"] == "local"
+    assert payload["provider"] == "openai"
+    assert payload["model"] == "gpt-5.4-vision"
+    assert payload["attempts"] == []
+    assert payload["outputs"] == [
+        {
+            "path": str((Path.cwd() / "moon.png").resolve()),
+            "text": "Description for moon.png",
+            "provider": "openai",
+            "model": "gpt-5.4-vision",
+            "kind": "image.description",
+        },
+        {
+            "path": str((Path.cwd() / "sun.png").resolve()),
+            "text": "Description for sun.png",
+            "provider": "openai",
+            "model": "gpt-5.4-vision",
+            "kind": "image.description",
+        },
+    ]
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "moon.png").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        },
+        {
+            "file_path": str((Path.cwd() / "sun.png").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        },
+    ]
+
+
+def test_infer_image_generate_json_wraps_native_image_generation(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageGeneration:
+        async def generate_image(
+            self,
+            *,
+            prompt: str,
+            active_model: dict[str, str] | None,
+            count: int | None,
+            size: str | None,
+            aspect_ratio: str | None,
+            resolution: str | None,
+            output_path: str | None,
+            input_files: list[str] | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "active_model": active_model,
+                    "count": count,
+                    "size": size,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": resolution,
+                    "output_path": output_path,
+                    "input_files": input_files,
+                }
+            )
+            return {
+                "provider": "vision-one",
+                "model": "paint-v1",
+                "attempts": [{"provider": "vision-one", "model": "paint-v1", "ok": True}],
+                "outputs": [
+                    {
+                        "path": str((Path.cwd() / "generated" / "moon.png").resolve()),
+                        "mimeType": "image/png",
+                        "width": 1024,
+                        "height": 1024,
+                        "revisedPrompt": "painted moon",
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_generation=FakeImageGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "image",
+            "generate",
+            "--prompt",
+            "moon",
+            "--model",
+            "vision-one/paint-v1",
+            "--count",
+            "1",
+            "--size",
+            "1024x1024",
+            "--aspect-ratio",
+            "1:1",
+            "--resolution",
+            "1K",
+            "--output",
+            "generated/moon.png",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "image.generate",
+        "transport": "local",
+        "provider": "vision-one",
+        "model": "paint-v1",
+        "attempts": [{"provider": "vision-one", "model": "paint-v1", "ok": True}],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "generated" / "moon.png").resolve()),
+                "mimeType": "image/png",
+                "width": 1024,
+                "height": 1024,
+                "revisedPrompt": "painted moon",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "prompt": "moon",
+            "active_model": {"provider": "vision-one", "model": "paint-v1"},
+            "count": 1,
+            "size": "1024x1024",
+            "aspect_ratio": "1:1",
+            "resolution": "1K",
+            "output_path": "generated/moon.png",
+            "input_files": None,
+        }
+    ]
+
+
+def test_capability_image_edit_json_wraps_native_image_generation(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageGeneration:
+        async def generate_image(
+            self,
+            *,
+            prompt: str,
+            active_model: dict[str, str] | None,
+            count: int | None,
+            size: str | None,
+            aspect_ratio: str | None,
+            resolution: str | None,
+            output_path: str | None,
+            input_files: list[str] | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "active_model": active_model,
+                    "count": count,
+                    "size": size,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": resolution,
+                    "output_path": output_path,
+                    "input_files": input_files,
+                }
+            )
+            return {
+                "provider": "vision-one",
+                "model": "paint-v1",
+                "attempts": [],
+                "outputs": [
+                    {
+                        "path": str((Path.cwd() / "edited" / "moon.png").resolve()),
+                        "mimeType": "image/png",
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_generation=FakeImageGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "image",
+            "edit",
+            "--file",
+            "moon-source.png",
+            "--file",
+            "mask.png",
+            "--prompt",
+            "add stars",
+            "--model",
+            "vision-one/paint-v1",
+            "--output",
+            "edited/moon.png",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "image.edit",
+        "transport": "local",
+        "provider": "vision-one",
+        "model": "paint-v1",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "edited" / "moon.png").resolve()),
+                "mimeType": "image/png",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "prompt": "add stars",
+            "active_model": {"provider": "vision-one", "model": "paint-v1"},
+            "count": None,
+            "size": None,
+            "aspect_ratio": None,
+            "resolution": None,
+            "output_path": "edited/moon.png",
+            "input_files": [
+                str((Path.cwd() / "moon-source.png").resolve()),
+                str((Path.cwd() / "mask.png").resolve()),
+            ],
+        }
+    ]
+
+
+def test_infer_audio_providers_json_filters_audio_capable_registry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeMediaUnderstanding:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("list_providers")
+            return [
+                {
+                    "id": "openai",
+                    "capabilities": ["image", "audio"],
+                    "defaultModels": {"audio": "whisper-1"},
+                    "configured": True,
+                },
+                {
+                    "id": "vision-only",
+                    "capabilities": ["image"],
+                    "defaultModels": {"image": "gpt-5.4-vision"},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(media_understanding=FakeMediaUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "audio", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "available": True,
+            "configured": True,
+            "selected": False,
+            "id": "openai",
+            "capabilities": ["image", "audio"],
+            "defaultModels": {"audio": "whisper-1"},
+        }
+    ]
+    assert calls == ["list_providers"]
+
+
+def test_infer_audio_transcribe_json_wraps_native_media_understanding(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeMediaUnderstanding:
+        async def transcribe_audio_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+            language: str | None,
+            prompt: str | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "file_path": file_path,
+                    "active_model": active_model,
+                    "language": language,
+                    "prompt": prompt,
+                }
+            )
+            return {
+                "text": "Meeting notes and next steps.",
+                "provider": "openai",
+                "model": "whisper-1",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(media_understanding=FakeMediaUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "audio",
+            "transcribe",
+            "--file",
+            "memo.m4a",
+            "--language",
+            "en",
+            "--prompt",
+            "Names: Ada, Grace",
+            "--model",
+            "openai/whisper-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "audio.transcribe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "memo.m4a").resolve()),
+                "text": "Meeting notes and next steps.",
+                "kind": "audio.transcription",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "memo.m4a").resolve()),
+            "active_model": {"provider": "openai", "model": "whisper-1"},
+            "language": "en",
+            "prompt": "Names: Ada, Grace",
+        }
+    ]
+
+
+def test_infer_video_providers_json_projects_generation_and_description(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeVideoGeneration:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("video_generation.list_providers")
+            return [
+                {
+                    "id": "runway",
+                    "label": "Runway",
+                    "defaultModel": "gen-3",
+                    "models": ["gen-3"],
+                    "capabilities": {"generate": {"durations": [5, 10]}},
+                    "configured": True,
+                    "selected": True,
+                }
+            ]
+
+    class FakeMediaUnderstanding:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("media_understanding.list_providers")
+            return [
+                {
+                    "id": "openai",
+                    "capabilities": ["image", "video"],
+                    "defaultModels": {"video": "gpt-5.4-vision"},
+                    "configured": True,
+                },
+                {
+                    "id": "audio-only",
+                    "capabilities": ["audio"],
+                    "defaultModels": {"audio": "whisper-1"},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                video_generation=FakeVideoGeneration(),
+                media_understanding=FakeMediaUnderstanding(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "video", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "generation": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": True,
+                "id": "runway",
+                "label": "Runway",
+                "defaultModel": "gen-3",
+                "models": ["gen-3"],
+                "capabilities": {"generate": {"durations": [5, 10]}},
+            }
+        ],
+        "description": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": False,
+                "id": "openai",
+                "capabilities": ["image", "video"],
+                "defaultModels": {"video": "gpt-5.4-vision"},
+            }
+        ],
+    }
+    assert calls == [
+        "video_generation.list_providers",
+        "media_understanding.list_providers",
+    ]
+
+
+def test_infer_video_describe_json_wraps_native_media_understanding(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeMediaUnderstanding:
+        async def describe_video_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+        ) -> dict[str, object]:
+            calls.append({"file_path": file_path, "active_model": active_model})
+            return {
+                "text": "A product demo clip with captions.",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(media_understanding=FakeMediaUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "video",
+            "describe",
+            "--file",
+            "demo.mp4",
+            "--model",
+            "openai/gpt-5.4-vision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "video.describe",
+        "transport": "local",
+        "provider": "openai",
+        "model": "gpt-5.4-vision",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "demo.mp4").resolve()),
+                "text": "A product demo clip with captions.",
+                "kind": "video.description",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "demo.mp4").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        }
+    ]
+
+
+def test_capability_video_generate_json_wraps_native_video_generation(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeVideoGeneration:
+        async def generate_video(
+            self,
+            *,
+            prompt: str,
+            active_model: dict[str, str] | None,
+            output_path: str | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "active_model": active_model,
+                    "output_path": output_path,
+                }
+            )
+            return {
+                "provider": "runway",
+                "model": "gen-3",
+                "attempts": [{"provider": "runway", "model": "gen-3", "ok": True}],
+                "outputs": [
+                    {
+                        "path": str((Path.cwd() / "generated" / "demo.mp4").resolve()),
+                        "mimeType": "video/mp4",
+                        "size": 2048,
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(video_generation=FakeVideoGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "video",
+            "generate",
+            "--prompt",
+            "demo reel",
+            "--model",
+            "runway/gen-3",
+            "--output",
+            "generated/demo.mp4",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "video.generate",
+        "transport": "local",
+        "provider": "runway",
+        "model": "gen-3",
+        "attempts": [{"provider": "runway", "model": "gen-3", "ok": True}],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "generated" / "demo.mp4").resolve()),
+                "mimeType": "video/mp4",
+                "size": 2048,
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "prompt": "demo reel",
+            "active_model": {"provider": "runway", "model": "gen-3"},
+            "output_path": "generated/demo.mp4",
+        }
+    ]
+
+
+def test_infer_web_providers_json_projects_search_and_fetch(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeWebRuntime:
+        async def list_search_providers(self) -> list[dict[str, object]]:
+            calls.append("list_search_providers")
+            return [
+                {
+                    "id": "serpapi",
+                    "envVars": ["SERPAPI_API_KEY"],
+                    "configured": True,
+                    "selected": True,
+                }
+            ]
+
+        async def list_fetch_providers(self) -> list[dict[str, object]]:
+            calls.append("list_fetch_providers")
+            return [
+                {
+                    "id": "browserless",
+                    "envVars": ["BROWSERLESS_TOKEN"],
+                    "configured": False,
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(web_runtime=FakeWebRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "web", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "search": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": True,
+                "id": "serpapi",
+                "envVars": ["SERPAPI_API_KEY"],
+            }
+        ],
+        "fetch": [
+            {
+                "available": True,
+                "configured": False,
+                "selected": False,
+                "id": "browserless",
+                "envVars": ["BROWSERLESS_TOKEN"],
+            }
+        ],
+    }
+    assert calls == ["list_search_providers", "list_fetch_providers"]
+
+
+def test_infer_web_search_json_wraps_native_web_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeWebRuntime:
+        async def search(
+            self,
+            *,
+            query: str,
+            provider: str | None,
+            limit: int | None,
+        ) -> dict[str, object]:
+            calls.append({"query": query, "provider": provider, "limit": limit})
+            return {
+                "provider": "serpapi",
+                "result": {
+                    "items": [
+                        {"title": "OpenZues", "url": "https://example.test/openzues"}
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(web_runtime=FakeWebRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "web",
+            "search",
+            "--query",
+            "OpenZues parity",
+            "--provider",
+            "serpapi",
+            "--limit",
+            "3",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "web.search",
+        "transport": "local",
+        "provider": "serpapi",
+        "attempts": [],
+        "outputs": [
+            {
+                "result": {
+                    "items": [
+                        {"title": "OpenZues", "url": "https://example.test/openzues"}
+                    ]
+                }
+            }
+        ],
+    }
+    assert calls == [{"query": "OpenZues parity", "provider": "serpapi", "limit": 3}]
+
+
+def test_capability_web_fetch_json_wraps_native_web_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeWebRuntime:
+        async def fetch(
+            self,
+            *,
+            url: str,
+            provider: str | None,
+            format: str | None,
+        ) -> dict[str, object]:
+            calls.append({"url": url, "provider": provider, "format": format})
+            return {
+                "provider": "browserless",
+                "result": {
+                    "url": url,
+                    "format": format,
+                    "content": "# OpenZues\nParity notes",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(web_runtime=FakeWebRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "web",
+            "fetch",
+            "--url",
+            "https://example.test/openzues",
+            "--provider",
+            "browserless",
+            "--format",
+            "markdown",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "web.fetch",
+        "transport": "local",
+        "provider": "browserless",
+        "attempts": [],
+        "outputs": [
+            {
+                "result": {
+                    "url": "https://example.test/openzues",
+                    "format": "markdown",
+                    "content": "# OpenZues\nParity notes",
+                }
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "url": "https://example.test/openzues",
+            "provider": "browserless",
+            "format": "markdown",
+        }
+    ]
+
+
+def test_infer_embedding_providers_json_projects_native_registry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeEmbeddingRuntime:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("list_providers")
+            return [
+                {
+                    "id": "openai",
+                    "defaultModel": "text-embedding-3-small",
+                    "transport": "remote",
+                    "autoSelectPriority": 10,
+                    "configured": True,
+                    "selected": True,
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(embedding_runtime=FakeEmbeddingRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "embedding", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "available": True,
+            "configured": True,
+            "selected": True,
+            "id": "openai",
+            "defaultModel": "text-embedding-3-small",
+            "transport": "remote",
+            "autoSelectPriority": 10,
+        }
+    ]
+    assert calls == ["list_providers"]
+
+
+def test_capability_embedding_create_json_wraps_native_embedding_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeEmbeddingRuntime:
+        async def create_embeddings(
+            self,
+            *,
+            texts: list[str],
+            provider: str | None,
+            model: str | None,
+        ) -> dict[str, object]:
+            calls.append({"texts": texts, "provider": provider, "model": model})
+            return {
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "attempts": [],
+                "embeddings": [[0.1, 0.2], [0.3, 0.4]],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(embedding_runtime=FakeEmbeddingRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "embedding",
+            "create",
+            "--text",
+            "alpha",
+            "--text",
+            "beta",
+            "--provider",
+            "openai",
+            "--model",
+            "openai/text-embedding-3-small",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "embedding.create",
+        "transport": "local",
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "attempts": [],
+        "outputs": [
+            {"text": "alpha", "embedding": [0.1, 0.2], "dimensions": 2},
+            {"text": "beta", "embedding": [0.3, 0.4], "dimensions": 2},
+        ],
+    }
+    assert calls == [
+        {
+            "texts": ["alpha", "beta"],
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
@@ -3531,12 +4801,18 @@ def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> 
             params: dict[str, object],
         ) -> dict[str, object]:
             calls.append((method, params))
-            return {
-                "result": {
-                    "payloads": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
-                    "meta": {"agentMeta": {"provider": "openai", "model": "gpt-5.4"}},
+            if method == "agent":
+                return {"runId": "model-run-final-1", "status": "accepted"}
+            if method == "agent.wait":
+                return {
+                    "runId": "model-run-final-1",
+                    "status": "completed",
+                    "result": {
+                        "payloads": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
+                        "meta": {"agentMeta": {"provider": "openai", "model": "gpt-5.4"}},
+                    },
                 }
-            }
+            return {}
 
     async def fake_run_with_services(action):
         return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
@@ -3578,7 +4854,8 @@ def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> 
                 "model": "gpt-5.4",
                 "idempotencyKey": calls[0][1]["idempotencyKey"],
             },
-        )
+        ),
+        ("agent.wait", {"runId": "model-run-final-1", "timeoutMs": 120_000}),
     ]
 
 
@@ -4794,6 +6071,63 @@ def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
     assert payload["usage"]["status"] == "unavailable"
     assert payload["usage"]["timeoutMs"] == 5000
     assert payload["securityAudit"]["status"] == "unavailable"
+
+
+def test_status_json_uses_registered_usage_and_security_runtime_adapters(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+
+    class FakeProviderUsageRuntime:
+        async def get_summary(self, *, timeout_ms: int) -> dict[str, object]:
+            calls.append(("usage", timeout_ms))
+            return {
+                "status": "ok",
+                "providers": [{"provider": "openai", "tokens": 123}],
+            }
+
+    class FakeSecurityAuditRuntime:
+        async def get_audit(self, *, timeout_ms: int) -> dict[str, object]:
+            calls.append(("security", timeout_ms))
+            return {
+                "status": "ok",
+                "findings": [{"severity": "low", "title": "No critical issues"}],
+            }
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {"headline": "Live dashboard headline", "summary": "Live dashboard summary"}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=cli_module._runtime_settings(),
+                provider_usage=FakeProviderUsageRuntime(),
+                security_audit=FakeSecurityAuditRuntime(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["status", "--json", "--usage", "--all", "--timeout", "7000"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["usage"] == {
+        "status": "ok",
+        "providers": [{"provider": "openai", "tokens": 123}],
+        "timeoutMs": 7000,
+    }
+    assert payload["securityAudit"] == {
+        "status": "ok",
+        "findings": [{"severity": "low", "title": "No critical issues"}],
+    }
+    assert calls == [("usage", 7000), ("security", 7000)]
 
 
 def test_status_all_human_output_renders_pasteable_diagnosis(

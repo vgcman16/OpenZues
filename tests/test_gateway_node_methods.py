@@ -46,6 +46,7 @@ from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
 )
+from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import (
     GatewayNodeMethodError,
     GatewayNodeMethodRequester,
@@ -787,17 +788,58 @@ async def test_models_list_returns_bounded_catalog_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_models_auth_status_returns_validated_unavailable_contract() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_models_auth_status_returns_native_snapshot() -> None:
+    calls: list[dict[str, object]] = []
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call("models.authStatus", {"refresh": True})
+    async def fake_auth_status_service(
+        *,
+        refresh: bool,
+        now_ms: int,
+    ) -> dict[str, object]:
+        calls.append({"refresh": refresh, "nowMs": now_ms})
+        return {
+            "ts": 1000,
+            "providers": [
+                {
+                    "provider": "openai-codex",
+                    "displayName": "OpenAI Codex",
+                    "status": "ok",
+                    "profiles": [
+                        {
+                            "profileId": "openai-codex:default",
+                            "type": "oauth",
+                            "status": "ok",
+                        }
+                    ],
+                }
+            ],
+        }
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == (
-        "models.authStatus is unavailable until model auth health runtime is wired"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        models_service=GatewayModelsService(auth_status_service=fake_auth_status_service),
     )
+
+    payload = await service.call("models.authStatus", {"refresh": True}, now_ms=777)
+
+    assert calls == [{"refresh": True, "nowMs": 777}]
+    assert payload == {
+        "ts": 1000,
+        "providers": [
+            {
+                "provider": "openai-codex",
+                "displayName": "OpenAI Codex",
+                "status": "ok",
+                "profiles": [
+                    {
+                        "profileId": "openai-codex:default",
+                        "type": "oauth",
+                        "status": "ok",
+                    }
+                ],
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -12815,6 +12857,87 @@ async def test_logs_tail_redacts_sensitive_tokens_from_returned_lines(
 
 
 @pytest.mark.asyncio
+async def test_update_run_returns_openclaw_envelope_sentinel_and_timeout_minimum(
+    tmp_path,
+) -> None:
+    view: dict[str, object] = {
+        "headline": "Runtime self-update is watching the repo",
+        "summary": "The current process is aligned with the checked-out repo revision.",
+        "enabled": True,
+        "repo_root": "C:/workspace/OpenZues",
+        "startup_revision": "rev-a",
+        "current_revision": "rev-b",
+        "pending_revision": "rev-b",
+        "pending_restart": True,
+        "restart_in_progress": False,
+        "safe_to_restart": False,
+        "last_checked_at": "2026-04-29T12:00:00Z",
+        "last_restart_at": None,
+        "last_error": None,
+        "auto_restart": True,
+    }
+    tick_calls: list[str] = []
+
+    async def fake_tick() -> bool:
+        tick_calls.append("tick")
+        return False
+
+    async def fake_view() -> dict[str, object]:
+        return dict(view)
+
+    database = Database(tmp_path / "openzues.db")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        runtime_update_tick=fake_tick,
+        runtime_update_view=fake_view,
+    )
+    payload = await service.call(
+        "update.run",
+        {
+            "timeoutMs": 1,
+            "sessionKey": "agent:main:slack:channel:C0123ABC:thread:1234567890.123456",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "slack:C0123ABC",
+                "accountId": "workspace-1",
+            },
+            "note": "Apply the runtime update.",
+        },
+    )
+
+    assert tick_calls == ["tick"]
+    assert payload["ok"] is True
+    assert payload["restart"] is None
+    result = payload["result"]
+    assert isinstance(result, dict)
+    assert result["status"] == "ok"
+    assert result["mode"] == "openzues-runtime"
+    assert result["timeoutMs"] == 1000
+    assert result["snapshot"] == view
+    sentinel = payload["sentinel"]
+    assert isinstance(sentinel, dict)
+    sentinel_path = sentinel["path"]
+    assert isinstance(sentinel_path, str)
+    assert Path(sentinel_path).exists()
+    sentinel_payload = sentinel["payload"]
+    assert isinstance(sentinel_payload, dict)
+    assert sentinel_payload["kind"] == "update"
+    assert sentinel_payload["status"] == "ok"
+    assert sentinel_payload["sessionKey"] == (
+        "agent:main:slack:channel:C0123ABC:thread:1234567890.123456"
+    )
+    assert sentinel_payload["threadId"] == "1234567890.123456"
+    assert sentinel_payload["deliveryContext"] == {
+        "channel": "slack",
+        "to": "slack:C0123ABC",
+        "accountId": "workspace-1",
+    }
+    assert sentinel_payload["message"] == "Apply the runtime update."
+    assert sentinel_payload["stats"]["mode"] == "openzues-runtime"
+
+
+@pytest.mark.asyncio
 async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() -> None:
     payload: dict[str, object] = {
         "headline": "Runtime self-update is watching the repo",
@@ -12863,7 +12986,9 @@ async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() 
     result = await service.call("update.run", {})
 
     assert tick_calls == ["tick"]
-    assert result == payload
+    assert result["ok"] is True
+    assert result["restart"] is None
+    assert result["result"]["snapshot"] == payload
 
 
 @pytest.mark.asyncio
@@ -12915,7 +13040,11 @@ async def test_update_run_accepts_upstream_optional_restart_request_params() -> 
     )
 
     assert tick_calls == ["tick"]
-    assert result == payload
+    assert result["ok"] is True
+    assert result["restart"] is None
+    assert result["result"]["timeoutMs"] == 5_000
+    assert result["result"]["snapshot"] == payload
+    assert result["sentinel"]["payload"]["threadId"] == "1771242986529939"
 
 
 @pytest.mark.asyncio
@@ -15167,6 +15296,191 @@ async def test_sessions_spawn_rejects_acp_attachments_before_runtime_boundary() 
             "use runtime=subagent or remove attachments"
         ),
         "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_requires_target_agent_without_default(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-target-required.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:thread-should-not-run",
+                "runId": "run-should-not-run",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through ACP.",
+            "runtime": "acp",
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "target_agent_required",
+        "error": (
+            "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
+            "or set `acp.defaultAgent` in config."
+        ),
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_uses_configured_default_agent(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-default-agent.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "defaultAgent": "Codex",
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            assert params["agentId"] == "codex"
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-default",
+                "runId": "run-acp-default-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-default",
+                "runtimeSessionId": "thread-acp-default",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through the configured ACP default.",
+            "runtime": "acp",
+        },
+        now_ms=10_000,
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["childSessionKey"] == "agent:codex:acp:thread-acp-default"
+    assert calls[0]["params"]["agentId"] == "codex"
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-acp-default"
+    )
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_agent_outside_acp_allowlist(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-agent-allowlist.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("disallowed ACP target should reject before runtime dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through a forbidden ACP agent.",
+            "runtime": "acp",
+            "agentId": "claude",
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "agent_forbidden",
+        "error": 'ACP agent "claude" is not allowed by policy.',
+        "role": "claude",
     }
 
 
@@ -19742,6 +20056,192 @@ async def test_agent_launch_ignores_blank_optional_unsupported_string_fields() -
     assert isinstance(wait_payload["endedAt"], int)
     assert wait_payload["endedAt"] >= wait_payload["startedAt"]
     assert sleep_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_applies_provider_model_override_before_dispatch(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-provider-model.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.create_mission(
+        name="Gateway Agent Provider Model Loop",
+        objective="Launch parity with provider/model override metadata.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-provider-model",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the provider/model turn.",
+            "agentId": "main",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+            "idempotencyKey": "agent-run-provider-model-1",
+        },
+        now_ms=4112,
+    )
+
+    assert launch_payload["runId"] == "agent-run-provider-model-1"
+    assert launch_payload["status"] == "accepted"
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the provider/model turn.",
+        "idempotency_key": "agent-run-provider-model-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    metadata_row = await database.get_gateway_session_metadata(main_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["providerOverride"] == "openai"
+    assert metadata_row["metadata"]["modelOverride"] == "gpt-5.4-mini"
+    assert metadata_row["metadata"]["modelOverrideSource"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_applies_model_only_override_before_dispatch(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-model-only.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.create_mission(
+        name="Gateway Agent Model Only Loop",
+        objective="Launch parity with a model-only override.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-model-only",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the model-only turn.",
+            "agentId": "main",
+            "model": "gpt-5.4-mini",
+            "idempotencyKey": "agent-run-model-only-1",
+        },
+        now_ms=4113,
+    )
+
+    assert launch_payload["runId"] == "agent-run-model-only-1"
+    assert launch_payload["status"] == "accepted"
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the model-only turn.",
+        "idempotency_key": "agent-run-model-only-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    metadata_row = await database.get_gateway_session_metadata(main_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["model"] == "gpt-5.4-mini"
+    assert "providerOverride" not in metadata_row["metadata"]
+    assert "modelOverride" not in metadata_row["metadata"]
+    assert "modelOverrideSource" not in metadata_row["metadata"]
 
 
 @pytest.mark.asyncio
@@ -29778,6 +30278,49 @@ async def test_config_write_methods_return_explicit_unavailable_contract(
 
 
 @pytest.mark.asyncio
+async def test_config_patch_noop_skips_restart_sentinel(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+        }
+    )
+
+    set_payload = await service.call("config.set", {"raw": raw_snapshot})
+    noop_payload = await service.call(
+        "config.patch",
+        {
+            "raw": "{}",
+            "baseHash": set_payload["hash"],
+            "sessionKey": "agent:main:thread:demo",
+            "note": "This should not restart.",
+        },
+    )
+
+    assert noop_payload["ok"] is True
+    assert noop_payload["noop"] is True
+    assert noop_payload["config"] == set_payload["config"]
+    assert "restart" not in noop_payload
+    assert "sentinel" not in noop_payload
+
+
+@pytest.mark.asyncio
 async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp_path) -> None:
     expected_path = tmp_path / "settings" / "control-ui-config.json"
     service = GatewayNodeMethodService(
@@ -29836,9 +30379,23 @@ async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp
     assert set_payload["path"] == str(expected_path)
     assert set_payload["config"]["assistantName"] == "Parity Builder"
     assert patch_payload["config"]["assistantName"] == "Patched Builder"
+    patch_sentinel = patch_payload["sentinel"]
+    assert isinstance(patch_sentinel, dict)
+    assert Path(str(patch_sentinel["path"])).exists()
+    assert patch_sentinel["payload"]["kind"] == "config-patch"
+    assert patch_sentinel["payload"]["threadId"] == "1771242986529939"
+    assert patch_sentinel["payload"]["stats"]["mode"] == "config.patch"
+    assert patch_payload["restart"] is None
     assert apply_payload["config"]["allowExternalEmbedUrls"] is True
     assert apply_payload["restart"] is None
-    assert apply_payload["sentinel"] is None
+    apply_sentinel = apply_payload["sentinel"]
+    assert isinstance(apply_sentinel, dict)
+    assert Path(str(apply_sentinel["path"])).exists()
+    assert apply_sentinel["payload"]["kind"] == "config-apply"
+    assert apply_sentinel["payload"]["sessionKey"] == "agent:main:thread:demo"
+    assert apply_sentinel["payload"]["threadId"] == "demo"
+    assert apply_sentinel["payload"]["message"] == "Apply the bounded config seam."
+    assert apply_sentinel["payload"]["stats"]["mode"] == "config.apply"
     assert await service.call("config.get", {}) == apply_payload["config"]
     assert json.loads(expected_path.read_text(encoding="utf-8")) == apply_payload["config"]
 
@@ -34133,6 +34690,208 @@ async def test_secrets_resolve_returns_validated_unavailable_contract() -> None:
     with pytest.raises(
         GatewayNodeMethodError,
         match=("secrets.resolve is unavailable until command-target secret resolution is wired"),
+    ) as exc_info:
+        await service.call(
+            "secrets.resolve",
+            {
+                "commandName": "memory status",
+                "targetIds": ["talk.providers.*.apiKey"],
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_dispatches_to_registered_resolver() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        calls.append({"commandName": command_name, "targetIds": target_ids})
+        return {
+            "assignments": [
+                {
+                    "path": "talk.providers.openai.apiKey",
+                    "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                    "value": "env:OPENAI_API_KEY",
+                }
+            ],
+            "diagnostics": ["resolved talk provider secret"],
+            "inactiveRefPaths": ["talk.providers.zai.apiKey"],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    payload = await service.call(
+        "secrets.resolve",
+        {
+            "commandName": " memory status ",
+            "targetIds": [" talk.providers.*.apiKey ", "   "],
+        },
+    )
+
+    assert calls == [
+        {"commandName": "memory status", "targetIds": ["talk.providers.*.apiKey"]}
+    ]
+    assert payload == {
+        "ok": True,
+        "assignments": [
+            {
+                "path": "talk.providers.openai.apiKey",
+                "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                "value": "env:OPENAI_API_KEY",
+            }
+        ],
+        "diagnostics": ["resolved talk provider secret"],
+        "inactiveRefPaths": ["talk.providers.zai.apiKey"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_allows_empty_target_set_after_whitespace_filter() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        calls.append({"commandName": command_name, "targetIds": target_ids})
+        return {"assignments": [], "diagnostics": [], "inactiveRefPaths": []}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    payload = await service.call(
+        "secrets.resolve",
+        {
+            "commandName": "memory status",
+            "targetIds": ["   "],
+        },
+    )
+
+    assert calls == [{"commandName": "memory status", "targetIds": []}]
+    assert payload == {
+        "ok": True,
+        "assignments": [],
+        "diagnostics": [],
+        "inactiveRefPaths": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_accepts_assignment_without_optional_path() -> None:
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        return {
+            "assignments": [
+                {
+                    "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                    "value": "env:OPENAI_API_KEY",
+                }
+            ],
+            "diagnostics": [],
+            "inactiveRefPaths": [],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    payload = await service.call(
+        "secrets.resolve",
+        {
+            "commandName": "memory status",
+            "targetIds": ["talk.providers.*.apiKey"],
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "assignments": [
+            {
+                "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                "value": "env:OPENAI_API_KEY",
+            }
+        ],
+        "diagnostics": [],
+        "inactiveRefPaths": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_rejects_unknown_target_ids_before_dispatch() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        calls.append({"commandName": command_name, "targetIds": target_ids})
+        return {"assignments": [], "diagnostics": [], "inactiveRefPaths": []}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match='invalid secrets.resolve params: unknown target id "unknown.target"',
+    ):
+        await service.call(
+            "secrets.resolve",
+            {
+                "commandName": "memory status",
+                "targetIds": ["unknown.target"],
+            },
+        )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_projects_invalid_resolver_payload_to_unavailable() -> None:
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        return {
+            "assignments": [
+                {
+                    "path": "talk.providers.openai.apiKey",
+                    "pathSegments": [""],
+                    "value": "env:OPENAI_API_KEY",
+                }
+            ],
+            "diagnostics": [],
+            "inactiveRefPaths": [],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="secrets.resolve returned invalid payload.",
     ) as exc_info:
         await service.call(
             "secrets.resolve",

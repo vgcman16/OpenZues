@@ -375,6 +375,11 @@ capability_app = typer.Typer(
 capability_model_app = typer.Typer(help="Inspect text inference model catalog metadata.")
 capability_model_auth_app = typer.Typer(help="Inspect model provider auth metadata.")
 capability_tts_app = typer.Typer(help="Inspect text-to-speech runtime metadata.")
+capability_image_app = typer.Typer(help="Inspect image generation and description metadata.")
+capability_audio_app = typer.Typer(help="Inspect audio transcription runtime metadata.")
+capability_video_app = typer.Typer(help="Inspect video generation and description metadata.")
+capability_web_app = typer.Typer(help="Inspect web search and fetch metadata.")
+capability_embedding_app = typer.Typer(help="Inspect embedding provider metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -403,6 +408,11 @@ app.add_typer(sessions_app, name="sessions")
 capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
 capability_app.add_typer(capability_tts_app, name="tts")
+capability_app.add_typer(capability_image_app, name="image")
+capability_app.add_typer(capability_audio_app, name="audio")
+capability_app.add_typer(capability_video_app, name="video")
+capability_app.add_typer(capability_web_app, name="web")
+capability_app.add_typer(capability_embedding_app, name="embedding")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -598,6 +608,54 @@ def _build_status_security_audit_unavailable_payload() -> dict[str, object]:
     }
 
 
+def _status_provider_usage_runtime(services: object | None) -> Any | None:
+    if services is None:
+        return None
+    runtime = getattr(services, "provider_usage", None)
+    if runtime is None:
+        runtime = getattr(services, "provider_usage_service", None)
+    return runtime
+
+
+async def _build_status_usage_payload(
+    services: object | None,
+    *,
+    timeout_ms: int,
+) -> dict[str, object]:
+    runtime = _status_provider_usage_runtime(services)
+    for method_name in ("get_summary", "snapshot", "load_summary"):
+        method = getattr(runtime, method_name, None) if runtime is not None else None
+        if callable(method):
+            result = await method(timeout_ms=timeout_ms)
+            payload = dict(result) if isinstance(result, dict) else {}
+            payload.setdefault("timeoutMs", timeout_ms)
+            return payload
+    return _build_status_usage_unavailable_payload(timeout_ms=timeout_ms)
+
+
+def _status_security_audit_runtime(services: object | None) -> Any | None:
+    if services is None:
+        return None
+    runtime = getattr(services, "security_audit", None)
+    if runtime is None:
+        runtime = getattr(services, "security_audit_service", None)
+    return runtime
+
+
+async def _build_status_security_audit_payload(
+    services: object | None,
+    *,
+    timeout_ms: int,
+) -> dict[str, object]:
+    runtime = _status_security_audit_runtime(services)
+    for method_name in ("get_audit", "snapshot", "run_audit"):
+        method = getattr(runtime, method_name, None) if runtime is not None else None
+        if callable(method):
+            result = await method(timeout_ms=timeout_ms)
+            return dict(result) if isinstance(result, dict) else {}
+    return _build_status_security_audit_unavailable_payload()
+
+
 async def _build_status_runtime_sections(
     app_settings: Settings,
     *,
@@ -605,6 +663,7 @@ async def _build_status_runtime_sections(
     usage: bool,
     all_output: bool,
     timeout_ms: int,
+    services: object | None = None,
 ) -> dict[str, object]:
     sections: dict[str, object] = {}
     if deep:
@@ -622,9 +681,15 @@ async def _build_status_runtime_sections(
     if deep or usage:
         sections["lastHeartbeat"] = None
     if usage:
-        sections["usage"] = _build_status_usage_unavailable_payload(timeout_ms=timeout_ms)
+        sections["usage"] = await _build_status_usage_payload(
+            services,
+            timeout_ms=timeout_ms,
+        )
     if all_output:
-        sections["securityAudit"] = _build_status_security_audit_unavailable_payload()
+        sections["securityAudit"] = await _build_status_security_audit_payload(
+            services,
+            timeout_ms=timeout_ms,
+        )
     return sections
 
 
@@ -2555,6 +2620,33 @@ def _emit_models_status(
         typer.echo(f"auth: {auth.get('status') or 'unknown'}")
 
 
+def _models_status_check_exit_code(payload: dict[str, object]) -> int:
+    if payload.get("ok") is not True:
+        return 1
+    auth = payload.get("auth")
+    if not isinstance(auth, dict):
+        return 0
+    auth_status = (_optional_cli_string(auth.get("status")) or "").lower()
+    if auth_status in {"error", "failed", "failure", "unhealthy"}:
+        return 1
+    missing = auth.get("missingProvidersInUse")
+    if isinstance(missing, list) and any(_optional_cli_string(item) for item in missing):
+        return 1
+    oauth = auth.get("oauth")
+    profiles = oauth.get("profiles") if isinstance(oauth, dict) else None
+    has_expiring = False
+    if isinstance(profiles, list):
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            profile_status = (_optional_cli_string(profile.get("status")) or "").lower()
+            if profile_status in {"expired", "missing"}:
+                return 1
+            if profile_status == "expiring":
+                has_expiring = True
+    return 2 if has_expiring else 0
+
+
 def _model_catalog_entries(payload: dict[str, object]) -> list[dict[str, object]]:
     raw_models = payload.get("models")
     if not isinstance(raw_models, list):
@@ -2598,6 +2690,768 @@ def _build_capability_model_providers_payload(
         if len(defaults) < 3:
             defaults.append(model_id)
     return [grouped[key] for key in sorted(grouped)]
+
+
+def _optional_model_auth_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "model_auth", None)
+    if runtime is None:
+        runtime = getattr(services, "model_auth_service", None)
+    return runtime
+
+
+def _model_auth_runtime(services: CliServices) -> Any:
+    runtime = _optional_model_auth_runtime(services)
+    if runtime is None:
+        raise ValueError("model auth runtime is unavailable.")
+    return runtime
+
+
+async def _build_capability_model_auth_login_payload(
+    services: CliServices,
+    *,
+    provider: str,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    login = getattr(runtime, "login", None)
+    if not callable(login):
+        raise ValueError("model auth login is unavailable until model auth runtime is wired.")
+    result = await login(provider)
+    return dict(result) if isinstance(result, dict) else {"provider": provider}
+
+
+async def _build_capability_model_auth_logout_payload(
+    services: CliServices,
+    *,
+    provider: str,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    logout = getattr(runtime, "logout", None)
+    if not callable(logout):
+        raise ValueError("model auth logout is unavailable until model auth runtime is wired.")
+    result = await logout(provider)
+    return dict(result) if isinstance(result, dict) else {"provider": provider}
+
+
+def _emit_capability_model_auth_login(payload: dict[str, object]) -> None:
+    message = _optional_cli_string(payload.get("message"))
+    if message is not None:
+        typer.echo(message)
+        return
+    provider = _optional_cli_string(payload.get("provider")) or "provider"
+    status = _optional_cli_string(payload.get("status")) or "completed"
+    typer.echo(f"Model auth login {status} for {provider}.")
+
+
+def _image_generation_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "image_generation", None)
+    if runtime is None:
+        runtime = getattr(services, "image_generation_service", None)
+    return runtime
+
+
+def _video_generation_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "video_generation", None)
+    if runtime is None:
+        runtime = getattr(services, "video_generation_service", None)
+    return runtime
+
+
+def _web_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "web_runtime", None)
+    if runtime is None:
+        runtime = getattr(services, "web", None)
+    if runtime is None:
+        runtime = getattr(services, "web_service", None)
+    return runtime
+
+
+def _embedding_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "embedding_runtime", None)
+    if runtime is None:
+        runtime = getattr(services, "embedding", None)
+    if runtime is None:
+        runtime = getattr(services, "embedding_service", None)
+    return runtime
+
+
+async def _build_capability_image_providers_payload(
+    services: CliServices,
+) -> list[dict[str, object]]:
+    runtime = _image_generation_runtime(services)
+    list_providers = getattr(runtime, "list_providers", None) if runtime is not None else None
+    if not callable(list_providers):
+        return []
+    raw_providers = await list_providers()
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+        }
+        label = _optional_cli_string(raw_provider.get("label"))
+        if label is not None:
+            entry["label"] = label
+        default_model = _optional_cli_string(raw_provider.get("defaultModel"))
+        if default_model is not None:
+            entry["defaultModel"] = default_model
+        models = raw_provider.get("models")
+        if isinstance(models, list):
+            entry["models"] = [model for model in models if isinstance(model, str)]
+        capabilities = raw_provider.get("capabilities")
+        if isinstance(capabilities, dict):
+            entry["capabilities"] = dict(capabilities)
+        providers.append(entry)
+    return providers
+
+
+async def _build_capability_image_generate_payload(
+    services: CliServices,
+    *,
+    capability: str,
+    prompt: str,
+    model_ref: str | None,
+    count: int | None,
+    size: str | None,
+    aspect_ratio: str | None,
+    resolution: str | None,
+    output_path: str | None,
+    input_files: list[str] | None,
+) -> dict[str, object]:
+    runtime = _image_generation_runtime(services)
+    generate_image = getattr(runtime, "generate_image", None) if runtime is not None else None
+    if not callable(generate_image):
+        raise ValueError(
+            f"{capability} local transport is unavailable until image generation is wired."
+        )
+    active_model = _require_capability_provider_model_ref(model_ref)
+    resolved_input_files: list[str] | None = None
+    if input_files is not None:
+        if not input_files:
+            raise ValueError("At least one --file value is required.")
+        resolved_input_files = [str(Path(file_path).resolve()) for file_path in input_files]
+    result = await generate_image(
+        prompt=prompt,
+        active_model=active_model,
+        count=count,
+        size=size,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        output_path=output_path,
+        input_files=resolved_input_files,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    provider = _optional_cli_string(result_payload.get("provider"))
+    model = _optional_cli_string(result_payload.get("model"))
+    attempts = result_payload.get("attempts")
+    outputs = result_payload.get("outputs")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": capability,
+        "transport": "local",
+        "attempts": [dict(item) for item in attempts if isinstance(item, dict)]
+        if isinstance(attempts, list)
+        else [],
+        "outputs": [dict(item) for item in outputs if isinstance(item, dict)]
+        if isinstance(outputs, list)
+        else [],
+    }
+    if provider is not None:
+        envelope["provider"] = provider
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
+def _media_understanding_runtime(services: CliServices) -> Any:
+    runtime = getattr(services, "image_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding_service", None)
+    if runtime is None:
+        raise ValueError(
+            "image.describe local transport is unavailable until media understanding is wired."
+        )
+    return runtime
+
+
+def _optional_media_understanding_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "image_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding_service", None)
+    return runtime
+
+
+async def _build_capability_audio_providers_payload(
+    services: CliServices,
+) -> list[dict[str, object]]:
+    runtime = _optional_media_understanding_runtime(services)
+    list_providers = getattr(runtime, "list_providers", None) if runtime is not None else None
+    if not callable(list_providers):
+        return []
+    raw_providers = await list_providers()
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        capabilities = raw_provider.get("capabilities")
+        capability_items = [
+            capability for capability in capabilities if isinstance(capability, str)
+        ] if isinstance(capabilities, list) else []
+        if "audio" not in capability_items:
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+            "capabilities": capability_items,
+        }
+        default_models = raw_provider.get("defaultModels")
+        if isinstance(default_models, dict):
+            entry["defaultModels"] = dict(default_models)
+        providers.append(entry)
+    return providers
+
+
+async def _build_capability_video_providers_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    generation_runtime = _video_generation_runtime(services)
+    list_generation_providers = (
+        getattr(generation_runtime, "list_providers", None)
+        if generation_runtime is not None
+        else None
+    )
+    generation: list[dict[str, object]] = []
+    if callable(list_generation_providers):
+        raw_generation_providers = await list_generation_providers()
+        if isinstance(raw_generation_providers, list):
+            for raw_provider in raw_generation_providers:
+                if not isinstance(raw_provider, dict):
+                    continue
+                provider_id = _optional_cli_string(raw_provider.get("id"))
+                if provider_id is None:
+                    continue
+                entry: dict[str, object] = {
+                    "available": raw_provider.get("available")
+                    if isinstance(raw_provider.get("available"), bool)
+                    else True,
+                    "configured": raw_provider.get("configured")
+                    if isinstance(raw_provider.get("configured"), bool)
+                    else False,
+                    "selected": raw_provider.get("selected")
+                    if isinstance(raw_provider.get("selected"), bool)
+                    else False,
+                    "id": provider_id,
+                }
+                label = _optional_cli_string(raw_provider.get("label"))
+                if label is not None:
+                    entry["label"] = label
+                default_model = _optional_cli_string(raw_provider.get("defaultModel"))
+                if default_model is not None:
+                    entry["defaultModel"] = default_model
+                models = raw_provider.get("models")
+                if isinstance(models, list):
+                    entry["models"] = [model for model in models if isinstance(model, str)]
+                capabilities = raw_provider.get("capabilities")
+                if isinstance(capabilities, dict):
+                    entry["capabilities"] = dict(capabilities)
+                generation.append(entry)
+
+    media_runtime = _optional_media_understanding_runtime(services)
+    list_description_providers = (
+        getattr(media_runtime, "list_providers", None) if media_runtime is not None else None
+    )
+    description: list[dict[str, object]] = []
+    if callable(list_description_providers):
+        raw_description_providers = await list_description_providers()
+        if isinstance(raw_description_providers, list):
+            for raw_provider in raw_description_providers:
+                if not isinstance(raw_provider, dict):
+                    continue
+                capabilities = raw_provider.get("capabilities")
+                capability_items = [
+                    capability
+                    for capability in capabilities
+                    if isinstance(capability, str)
+                ] if isinstance(capabilities, list) else []
+                if "video" not in capability_items:
+                    continue
+                provider_id = _optional_cli_string(raw_provider.get("id"))
+                if provider_id is None:
+                    continue
+                entry = {
+                    "available": raw_provider.get("available")
+                    if isinstance(raw_provider.get("available"), bool)
+                    else True,
+                    "configured": raw_provider.get("configured")
+                    if isinstance(raw_provider.get("configured"), bool)
+                    else False,
+                    "selected": raw_provider.get("selected")
+                    if isinstance(raw_provider.get("selected"), bool)
+                    else False,
+                    "id": provider_id,
+                    "capabilities": capability_items,
+                }
+                default_models = raw_provider.get("defaultModels")
+                if isinstance(default_models, dict):
+                    entry["defaultModels"] = dict(default_models)
+                description.append(entry)
+    return {"generation": generation, "description": description}
+
+
+async def _build_capability_video_generate_payload(
+    services: CliServices,
+    *,
+    prompt: str,
+    model_ref: str | None,
+    output_path: str | None,
+) -> dict[str, object]:
+    runtime = _video_generation_runtime(services)
+    generate_video = getattr(runtime, "generate_video", None) if runtime is not None else None
+    if not callable(generate_video):
+        raise ValueError(
+            "video.generate local transport is unavailable until video generation is wired."
+        )
+    active_model = _require_capability_provider_model_ref(model_ref)
+    result = await generate_video(
+        prompt=prompt,
+        active_model=active_model,
+        output_path=output_path,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    provider = _optional_cli_string(result_payload.get("provider"))
+    model = _optional_cli_string(result_payload.get("model"))
+    attempts = result_payload.get("attempts")
+    outputs = result_payload.get("outputs")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "video.generate",
+        "transport": "local",
+        "attempts": [dict(item) for item in attempts if isinstance(item, dict)]
+        if isinstance(attempts, list)
+        else [],
+        "outputs": [dict(item) for item in outputs if isinstance(item, dict)]
+        if isinstance(outputs, list)
+        else [],
+    }
+    if provider is not None:
+        envelope["provider"] = provider
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
+def _project_web_provider_entries(raw_providers: object) -> list[dict[str, object]]:
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+        }
+        env_vars = raw_provider.get("envVars")
+        if isinstance(env_vars, list):
+            entry["envVars"] = [env_var for env_var in env_vars if isinstance(env_var, str)]
+        providers.append(entry)
+    return providers
+
+
+async def _build_capability_web_providers_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    runtime = _web_runtime(services)
+    list_search_providers = (
+        getattr(runtime, "list_search_providers", None) if runtime is not None else None
+    )
+    list_fetch_providers = (
+        getattr(runtime, "list_fetch_providers", None) if runtime is not None else None
+    )
+    search = (
+        _project_web_provider_entries(await list_search_providers())
+        if callable(list_search_providers)
+        else []
+    )
+    fetch = (
+        _project_web_provider_entries(await list_fetch_providers())
+        if callable(list_fetch_providers)
+        else []
+    )
+    return {"search": search, "fetch": fetch}
+
+
+async def _build_capability_web_search_payload(
+    services: CliServices,
+    *,
+    query: str,
+    provider: str | None,
+    limit: int | None,
+) -> dict[str, object]:
+    runtime = _web_runtime(services)
+    search = getattr(runtime, "search", None) if runtime is not None else None
+    if not callable(search):
+        raise ValueError("web.search local transport is unavailable until web runtime is wired.")
+    result = await search(query=query, provider=provider, limit=limit)
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "web.search",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [{"result": result_payload.get("result")}],
+    }
+    provider_id = _optional_cli_string(result_payload.get("provider"))
+    if provider_id is not None:
+        envelope["provider"] = provider_id
+    return envelope
+
+
+async def _build_capability_web_fetch_payload(
+    services: CliServices,
+    *,
+    url: str,
+    provider: str | None,
+    format_hint: str | None,
+) -> dict[str, object]:
+    runtime = _web_runtime(services)
+    fetch = getattr(runtime, "fetch", None) if runtime is not None else None
+    if not callable(fetch):
+        raise ValueError("web.fetch local transport is unavailable until web runtime is wired.")
+    result = await fetch(url=url, provider=provider, format=format_hint)
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "web.fetch",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [{"result": result_payload.get("result")}],
+    }
+    provider_id = _optional_cli_string(result_payload.get("provider"))
+    if provider_id is not None:
+        envelope["provider"] = provider_id
+    return envelope
+
+
+async def _build_capability_embedding_providers_payload(
+    services: CliServices,
+) -> list[dict[str, object]]:
+    runtime = _embedding_runtime(services)
+    list_providers = getattr(runtime, "list_providers", None) if runtime is not None else None
+    if not callable(list_providers):
+        return []
+    raw_providers = await list_providers()
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+        }
+        default_model = _optional_cli_string(raw_provider.get("defaultModel"))
+        if default_model is not None:
+            entry["defaultModel"] = default_model
+        transport = _optional_cli_string(raw_provider.get("transport"))
+        if transport is not None:
+            entry["transport"] = transport
+        auto_select_priority = raw_provider.get("autoSelectPriority")
+        if isinstance(auto_select_priority, int):
+            entry["autoSelectPriority"] = auto_select_priority
+        providers.append(entry)
+    return providers
+
+
+async def _build_capability_embedding_create_payload(
+    services: CliServices,
+    *,
+    texts: list[str],
+    provider: str | None,
+    model_ref: str | None,
+) -> dict[str, object]:
+    if not texts:
+        raise ValueError("At least one --text value is required.")
+    runtime = _embedding_runtime(services)
+    create_embeddings = (
+        getattr(runtime, "create_embeddings", None) if runtime is not None else None
+    )
+    if not callable(create_embeddings):
+        raise ValueError(
+            "embedding.create local transport is unavailable until embedding runtime is wired."
+        )
+    active_model = _require_capability_provider_model_ref(model_ref)
+    requested_provider = provider
+    requested_model: str | None = None
+    if active_model is not None:
+        requested_provider = requested_provider or active_model["provider"]
+        requested_model = active_model["model"]
+    result = await create_embeddings(
+        texts=texts,
+        provider=requested_provider,
+        model=requested_model,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    raw_outputs = result_payload.get("outputs")
+    outputs: list[dict[str, object]]
+    if isinstance(raw_outputs, list):
+        outputs = [dict(item) for item in raw_outputs if isinstance(item, dict)]
+    else:
+        outputs = []
+        embeddings = result_payload.get("embeddings")
+        if isinstance(embeddings, list):
+            for index, embedding in enumerate(embeddings):
+                if not isinstance(embedding, list):
+                    continue
+                vector = [
+                    value
+                    for value in embedding
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                ]
+                if index >= len(texts):
+                    continue
+                outputs.append(
+                    {
+                        "text": texts[index],
+                        "embedding": vector,
+                        "dimensions": len(vector),
+                    }
+                )
+    attempts = result_payload.get("attempts")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "embedding.create",
+        "transport": "local",
+        "attempts": [dict(item) for item in attempts if isinstance(item, dict)]
+        if isinstance(attempts, list)
+        else [],
+        "outputs": outputs,
+    }
+    provider_id = _optional_cli_string(result_payload.get("provider"))
+    if provider_id is not None:
+        envelope["provider"] = provider_id
+    model = _optional_cli_string(result_payload.get("model"))
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
+async def _build_capability_video_describe_payload(
+    services: CliServices,
+    *,
+    file_path: str,
+    model_ref: str | None,
+) -> dict[str, object]:
+    active_model = _require_capability_provider_model_ref(model_ref)
+    runtime = _optional_media_understanding_runtime(services)
+    describe_video_file = (
+        getattr(runtime, "describe_video_file", None) if runtime is not None else None
+    )
+    if not callable(describe_video_file):
+        raise ValueError(
+            "video.describe local transport is unavailable until media understanding is wired."
+        )
+    resolved_path = str(Path(file_path).resolve())
+    result = await describe_video_file(file_path=resolved_path, active_model=active_model)
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    text = _optional_cli_string(result_payload.get("text"))
+    if text is None:
+        raise ValueError(f"No description returned for video: {resolved_path}")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "video.describe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": resolved_path,
+                "text": text,
+                "kind": "video.description",
+            }
+        ],
+    }
+    provider = _optional_cli_string(result_payload.get("provider"))
+    if provider is not None:
+        envelope["provider"] = provider
+    model = _optional_cli_string(result_payload.get("model"))
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
+async def _build_capability_audio_transcribe_payload(
+    services: CliServices,
+    *,
+    file_path: str,
+    language: str | None,
+    model_ref: str | None,
+    prompt: str | None,
+) -> dict[str, object]:
+    active_model = _require_capability_provider_model_ref(model_ref)
+    runtime = _optional_media_understanding_runtime(services)
+    transcribe_audio_file = (
+        getattr(runtime, "transcribe_audio_file", None) if runtime is not None else None
+    )
+    if not callable(transcribe_audio_file):
+        raise ValueError(
+            "audio.transcribe local transport is unavailable until media understanding is wired."
+        )
+    resolved_path = str(Path(file_path).resolve())
+    result = await transcribe_audio_file(
+        file_path=resolved_path,
+        active_model=active_model,
+        language=language,
+        prompt=prompt,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    text = _optional_cli_string(result_payload.get("text"))
+    if text is None:
+        raise ValueError(f"No transcript returned for audio: {resolved_path}")
+    return {
+        "ok": True,
+        "capability": "audio.transcribe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": resolved_path,
+                "text": text,
+                "kind": "audio.transcription",
+            }
+        ],
+    }
+
+
+def _require_capability_provider_model_ref(
+    model_ref: str | None,
+) -> dict[str, str] | None:
+    if _optional_cli_string(model_ref) is None:
+        return None
+    provider, model = _split_capability_model_ref(model_ref)
+    if provider is None or model is None:
+        raise ValueError("Model overrides must use the form <provider/model>.")
+    return {"provider": provider, "model": model}
+
+
+async def _build_capability_image_describe_payload(
+    services: CliServices,
+    *,
+    file_path: str,
+    model_ref: str | None,
+) -> dict[str, object]:
+    return await _build_capability_image_describe_files_payload(
+        services,
+        file_paths=[file_path],
+        model_ref=model_ref,
+        capability="image.describe",
+    )
+
+
+async def _build_capability_image_describe_files_payload(
+    services: CliServices,
+    *,
+    file_paths: list[str],
+    model_ref: str | None,
+    capability: str,
+) -> dict[str, object]:
+    active_model = _require_capability_provider_model_ref(model_ref)
+    if not file_paths:
+        raise ValueError("At least one --file value is required.")
+    runtime = _media_understanding_runtime(services)
+    describe_image_file = getattr(runtime, "describe_image_file", None)
+    if not callable(describe_image_file):
+        raise ValueError(
+            "image.describe local transport is unavailable until media understanding is wired."
+        )
+    outputs: list[dict[str, object]] = []
+    for file_path in file_paths:
+        resolved_path = str(Path(file_path).resolve())
+        result = await describe_image_file(file_path=resolved_path, active_model=active_model)
+        result_payload = dict(result) if isinstance(result, dict) else {}
+        text = _optional_cli_string(result_payload.get("text"))
+        if text is None:
+            raise ValueError(f"No description returned for image: {resolved_path}")
+        provider = _optional_cli_string(result_payload.get("provider"))
+        model = _optional_cli_string(result_payload.get("model"))
+        output: dict[str, object] = {
+            "path": resolved_path,
+            "text": text,
+            "kind": "image.description",
+        }
+        if provider is not None:
+            output["provider"] = provider
+        if model is not None:
+            output["model"] = model
+        outputs.append(output)
+    first_output = outputs[0] if outputs else {}
+    provider = _optional_cli_string(first_output.get("provider"))
+    model = _optional_cli_string(first_output.get("model"))
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": capability,
+        "transport": "local",
+        "attempts": [],
+        "outputs": outputs,
+    }
+    if provider is not None:
+        envelope["provider"] = provider
+    if model is not None:
+        envelope["model"] = model
+    return envelope
 
 
 def _emit_capability_provider_summary(payload: object, *, json_output: bool) -> None:
@@ -2720,6 +3574,13 @@ async def _build_capability_model_run_payload(
         if model is not None:
             params["model"] = model
         result = await _call_gateway_node_method(services, "agent", params)
+        run_id = _optional_cli_string(result.get("runId"))
+        if run_id is not None:
+            result = await _call_gateway_node_method(
+                services,
+                "agent.wait",
+                {"runId": run_id, "timeoutMs": 120_000},
+            )
         return _normalize_capability_model_run_envelope(
             result,
             transport=transport,
@@ -4054,6 +4915,30 @@ async def _build_models_status_payload(
             "status": "unavailable",
             "reason": "models status probes require the model auth health runtime.",
         }
+    auth_payload: dict[str, object] = {
+        "status": "unavailable",
+        "providersWithOAuth": [],
+        "missingProvidersInUse": providers_in_use,
+        "providers": [],
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": [],
+            "providers": [],
+        },
+        "probes": probes,
+    }
+    auth_runtime = _optional_model_auth_runtime(services)
+    status = getattr(auth_runtime, "status", None) if auth_runtime is not None else None
+    if not callable(status) and auth_runtime is not None:
+        status = getattr(auth_runtime, "get_status", None)
+    if callable(status):
+        runtime_status = await status(providers=providers_in_use, probe=probe)
+        if isinstance(runtime_status, dict):
+            runtime_auth = runtime_status.get("auth")
+            if isinstance(runtime_auth, dict):
+                auth_payload.update(dict(runtime_auth))
+            else:
+                auth_payload.update(dict(runtime_status))
     return {
         "ok": True,
         "defaultModel": default_label,
@@ -4063,18 +4948,7 @@ async def _build_models_status_payload(
         "imageFallbacks": [],
         "aliases": {},
         "allowed": allowed,
-        "auth": {
-            "status": "unavailable",
-            "providersWithOAuth": [],
-            "missingProvidersInUse": providers_in_use,
-            "providers": [],
-            "unusableProfiles": [],
-            "oauth": {
-                "profiles": [],
-                "providers": [],
-            },
-            "probes": probes,
-        },
+        "auth": auth_payload,
     }
 
 
@@ -4135,6 +5009,7 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         for capability in (capabilities if isinstance(capabilities, list) else [])
         if str(capability).strip()
     ]
+    install = plugin.get("install")
     return {
         "plugin": dict(plugin),
         "shape": _plugin_inspect_shape(plugin),
@@ -4156,7 +5031,7 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         "httpRouteCount": 0,
         "policy": {},
         "diagnostics": [],
-        "install": None,
+        "install": dict(install) if isinstance(install, dict) else None,
     }
 
 
@@ -6509,6 +7384,7 @@ def status_command(
                 usage=usage,
                 all_output=all_output,
                 timeout_ms=timeout_ms,
+                services=services,
             )
         )
         if all_output and not json_output:
@@ -7259,8 +8135,10 @@ def models_status_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_status(payload, json_output=json_output, plain=plain)
-    if check and payload.get("ok") is not True:
-        raise typer.Exit(code=1)
+    if check:
+        exit_code = _models_status_check_exit_code(payload)
+        if exit_code:
+            raise typer.Exit(code=exit_code)
 
 
 @plugins_app.command("list")
@@ -7811,6 +8689,43 @@ def capability_model_auth_status_command(
     _emit_capability_provider_summary(payload, json_output=json_output)
 
 
+@capability_model_auth_app.command("login")
+def capability_model_auth_login_command(
+    provider: str = typer.Option(..., "--provider", help="Provider id."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_model_auth_login_payload(
+            services,
+            provider=provider,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@capability_model_auth_app.command("logout")
+def capability_model_auth_logout_command(
+    provider: str = typer.Option(..., "--provider", help="Provider id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_model_auth_logout_payload(
+            services,
+            provider=provider,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
 @capability_tts_app.command("providers")
 def capability_tts_providers_command(
     local: bool = typer.Option(False, "--local", help="Force local execution."),
@@ -7828,6 +8743,305 @@ def capability_tts_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_image_app.command("providers")
+def capability_image_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_capability_image_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_image_app.command("generate")
+def capability_image_generate_command(
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    count: int | None = typer.Option(None, "--count", help="Number of images."),
+    size: str | None = typer.Option(None, "--size", help="Size hint."),
+    aspect_ratio: str | None = typer.Option(None, "--aspect-ratio", help="Aspect ratio hint."),
+    resolution: str | None = typer.Option(None, "--resolution", help="Resolution hint."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_generate_payload(
+            services,
+            capability="image.generate",
+            prompt=prompt,
+            model_ref=model,
+            count=count,
+            size=size,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            output_path=output,
+            input_files=None,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_image_app.command("edit")
+def capability_image_edit_command(
+    file_paths: Annotated[list[str] | None, typer.Option("--file", help="Input file.")] = None,
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_generate_payload(
+            services,
+            capability="image.edit",
+            prompt=prompt,
+            model_ref=model,
+            count=None,
+            size=None,
+            aspect_ratio=None,
+            resolution=None,
+            output_path=output,
+            input_files=file_paths or [],
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_audio_app.command("providers")
+def capability_audio_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_capability_audio_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_video_app.command("providers")
+def capability_video_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_video_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_video_app.command("generate")
+def capability_video_generate_command(
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_video_generate_payload(
+            services,
+            prompt=prompt,
+            model_ref=model,
+            output_path=output,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_web_app.command("providers")
+def capability_web_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_web_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_web_app.command("search")
+def capability_web_search_command(
+    query: str = typer.Option(..., "--query", help="Search query."),
+    provider: str | None = typer.Option(None, "--provider", help="Provider id."),
+    limit: int | None = typer.Option(None, "--limit", help="Result limit."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_web_search_payload(
+            services,
+            query=query,
+            provider=provider,
+            limit=limit,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_web_app.command("fetch")
+def capability_web_fetch_command(
+    url: str = typer.Option(..., "--url", help="URL."),
+    provider: str | None = typer.Option(None, "--provider", help="Provider id."),
+    format_hint: str | None = typer.Option(None, "--format", help="Format hint."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_web_fetch_payload(
+            services,
+            url=url,
+            provider=provider,
+            format_hint=format_hint,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_embedding_app.command("providers")
+def capability_embedding_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_capability_embedding_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_embedding_app.command("create")
+def capability_embedding_create_command(
+    texts: Annotated[list[str] | None, typer.Option("--text", help="Input text.")] = None,
+    provider: str | None = typer.Option(None, "--provider", help="Provider id."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_embedding_create_payload(
+            services,
+            texts=texts or [],
+            provider=provider,
+            model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_video_app.command("describe")
+def capability_video_describe_command(
+    file_path: str = typer.Option(..., "--file", help="Video file."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_video_describe_payload(
+            services,
+            file_path=file_path,
+            model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_audio_app.command("transcribe")
+def capability_audio_transcribe_command(
+    file_path: str = typer.Option(..., "--file", help="Audio file."),
+    language: str | None = typer.Option(None, "--language", help="Language hint."),
+    prompt: str | None = typer.Option(None, "--prompt", help="Prompt hint."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_audio_transcribe_payload(
+            services,
+            file_path=file_path,
+            language=language,
+            model_ref=model,
+            prompt=prompt,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_image_app.command("describe")
+def capability_image_describe_command(
+    file_path: str = typer.Option(..., "--file", help="Image file."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_describe_payload(
+            services,
+            file_path=file_path,
+            model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_image_app.command("describe-many")
+def capability_image_describe_many_command(
+    file_paths: Annotated[list[str] | None, typer.Option("--file", help="Image file.")] = None,
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_describe_files_payload(
+            services,
+            file_paths=file_paths or [],
+            model_ref=model,
+            capability="image.describe-many",
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_tts_app.command("voices")

@@ -1805,6 +1805,7 @@ class ControlUiBootstrapConfigView(BaseModel):
     gateway: ControlUiGatewayConfigView | None = None
     session: ControlUiSessionConfigView | None = None
     tools: ControlUiToolsConfigView | None = None
+    acp: dict[str, Any] | None = None
     plugins: dict[str, Any] | None = None
     channels: dict[str, Any] | None = None
 
