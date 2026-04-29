@@ -4009,6 +4009,86 @@ def test_infer_audio_transcribe_json_wraps_native_media_understanding(monkeypatc
     ]
 
 
+def test_infer_video_providers_json_projects_generation_and_description(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeVideoGeneration:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("video_generation.list_providers")
+            return [
+                {
+                    "id": "runway",
+                    "label": "Runway",
+                    "defaultModel": "gen-3",
+                    "models": ["gen-3"],
+                    "capabilities": {"generate": {"durations": [5, 10]}},
+                    "configured": True,
+                    "selected": True,
+                }
+            ]
+
+    class FakeMediaUnderstanding:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("media_understanding.list_providers")
+            return [
+                {
+                    "id": "openai",
+                    "capabilities": ["image", "video"],
+                    "defaultModels": {"video": "gpt-5.4-vision"},
+                    "configured": True,
+                },
+                {
+                    "id": "audio-only",
+                    "capabilities": ["audio"],
+                    "defaultModels": {"audio": "whisper-1"},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                video_generation=FakeVideoGeneration(),
+                media_understanding=FakeMediaUnderstanding(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "video", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "generation": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": True,
+                "id": "runway",
+                "label": "Runway",
+                "defaultModel": "gen-3",
+                "models": ["gen-3"],
+                "capabilities": {"generate": {"durations": [5, 10]}},
+            }
+        ],
+        "description": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": False,
+                "id": "openai",
+                "capabilities": ["image", "video"],
+                "defaultModels": {"video": "gpt-5.4-vision"},
+            }
+        ],
+    }
+    assert calls == [
+        "video_generation.list_providers",
+        "media_understanding.list_providers",
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
