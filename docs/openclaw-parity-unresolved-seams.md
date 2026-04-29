@@ -269,8 +269,11 @@ mutation command remains; the next model CLI queue head is non-interactive
 returns fakeable/native OpenRouter free-model metadata without credentials, and
 `--yes` applies preselected text/image fallbacks plus default/image-model
 updates through the native config writer without prompting. The remaining scan
-depth is live OpenRouter tool/image probing parity beyond the metadata/runtime
-posture.
+depth was live OpenRouter tool/image probing parity beyond the metadata/runtime
+posture; `models scan` now performs native OpenRouter chat-completions tool
+probes with a required `ping` tool and image probes with a small data-URL image
+for image-capable candidates, preserving the upstream missing-key guard and
+fakeable HTTP transport coverage. No smaller model-scan CLI/probe seam remains.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`

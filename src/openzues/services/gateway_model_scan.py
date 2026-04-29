@@ -5,12 +5,17 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_TIMEOUT_MS = 12_000
+_BASE_IMAGE_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X3mIAAAAASUVORK5CYII="
+)
 _PROVIDER_ALIASES = {
     "z.ai": "zai",
     "z-ai": "zai",
@@ -22,9 +27,14 @@ _PROVIDER_ALIASES = {
     "doubao": "volcengine",
 }
 _PARAM_B_RE = re.compile(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*b(?:\b|[^a-z0-9])", re.IGNORECASE)
+_SKIPPED_PROBE = {"ok": False, "latencyMs": None, "skipped": True}
+_Urlopen = Callable[..., Any]
 
 
 class GatewayModelScanService:
+    def __init__(self, *, urlopen_impl: _Urlopen = urlopen) -> None:
+        self._urlopen = urlopen_impl
+
     async def scan(
         self,
         *,
@@ -59,7 +69,11 @@ class GatewayModelScanService:
             raise ValueError(
                 "Missing OpenRouter API key. Set OPENROUTER_API_KEY to run models scan."
             )
-        entries = _fetch_openrouter_models(timeout_ms=timeout_ms)
+        timeout_seconds = max(1.0, (timeout_ms or _DEFAULT_TIMEOUT_MS) / 1000)
+        entries = _fetch_openrouter_models(
+            timeout_seconds=timeout_seconds,
+            urlopen_impl=self._urlopen,
+        )
         now_ms = time.time() * 1000
         min_param_b = float(min_params or 0)
         max_age = float(max_age_days or 0)
@@ -84,22 +98,79 @@ class GatewayModelScanService:
                 age_days = (now_ms - created_at_ms) / (24 * 60 * 60 * 1000)
                 if age_days > max_age:
                     continue
-            results.append(_build_scan_result(normalized, probe=probe))
+            if not probe:
+                results.append(
+                    _build_scan_result(
+                        normalized,
+                        tool=dict(_SKIPPED_PROBE),
+                        image=dict(_SKIPPED_PROBE),
+                    )
+                )
+                continue
+            tool = _probe_tool(
+                normalized,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+                urlopen_impl=self._urlopen,
+            )
+            image = (
+                _probe_image(
+                    normalized,
+                    api_key=api_key,
+                    timeout_seconds=timeout_seconds,
+                    urlopen_impl=self._urlopen,
+                )
+                if _supports_image_input(normalized)
+                else dict(_SKIPPED_PROBE)
+            )
+            results.append(_build_scan_result(normalized, tool=tool, image=image))
         return results
 
 
-def _fetch_openrouter_models(*, timeout_ms: int | None) -> list[dict[str, Any]]:
-    timeout_seconds = max(1.0, (timeout_ms or _DEFAULT_TIMEOUT_MS) / 1000)
+def _fetch_openrouter_models(
+    *,
+    timeout_seconds: float,
+    urlopen_impl: _Urlopen,
+) -> list[dict[str, Any]]:
     request = Request(_OPENROUTER_MODELS_URL, headers={"Accept": "application/json"})
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
-            payload = json.loads(response.read().decode("utf-8"))
+        with urlopen_impl(request, timeout=timeout_seconds) as response:
+            payload = _read_json_response(response)
     except HTTPError as exc:
         raise ValueError(f"OpenRouter /models failed: HTTP {exc.code}") from exc
     except (OSError, URLError, json.JSONDecodeError) as exc:
         raise ValueError(f"OpenRouter /models failed: {exc}") from exc
     data = payload.get("data") if isinstance(payload, dict) else None
     return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
+
+
+def _post_openrouter_chat(
+    payload: dict[str, Any],
+    *,
+    api_key: str,
+    timeout_seconds: float,
+    urlopen_impl: _Urlopen,
+) -> dict[str, Any]:
+    request = Request(
+        _OPENROUTER_CHAT_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urlopen_impl(request, timeout=timeout_seconds) as response:
+        response_payload = _read_json_response(response)
+    return response_payload if isinstance(response_payload, dict) else {}
+
+
+def _read_json_response(response: object) -> object:
+    read = getattr(response, "read", None)
+    if not callable(read):
+        return {}
+    return json.loads(read().decode("utf-8"))
 
 
 def _normalize_openrouter_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
@@ -132,18 +203,133 @@ def _normalize_openrouter_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _build_scan_result(entry: dict[str, Any], *, probe: bool) -> dict[str, Any]:
-    supports_tools = bool(entry.get("supportsToolsMeta"))
-    supports_image = "image" in str(entry.get("modality") or "").lower()
-    skipped_probe = {"ok": False, "latencyMs": None, "skipped": True}
+def _probe_tool(
+    entry: dict[str, Any],
+    *,
+    api_key: str,
+    timeout_seconds: float,
+    urlopen_impl: _Urlopen,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        payload = _post_openrouter_chat(
+            {
+                "model": entry["id"],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Call the ping tool with {} and nothing else.",
+                    }
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "ping",
+                            "description": "Return OK.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": False,
+                            },
+                        },
+                    }
+                ],
+                "tool_choice": "required",
+                "max_tokens": 256,
+                "temperature": 0,
+            },
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            urlopen_impl=urlopen_impl,
+        )
+        if _response_has_tool_call(payload):
+            return {"ok": True, "latencyMs": _elapsed_ms(started)}
+        return {
+            "ok": False,
+            "latencyMs": _elapsed_ms(started),
+            "error": "No tool call returned",
+        }
+    except (HTTPError, OSError, URLError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "latencyMs": _elapsed_ms(started), "error": str(exc)}
+
+
+def _probe_image(
+    entry: dict[str, Any],
+    *,
+    api_key: str,
+    timeout_seconds: float,
+    urlopen_impl: _Urlopen,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        _post_openrouter_chat(
+            {
+                "model": entry["id"],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Reply with OK."},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{_BASE_IMAGE_PNG}"
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 16,
+                "temperature": 0,
+            },
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            urlopen_impl=urlopen_impl,
+        )
+        return {"ok": True, "latencyMs": _elapsed_ms(started)}
+    except (HTTPError, OSError, URLError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "latencyMs": _elapsed_ms(started), "error": str(exc)}
+
+
+def _build_scan_result(
+    entry: dict[str, Any],
+    *,
+    tool: dict[str, Any],
+    image: dict[str, Any],
+) -> dict[str, Any]:
     return {
         **entry,
         "provider": "openrouter",
         "modelRef": f"openrouter/{entry['id']}",
         "isFree": True,
-        "tool": {"ok": supports_tools, "latencyMs": None} if probe else skipped_probe,
-        "image": {"ok": supports_image, "latencyMs": None} if probe else skipped_probe,
+        "tool": tool,
+        "image": image,
     }
+
+
+def _supports_image_input(entry: dict[str, Any]) -> bool:
+    return "image" in str(entry.get("modality") or "").lower()
+
+
+def _response_has_tool_call(payload: dict[str, Any]) -> bool:
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            return True
+    return False
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, round((time.monotonic() - started) * 1000))
 
 
 def _pricing_from_entry(value: object) -> dict[str, float] | None:
