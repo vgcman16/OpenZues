@@ -5386,6 +5386,12 @@ class OpsMeshService:
             return []
         normalized_channel = str(channel or "").strip().lower()
         normalized_kind = str(kind or "").strip().lower()
+        if normalized_channel == "telegram":
+            return await self._resolve_telegram_channel_targets(
+                account_id=account_id,
+                kind=normalized_kind,
+                inputs=normalized_inputs,
+            )
         if normalized_channel != "slack" or normalized_kind not in {
             "auto",
             "channel",
@@ -5544,6 +5550,95 @@ class OpsMeshService:
             if cursor is None:
                 break
         return [_resolve_slack_user_target(input_value, users) for input_value in inputs]
+
+    async def _resolve_telegram_channel_targets(
+        self,
+        *,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        if kind != "user":
+            return [
+                _unresolved_channel_target(
+                    input_value,
+                    "Telegram runtime target resolution only supports usernames for "
+                    "direct-message lookups.",
+                )
+                for input_value in inputs
+            ]
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel="telegram",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return [
+                _unresolved_channel_target(input_value, "missing Telegram route")
+                for input_value in inputs
+            ]
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return [
+                _unresolved_channel_target(
+                    input_value,
+                    "Telegram bot token is required to resolve @username targets.",
+                )
+                for input_value in inputs
+            ]
+        return await asyncio.to_thread(
+            self._resolve_telegram_user_targets,
+            route,
+            secret_token,
+            inputs,
+        )
+
+    def _resolve_telegram_user_targets(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        token = _telegram_bot_token(secret_token)
+        results: list[dict[str, object]] = []
+        for input_value in inputs:
+            trimmed = input_value.strip()
+            if not trimmed:
+                results.append(
+                    _unresolved_channel_target(input_value, "Telegram target is required.")
+                )
+                continue
+            normalized = trimmed if trimmed.startswith("@") else f"@{trimmed}"
+            try:
+                result = self._get_json_provider_url(
+                    f"{_telegram_api_endpoint(str(route.get('target') or ''), token, 'getChat')}"
+                    f"?{urlencode({'chat_id': normalized})}",
+                )
+            except RuntimeError as exc:
+                results.append(_unresolved_channel_target(input_value, str(exc)))
+                continue
+            payload = _telegram_result_payload(result)
+            chat_id = payload.get("id")
+            if chat_id is None:
+                results.append(
+                    _unresolved_channel_target(
+                        input_value,
+                        "Telegram username could not be resolved by the configured bot.",
+                    )
+                )
+                continue
+            results.append(
+                {
+                    "input": input_value,
+                    "resolved": True,
+                    "id": str(chat_id),
+                    "name": normalized,
+                }
+            )
+        return results
 
     def _probe_discord_provider_route(
         self,

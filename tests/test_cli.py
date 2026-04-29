@@ -1344,6 +1344,93 @@ def test_channels_resolve_json_auto_groups_route_backed_slack_targets(
     ]
 
 
+def test_channels_resolve_json_uses_route_backed_telegram_user_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Telegram Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Telegram Native Resolve Route",
+            kind="telegram",
+            target="https://api.telegram.org",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "workspace-bot",
+                "peer_kind": "direct",
+                "peer_id": "telegram:12345",
+                "summary": "telegram workspace-bot direct fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="123456:ABC",
+            vault_secret_id=None,
+        )
+    )
+    telegram_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        telegram_gets.append((target, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "id": 12345,
+                "username": "opsroom",
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "opsroom",
+            "--channel",
+            "telegram",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "user",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "opsroom",
+            "resolved": True,
+            "id": "12345",
+            "name": "@opsroom",
+        }
+    ]
+    assert telegram_gets == [
+        (
+            "https://api.telegram.org/bot123456:ABC/getChat?chat_id=%40opsroom",
+            None,
+            None,
+        )
+    ]
+
+
 def test_channels_logs_json_filters_channel_and_limits_lines(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Logs")
     logs_dir = tmp_path / "logs"
