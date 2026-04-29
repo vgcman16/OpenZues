@@ -393,6 +393,29 @@ class GatewayConfigService:
             "order": requested,
         }
 
+    def clear_model_auth_order(
+        self,
+        *,
+        provider: str,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        context = _resolve_model_auth_order_context(
+            self.build_snapshot(),
+            data_dir=self._require_data_dir(),
+            provider=provider,
+            agent=agent,
+        )
+        state = _read_json_object(context["auth_state_path"])
+        next_state = _clear_auth_order_in_state(state, provider=context["provider"])
+        _write_or_remove_auth_state(context["auth_state_path"], next_state)
+        return {
+            "agentId": context["agent_id"],
+            "agentDir": str(context["agent_dir"]),
+            "provider": context["provider"],
+            "authStatePath": str(context["auth_state_path"]),
+            "order": None,
+        }
+
     def record_marketplace_plugin_install(
         self,
         *,
@@ -709,6 +732,16 @@ def _write_json_object(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _write_or_remove_auth_state(path: Path, payload: dict[str, Any] | None) -> None:
+    if payload is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    _write_json_object(path, payload)
+
+
 def _normalize_string_entries(entries: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -774,6 +807,42 @@ def _set_auth_order_in_state(
     }
     next_state["version"] = 1
     next_state["order"] = next_order
+    return next_state
+
+
+def _clear_auth_order_in_state(
+    state: dict[str, Any],
+    *,
+    provider: str,
+) -> dict[str, Any] | None:
+    provider_key = _normalize_model_auth_provider(provider)
+    raw_order = state.get("order")
+    next_order: dict[str, list[str]] = {}
+    if isinstance(raw_order, dict):
+        for raw_provider, raw_entries in raw_order.items():
+            if not isinstance(raw_provider, str):
+                continue
+            if _normalize_model_auth_provider(raw_provider) == provider_key:
+                continue
+            if not isinstance(raw_entries, list):
+                continue
+            entries = [
+                entry.strip()
+                for entry in raw_entries
+                if isinstance(entry, str) and entry.strip()
+            ]
+            if entries:
+                next_order[raw_provider] = entries
+    next_state: dict[str, Any] = {
+        key: value
+        for key, value in state.items()
+        if key in {"lastGood", "usageStats"} and isinstance(value, dict)
+    }
+    if next_order:
+        next_state["order"] = next_order
+    if not next_state:
+        return None
+    next_state["version"] = 1
     return next_state
 
 

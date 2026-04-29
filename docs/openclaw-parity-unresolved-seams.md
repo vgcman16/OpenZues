@@ -237,7 +237,11 @@ OpenClaw-style provider normalization and JSON/human output. `models auth order
 set` now validates requested profile ids against the target agent's
 `auth-profiles.json`, rejects provider mismatches with OpenClaw-shaped errors,
 dedupes the requested order, and writes the per-agent `auth-state.json` order
-override. The next model CLI queue head is auth-order clear. Live auth
+override. `models auth order clear` now removes the selected provider order
+override while preserving neighboring auth-state metadata. No smaller auth-order
+CLI command remains; the next model CLI queue head is the provider auth command
+cluster (`models auth add/login/setup-token/paste-token/login-github-copilot`).
+Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
