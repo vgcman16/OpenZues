@@ -187,15 +187,20 @@ pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model
 auth/probe inspection, production provider usage/security-audit adapter wiring,
-plugin/runtime inspection, doctor readiness checks, non-metadata external
-sandbox container cleanup, and broader TUI ergonomics.
+plugin/runtime inspection, deeper runtime bridge doctor checks, non-metadata
+external sandbox container cleanup, and broader TUI ergonomics.
 `status --json --usage
 --all` now consumes fakeable native provider-usage and security-audit runtime
 adapters when registered while keeping the honest unavailable placeholders
 when they are absent. The existing
 `sandbox list` human output now also mirrors OpenClaw's total/running summary
 line and config-mismatch recreate hint after listing native saved sandbox
-runtimes. The top-level `acp` and `acp client` command surfaces now accept the
+runtimes. Top-level `doctor --json` / human output now also mirrors OpenClaw's
+Sandbox doctor preflight for `agents.defaults.sandbox.mode`: when mode is
+`non-main` or `all`, the effective backend defaults to Docker, and `docker
+version` is unavailable, the Hermes doctor payload carries the same actionable
+Sandbox warning text while preserving the existing warning surface. The
+top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
 ACP CLI parity is the real bridge server/client runtime. The unavailable

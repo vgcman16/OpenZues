@@ -1800,6 +1800,114 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
             typer.echo("warning: " + str(warning))
 
 
+def _sandbox_docker_available() -> bool:
+    docker_command = shutil.which("docker")
+    if docker_command is None:
+        return False
+    try:
+        result = subprocess.run(
+            [docker_command, "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _doctor_sandbox_warning_from_config(
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if config_service is None:
+        return None
+    sandbox_config = _doctor_sandbox_config_from_snapshot(config_service.build_snapshot())
+    if sandbox_config is None:
+        return None
+    mode = _doctor_sandbox_mode(sandbox_config.get("mode"))
+    if mode == "off":
+        return None
+    backend = _doctor_sandbox_backend(sandbox_config.get("backend"))
+    if backend != "docker":
+        return None
+    if _sandbox_docker_available():
+        return None
+    return "\n".join(
+        [
+            f'Sandbox mode is enabled (mode: "{mode}") but Docker is not available.',
+            "Docker is required for sandbox mode to function.",
+            "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
+            "",
+            "Options:",
+            "- Install Docker and restart the gateway",
+            "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
+        ]
+    )
+
+
+def _with_doctor_sandbox_warnings(
+    payload: dict[str, object],
+    config_service: GatewayConfigService | None,
+) -> dict[str, object]:
+    warning = _doctor_sandbox_warning_from_config(config_service)
+    if warning is None:
+        return payload
+    next_payload = dict(payload)
+    existing = next_payload.get("warnings")
+    if isinstance(existing, list):
+        warnings = list(existing)
+    elif existing is None:
+        warnings = []
+    else:
+        warnings = [existing]
+    if warning not in {str(item) for item in warnings}:
+        warnings.append(warning)
+    next_payload["warnings"] = warnings
+    return next_payload
+
+
+def _doctor_sandbox_config_from_snapshot(
+    snapshot: dict[str, Any],
+) -> dict[str, object] | None:
+    resolved: dict[str, object] = {}
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        defaults_config = agents_config.get("defaults")
+        if not isinstance(defaults_config, dict):
+            continue
+        sandbox_config = defaults_config.get("sandbox")
+        if isinstance(sandbox_config, dict):
+            resolved.update(sandbox_config)
+    if not resolved:
+        return None
+    return resolved
+
+
+def _doctor_agents_config_roots(snapshot: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    roots: list[dict[str, Any]] = []
+    gateway_config = snapshot.get("gateway")
+    if isinstance(gateway_config, dict):
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
+
+
+def _doctor_sandbox_mode(value: object) -> Literal["off", "non-main", "all"]:
+    text = str(value or "").strip()
+    if text in {"non-main", "all"}:
+        return cast(Literal["non-main", "all"], text)
+    return "off"
+
+
+def _doctor_sandbox_backend(value: object) -> str:
+    backend = str(value or "").strip()
+    return backend or "docker"
+
+
 def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -14870,7 +14978,10 @@ def doctor(
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_doctor_view()
-        return view.model_dump(mode="json")
+        return _with_doctor_sandbox_warnings(
+            view.model_dump(mode="json"),
+            services.gateway_config,
+        )
 
     payload = _run(_run_with_services(_action))
     _emit_hermes_doctor(payload, json_output=json_output)
