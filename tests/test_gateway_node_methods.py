@@ -30109,9 +30109,23 @@ async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp
     assert set_payload["path"] == str(expected_path)
     assert set_payload["config"]["assistantName"] == "Parity Builder"
     assert patch_payload["config"]["assistantName"] == "Patched Builder"
+    patch_sentinel = patch_payload["sentinel"]
+    assert isinstance(patch_sentinel, dict)
+    assert Path(str(patch_sentinel["path"])).exists()
+    assert patch_sentinel["payload"]["kind"] == "config-patch"
+    assert patch_sentinel["payload"]["threadId"] == "1771242986529939"
+    assert patch_sentinel["payload"]["stats"]["mode"] == "config.patch"
+    assert patch_payload["restart"] is None
     assert apply_payload["config"]["allowExternalEmbedUrls"] is True
     assert apply_payload["restart"] is None
-    assert apply_payload["sentinel"] is None
+    apply_sentinel = apply_payload["sentinel"]
+    assert isinstance(apply_sentinel, dict)
+    assert Path(str(apply_sentinel["path"])).exists()
+    assert apply_sentinel["payload"]["kind"] == "config-apply"
+    assert apply_sentinel["payload"]["sessionKey"] == "agent:main:thread:demo"
+    assert apply_sentinel["payload"]["threadId"] == "demo"
+    assert apply_sentinel["payload"]["message"] == "Apply the bounded config seam."
+    assert apply_sentinel["payload"]["stats"]["mode"] == "config.apply"
     assert await service.call("config.get", {}) == apply_payload["config"]
     assert json.loads(expected_path.read_text(encoding="utf-8")) == apply_payload["config"]
 

@@ -1832,6 +1832,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and only reports a restart object when the native update tick actually
   requested one.
 - Verified the `update.run` envelope/sentinel seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, endpoint proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `config.patch` and `config.apply` now consume the same OpenClaw restart
+  request fields they already validated, returning `config-patch` /
+  `config-apply` restart sentinels with session delivery context, note,
+  thread id, config path stats, and a written data-dir sentinel file while
+  preserving the native no-direct-restart posture.
+- Verified the config restart-sentinel seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods_persist_control_ui_config_with_base_hash"`, endpoint proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "config_write_lifecycle"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "config_write_methods_persist_control_ui_config_with_base_hash or config_write_lifecycle or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

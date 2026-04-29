@@ -4008,7 +4008,7 @@ class GatewayNodeMethodService:
                 restart_delay_ms=restart_delay_ms,
             )
             sentinel_payload = _build_update_run_sentinel_payload(payload, update_result)
-            sentinel_path = await _write_update_run_sentinel(
+            sentinel_path = await _write_restart_sentinel(
                 self._database,
                 sentinel_payload,
             )
@@ -5078,9 +5078,16 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return self._config_service.patch_raw(
+            patch_result = self._config_service.patch_raw(
                 raw,
                 base_hash=base_hash,
+            )
+            return await _attach_config_restart_sentinel(
+                self._database,
+                patch_result,
+                payload,
+                kind="config-patch",
+                mode="config.patch",
             )
 
         if resolved_method == "config.apply":
@@ -5112,9 +5119,16 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return self._config_service.apply_raw(
+            apply_result = self._config_service.apply_raw(
                 raw,
                 base_hash=base_hash,
+            )
+            return await _attach_config_restart_sentinel(
+                self._database,
+                apply_result,
+                payload,
+                kind="config-apply",
+                mode="config.apply",
             )
 
         if resolved_method == "config.openFile":
@@ -14022,6 +14036,60 @@ def _build_update_run_sentinel_payload(
     }
 
 
+async def _attach_config_restart_sentinel(
+    database: Database | None,
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    kind: Literal["config-apply", "config-patch"],
+    mode: Literal["config.apply", "config.patch"],
+) -> dict[str, Any]:
+    sentinel_payload = _build_config_restart_sentinel_payload(
+        result,
+        payload,
+        kind=kind,
+        mode=mode,
+    )
+    sentinel_path = await _write_restart_sentinel(database, sentinel_payload)
+    updated = dict(result)
+    updated["restart"] = None
+    updated["sentinel"] = {
+        "path": sentinel_path,
+        "payload": sentinel_payload,
+    }
+    return updated
+
+
+def _build_config_restart_sentinel_payload(
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    kind: Literal["config-apply", "config-patch"],
+    mode: Literal["config.apply", "config.patch"],
+) -> dict[str, object]:
+    session_key = _string_or_none(payload.get("sessionKey"))
+    requested_delivery_context, requested_thread_id = _restart_delivery_context_from_payload(
+        payload.get("deliveryContext")
+    )
+    session_delivery_context, session_thread_id = _restart_delivery_context_from_session_key(
+        session_key
+    )
+    return {
+        "kind": kind,
+        "status": "ok",
+        "ts": _timestamp_ms(None),
+        "sessionKey": session_key,
+        "deliveryContext": requested_delivery_context or session_delivery_context,
+        "threadId": requested_thread_id or session_thread_id,
+        "message": _string_or_none(payload.get("note")),
+        "doctorHint": "Run `openzues doctor` for restart diagnostics.",
+        "stats": {
+            "mode": mode,
+            "root": _string_or_none(result.get("path")),
+        },
+    }
+
+
 def _restart_delivery_context_from_payload(
     value: object,
 ) -> tuple[dict[str, str] | None, str | None]:
@@ -14054,7 +14122,7 @@ def _restart_delivery_context_from_session_key(
     return delivery_context or None, thread_id or target_thread_id
 
 
-async def _write_update_run_sentinel(
+async def _write_restart_sentinel(
     database: Database | None,
     payload: dict[str, object],
 ) -> str | None:

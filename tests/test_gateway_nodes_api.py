@@ -21142,9 +21142,16 @@ def test_gateway_node_method_call_endpoint_supports_config_write_lifecycle(
     assert apply_response.status_code == 200
     assert set_response.json()["config"]["assistantName"] == "API Parity Builder"
     assert patch_response.json()["config"]["assistantName"] == "API Patched Builder"
+    patch_sentinel = patch_response.json()["sentinel"]
+    assert patch_sentinel["payload"]["kind"] == "config-patch"
+    assert patch_sentinel["payload"]["threadId"] == "demo"
     assert apply_response.json()["config"]["allowExternalEmbedUrls"] is True
     assert apply_response.json()["restart"] is None
-    assert apply_response.json()["sentinel"] is None
+    apply_sentinel = apply_response.json()["sentinel"]
+    assert apply_sentinel["payload"]["kind"] == "config-apply"
+    assert apply_sentinel["payload"]["sessionKey"] == "agent:main:thread:demo"
+    assert apply_sentinel["payload"]["threadId"] == "demo"
+    assert apply_sentinel["payload"]["message"] == "Apply the bounded config seam."
     assert get_response.json() == apply_response.json()["config"]
 
 

@@ -1136,6 +1136,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   sentinel payload/file carrying session delivery context, thread id, note, and
   the upstream 1000ms minimum timeout normalization.
 - Verified the update-run envelope/sentinel slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `config.patch` and `config.apply` now return OpenClaw-shaped restart
+  sentinel payloads/files with `config-patch` / `config-apply` kind, session
+  delivery context, thread id, note, config path stats, and the existing honest
+  no-direct-restart result.
+- Verified the config restart-sentinel slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods_persist_control_ui_config_with_base_hash"`, `python -m pytest tests\test_gateway_nodes_api.py -q -k "config_write_lifecycle"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "config_write_methods_persist_control_ui_config_with_base_hash or config_write_lifecycle or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References
