@@ -1178,7 +1178,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `cron.list`/job responses, and merges update patches while preserving the
   `failureAlert=false` override path.
 - Verified the cron failure-alert persistence slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "failure_alert_object_like_openclaw"` (`2 passed`), adjacent service cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_add or cron_update or cron_list or cron_status or cron_runs or cron_run or cron_remove"` (`50 passed`), adjacent API cron pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_add or cron_update or cron_list or cron_status or cron_runs or cron_run or cron_remove"` (`24 passed`), `ruff check src\openzues\schemas.py src\openzues\services\gateway_cron.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\schemas.py src\openzues\services\gateway_cron.py`.
-- Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
+- `cron.update` now accepts OpenClaw-style `patch.state` objects, merges them
+  into persisted native `cron_state`, and projects the sanitized runtime state
+  fields through cron job snapshots while preserving OpenZues-derived local run
+  status when execution data exists.
+- Verified the cron state-patch slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_update_persists_state_patch_like_openclaw or cron_update_merges_state_patch_like_openclaw"` (`2 passed`), adjacent service cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_update or cron_list or cron_status"` (`20 passed`), adjacent API cron pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_update or cron_list or cron_status"` (`11 passed`), `ruff check src\openzues\schemas.py src\openzues\services\gateway_cron.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\schemas.py src\openzues\services\gateway_cron.py`.
+- Next repo-level parity work should continue with cron runtime failure-alert
+  consumption: `cron.run` should update consecutive failure state, honor
+  `failureAlert.after` / `cooldownMs`, stamp delivery metadata, and dispatch the
+  configured alert through the native delivery owner.
 
 ## References
 

@@ -24,10 +24,50 @@ CronRunsScope = Literal["job", "all"]
 CronRunStatus = Literal["ok", "error", "skipped"]
 CronRunStatusFilter = Literal["all", "ok", "error", "skipped"]
 CronDeliveryStatus = Literal["delivered", "not-delivered", "unknown", "not-requested"]
+CronFailoverReason = Literal[
+    "auth",
+    "format",
+    "rate_limit",
+    "billing",
+    "timeout",
+    "model_not_found",
+    "unknown",
+]
 _GATEWAY_CRON_AGENT_ID = "openzues"
 _CRON_CUSTOM_SESSION_SEGMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
 _CRON_DELIVERY_CHANNEL_ID_RE = re.compile(r"^[a-z][a-z_-]{0,63}$")
 _CRON_LOOKAHEAD_MINUTES = 366 * 24 * 60
+_CRON_STATE_INT_FIELDS = {
+    "consecutiveErrors",
+    "lastDurationMs",
+    "lastFailureAlertAtMs",
+    "lastRunAtMs",
+    "nextRunAtMs",
+    "runningAtMs",
+}
+_CRON_STATE_TEXT_FIELDS = {"lastDeliveryError", "lastError"}
+_CRON_STATE_RUN_STATUS_FIELDS = {"lastRunStatus", "lastStatus"}
+_CRON_RUN_STATUS_VALUES = {"ok", "error", "skipped"}
+_CRON_DELIVERY_STATUS_VALUES = {"delivered", "not-delivered", "not-requested", "unknown"}
+_CRON_FAILOVER_REASON_VALUES = {
+    "auth",
+    "billing",
+    "format",
+    "model_not_found",
+    "rate_limit",
+    "timeout",
+    "unknown",
+}
+_CRON_STATE_ALLOWED_KEYS = (
+    _CRON_STATE_INT_FIELDS
+    | _CRON_STATE_TEXT_FIELDS
+    | _CRON_STATE_RUN_STATUS_FIELDS
+    | {
+        "lastDelivered",
+        "lastDeliveryStatus",
+        "lastErrorReason",
+    }
+)
 
 
 class _ParsedCronSchedule(NamedTuple):
@@ -598,7 +638,7 @@ class GatewayCronService:
         *,
         payload_state: dict[str, Any],
     ) -> dict[str, Any]:
-        state: dict[str, Any] = {}
+        state = _cron_state_payload(payload_state.get("cron_state"))
         last_run_at_ms = _timestamp_ms(payload_state.get("last_launched_at"))
         if last_run_at_ms is not None:
             state["lastRunAtMs"] = last_run_at_ms
@@ -1662,13 +1702,17 @@ def build_gateway_cron_job_patch(
             patch.get("failureAlert"),
             label="patch.failureAlert",
         )
+    if "state" in patch:
+        payload_updates["cron_state"] = _merged_cron_state_patch(
+            _task_payload_fields(task).get("cron_state"),
+            patch.get("state"),
+            label="patch.state",
+        )
     if "notify" in patch:
         notify = patch.get("notify")
         if not isinstance(notify, bool):
             raise ValueError("invalid cron.update params: patch.notify must be a boolean")
         payload_updates["cron_notify_enabled"] = notify
-    if "state" in patch:
-        raise ValueError("invalid cron.update params: OpenZues does not support patch.state")
 
     if "delivery" in patch:
         delivery = patch.get("delivery")
@@ -2400,6 +2444,112 @@ def _normalized_cron_failure_alert(
             )
         normalized["accountId"] = account_id
     return normalized
+
+
+def _cron_state_payload(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, Any] = {}
+    for key in _CRON_STATE_INT_FIELDS:
+        candidate = value.get(key)
+        if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate < 0:
+            continue
+        normalized[key] = candidate
+    for key in _CRON_STATE_TEXT_FIELDS:
+        candidate = value.get(key)
+        if isinstance(candidate, str):
+            normalized[key] = candidate
+    for key in _CRON_STATE_RUN_STATUS_FIELDS:
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate in _CRON_RUN_STATUS_VALUES:
+            normalized[key] = candidate
+    candidate = value.get("lastErrorReason")
+    if isinstance(candidate, str) and candidate in _CRON_FAILOVER_REASON_VALUES:
+        normalized["lastErrorReason"] = candidate
+    candidate = value.get("lastDelivered")
+    if isinstance(candidate, bool):
+        normalized["lastDelivered"] = candidate
+    candidate = value.get("lastDeliveryStatus")
+    if isinstance(candidate, str) and candidate in _CRON_DELIVERY_STATUS_VALUES:
+        normalized["lastDeliveryStatus"] = candidate
+    return normalized
+
+
+def _normalized_cron_state_patch(
+    value: object,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid cron.update params: {label} must be an object")
+    _validate_gateway_cron_object_keys(
+        value,
+        method="cron.update",
+        label=label,
+        allowed_keys=_CRON_STATE_ALLOWED_KEYS,
+    )
+    normalized: dict[str, Any] = {}
+    for key in _CRON_STATE_INT_FIELDS:
+        if key not in value:
+            continue
+        candidate = value.get(key)
+        if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate < 0:
+            raise ValueError(
+                f"invalid cron.update params: {label}.{key} must be a non-negative integer"
+            )
+        normalized[key] = candidate
+    for key in _CRON_STATE_TEXT_FIELDS:
+        if key not in value:
+            continue
+        candidate = value.get(key)
+        if not isinstance(candidate, str):
+            raise ValueError(f"invalid cron.update params: {label}.{key} must be a string")
+        normalized[key] = candidate
+    for key in _CRON_STATE_RUN_STATUS_FIELDS:
+        if key not in value:
+            continue
+        candidate = value.get(key)
+        if not isinstance(candidate, str) or candidate not in _CRON_RUN_STATUS_VALUES:
+            raise ValueError(
+                f"invalid cron.update params: {label}.{key} must be one of: "
+                "ok, error, skipped"
+            )
+        normalized[key] = candidate
+    if "lastErrorReason" in value:
+        candidate = value.get("lastErrorReason")
+        if not isinstance(candidate, str) or candidate not in _CRON_FAILOVER_REASON_VALUES:
+            raise ValueError(
+                f"invalid cron.update params: {label}.lastErrorReason must be one of: "
+                "auth, format, rate_limit, billing, timeout, model_not_found, unknown"
+            )
+        normalized["lastErrorReason"] = candidate
+    if "lastDelivered" in value:
+        candidate = value.get("lastDelivered")
+        if not isinstance(candidate, bool):
+            raise ValueError(
+                f"invalid cron.update params: {label}.lastDelivered must be a boolean"
+            )
+        normalized["lastDelivered"] = candidate
+    if "lastDeliveryStatus" in value:
+        candidate = value.get("lastDeliveryStatus")
+        if not isinstance(candidate, str) or candidate not in _CRON_DELIVERY_STATUS_VALUES:
+            raise ValueError(
+                f"invalid cron.update params: {label}.lastDeliveryStatus must be one of: "
+                "delivered, not-delivered, not-requested, unknown"
+            )
+        normalized["lastDeliveryStatus"] = candidate
+    return normalized
+
+
+def _merged_cron_state_patch(
+    existing: object,
+    patch: object,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    merged = _cron_state_payload(existing)
+    merged.update(_normalized_cron_state_patch(patch, label=label))
+    return merged
 
 
 def _merged_cron_failure_alert_patch(

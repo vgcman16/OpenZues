@@ -1210,6 +1210,7 @@ class TaskBlueprintCreate(BaseModel):
     cron_delivery_best_effort: bool | None = None
     cron_delivery_failure_destination: dict[str, Any] | None = None
     cron_failure_alert: dict[str, Any] | Literal[False] | None = None
+    cron_state: dict[str, Any] | None = None
     cron_notify_enabled: bool | None = None
     run_until_complete: bool = False
     continuation_cooldown_minutes: int = Field(default=10, ge=1)

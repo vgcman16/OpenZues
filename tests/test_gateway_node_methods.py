@@ -23992,6 +23992,109 @@ async def test_cron_update_merges_failure_alert_object_like_openclaw() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_update_persists_state_patch_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-state"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-state.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Stateful Repair",
+        summary="Repair the lane with visible state.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Repair the lane with visible state."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    state_patch = {
+        "nextRunAtMs": 1_770_003_600_000,
+        "runningAtMs": 1_770_000_000_500,
+        "lastRunAtMs": 1_770_000_000_000,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastError": "quota exhausted",
+        "lastErrorReason": "billing",
+        "lastDurationMs": 4_200,
+        "consecutiveErrors": 3,
+        "lastDelivered": False,
+        "lastDeliveryStatus": "not-delivered",
+        "lastDeliveryError": "channel route missing",
+        "lastFailureAlertAtMs": 1_770_000_001_000,
+    }
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {"state": state_patch},
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["state"] == state_patch
+    assert updated_task is not None
+    assert updated_task["cron_state"] == state_patch
+
+
+@pytest.mark.asyncio
+async def test_cron_update_merges_state_patch_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-state-merge"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-state-merge.db")
+    await database.initialize()
+    existing_state = {
+        "lastRunAtMs": 1_770_000_000_000,
+        "lastRunStatus": "ok",
+        "lastStatus": "ok",
+        "lastDurationMs": 125,
+    }
+    task_id = await database.create_task_blueprint(
+        name="Merge Stateful Repair",
+        summary="Repair the lane with merged state.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Repair the lane with merged state."),
+            "cron_state": existing_state,
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "state": {
+                    "lastRunStatus": "error",
+                    "lastStatus": "error",
+                    "lastError": "quota exhausted",
+                    "consecutiveErrors": 1,
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+    expected = {
+        **existing_state,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastError": "quota exhausted",
+        "consecutiveErrors": 1,
+    }
+
+    assert payload["state"] == expected
+    assert updated_task is not None
+    assert updated_task["cron_state"] == expected
+
+
+@pytest.mark.asyncio
 async def test_cron_update_accepts_every_schedule_anchor_ms() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-anchor-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
