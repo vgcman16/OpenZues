@@ -738,6 +738,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   continuing to the next source, so an old exact terminal row cannot block a
   fresher terminal session or child mission.
 - Verified the stale-terminal fallback chain seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_ignores_stale_exact_terminal_before_session_fallback"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
+- after dropping a stale exact terminal candidate, tracked `agent.wait` now
+  re-checks the active-aware exact run-id lookup before session fallback, so an
+  active exact run cannot be completed by an unrelated session terminal row.
+- Verified the active-exact-after-stale-terminal seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_preserves_active_exact_run_after_stale_terminal"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

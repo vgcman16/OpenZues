@@ -107,6 +107,11 @@ terminal candidates before continuing to the next lookup source. An old exact
 terminal row can no longer stop the wait from finding a fresher terminal
 session or child mission for the tracked run.
 
+Current queue-head adjustment: after dropping a stale exact terminal candidate,
+tracked `agent.wait` now re-checks the active-aware exact run-id lookup before
+falling through to session fallback. A currently active exact run can no longer
+be completed by an unrelated session terminal row.
+
 Current queue-head adjustment: OpenZues now advertises an explicit
 `sessions_history` tool posture and exposes `sessions.history` as an
 agent-tool-style gateway read: it resolves session aliases, hides tool rows by

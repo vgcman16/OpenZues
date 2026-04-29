@@ -11024,6 +11024,12 @@ class GatewayNodeMethodService:
         if tracked_run is not None:
             mission = fresh_terminal_candidate(mission)
             if mission is None:
+                mission = await self._database.get_latest_mission_by_run_id(
+                    run_id,
+                    require_session_key=True,
+                )
+                mission = fresh_terminal_candidate(mission)
+            if mission is None:
                 mission = await self._database.get_latest_terminal_mission_by_session_key(
                     tracked_run.session_key,
                     require_thread=True,
