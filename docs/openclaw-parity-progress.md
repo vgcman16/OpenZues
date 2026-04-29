@@ -2038,6 +2038,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\gateway_agent_files.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_agent_files.py`.
+- `sessions.spawn runtime="acp"` now mirrors OpenClaw's requester sandbox
+  policy guard: sandboxed requester sessions are rejected before ACP target
+  resolution or runtime dispatch because ACP runs on the host, while the
+  existing explicit `sandbox="require"` ACP error remains unchanged.
+- Verified the ACP sandboxed-requester guard with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_rejects_sandboxed_requester_to_acp_runtime"` (`1 passed`),
+  adjacent ACP spawn policy/runtime pack `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_rejects_acp_required_sandbox_policy or
+  sessions_spawn_rejects_sandboxed_requester_to_acp_runtime or
+  sessions_spawn_rejects_light_context_for_acp_before_runtime_boundary or
+  sessions_spawn_rejects_acp_attachments_before_runtime_boundary or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`8 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

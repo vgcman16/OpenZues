@@ -195,6 +195,10 @@ _SANDBOXED_REQUESTER_UNSANDBOXED_CHILD_ERROR = (
     "Sandboxed sessions cannot spawn unsandboxed subagents. Set a sandboxed target agent "
     "or use the same agent runtime."
 )
+_ACP_SANDBOXED_REQUESTER_ERROR = (
+    'Sandboxed sessions cannot spawn ACP sessions because runtime="acp" runs on the host. '
+    'Use runtime="subagent" from sandboxed sessions.'
+)
 _GATEWAY_TOOLS_INVOKE_DEFAULT_DENY = {
     "exec",
     "spawn",
@@ -7242,6 +7246,26 @@ class GatewayNodeMethodService:
                         message="sessions.spawn is unavailable until session inventory is wired",
                         status_code=503,
                     )
+                timestamp_ms = _timestamp_ms(now_ms)
+                requester_session_key = _optional_non_empty_string(
+                    payload.get("requesterSessionKey"),
+                    label="requesterSessionKey",
+                )
+                spawn_parent_session_key = (
+                    await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
+                    if requester_session_key is not None
+                    else await self._sessions_service.main_session_key()
+                )
+                requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
+                    self._config_service,
+                    session_key=spawn_parent_session_key,
+                )
+                if requester_sandbox_status.sandboxed:
+                    return {
+                        "status": "forbidden",
+                        "error": _ACP_SANDBOXED_REQUESTER_ERROR,
+                        **role_context,
+                    }
                 acp_agent_id = _sessions_spawn_acp_target_agent_id(
                     requested_agent_id=agent_id,
                     config_service=self._config_service,
@@ -7264,16 +7288,6 @@ class GatewayNodeMethodService:
                         "error": acp_agent_policy_error,
                         **role_context,
                     }
-                timestamp_ms = _timestamp_ms(now_ms)
-                requester_session_key = _optional_non_empty_string(
-                    payload.get("requesterSessionKey"),
-                    label="requesterSessionKey",
-                )
-                spawn_parent_session_key = (
-                    await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
-                    if requester_session_key is not None
-                    else await self._sessions_service.main_session_key()
-                )
                 spawn_parent_payload = await self._sessions_service.build_session_payload_for_key(
                     session_key=spawn_parent_session_key,
                     now_ms=timestamp_ms,

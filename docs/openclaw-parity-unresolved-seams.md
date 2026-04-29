@@ -2282,10 +2282,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   agent-files pack, `ruff check
   src\openzues\services\gateway_agent_files.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_agent_files.py`.
+- Closed the ACP sandboxed-requester policy seam: `sessions.spawn
+  runtime="acp"` now rejects sandboxed requester sessions before ACP target
+  resolution or runtime dispatch, using the OpenClaw host-runtime error while
+  preserving the existing explicit `sandbox="require"` ACP rejection. Verified
+  with `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_rejects_sandboxed_requester_to_acp_runtime"`, adjacent ACP
+  spawn policy/runtime pack, `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially ACP spawn harness parity, richer `tools.invoke` executor parity
-  (real plugin HTTP ordering and any additional intentional high-risk
-  mappings), broader runtime/client integration, and session runtime methods
+  especially richer `tools.invoke` executor parity (real plugin HTTP ordering
+  and scoped plugin visibility), broader runtime/client integration, and
+  session runtime methods
   (`chat.*`, `sessions.*`), rather than the older approval lifecycle/config/
   device-token/agent-mutation/memory-doctor/placeheld provenance/false
   steer-runtime/custom-agent-session placeholders.
