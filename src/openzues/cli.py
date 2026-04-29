@@ -2381,7 +2381,9 @@ def _emit_sessions_inventory(payload: dict[str, object], *, json_output: bool) -
 
 _SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
 _SESSION_CLEANUP_DEFAULT_MAX_ENTRIES = 500
+_SESSION_CLEANUP_DISK_HIGH_WATER_RATIO = 0.8
 _SESSION_CLEANUP_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?\s*$", re.I)
+_SESSION_CLEANUP_BYTE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?\s*$", re.I)
 
 
 def _sessions_cleanup_parse_duration_ms(value: object) -> int | None:
@@ -2426,7 +2428,30 @@ def _sessions_cleanup_parse_positive_int(value: object, *, default: int) -> int:
     return default
 
 
-def _sessions_cleanup_maintenance_config(services: object) -> dict[str, int]:
+def _sessions_cleanup_parse_byte_size(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        if value < 0:
+            return None
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    match = _SESSION_CLEANUP_BYTE_RE.match(value)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = (match.group(2) or "b").lower()
+    multipliers = {
+        "b": 1,
+        "kb": 1024,
+        "mb": 1024 * 1024,
+        "gb": 1024 * 1024 * 1024,
+    }
+    return int(amount * multipliers[unit])
+
+
+def _sessions_cleanup_maintenance_config(services: object) -> dict[str, int | None]:
     maintenance: dict[str, object] = {}
     gateway_config = getattr(services, "gateway_config", None)
     build_snapshot = getattr(gateway_config, "build_snapshot", None)
@@ -2452,7 +2477,26 @@ def _sessions_cleanup_maintenance_config(services: object) -> dict[str, int]:
         maintenance.get("maxEntries"),
         default=_SESSION_CLEANUP_DEFAULT_MAX_ENTRIES,
     )
-    return {"pruneAfterMs": prune_after_ms, "maxEntries": max_entries}
+    max_disk_bytes = _sessions_cleanup_parse_byte_size(maintenance.get("maxDiskBytes"))
+    raw_high_water_bytes = _sessions_cleanup_parse_byte_size(maintenance.get("highWaterBytes"))
+    high_water_bytes: int | None
+    if max_disk_bytes is None:
+        high_water_bytes = None
+    elif raw_high_water_bytes is not None:
+        high_water_bytes = min(raw_high_water_bytes, max_disk_bytes)
+    elif max_disk_bytes <= 0:
+        high_water_bytes = 0
+    else:
+        high_water_bytes = max(
+            1,
+            min(max_disk_bytes, int(max_disk_bytes * _SESSION_CLEANUP_DISK_HIGH_WATER_RATIO)),
+        )
+    return {
+        "pruneAfterMs": prune_after_ms,
+        "maxEntries": max_entries,
+        "maxDiskBytes": max_disk_bytes,
+        "highWaterBytes": high_water_bytes,
+    }
 
 
 def _sessions_cleanup_updated_at_ms(row: dict[str, object]) -> int | None:
@@ -2482,12 +2526,81 @@ def _sessions_cleanup_sort_updated_at_ms(row: dict[str, object]) -> int:
     return updated_at if updated_at is not None else -1
 
 
+def _sessions_cleanup_estimated_row_bytes(key: str, row: dict[str, object]) -> int:
+    try:
+        encoded = json.dumps({key: row}, sort_keys=True, separators=(",", ":"), default=str)
+    except TypeError:
+        encoded = key
+    return len(encoded.encode("utf-8"))
+
+
+def _sessions_cleanup_disk_budget_plan(
+    *,
+    row_by_key: dict[str, dict[str, object]],
+    remaining_keys: list[str],
+    active_key: str | None,
+    max_disk_bytes: int | None,
+    high_water_bytes: int | None,
+) -> tuple[dict[str, object] | None, list[str]]:
+    if max_disk_bytes is None or high_water_bytes is None:
+        return None, []
+    entry_sizes = {
+        key: _sessions_cleanup_estimated_row_bytes(key, row_by_key[key])
+        for key in remaining_keys
+    }
+    total_before = sum(entry_sizes.values())
+    if total_before <= max_disk_bytes:
+        return (
+            {
+                "totalBytesBefore": total_before,
+                "totalBytesAfter": total_before,
+                "removedFiles": 0,
+                "removedEntries": 0,
+                "freedBytes": 0,
+                "maxBytes": max_disk_bytes,
+                "highWaterBytes": high_water_bytes,
+                "overBudget": False,
+            },
+            [],
+        )
+
+    normalized_active_key = active_key.strip().lower() if active_key is not None else None
+    total_after = total_before
+    evicted_keys: list[str] = []
+    for key in sorted(
+        remaining_keys,
+        key=lambda candidate: _sessions_cleanup_sort_updated_at_ms(row_by_key[candidate]),
+    ):
+        if total_after <= high_water_bytes:
+            break
+        if normalized_active_key is not None and key.lower() == normalized_active_key:
+            continue
+        total_after -= entry_sizes.get(key, 0)
+        evicted_keys.append(key)
+
+    freed_bytes = max(0, total_before - total_after)
+    return (
+        {
+            "totalBytesBefore": total_before,
+            "totalBytesAfter": total_after,
+            "removedFiles": 0,
+            "removedEntries": len(evicted_keys),
+            "freedBytes": freed_bytes,
+            "maxBytes": max_disk_bytes,
+            "highWaterBytes": high_water_bytes,
+            "overBudget": True,
+        },
+        evicted_keys,
+    )
+
+
 def _sessions_cleanup_planned_keys(
     sessions: list[object],
     *,
     missing_keys: list[str],
     services: object,
-) -> dict[str, list[str]]:
+    active_key: str | None = None,
+) -> dict[str, object]:
     row_by_key: dict[str, dict[str, object]] = {}
     ordered_keys: list[str] = []
     for item in sessions:
@@ -2501,7 +2614,21 @@ def _sessions_cleanup_planned_keys(
 
     missing_set = {key for key in missing_keys if key in row_by_key}
     maintenance = _sessions_cleanup_maintenance_config(services)
-    cutoff_ms = int(time.time() * 1000) - maintenance["pruneAfterMs"]
+    prune_after_ms = maintenance["pruneAfterMs"]
+    resolved_prune_after_ms = (
+        prune_after_ms
+        if isinstance(prune_after_ms, int)
+        else _SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS
+    )
+    raw_max_entries = maintenance["maxEntries"]
+    max_entries = (
+        raw_max_entries
+        if isinstance(raw_max_entries, int)
+        else _SESSION_CLEANUP_DEFAULT_MAX_ENTRIES
+    )
+    cutoff_ms = int(time.time() * 1000) - (
+        resolved_prune_after_ms
+    )
     stale_keys: list[str] = []
     for key in ordered_keys:
         if key in missing_set:
@@ -2512,7 +2639,6 @@ def _sessions_cleanup_planned_keys(
 
     removed_before_cap = missing_set | set(stale_keys)
     remaining_keys = [key for key in ordered_keys if key not in removed_before_cap]
-    max_entries = maintenance["maxEntries"]
     capped_keys: list[str] = []
     if len(remaining_keys) > max_entries:
         sorted_remaining = sorted(
@@ -2521,11 +2647,27 @@ def _sessions_cleanup_planned_keys(
             reverse=True,
         )
         capped_keys = sorted_remaining[max_entries:]
+    remaining_after_cap = [key for key in remaining_keys if key not in set(capped_keys)]
+    disk_budget, disk_keys = _sessions_cleanup_disk_budget_plan(
+        row_by_key=row_by_key,
+        remaining_keys=remaining_after_cap,
+        active_key=active_key,
+        max_disk_bytes=(
+            maintenance["maxDiskBytes"] if isinstance(maintenance["maxDiskBytes"], int) else None
+        ),
+        high_water_bytes=(
+            maintenance["highWaterBytes"]
+            if isinstance(maintenance["highWaterBytes"], int)
+            else None
+        ),
+    )
 
     return {
         "missing": list(missing_set),
         "stale": stale_keys,
         "capped": capped_keys,
+        "disk": disk_keys,
+        "diskBudget": disk_budget,
     }
 
 
@@ -2537,6 +2679,7 @@ def _sessions_cleanup_summary(
     mode: str,
     dry_run: bool,
     missing_keys: list[str] | None = None,
+    active_key: str | None = None,
 ) -> dict[str, object]:
     raw_sessions = payload.get("sessions")
     sessions = raw_sessions if isinstance(raw_sessions, list) else []
@@ -2547,11 +2690,14 @@ def _sessions_cleanup_summary(
         sessions,
         missing_keys=missing_keys or [],
         services=services,
+        active_key=active_key,
     )
-    missing_count = len(plan["missing"])
-    pruned_count = len(plan["stale"]) if dry_run or mode == "enforce" else 0
-    capped_count = len(plan["capped"]) if dry_run or mode == "enforce" else 0
-    after_count = max(0, count - missing_count - pruned_count - capped_count)
+    missing_count = len(cast(list[str], plan["missing"]))
+    pruned_count = len(cast(list[str], plan["stale"])) if dry_run or mode == "enforce" else 0
+    capped_count = len(cast(list[str], plan["capped"])) if dry_run or mode == "enforce" else 0
+    disk_count = len(cast(list[str], plan["disk"])) if dry_run or mode == "enforce" else 0
+    disk_budget = plan["diskBudget"] if dry_run or mode == "enforce" else None
+    after_count = max(0, count - missing_count - pruned_count - capped_count - disk_count)
     summary: dict[str, object] = {
         "agentId": agent_id or "default",
         "storePath": "native-gateway-session-store",
@@ -2562,8 +2708,10 @@ def _sessions_cleanup_summary(
         "missing": missing_count,
         "pruned": pruned_count,
         "capped": capped_count,
-        "diskBudget": None,
-        "wouldMutate": missing_count > 0 or pruned_count > 0 or capped_count > 0,
+        "diskBudget": disk_budget,
+        "wouldMutate": (
+            missing_count > 0 or pruned_count > 0 or capped_count > 0 or disk_count > 0
+        ),
     }
     if not dry_run:
         summary["applied"] = True
@@ -13602,6 +13750,7 @@ def sessions_cleanup_command(
             mode=mode,
             dry_run=dry_run,
             missing_keys=missing_keys,
+            active_key=active_key,
         )
         if not dry_run and mode == "enforce":
             raw_sessions = inventory.get("sessions")
@@ -13610,10 +13759,15 @@ def sessions_cleanup_command(
                 sessions,
                 missing_keys=missing_keys,
                 services=services,
+                active_key=active_key,
             )
             await _sessions_cleanup_delete_metadata_keys(
                 services,
-                [*cleanup_plan["stale"], *cleanup_plan["capped"]],
+                [
+                    *cast(list[str], cleanup_plan["stale"]),
+                    *cast(list[str], cleanup_plan["capped"]),
+                    *cast(list[str], cleanup_plan["disk"]),
+                ],
             )
         return summary
 

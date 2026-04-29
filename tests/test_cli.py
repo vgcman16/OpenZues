@@ -3882,6 +3882,158 @@ def test_sessions_cleanup_enforce_deletes_stale_and_capped_metadata_rows(monkeyp
     assert deleted == ["agent:worker:stale", "agent:worker:overflow"]
 
 
+def test_sessions_cleanup_dry_run_json_reports_native_disk_budget_evictions(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "count": 3,
+                "sessions": [
+                    {
+                        "key": "agent:worker:oldest",
+                        "sessionKey": "agent:worker:oldest",
+                        "updatedAt": 2_999_999_997_000,
+                    },
+                    {
+                        "key": "agent:worker:middle",
+                        "sessionKey": "agent:worker:middle",
+                        "updatedAt": 2_999_999_998_000,
+                    },
+                    {
+                        "key": "agent:worker:active",
+                        "sessionKey": "agent:worker:active",
+                        "updatedAt": 3_000_000_000_000,
+                    },
+                ],
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "session": {
+                    "maintenance": {
+                        "maxEntries": 500,
+                        "maxDiskBytes": 1,
+                        "highWaterBytes": 0,
+                    }
+                }
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--dry-run",
+            "--json",
+            "--agent",
+            "worker",
+            "--active-key",
+            "agent:worker:active",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["afterCount"] == 1
+    assert payload["diskBudget"]["removedEntries"] == 2
+    assert payload["diskBudget"]["removedFiles"] == 0
+    assert payload["diskBudget"]["overBudget"] is True
+    assert payload["wouldMutate"] is True
+
+
+def test_sessions_cleanup_enforce_deletes_disk_budget_evicted_metadata_rows(monkeypatch) -> None:
+    deleted: list[str] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "count": 3,
+                "sessions": [
+                    {
+                        "key": "agent:worker:oldest",
+                        "sessionKey": "agent:worker:oldest",
+                        "updatedAt": 2_999_999_997_000,
+                    },
+                    {
+                        "key": "agent:worker:middle",
+                        "sessionKey": "agent:worker:middle",
+                        "updatedAt": 2_999_999_998_000,
+                    },
+                    {
+                        "key": "agent:worker:active",
+                        "sessionKey": "agent:worker:active",
+                        "updatedAt": 3_000_000_000_000,
+                    },
+                ],
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "session": {
+                    "maintenance": {
+                        "maxEntries": 500,
+                        "maxDiskBytes": 1,
+                        "highWaterBytes": 0,
+                    }
+                }
+            }
+
+    class FakeDatabase:
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                gateway_config=FakeGatewayConfig(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--json",
+            "--agent",
+            "worker",
+            "--active-key",
+            "agent:worker:active",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["afterCount"] == 1
+    assert payload["diskBudget"]["removedEntries"] == 2
+    assert payload["appliedCount"] == 1
+    assert deleted == ["agent:worker:oldest", "agent:worker:middle"]
+
+
 def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
     calls: list[str] = []
     created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
