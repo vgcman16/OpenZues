@@ -393,6 +393,7 @@ plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin mar
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
 models_aliases_app = typer.Typer(help="Inspect configured model aliases.")
 models_fallbacks_app = typer.Typer(help="Inspect configured model fallbacks.")
+models_image_fallbacks_app = typer.Typer(help="Inspect configured image model fallbacks.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -432,6 +433,7 @@ app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
 models_app.add_typer(models_aliases_app, name="aliases")
 models_app.add_typer(models_fallbacks_app, name="fallbacks")
+models_app.add_typer(models_image_fallbacks_app, name="image-fallbacks")
 plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
@@ -3234,6 +3236,7 @@ def _emit_models_fallbacks(
     *,
     json_output: bool,
     plain: bool,
+    label: str = "Fallbacks",
 ) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -3244,7 +3247,7 @@ def _emit_models_fallbacks(
         for fallback in fallbacks:
             typer.echo(str(fallback))
         return
-    typer.echo(f"Fallbacks ({len(fallbacks)}):")
+    typer.echo(f"{label} ({len(fallbacks)}):")
     if not fallbacks:
         typer.echo("- none")
         return
@@ -5573,11 +5576,15 @@ def _model_aliases_from_services_config(services: CliServices) -> dict[str, str]
     return _model_aliases_from_config_snapshot(gateway_config.build_snapshot())
 
 
-def _model_fallbacks_from_services_config(services: CliServices) -> list[str]:
+def _model_fallbacks_from_services_config(
+    services: CliServices,
+    *,
+    key: str = "model",
+) -> list[str]:
     gateway_config = getattr(services, "gateway_config", None)
     if not isinstance(gateway_config, GatewayConfigService):
         return []
-    return _model_fallbacks_from_config_snapshot(gateway_config.build_snapshot())
+    return _model_fallbacks_from_config_snapshot(gateway_config.build_snapshot(), key=key)
 
 
 async def _build_models_aliases_payload(services: CliServices) -> dict[str, object]:
@@ -5605,6 +5612,10 @@ async def _build_models_aliases_payload(services: CliServices) -> dict[str, obje
 
 async def _build_models_fallbacks_payload(services: CliServices) -> dict[str, object]:
     return {"fallbacks": _model_fallbacks_from_services_config(services)}
+
+
+async def _build_models_image_fallbacks_payload(services: CliServices) -> dict[str, object]:
+    return {"fallbacks": _model_fallbacks_from_services_config(services, key="imageModel")}
 
 
 async def _set_model_alias_payload(
@@ -5760,7 +5771,7 @@ async def _build_models_status_payload(
         "resolvedDefault": resolved_default,
         "fallbacks": _model_fallbacks_from_services_config(services),
         "imageModel": None,
-        "imageFallbacks": [],
+        "imageFallbacks": _model_fallbacks_from_services_config(services, key="imageModel"),
         "aliases": _model_aliases_from_services_config(services),
         "allowed": allowed,
         "auth": auth_payload,
@@ -9001,6 +9012,31 @@ def models_fallbacks_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_fallbacks(payload, json_output=json_output, plain=plain)
+
+
+@models_image_fallbacks_app.command("list")
+def models_image_fallbacks_list_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit image fallback models as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit one image fallback model per line.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_image_fallbacks_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_fallbacks(
+        payload,
+        json_output=json_output,
+        plain=plain,
+        label="Image fallbacks",
+    )
 
 
 @models_fallbacks_app.command("add")

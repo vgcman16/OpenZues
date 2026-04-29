@@ -222,9 +222,12 @@ removes matching canonical fallback targets, preserves the remaining order, and
 returns the upstream not-found error for missing fallback targets. `models
 fallbacks clear` now empties the configured text fallback list while preserving
 the existing primary model config. No smaller text fallback CLI command remains;
-the next model CLI queue head is image fallback list/add/remove/clear, followed
-by auth-order mutation clusters. Live auth probes remain unavailable until the
-native model auth health runtime exists.
+`models image-fallbacks list` now projects
+`agents.defaults.imageModel.fallbacks` from the native config snapshot and
+supports the upstream JSON/plain/human output shapes. The next model CLI queue
+head is image fallback add/remove/clear, followed by auth-order mutation
+clusters. Live auth probes remain unavailable until the native model auth health
+runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

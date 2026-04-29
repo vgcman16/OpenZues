@@ -1713,6 +1713,7 @@ class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
     models: dict[str, dict[str, Any]] | None = None
     model: dict[str, Any] | str | None = None
+    image_model: dict[str, Any] | str | None = Field(default=None, alias="imageModel")
 
 
 class ControlUiGatewayAgentConfigView(BaseModel):
