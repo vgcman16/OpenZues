@@ -4152,6 +4152,58 @@ def test_tasks_flow_show_json_resolves_task_blueprint_flow(monkeypatch) -> None:
     assert payload["taskSummary"]["total"] == 0
 
 
+def test_tasks_cancel_pauses_native_mission_task(monkeypatch) -> None:
+    paused: list[int] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+        async def pause(self, mission_id: int) -> SimpleNamespace:
+            paused.append(mission_id)
+            return SimpleNamespace(id=mission_id, status="paused")
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "cancel", "agent:worker:main"])
+
+    assert result.exit_code == 0, result.stdout
+    assert paused == [17]
+    assert "Cancelled mission:17 (subagent) run thread-17." in result.stdout
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

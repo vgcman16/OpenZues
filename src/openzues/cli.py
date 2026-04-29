@@ -10596,6 +10596,33 @@ async def _resolve_openclaw_task(services: CliServices, lookup: str) -> dict[str
     return None
 
 
+def _mission_id_from_task_record(task: dict[str, object]) -> int | None:
+    task_id = _optional_cli_string(task.get("taskId"))
+    if task_id is None or not task_id.startswith("mission:"):
+        return None
+    try:
+        return int(task_id.removeprefix("mission:"))
+    except ValueError:
+        return None
+
+
+async def _cancel_openclaw_task(services: CliServices, lookup: str) -> str:
+    task = await _resolve_openclaw_task(services, lookup)
+    if task is None:
+        raise ValueError(f"Task not found: {lookup}")
+    status = _optional_cli_string(task.get("status"))
+    if status not in {"queued", "running"}:
+        raise ValueError(f"Could not cancel task: {lookup}")
+    mission_id = _mission_id_from_task_record(task)
+    pause = getattr(getattr(services, "mission_service", None), "pause", None)
+    if mission_id is None or not callable(pause):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    await pause(mission_id)
+    run_id = _optional_cli_string(task.get("runId"))
+    run_text = f" run {run_id}" if run_id is not None else ""
+    return f"Cancelled {task.get('taskId')} ({task.get('runtime')}){run_text}."
+
+
 def _task_status_counts(tasks: list[dict[str, object]]) -> dict[str, int]:
     counts = dict.fromkeys(_OPENCLAW_TASK_STATUS_VALUES, 0)
     for task in tasks:
@@ -11759,6 +11786,18 @@ def tasks_flow_show_command(
         typer.echo(f"TaskFlow not found: {lookup}", err=True)
         raise typer.Exit(code=1)
     _emit_task_flow_show(flow, json_output=json_output)
+
+
+@tasks_app.command("cancel")
+def tasks_cancel_command(
+    lookup: str = typer.Argument(..., help="Task id, run id, or session key."),
+) -> None:
+    try:
+        message = _run(_run_with_services(lambda services: _cancel_openclaw_task(services, lookup)))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(message)
 
 
 @tasks_app.command("show")
