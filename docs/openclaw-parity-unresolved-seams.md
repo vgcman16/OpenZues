@@ -1024,17 +1024,24 @@ missions update persisted `cron_state` with last run/error/duration/delivery
 status, increment `consecutiveErrors`, emit the OpenClaw-shaped failure-alert
 message after the configured `after` threshold, stamp `lastFailureAlertAtMs`,
 and suppress repeat alerts inside `cooldownMs`. Remaining cron runtime parity
-is the broader OpenClaw config surface around global `cron.failureAlert`,
-provider-specific alert delivery metadata, and system-event wake-result state
-tracking.
+is the broader OpenClaw config surface around retry/backoff policy and
+provider-specific alert delivery metadata.
 
 Current queue-head adjustment: main-session `systemEvent` cron dispatch now
 persists OpenClaw-style success state when the wake request is queued:
 `lastRunAtMs`, `lastRunStatus="ok"`, `lastStatus="ok"`, `lastDurationMs=0`,
 `lastDeliveryStatus="not-requested"`, and reset consecutive failure state.
 Remaining cron parity is no longer the local wake-result state boundary; it is
-global cron config (`failureAlert`, retry/backoff policy) and richer provider
-delivery result attribution.
+global cron config retry/backoff policy and richer provider delivery result
+attribution.
+
+Current queue-head adjustment: Ops Mesh now accepts production-wired global
+`cron.failureAlert` settings through `Settings` / app construction and applies
+them to failed cron jobs that have no per-job `failureAlert`, matching
+OpenClaw's global `enabled` / `after` / `cooldownMs` behavior while preserving
+per-job override and `failureAlert=false` suppression. Remaining cron runtime
+parity is OpenClaw's retry/backoff policy for transient one-shot jobs and
+richer provider-specific alert delivery attribution.
 
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 

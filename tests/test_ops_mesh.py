@@ -1699,6 +1699,121 @@ async def test_ops_mesh_service_applies_cron_failure_alert_threshold_and_cooldow
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_applies_global_cron_failure_alert_threshold_and_cooldown(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    alert_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        alert_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        cron_failure_alert={
+            "enabled": True,
+            "after": 2,
+            "cooldownMs": 60_000,
+        },
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Global Failure Alert",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Use the global cron failure alert config.",
+                },
+            }
+        )
+    )
+    session_key = "agent:main:telegram:direct:19098680"
+    started_at = datetime(2026, 4, 29, 13, 0, tzinfo=UTC)
+
+    async def record_failed_run(offset_seconds: int) -> dict[str, object]:
+        launched_at = started_at + timedelta(seconds=offset_seconds)
+        ended_at = launched_at + timedelta(seconds=5)
+        await database.update_task_blueprint(
+            task.id,
+            last_launched_at=launched_at.isoformat(),
+            last_status="active",
+        )
+        mission_id = await database.create_mission(
+            name="Global Failure Alert",
+            objective="Use the global cron failure alert config.",
+            status="failed",
+            instance_id=task.instance_id or 1,
+            project_id=task.project_id,
+            task_blueprint_id=task.id,
+            thread_id="thread_global_cron_failure_alert",
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=4,
+            use_builtin_agents=True,
+            run_verification=True,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+            toolsets=[],
+        )
+        await database.update_mission(
+            mission_id,
+            last_checkpoint=None,
+            last_error="server overloaded",
+            last_activity_at=ended_at.isoformat(),
+            session_key=session_key,
+        )
+
+        await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+        stored = await database.get_task_blueprint(task.id)
+        assert stored is not None
+        return stored["cron_state"]
+
+    first_state = await record_failed_run(0)
+
+    assert first_state["consecutiveErrors"] == 1
+    assert "lastFailureAlertAtMs" not in first_state
+    assert alert_deliveries == []
+
+    second_state = await record_failed_run(30)
+
+    assert second_state["consecutiveErrors"] == 2
+    assert isinstance(second_state["lastFailureAlertAtMs"], int)
+    assert alert_deliveries == [
+        (
+            session_key,
+            'Cron job "Global Failure Alert" failed 2 times\n'
+            "Last error: server overloaded",
+        )
+    ]
+
+    third_state = await record_failed_run(45)
+
+    assert third_state["consecutiveErrors"] == 3
+    assert third_state["lastFailureAlertAtMs"] == second_state["lastFailureAlertAtMs"]
+    assert len(alert_deliveries) == 1
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_delivers_last_channel_cron_failure_destination_to_session_key(
     tmp_path: Path,
 ) -> None:

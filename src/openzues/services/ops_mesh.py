@@ -479,13 +479,21 @@ def _cron_delivery_state(
 
 def _resolve_cron_failure_alert(
     task: TaskBlueprintView,
+    global_config: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if task.cron_failure_alert is False:
         return None
-    config = _task_cron_failure_alert(task)
-    if config is None:
+    job_config = _task_cron_failure_alert(task)
+    global_alert_config = dict(global_config) if isinstance(global_config, dict) else None
+    if job_config is None and not (
+        isinstance(global_alert_config, dict)
+        and global_alert_config.get("enabled") is True
+    ):
         return None
-    mode = _cron_failure_alert_text(config.get("mode"))
+    config = job_config or {}
+    mode = _cron_failure_alert_text(config.get("mode")) or _cron_failure_alert_text(
+        None if global_alert_config is None else global_alert_config.get("mode")
+    )
     explicit_to = _cron_failure_alert_text(config.get("to"))
     channel = (
         _cron_failure_alert_text(config.get("channel"))
@@ -494,19 +502,30 @@ def _resolve_cron_failure_alert(
     )
     return {
         "after": _cron_failure_alert_int(
-            config.get("after"),
+            config.get(
+                "after",
+                None if global_alert_config is None else global_alert_config.get("after"),
+            ),
             DEFAULT_CRON_FAILURE_ALERT_AFTER,
             minimum=1,
         ),
         "cooldownMs": _cron_failure_alert_int(
-            config.get("cooldownMs"),
+            config.get(
+                "cooldownMs",
+                None
+                if global_alert_config is None
+                else global_alert_config.get("cooldownMs"),
+            ),
             DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS,
             minimum=0,
         ),
         "channel": channel,
         "to": explicit_to if mode == "webhook" else explicit_to or _task_cron_delivery_to(task),
         "mode": mode,
-        "accountId": _cron_failure_alert_text(config.get("accountId")),
+        "accountId": _cron_failure_alert_text(config.get("accountId"))
+        or _cron_failure_alert_text(
+            None if global_alert_config is None else global_alert_config.get("accountId")
+        ),
     }
 
 
@@ -4032,6 +4051,7 @@ class OpsMeshService:
     launch_routing: LaunchRoutingService | None = None
     cron_webhook_url: str | None = None
     cron_webhook_token: str | None = None
+    cron_failure_alert: dict[str, Any] | None = None
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
     parity_checkpoint_path: Path | None = None
@@ -7217,7 +7237,7 @@ class OpsMeshService:
                 else 1
             )
             state["consecutiveErrors"] = consecutive_errors
-            alert_config = _resolve_cron_failure_alert(task)
+            alert_config = _resolve_cron_failure_alert(task, self.cron_failure_alert)
             if (
                 alert_config is not None
                 and not bool(task.cron_delivery_best_effort)

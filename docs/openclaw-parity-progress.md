@@ -1208,9 +1208,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\cli.py
   src\openzues\services\acp_client_runtime.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py src\openzues\services\acp_client_runtime.py`.
+- Ops Mesh now applies production-wired global `cron.failureAlert` settings
+  for jobs without a per-job alert policy, preserving the same
+  threshold/cooldown state update path and leaving per-job overrides plus
+  `failureAlert=false` suppression intact.
+- Verified the global cron failure-alert slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "global_cron_failure_alert or
+  cron_failure_alert_threshold"` (`2 passed`), adjacent Ops Mesh cron/failure
+  pack `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure or
+  failure_destination or cron_run or scheduled"` (`14 passed`), adjacent
+  gateway cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "cron_run or cron_runs or cron_update"` (`23 passed`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  src\openzues\settings.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  src\openzues\settings.py`.
 - Next repo-level parity work should continue with broader cron runtime
-  hardening: global `cron.failureAlert` config, retry/backoff policy, and
-  provider-specific alert result metadata.
+  hardening: retry/backoff policy and provider-specific alert result metadata.
 
 ## References
 

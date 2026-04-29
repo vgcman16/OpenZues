@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
     )
     cron_webhook_url: str | None = None
     cron_webhook_token: str | None = None
+    cron_failure_alert: dict[str, Any] | None = None
     attention_queue_enabled: bool = True
     attention_queue_poll_interval_seconds: int = 30
     websocket_ping_interval_seconds: int = 20
