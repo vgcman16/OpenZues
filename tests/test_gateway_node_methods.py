@@ -34477,6 +34477,208 @@ async def test_secrets_resolve_returns_validated_unavailable_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_secrets_resolve_dispatches_to_registered_resolver() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        calls.append({"commandName": command_name, "targetIds": target_ids})
+        return {
+            "assignments": [
+                {
+                    "path": "talk.providers.openai.apiKey",
+                    "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                    "value": "env:OPENAI_API_KEY",
+                }
+            ],
+            "diagnostics": ["resolved talk provider secret"],
+            "inactiveRefPaths": ["talk.providers.zai.apiKey"],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    payload = await service.call(
+        "secrets.resolve",
+        {
+            "commandName": " memory status ",
+            "targetIds": [" talk.providers.*.apiKey ", "   "],
+        },
+    )
+
+    assert calls == [
+        {"commandName": "memory status", "targetIds": ["talk.providers.*.apiKey"]}
+    ]
+    assert payload == {
+        "ok": True,
+        "assignments": [
+            {
+                "path": "talk.providers.openai.apiKey",
+                "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                "value": "env:OPENAI_API_KEY",
+            }
+        ],
+        "diagnostics": ["resolved talk provider secret"],
+        "inactiveRefPaths": ["talk.providers.zai.apiKey"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_allows_empty_target_set_after_whitespace_filter() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        calls.append({"commandName": command_name, "targetIds": target_ids})
+        return {"assignments": [], "diagnostics": [], "inactiveRefPaths": []}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    payload = await service.call(
+        "secrets.resolve",
+        {
+            "commandName": "memory status",
+            "targetIds": ["   "],
+        },
+    )
+
+    assert calls == [{"commandName": "memory status", "targetIds": []}]
+    assert payload == {
+        "ok": True,
+        "assignments": [],
+        "diagnostics": [],
+        "inactiveRefPaths": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_accepts_assignment_without_optional_path() -> None:
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        return {
+            "assignments": [
+                {
+                    "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                    "value": "env:OPENAI_API_KEY",
+                }
+            ],
+            "diagnostics": [],
+            "inactiveRefPaths": [],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    payload = await service.call(
+        "secrets.resolve",
+        {
+            "commandName": "memory status",
+            "targetIds": ["talk.providers.*.apiKey"],
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "assignments": [
+            {
+                "pathSegments": ["talk", "providers", "openai", "apiKey"],
+                "value": "env:OPENAI_API_KEY",
+            }
+        ],
+        "diagnostics": [],
+        "inactiveRefPaths": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_rejects_unknown_target_ids_before_dispatch() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        calls.append({"commandName": command_name, "targetIds": target_ids})
+        return {"assignments": [], "diagnostics": [], "inactiveRefPaths": []}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match='invalid secrets.resolve params: unknown target id "unknown.target"',
+    ):
+        await service.call(
+            "secrets.resolve",
+            {
+                "commandName": "memory status",
+                "targetIds": ["unknown.target"],
+            },
+        )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_secrets_resolve_projects_invalid_resolver_payload_to_unavailable() -> None:
+    async def fake_resolve_secrets(
+        *,
+        command_name: str,
+        target_ids: list[str],
+    ) -> dict[str, object]:
+        return {
+            "assignments": [
+                {
+                    "path": "talk.providers.openai.apiKey",
+                    "pathSegments": [""],
+                    "value": "env:OPENAI_API_KEY",
+                }
+            ],
+            "diagnostics": [],
+            "inactiveRefPaths": [],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        resolve_secrets_service=fake_resolve_secrets,
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="secrets.resolve returned invalid payload.",
+    ) as exc_info:
+        await service.call(
+            "secrets.resolve",
+            {
+                "commandName": "memory status",
+                "targetIds": ["talk.providers.*.apiKey"],
+            },
+        )
+
+    assert exc_info.value.code == "UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_message_action_reports_unsupported_action_for_known_channel() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

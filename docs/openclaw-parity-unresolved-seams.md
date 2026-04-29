@@ -1843,6 +1843,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   current hash/config/path payload, and skip restart/sentinel decoration while
   still enforcing the existing base-hash guard.
 - Verified the config no-op seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash or config_write_lifecycle or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py`.
+- `secrets.resolve` now has the upstream-shaped command-target resolver seam:
+  OpenZues trims the command and target ids, filters empty targets, rejects
+  unknown OpenClaw secret target ids before dispatch, calls a fakeable native
+  resolver, and validates the returned assignments/diagnostics/inactive refs
+  into the OpenClaw `{ok, assignments, diagnostics, inactiveRefPaths}` result.
+- Verified the `secrets.resolve` resolver seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "secrets_resolve or secrets_reload"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "secrets_resolve or secrets_reload or config_patch_noop_skips_restart_sentinel or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

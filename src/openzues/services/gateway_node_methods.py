@@ -279,6 +279,93 @@ _NODE_ONLY_METHODS = {
     "node.pending.ack",
     "node.pending.drain",
 }
+_OPENCLAW_SECRET_TARGET_IDS = frozenset(
+    {
+        "agents.defaults.memorySearch.remote.apiKey",
+        "agents.list[].memorySearch.remote.apiKey",
+        "auth-profiles.api_key.key",
+        "auth-profiles.token.token",
+        "channels.bluebubbles.accounts.*.password",
+        "channels.bluebubbles.password",
+        "channels.discord.accounts.*.pluralkit.token",
+        "channels.discord.accounts.*.token",
+        "channels.discord.accounts.*.voice.tts.providers.*.apiKey",
+        "channels.discord.pluralkit.token",
+        "channels.discord.token",
+        "channels.discord.voice.tts.providers.*.apiKey",
+        "channels.feishu.accounts.*.appSecret",
+        "channels.feishu.accounts.*.encryptKey",
+        "channels.feishu.accounts.*.verificationToken",
+        "channels.feishu.appSecret",
+        "channels.feishu.encryptKey",
+        "channels.feishu.verificationToken",
+        "channels.googlechat.accounts.*.serviceAccount",
+        "channels.googlechat.serviceAccount",
+        "channels.irc.accounts.*.nickserv.password",
+        "channels.irc.accounts.*.password",
+        "channels.irc.nickserv.password",
+        "channels.irc.password",
+        "channels.matrix.accounts.*.accessToken",
+        "channels.matrix.accounts.*.password",
+        "channels.matrix.accessToken",
+        "channels.matrix.password",
+        "channels.mattermost.accounts.*.botToken",
+        "channels.mattermost.botToken",
+        "channels.msteams.appPassword",
+        "channels.nextcloud-talk.accounts.*.apiPassword",
+        "channels.nextcloud-talk.accounts.*.botSecret",
+        "channels.nextcloud-talk.apiPassword",
+        "channels.nextcloud-talk.botSecret",
+        "channels.slack.accounts.*.appToken",
+        "channels.slack.accounts.*.botToken",
+        "channels.slack.accounts.*.signingSecret",
+        "channels.slack.accounts.*.userToken",
+        "channels.slack.appToken",
+        "channels.slack.botToken",
+        "channels.slack.signingSecret",
+        "channels.slack.userToken",
+        "channels.telegram.accounts.*.botToken",
+        "channels.telegram.accounts.*.webhookSecret",
+        "channels.telegram.botToken",
+        "channels.telegram.webhookSecret",
+        "channels.zalo.accounts.*.botToken",
+        "channels.zalo.accounts.*.webhookSecret",
+        "channels.zalo.botToken",
+        "channels.zalo.webhookSecret",
+        "cron.webhookToken",
+        "gateway.auth.password",
+        "gateway.auth.token",
+        "gateway.remote.password",
+        "gateway.remote.token",
+        "messages.tts.providers.*.apiKey",
+        "models.providers.*.apiKey",
+        "models.providers.*.headers.*",
+        "models.providers.*.request.auth.token",
+        "models.providers.*.request.auth.value",
+        "models.providers.*.request.headers.*",
+        "models.providers.*.request.proxy.tls.ca",
+        "models.providers.*.request.proxy.tls.cert",
+        "models.providers.*.request.proxy.tls.key",
+        "models.providers.*.request.proxy.tls.passphrase",
+        "models.providers.*.request.tls.ca",
+        "models.providers.*.request.tls.cert",
+        "models.providers.*.request.tls.key",
+        "models.providers.*.request.tls.passphrase",
+        "plugins.entries.brave.config.webSearch.apiKey",
+        "plugins.entries.exa.config.webSearch.apiKey",
+        "plugins.entries.firecrawl.config.webFetch.apiKey",
+        "plugins.entries.firecrawl.config.webSearch.apiKey",
+        "plugins.entries.google.config.webSearch.apiKey",
+        "plugins.entries.minimax.config.webSearch.apiKey",
+        "plugins.entries.moonshot.config.webSearch.apiKey",
+        "plugins.entries.perplexity.config.webSearch.apiKey",
+        "plugins.entries.tavily.config.webSearch.apiKey",
+        "plugins.entries.xai.config.webSearch.apiKey",
+        "skills.entries.*.apiKey",
+        "talk.providers.*.apiKey",
+        "tools.web.search.apiKey",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1154,6 +1241,7 @@ class GatewayNodeMethodService:
         send_channel_poll_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_apns_push_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_apns_wake_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        resolve_secrets_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_attachment_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         sandbox_chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
@@ -1257,6 +1345,7 @@ class GatewayNodeMethodService:
         self._send_channel_poll_service = send_channel_poll_service
         self._send_apns_push_service = send_apns_push_service
         self._send_apns_wake_service = send_apns_wake_service
+        self._resolve_secrets_service = resolve_secrets_service
         self._chat_send_service = chat_send_service
         self._chat_attachment_send_service = chat_attachment_send_service
         self._sandbox_chat_send_service = sandbox_chat_send_service
@@ -5170,18 +5259,33 @@ class GatewayNodeMethodService:
             command_name = _require_string(payload.get("commandName"), label="commandName").strip()
             if not command_name:
                 raise ValueError("invalid secrets.resolve params: commandName")
-            _ = [
-                entry.strip()
-                for entry in _require_string_list(payload.get("targetIds"), label="targetIds")
-                if entry.strip()
-            ]
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "secrets.resolve is unavailable until command-target secret resolution is wired"
-                ),
-                status_code=503,
-            )
+            target_ids = _normalize_secrets_resolve_target_ids(payload.get("targetIds"))
+            for target_id in target_ids:
+                if not _is_known_openclaw_secret_target_id(target_id):
+                    raise ValueError(
+                        f'invalid secrets.resolve params: unknown target id "{target_id}"'
+                    )
+            if self._resolve_secrets_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "secrets.resolve is unavailable until command-target secret resolution "
+                        "is wired"
+                    ),
+                    status_code=503,
+                )
+            try:
+                resolved_secrets = await self._resolve_secrets_service(
+                    command_name=command_name,
+                    target_ids=target_ids,
+                )
+                return _normalize_secrets_resolve_result(resolved_secrets)
+            except Exception as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "channels.status":
             _validate_exact_keys(
@@ -14390,6 +14494,86 @@ def _build_doctor_memory_status_payload() -> dict[str, object]:
             "ok": False,
             "error": "memory search unavailable",
         },
+    }
+
+
+def _is_known_openclaw_secret_target_id(value: str) -> bool:
+    return value in _OPENCLAW_SECRET_TARGET_IDS
+
+
+def _raise_invalid_secrets_resolve_payload() -> NoReturn:
+    raise ValueError("secrets.resolve returned invalid payload.")
+
+
+def _normalize_secrets_resolve_target_ids(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("invalid secrets.resolve params: targetIds")
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError("invalid secrets.resolve params: targetIds")
+        trimmed = entry.strip()
+        if trimmed:
+            normalized.append(trimmed)
+    return normalized
+
+
+def _normalize_secrets_resolve_string_array(
+    value: object,
+    *,
+    require_entries: bool,
+) -> list[str]:
+    if not isinstance(value, list):
+        _raise_invalid_secrets_resolve_payload()
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            _raise_invalid_secrets_resolve_payload()
+        if require_entries and not entry:
+            _raise_invalid_secrets_resolve_payload()
+        normalized.append(entry)
+    return normalized
+
+
+def _normalize_secrets_resolve_result(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        _raise_invalid_secrets_resolve_payload()
+    raw_assignments = value.get("assignments")
+    if not isinstance(raw_assignments, list):
+        _raise_invalid_secrets_resolve_payload()
+    assignments: list[dict[str, object]] = []
+    for entry in raw_assignments:
+        if not isinstance(entry, dict):
+            _raise_invalid_secrets_resolve_payload()
+        if set(entry) - {"path", "pathSegments", "value"}:
+            _raise_invalid_secrets_resolve_payload()
+        path_segments = _normalize_secrets_resolve_string_array(
+            entry.get("pathSegments"),
+            require_entries=True,
+        )
+        if "value" not in entry:
+            _raise_invalid_secrets_resolve_payload()
+        assignment: dict[str, object] = {
+            "pathSegments": path_segments,
+            "value": entry["value"],
+        }
+        if "path" in entry:
+            path = entry.get("path")
+            if not isinstance(path, str) or not path:
+                _raise_invalid_secrets_resolve_payload()
+            assignment["path"] = path
+        assignments.append(assignment)
+    return {
+        "ok": True,
+        "assignments": assignments,
+        "diagnostics": _normalize_secrets_resolve_string_array(
+            value.get("diagnostics"),
+            require_entries=True,
+        ),
+        "inactiveRefPaths": _normalize_secrets_resolve_string_array(
+            value.get("inactiveRefPaths"),
+            require_entries=True,
+        ),
     }
 
 

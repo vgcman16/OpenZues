@@ -1145,6 +1145,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   that leave config unchanged, including `noop=true`, current hash/config/path,
   and no restart/sentinel payload.
 - Verified the config no-op slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash or config_write_lifecycle or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py`.
+- `secrets.resolve` now dispatches through a fakeable native resolver with
+  OpenClaw command/target trimming, known target validation, and resolver-result
+  shape projection into `{ok, assignments, diagnostics, inactiveRefPaths}`.
+- Verified the secrets resolver slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "secrets_resolve or secrets_reload"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "secrets_resolve or secrets_reload or config_patch_noop_skips_restart_sentinel or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References
