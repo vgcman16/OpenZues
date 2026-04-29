@@ -2171,6 +2171,60 @@ async def test_tools_effective_uses_resolved_subagent_store_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tools_effective_projects_plugin_group_from_runtime_specs(tmp_path: Path) -> None:
+    async def fake_executor(tool: str, args: dict[str, object]) -> dict[str, object]:
+        return {"tool": tool, "args": args}
+
+    database = Database(tmp_path / "gateway-tools-effective-plugins.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"toolsets": []},
+    )
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="matrix_room",
+                executor=fake_executor,
+                plugin_id="matrix",
+                plugin_name="Matrix",
+                description="Summarized Matrix room helper.",
+            )
+        ]
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call(
+        "tools.effective",
+        {"sessionKey": session_key, "agentId": "main"},
+    )
+
+    assert payload["groups"] == [
+        {
+            "id": "plugin",
+            "label": "Connected tools",
+            "source": "plugin",
+            "tools": [
+                {
+                    "id": "matrix_room",
+                    "label": "matrix_room",
+                    "description": "Summarized Matrix room helper.",
+                    "rawDescription": "Summarized Matrix room helper.",
+                    "source": "plugin",
+                    "pluginId": "matrix",
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_effective_returns_minimal_profile_when_session_has_no_toolsets() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-minimal-service"
     shutil.rmtree(tmp_path, ignore_errors=True)

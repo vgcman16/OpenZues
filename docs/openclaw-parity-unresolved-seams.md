@@ -132,8 +132,11 @@ registry-backed plugins, and applies owner-only visibility to registry tools.
 `tools.catalog` now also appends OpenClaw-shaped `plugin:<pluginId>` groups
 from the same enabled plugin runtime specs by default, suppresses core-name
 collisions, and honors `includePlugins=false` for core-only catalog reads.
-Remaining tool parity is effective-session plugin visibility plus any future
-production plugin metadata discovery beyond the fakeable registry adapter.
+`tools.effective` now projects the same runtime specs as upstream-style
+`source="plugin"` entries under the `Connected tools` group while filtering
+empty groups from plugin-only sessions. Remaining tool parity is future
+production plugin metadata discovery beyond the fakeable registry adapter and
+deeper marketplace install/update/uninstall flows.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human

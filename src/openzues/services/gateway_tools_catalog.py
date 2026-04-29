@@ -68,17 +68,30 @@ class GatewayToolsCatalogService:
         toolsets: Iterable[str] | None,
     ) -> dict[str, Any]:
         specs = _effective_tool_specs(toolsets)
-        return {
-            "agentId": agent_id,
-            "profile": _effective_profile(specs),
-            "groups": [
+        core_tools = [self._effective_tool_payload(spec) for spec in specs]
+        plugin_groups = (
+            _plugin_effective_groups(
+                self._plugin_runtime_service.catalog_specs(),
+                existing_tool_names={str(tool["id"]) for tool in core_tools},
+            )
+            if self._plugin_runtime_service is not None
+            else []
+        )
+        groups: list[dict[str, Any]] = []
+        if core_tools or not plugin_groups:
+            groups.append(
                 {
                     "id": "core",
                     "label": "Built-in tools",
                     "source": "core",
-                    "tools": [self._effective_tool_payload(spec) for spec in specs],
+                    "tools": core_tools,
                 }
-            ],
+            )
+        groups.extend(plugin_groups)
+        return {
+            "agentId": agent_id,
+            "profile": _effective_profile(specs),
+            "groups": groups,
         }
 
     def _tool_payload(self, spec: HermesToolsetSpec) -> dict[str, Any]:
@@ -164,3 +177,37 @@ def _plugin_catalog_groups(
     for group in groups.values():
         group["tools"] = sorted(group["tools"], key=lambda tool: str(tool.get("id") or ""))
     return sorted(groups.values(), key=lambda group: str(group.get("label") or ""))
+
+
+def _plugin_effective_groups(
+    specs: Iterable[GatewayPluginRuntimeExecutorSpec],
+    *,
+    existing_tool_names: set[str],
+) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for spec in specs:
+        if spec.tool in existing_tool_names:
+            continue
+        plugin_id = spec.plugin_id or spec.source or "plugin"
+        description = spec.description or ""
+        tools.append(
+            {
+                "id": spec.tool,
+                "label": spec.tool,
+                "description": description,
+                "rawDescription": description,
+                "source": "plugin",
+                "pluginId": plugin_id,
+            }
+        )
+        existing_tool_names.add(spec.tool)
+    if not tools:
+        return []
+    return [
+        {
+            "id": "plugin",
+            "label": "Connected tools",
+            "source": "plugin",
+            "tools": sorted(tools, key=lambda tool: str(tool.get("label") or "")),
+        }
+    ]
