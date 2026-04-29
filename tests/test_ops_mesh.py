@@ -7172,6 +7172,106 @@ async def test_ops_mesh_service_disables_consumed_one_shot_task_on_completion(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_schedules_transient_one_shot_retry_with_backoff(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="Retry Once",
+        summary="Retry a transient one-shot failure.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            "objective_template": "Retry a transient one-shot failure.",
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    launched_at = datetime(2026, 4, 18, 12, 5, tzinfo=UTC)
+    ended_at = launched_at + timedelta(seconds=10)
+    await database.update_task_blueprint(
+        1,
+        last_launched_at=launched_at.isoformat(),
+        last_status="active",
+    )
+    mission_id = await database.create_mission(
+        name="Retry Once",
+        objective="Retry a transient one-shot failure.",
+        status="failed",
+        instance_id=1,
+        project_id=1,
+        task_blueprint_id=1,
+        thread_id="thread_one_shot_retry",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="request timed out",
+        last_activity_at=ended_at.isoformat(),
+    )
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        cron_retry={
+            "maxAttempts": 2,
+            "backoffMs": [60_000],
+            "retryOn": ["timeout"],
+        },
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    stored = await database.get_task_blueprint(1)
+    assert stored is not None
+    expected_retry_at_ms = int((ended_at + timedelta(milliseconds=60_000)).timestamp() * 1000)
+    assert stored["enabled"] == 1
+    assert stored["cron_state"]["consecutiveErrors"] == 1
+    assert stored["cron_state"]["nextRunAtMs"] == expected_retry_at_ms
+
+    await service.tick_once()
+
+    assert len(fake_missions.created_payloads) == 1
+    assert fake_missions.created_payloads[0].task_blueprint_id == 1
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_appends_verified_parity_checkpoint_once(
     tmp_path: Path,
 ) -> None:

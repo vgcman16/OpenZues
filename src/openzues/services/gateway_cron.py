@@ -766,10 +766,19 @@ def _task_is_due(task: dict[str, Any]) -> bool:
     if schedule is None:
         return False
     if schedule["kind"] == "at":
+        payload_state = _task_payload_fields(task)
+        state_next_run_at_ms = _cron_state_payload(
+            payload_state.get("cron_state")
+        ).get("nextRunAtMs")
+        if isinstance(state_next_run_at_ms, int) and not isinstance(
+            state_next_run_at_ms, bool
+        ):
+            current_ms = int(datetime.now(UTC).timestamp() * 1000)
+            return state_next_run_at_ms <= current_ms
         next_run_at_ms = _at_schedule_next_run_at_ms(
             schedule_at=schedule.get("at"),
-            last_launched_at=_task_payload_fields(task).get("last_launched_at"),
-            last_status=_task_payload_fields(task).get("last_status"),
+            last_launched_at=payload_state.get("last_launched_at"),
+            last_status=payload_state.get("last_status"),
         )
         current_ms = int(datetime.now(UTC).timestamp() * 1000)
         return next_run_at_ms is not None and next_run_at_ms <= current_ms

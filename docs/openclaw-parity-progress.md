@@ -1223,8 +1223,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\settings.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py src\openzues\app.py
   src\openzues\settings.py`.
+- Transient failed one-shot cron jobs now consume production-wired
+  `cron.retry` settings: Ops Mesh writes `state.nextRunAtMs` from
+  `endedAt + backoff`, keeps retryable one-shot jobs enabled, disables
+  permanent/exhausted failures, and both the scheduler and gateway due-run path
+  honor the persisted retry timestamp.
+- Verified the cron retry/backoff slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "one_shot_retry"` (`1 passed`), adjacent Ops
+  Mesh cron pack `python -m pytest tests\test_ops_mesh.py -q -k "one_shot or
+  cron_failure or scheduled"` (`18 passed`), adjacent gateway cron pack
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_run or
+  cron_runs or cron_update or cron_add"` (`46 passed`), adjacent API cron pack
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_run or
+  cron_runs or cron_update or cron_add"` (`19 passed`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_cron.py
+  src\openzues\app.py src\openzues\settings.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_cron.py src\openzues\app.py
+  src\openzues\settings.py`.
 - Next repo-level parity work should continue with broader cron runtime
-  hardening: retry/backoff policy and provider-specific alert result metadata.
+  hardening: provider-specific alert result metadata and deeper cron
+  maintenance edge cases.
 
 ## References
 

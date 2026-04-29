@@ -139,6 +139,15 @@ NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
+DEFAULT_CRON_RETRY_MAX_ATTEMPTS = 3
+DEFAULT_CRON_RETRY_BACKOFF_MS = (30_000, 60_000, 5 * 60_000)
+DEFAULT_CRON_RETRY_ON = (
+    "rate_limit",
+    "overloaded",
+    "network",
+    "timeout",
+    "server_error",
+)
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -273,6 +282,9 @@ def _task_scheduled_next_run_at(task: TaskBlueprintView) -> str | None:
             return None
         last = _parse_timestamp(task.last_launched_at)
         status = str(task.last_status or "").strip().lower()
+        retry_at = _task_cron_state_next_run_at(task)
+        if status == "failed" and retry_at is not None:
+            return retry_at.isoformat()
         if last is not None and status in {"completed", "failed"} and scheduled_at <= last:
             return None
         return scheduled_at.isoformat()
@@ -400,6 +412,13 @@ def _task_cron_state(task: TaskBlueprintView) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _task_cron_state_next_run_at(task: TaskBlueprintView) -> datetime | None:
+    value = _task_cron_state(task).get("nextRunAtMs")
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    return datetime.fromtimestamp(value / 1000, tz=UTC)
+
+
 def _cron_failure_alert_int(value: object, fallback: int, *, minimum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return fallback
@@ -444,6 +463,82 @@ def _cron_error_reason(error: str | None) -> str | None:
     if any(token in lowered for token in ("model not found", "unknown model", "no such model")):
         return "model_not_found"
     return None
+
+
+def _resolve_cron_retry_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(config) if isinstance(config, dict) else {}
+    max_attempts_value = raw.get("maxAttempts")
+    max_attempts = (
+        max(0, min(10, max_attempts_value))
+        if isinstance(max_attempts_value, int) and not isinstance(max_attempts_value, bool)
+        else DEFAULT_CRON_RETRY_MAX_ATTEMPTS
+    )
+    raw_backoff = raw.get("backoffMs")
+    backoff_ms = (
+        tuple(
+            value
+            for value in raw_backoff
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        )
+        if isinstance(raw_backoff, list)
+        else ()
+    )
+    if not backoff_ms:
+        backoff_ms = DEFAULT_CRON_RETRY_BACKOFF_MS
+    raw_retry_on = raw.get("retryOn")
+    retry_on = (
+        tuple(
+            str(value).strip()
+            for value in raw_retry_on
+            if str(value).strip() in DEFAULT_CRON_RETRY_ON
+        )
+        if isinstance(raw_retry_on, list)
+        else ()
+    )
+    return {
+        "maxAttempts": max_attempts,
+        "backoffMs": backoff_ms,
+        "retryOn": retry_on or DEFAULT_CRON_RETRY_ON,
+    }
+
+
+def _cron_error_backoff_ms(consecutive_errors: int, schedule_ms: tuple[int, ...]) -> int:
+    if not schedule_ms:
+        return DEFAULT_CRON_RETRY_BACKOFF_MS[0]
+    index = min(max(0, consecutive_errors - 1), len(schedule_ms) - 1)
+    return schedule_ms[index]
+
+
+def _is_transient_cron_error(error: str | None, retry_on: tuple[str, ...]) -> bool:
+    lowered = str(error or "").strip().lower()
+    if not lowered:
+        return False
+    patterns: dict[str, tuple[str, ...]] = {
+        "rate_limit": (
+            "rate_limit",
+            "rate limit",
+            "too many requests",
+            "429",
+            "resource has been exhausted",
+            "cloudflare",
+            "tokens per day",
+        ),
+        "overloaded": (
+            "529",
+            "overloaded",
+            "high demand",
+            "temporarily overloaded",
+            "temporary overloaded",
+            "capacity exceeded",
+        ),
+        "network": ("network", "econnreset", "econnrefused", "fetch failed", "socket"),
+        "timeout": ("timeout", "timed out", "etimedout"),
+        "server_error": ("500", "502", "503", "504", "505", "506", "507", "508", "509"),
+    }
+    return any(
+        any(token in lowered for token in patterns.get(reason, ()))
+        for reason in retry_on
+    )
 
 
 def _cron_runtime_window_ms(
@@ -4052,6 +4147,7 @@ class OpsMeshService:
     cron_webhook_url: str | None = None
     cron_webhook_token: str | None = None
     cron_failure_alert: dict[str, Any] | None = None
+    cron_retry: dict[str, Any] | None = None
     poll_interval_seconds: float = 20.0
     snapshot_interval_seconds: float = 1800.0
     parity_checkpoint_path: Path | None = None
@@ -7264,9 +7360,27 @@ class OpsMeshService:
                         session_key=session_key,
                     )
                     state["lastFailureAlertAtMs"] = ended_at_ms
+            if task.schedule_kind == "at":
+                retry_config = _resolve_cron_retry_config(self.cron_retry)
+                backoff_ms = cast(tuple[int, ...], retry_config["backoffMs"])
+                retry_on = cast(tuple[str, ...], retry_config["retryOn"])
+                max_attempts = int(retry_config["maxAttempts"])
+                if (
+                    _is_transient_cron_error(error, retry_on)
+                    and consecutive_errors <= max_attempts
+                ):
+                    state["nextRunAtMs"] = ended_at_ms + _cron_error_backoff_ms(
+                        consecutive_errors,
+                        backoff_ms,
+                    )
+                else:
+                    state.pop("nextRunAtMs", None)
+                    await self.database.update_task_blueprint(task.id, enabled=0)
         else:
             state["consecutiveErrors"] = 0
             state.pop("lastFailureAlertAtMs", None)
+            if task.schedule_kind == "at":
+                state.pop("nextRunAtMs", None)
 
         await self.database.update_task_blueprint_payload(task.id, cron_state=state)
 

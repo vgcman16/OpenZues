@@ -1043,6 +1043,16 @@ per-job override and `failureAlert=false` suppression. Remaining cron runtime
 parity is OpenClaw's retry/backoff policy for transient one-shot jobs and
 richer provider-specific alert delivery attribution.
 
+Current queue-head adjustment: transient failed one-shot cron jobs now consume
+production-wired global `cron.retry` settings through `Settings` / app
+construction. For `schedule.kind="at"` jobs, Ops Mesh records
+`state.nextRunAtMs = endedAt + backoff`, keeps the job enabled while retry
+attempts remain, and the scheduler plus `cron.run mode="due"` honor that retry
+timestamp even after the original `schedule.at` has been consumed. Permanent or
+exhausted one-shot failures are disabled while preserving error state for
+inspection. Remaining cron runtime parity is richer provider-specific alert
+delivery attribution and any deeper OpenClaw cron maintenance edge cases.
+
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 
 ## Verified This Run
