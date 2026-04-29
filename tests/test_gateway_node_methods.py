@@ -21889,6 +21889,54 @@ async def test_cron_run_due_launches_due_one_shot_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_run_deletes_successful_one_shot_when_delete_after_run_true() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-delete-after-run"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-run-delete-after-run.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="One Shot Wake",
+        summary="Run exactly once through wake.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run exactly once through wake."),
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+            "cron_session_target": "main",
+            "cron_wake_mode": "now",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Run exactly once through wake.",
+            "cron_delete_after_run": True,
+        },
+    )
+    dispatch_calls: list[tuple[int, str]] = []
+
+    async def dispatch_task(task_blueprint_id: int, *, trigger: str) -> str:
+        dispatch_calls.append((task_blueprint_id, trigger))
+        return f"wake:{task_blueprint_id}"
+
+    async def delete_task(task_blueprint_id: int) -> None:
+        await database.delete_task_blueprint(task_blueprint_id)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        dispatch_cron_system_event_task=dispatch_task,
+        delete_task_blueprint=delete_task,
+    )
+
+    payload = await service.call("cron.run", {"id": f"task-blueprint:{task_id}", "mode": "force"})
+
+    assert payload == {"ok": True, "enqueued": True, "runId": f"wake:{task_id}"}
+    assert dispatch_calls == [(task_id, "gateway-cron:force")]
+    assert await database.get_task_blueprint(task_id) is None
+
+
+@pytest.mark.asyncio
 async def test_cron_run_due_launches_due_cron_expression_task() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-due-cron-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -22200,6 +22248,62 @@ async def test_cron_add_accepts_agent_turn_payload_extras_like_openclaw() -> Non
         "lightContext": True,
         "toolsAllow": ["read", "write"],
     }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_delete_after_run_true_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-delete-after-run"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-delete-after-run.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "One Shot Delete",
+            "enabled": True,
+            "deleteAfterRun": True,
+            "schedule": {"kind": "at", "at": "2026-03-23T22:00:00Z"},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Run once."},
+        },
+    )
+    task_id = int(str(payload["id"]).split(":", 1)[1])
+    stored = await database.get_task_blueprint(task_id)
+
+    assert payload["deleteAfterRun"] is True
+    assert stored is not None
+    assert stored["cron_delete_after_run"] is True
 
 
 @pytest.mark.asyncio

@@ -1444,8 +1444,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`24 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron parity should return to delete-after-run behavior and the remaining
-  direct `--at` timezone normalization breadth.
+- `cron.add` / `cron.update` now accept and project `deleteAfterRun=true`, and
+  successful one-shot system-event `cron.run` dispatch deletes the task
+  blueprint when that flag is set.
+- Verified the first delete-after-run runtime slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_add_accepts_delete_after_run_true_like_openclaw or
+  cron_run_deletes_successful_one_shot_when_delete_after_run_true"` (`2
+  passed`), adjacent gateway cron pack `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "cron_update or cron_add or
+  cron_list or cron_run"` (`51 passed`), `ruff check
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- Next cron parity should cover agent mission-completion delete-after-run
+  cleanup/default one-shot semantics and the remaining direct `--at` timezone
+  normalization breadth.
 
 ## References
 

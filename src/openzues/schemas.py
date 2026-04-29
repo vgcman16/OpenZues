@@ -1200,6 +1200,7 @@ class TaskBlueprintCreate(BaseModel):
     cron_session_target: str | None = None
     cron_session_key: str | None = None
     cron_wake_mode: Literal["now", "next-heartbeat"] | None = None
+    cron_delete_after_run: bool | None = None
     cron_payload_kind: Literal["agentTurn", "systemEvent"] | None = None
     cron_payload_text: str | None = None
     cron_payload_timeout_seconds: int | None = Field(default=None, ge=0)

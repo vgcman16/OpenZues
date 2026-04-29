@@ -223,6 +223,12 @@ class GatewayCronService:
                 task_blueprint_id,
                 trigger=f"gateway-cron:{mode}",
             )
+            if _cron_should_delete_after_success(task):
+                if self._delete_task_blueprint is None:
+                    raise RuntimeError(
+                        "cron.run deleteAfterRun requires scheduled task deletion to be wired"
+                    )
+                await self._delete_task_blueprint(task_blueprint_id)
             return {"ok": True, "enqueued": True, "runId": run_id}
         if self._run_task_blueprint_now is None:
             raise RuntimeError("cron.run is unavailable until scheduled task launch is wired")
@@ -466,6 +472,9 @@ class GatewayCronService:
                 payload_state=payload_state,
             ),
         }
+        delete_after_run = payload_state.get("cron_delete_after_run")
+        if isinstance(delete_after_run, bool):
+            job_payload["deleteAfterRun"] = delete_after_run
         session_key = _cron_session_key(payload_state)
         if session_key is not None:
             job_payload["sessionKey"] = session_key
@@ -1014,6 +1023,14 @@ def _task_routes_through_system_event_wake(task: dict[str, Any]) -> bool:
     )
 
 
+def _cron_should_delete_after_success(task: dict[str, Any]) -> bool:
+    payload_state = _task_payload_fields(task)
+    return (
+        str(payload_state.get("schedule_kind") or "").strip().lower() == "at"
+        and payload_state.get("cron_delete_after_run") is True
+    )
+
+
 def _is_gateway_cron_task(task: dict[str, Any]) -> bool:
     payload_state = _task_payload_fields(task)
     schedule_kind = str(payload_state.get("schedule_kind") or "").strip().lower()
@@ -1353,10 +1370,10 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         method="cron.add",
         label="sessionKey",
     )
-    if job_create.get("deleteAfterRun") not in {None, False}:
-        raise ValueError(
-            "invalid cron.add params: OpenZues currently supports only deleteAfterRun=false"
-        )
+    raw_delete_after_run = job_create.get("deleteAfterRun")
+    if raw_delete_after_run is not None and not isinstance(raw_delete_after_run, bool):
+        raise ValueError("invalid cron.add params: deleteAfterRun must be a boolean")
+    cron_delete_after_run = raw_delete_after_run if isinstance(raw_delete_after_run, bool) else None
     cron_failure_alert: dict[str, Any] | Literal[False] | None = None
     if "failureAlert" in job_create:
         cron_failure_alert = _normalized_cron_failure_alert(
@@ -1671,6 +1688,7 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         cron_session_target=session_target,
         cron_session_key=cron_session_key,
         cron_wake_mode=cast(Literal["now", "next-heartbeat"], wake_mode),
+        cron_delete_after_run=cron_delete_after_run,
         cron_payload_kind=cast(Literal["agentTurn", "systemEvent"], payload_kind),
         cron_payload_text=cron_payload_text,
         cron_payload_timeout_seconds=cron_payload_timeout_seconds,
@@ -1748,11 +1766,11 @@ def build_gateway_cron_job_patch(
             method="cron.update",
             label="patch.sessionKey",
         )
-    if patch.get("deleteAfterRun") not in {None, False}:
-        raise ValueError(
-            "invalid cron.update params: "
-            "OpenZues currently supports only patch.deleteAfterRun=false"
-        )
+    if "deleteAfterRun" in patch:
+        delete_after_run = patch.get("deleteAfterRun")
+        if not isinstance(delete_after_run, bool):
+            raise ValueError("invalid cron.update params: patch.deleteAfterRun must be a boolean")
+        payload_updates["cron_delete_after_run"] = delete_after_run
     if "failureAlert" in patch:
         payload_updates["cron_failure_alert"] = _merged_cron_failure_alert_patch(
             _task_payload_fields(task).get("cron_failure_alert"),
