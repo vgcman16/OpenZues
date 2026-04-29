@@ -2940,6 +2940,59 @@ def test_cron_add_cron_timezone_and_stagger_shape_schedule(monkeypatch) -> None:
     }
 
 
+def test_cron_edit_basic_patch_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--name",
+            "Renamed heartbeat",
+            "--description",
+            "Updated cadence.",
+            "--disable",
+            "--every",
+            "30m",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "name": "Renamed heartbeat",
+                    "description": "Updated cadence.",
+                    "enabled": False,
+                    "schedule": {"kind": "every", "everyMs": 1_800_000},
+                },
+            },
+        )
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

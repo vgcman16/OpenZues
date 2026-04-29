@@ -1348,8 +1348,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`18 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron CLI parity should continue with the remaining upstream `cron add`
-  option breadth, then `cron edit`.
+- `cron edit` now exists for the first supported upstream patch slice:
+  `--name`, `--description`, `--enable` / `--disable`, and direct schedule
+  changes dispatch to `cron.update` with a patch object.
+- Verified the first cron edit CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "cron_edit_basic_patch_calls_gateway_method_owner"`
+  (`1 passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`19 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Next cron CLI parity should continue with `cron edit` payload/session/delivery
+  patching, then failure-alert and existing-cron schedule patch breadth before
+  returning to backend-only cron add gaps.
 
 ## References
 

@@ -9795,6 +9795,80 @@ def cron_add_command(
     _emit_cron_mutation(result, json_output=json_output)
 
 
+def _cron_has_schedule_options(
+    *,
+    cron_expr: str | None,
+    every: str | None,
+    at: str | None,
+    tz: str | None,
+    stagger: str | None,
+    exact: bool,
+) -> bool:
+    return any(
+        (
+            _optional_cli_string(cron_expr),
+            _optional_cli_string(every),
+            _optional_cli_string(at),
+            _optional_cli_string(tz),
+            _optional_cli_string(stagger),
+            exact,
+        )
+    )
+
+
+@cron_app.command("edit")
+def cron_edit_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    name: str | None = typer.Option(None, "--name", help="Set cron job name."),
+    description: str | None = typer.Option(None, "--description", help="Set description."),
+    enable: bool = typer.Option(False, "--enable", help="Enable job."),
+    disable: bool = typer.Option(False, "--disable", help="Disable job."),
+    cron_expr: str | None = typer.Option(None, "--cron", help="Set cron expression."),
+    every: str | None = typer.Option(None, "--every", help="Set interval duration."),
+    at: str | None = typer.Option(None, "--at", help="Set one-shot time."),
+    tz: str | None = typer.Option(None, "--tz", help="Timezone for cron expressions."),
+    stagger: str | None = typer.Option(None, "--stagger", help="Cron stagger window."),
+    exact: bool = typer.Option(False, "--exact", help="Disable cron staggering."),
+    json_output: bool = typer.Option(False, "--json", help="Emit updated cron job as JSON."),
+) -> None:
+    if enable and disable:
+        raise typer.BadParameter("Choose --enable or --disable, not both")
+    patch: dict[str, object] = {}
+    normalized_name = _optional_cli_string(name)
+    if normalized_name is not None:
+        patch["name"] = normalized_name
+    normalized_description = _optional_cli_string(description)
+    if normalized_description is not None:
+        patch["description"] = normalized_description
+    if enable:
+        patch["enabled"] = True
+    if disable:
+        patch["enabled"] = False
+    if _cron_has_schedule_options(
+        cron_expr=cron_expr,
+        every=every,
+        at=at,
+        tz=tz,
+        stagger=stagger,
+        exact=exact,
+    ):
+        patch["schedule"] = _cron_cli_schedule(
+            cron_expr=cron_expr,
+            every=every,
+            at=at,
+            tz=tz,
+            stagger=stagger,
+            exact=exact,
+        )
+    params: dict[str, object] = {"id": job_id, "patch": patch}
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.update", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_cron_mutation(result, json_output=json_output)
+
+
 @sessions_app.command("spawn")
 def sessions_spawn_command(
     task: str = typer.Option(..., "--task", "-t", help="Task to hand to the spawned session."),
