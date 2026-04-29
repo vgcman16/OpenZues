@@ -72,6 +72,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Latest Verification
 
+- `python -m pytest tests\test_cli.py -q -k "plugins_inspect_json_projects_config_policy"`: 1 passed after projecting configured plugin inspect policy from `plugins.entries`.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 17 passed after rechecking plugin CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin inspect policy slice.
+- `mypy src\openzues\cli.py`: clean after the plugin inspect policy slice.
 - `python -m pytest tests\test_cli.py -q -k "plugins_inspect_json_projects_runtime_executor_tools"`: 1 passed after projecting native plugin runtime executor tools through `plugins inspect --json`.
 - `python -m pytest tests\test_cli.py -q -k "plugins_"`: 16 passed after rechecking plugin list/inspect/doctor/marketplace/install/update/uninstall/toggle surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin runtime inspect projection slice.

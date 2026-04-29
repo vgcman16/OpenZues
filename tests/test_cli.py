@@ -5355,6 +5355,72 @@ def test_plugins_inspect_all_json_includes_saved_install_records(
     assert payload[0]["install"] == install_record
 
 
+def test_plugins_inspect_json_projects_config_policy(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {
+                        "policy-plugin": {
+                            "enabled": True,
+                            "hooks": {"allowPromptInjection": False},
+                            "subagent": {
+                                "allowModelOverride": True,
+                                "allowedModels": ["openai/gpt-5.4"],
+                                "hasAllowedModelsConfig": True,
+                            },
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "policy-plugin", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["policy"] == {
+        "allowPromptInjection": False,
+        "allowModelOverride": True,
+        "allowedModels": ["openai/gpt-5.4"],
+        "hasAllowedModelsConfig": True,
+    }
+
+
 def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

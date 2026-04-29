@@ -475,6 +475,10 @@ code. `plugins inspect --json` now also consults the native
 runtime executor specs mark discovered plugins as imported, switch the inspect
 report from inventory-only to `capabilityMode="runtime"`, and project
 OpenClaw-shaped runtime tool entries with `names` / `optional` metadata.
+Inspect reports now also project OpenClaw-shaped policy summaries from
+`plugins.entries.<id>.hooks.allowPromptInjection` and
+`plugins.entries.<id>.subagent` (`allowModelOverride`, `allowedModels`, and
+`hasAllowedModelsConfig`) instead of always returning an empty policy object.
 Remaining plugin CLI parity is remote marketplace clone/update breadth and
 deeper runtime activation/import metadata beyond the native metadata/runtime
 projection.

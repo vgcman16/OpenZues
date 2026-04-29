@@ -7211,7 +7211,11 @@ async def _build_plugin_inspect_payload(
     ) else []
     if inspect_all:
         return [
-            _plugin_inspect_report(plugin, runtime_specs=runtime_specs)
+            _plugin_inspect_report(
+                plugin,
+                runtime_specs=runtime_specs,
+                policy=_plugin_inspect_policy_from_services(services, plugin),
+            )
             for plugin in plugin_rows
         ]
     normalized_id = _optional_cli_string(plugin_id)
@@ -7220,7 +7224,11 @@ async def _build_plugin_inspect_payload(
     plugin = _find_plugin_record(plugin_rows, normalized_id)
     if plugin is None:
         raise KeyError(normalized_id)
-    return _plugin_inspect_report(plugin, runtime_specs=runtime_specs)
+    return _plugin_inspect_report(
+        plugin,
+        runtime_specs=runtime_specs,
+        policy=_plugin_inspect_policy_from_services(services, plugin),
+    )
 
 
 def _find_plugin_record(
@@ -7240,6 +7248,7 @@ def _plugin_inspect_report(
     plugin: dict[str, object],
     *,
     runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
+    policy: dict[str, object] | None = None,
 ) -> dict[str, object]:
     capabilities = plugin.get("capabilities")
     capability_ids = [
@@ -7276,7 +7285,7 @@ def _plugin_inspect_report(
         "mcpServers": [],
         "lspServers": [],
         "httpRouteCount": 0,
-        "policy": {},
+        "policy": dict(policy) if policy is not None else {},
         "diagnostics": [],
         "install": dict(install) if isinstance(install, dict) else None,
     }
@@ -7357,6 +7366,41 @@ def _plugin_inspect_capabilities(
     if capability_ids:
         return [{"kind": "inventory", "ids": capability_ids}]
     return []
+
+
+def _plugin_inspect_policy_from_services(
+    services: object,
+    plugin: dict[str, object],
+) -> dict[str, object]:
+    plugin_id = _optional_cli_string(plugin.get("id"))
+    if plugin_id is None:
+        return {}
+    snapshot = _gateway_config_snapshot_for_cli(services)
+    plugins = snapshot.get("plugins")
+    if not isinstance(plugins, dict):
+        return {}
+    entries = plugins.get("entries")
+    if not isinstance(entries, dict):
+        return {}
+    entry = entries.get(plugin_id)
+    if not isinstance(entry, dict):
+        return {}
+    policy: dict[str, object] = {}
+    hooks = entry.get("hooks")
+    if isinstance(hooks, dict) and isinstance(hooks.get("allowPromptInjection"), bool):
+        policy["allowPromptInjection"] = hooks["allowPromptInjection"]
+    subagent = entry.get("subagent")
+    if isinstance(subagent, dict):
+        if isinstance(subagent.get("allowModelOverride"), bool):
+            policy["allowModelOverride"] = subagent["allowModelOverride"]
+        allowed_models = _string_list_or_none(subagent.get("allowedModels"))
+        if allowed_models is not None:
+            policy["allowedModels"] = allowed_models
+        if isinstance(subagent.get("hasAllowedModelsConfig"), bool):
+            policy["hasAllowedModelsConfig"] = subagent["hasAllowedModelsConfig"]
+        elif allowed_models is not None:
+            policy["hasAllowedModelsConfig"] = True
+    return policy
 
 
 def _plugin_inspect_shape(plugin: dict[str, object]) -> str:
