@@ -2429,6 +2429,20 @@ def _emit_cron_run(payload: dict[str, object], *, json_output: bool) -> None:
         typer.echo(f"enqueued: {bool(payload.get('enqueued'))}")
 
 
+def _emit_cron_mutation(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    job_id = str(payload.get("id") or "").strip()
+    if not job_id:
+        job = payload.get("job")
+        if isinstance(job, dict):
+            job_id = str(job.get("id") or "").strip()
+    if job_id:
+        typer.echo(f"id: {job_id}")
+
+
 def _emit_plugins_inventory(
     payload: dict[str, object],
     *,
@@ -9543,6 +9557,69 @@ def cron_run_command(
     _emit_cron_run(payload, json_output=json_output)
     if not _cron_run_succeeded(payload):
         raise typer.Exit(code=1)
+
+
+def _cron_remove_command(job_id: str, *, json_output: bool) -> None:
+    params: dict[str, object] = {"id": job_id}
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.remove", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_mutation(payload, json_output=json_output)
+
+
+@cron_app.command("rm")
+def cron_rm_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron removal result as JSON."),
+) -> None:
+    _cron_remove_command(job_id, json_output=json_output)
+
+
+@cron_app.command("remove")
+def cron_remove_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron removal result as JSON."),
+) -> None:
+    _cron_remove_command(job_id, json_output=json_output)
+
+
+@cron_app.command("delete")
+def cron_delete_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron removal result as JSON."),
+) -> None:
+    _cron_remove_command(job_id, json_output=json_output)
+
+
+def _cron_toggle_command(job_id: str, *, enabled: bool, json_output: bool) -> None:
+    params: dict[str, object] = {
+        "id": job_id,
+        "patch": {"enabled": enabled},
+    }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.update", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_mutation(payload, json_output=json_output)
+
+
+@cron_app.command("enable")
+def cron_enable_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron update result as JSON."),
+) -> None:
+    _cron_toggle_command(job_id, enabled=True, json_output=json_output)
+
+
+@cron_app.command("disable")
+def cron_disable_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron update result as JSON."),
+) -> None:
+    _cron_toggle_command(job_id, enabled=False, json_output=json_output)
 
 
 @sessions_app.command("spawn")
