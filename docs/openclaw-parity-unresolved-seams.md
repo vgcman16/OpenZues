@@ -141,8 +141,18 @@ maintenance summaries from the native `sessions.list` owner for both dry-run
 preview and enforce/apply no-op cases. `--fix-missing` now maps OpenClaw's
 missing transcript-file pruning onto OpenZues' SQLite-backed session metadata
 by deleting only agent-filtered metadata rows whose control-chat transcript has
-no messages. Remaining cleanup parity is stale/age/count/disk-budget cleanup
-and richer multi-store/all-agent mutation semantics over OpenZues' native
+no messages. `sessions cleanup` dry-run now also previews OpenClaw-shaped stale
+`updatedAt` pruning and `session.maintenance.maxEntries` count caps from the
+native `sessions.list` rows, and `--enforce` deletes those stale/capped native
+metadata rows. Native disk-budget maintenance now mirrors OpenClaw's
+post-prune budget envelope over SQLite metadata rows: configured
+`maxDiskBytes` / `highWaterBytes` preview oldest non-active evictions, protect
+`--active-key`, return `diskBudget` result metadata, and delete evicted rows
+under `--enforce`. `sessions cleanup --all-agents --json` now returns
+OpenClaw-shaped grouped `stores` summaries by native session-key agent while
+retaining the single SQLite-backed physical store. No smaller native
+`sessions cleanup` seam remains; any deeper cleanup work would require a
+future first-class multi-store transcript owner beyond OpenZues' current
 session store. The CLI now also exposes read-only `tasks`, `tasks list`, and
 `tasks show` inspection over native OpenZues mission and task-blueprint state,
 returning OpenClaw-shaped task records with `runtime`, `status`, `taskId`,
@@ -262,9 +272,23 @@ model config writer, rewrites `agents.defaults.imageModel.primary` into the
 OpenClaw object form, preserves image fallback metadata, upserts the canonical
 model entry, and reports the resolved image model. No smaller root model
 mutation command remains; the next model CLI queue head is non-interactive
-`models scan` posture.
-Live auth
-probes remain unavailable until the native model auth health runtime exists.
+`models scan` posture. `models scan` now exposes upstream-shaped
+`--min-params`, `--max-age-days`, `--provider`, `--max-candidates`,
+`--timeout`, `--concurrency`, `--no-probe`, `--yes`, `--no-input`,
+`--set-default`, `--set-image`, and `--json` options; `--no-probe --json`
+returns fakeable/native OpenRouter free-model metadata without credentials, and
+`--yes` applies preselected text/image fallbacks plus default/image-model
+updates through the native config writer without prompting. The remaining scan
+depth was live OpenRouter tool/image probing parity beyond the metadata/runtime
+posture; `models scan` now performs native OpenRouter chat-completions tool
+probes with a required `ping` tool and image probes with a small data-URL image
+for image-capable candidates, preserving the upstream missing-key guard and
+fakeable HTTP transport coverage. No smaller model-scan CLI/probe seam remains.
+`models status --probe` now falls back to the native `models.authStatus`
+gateway owner when no explicit model-auth runtime is injected, adapting provider
+profile health into the existing auth JSON/check shape and preserving the
+explicit fakeable `model_auth.status` runtime precedence. No smaller live auth
+status/probe fallback seam remains in the model CLI cluster.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

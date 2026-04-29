@@ -3739,6 +3739,355 @@ def test_sessions_cleanup_fix_missing_enforce_deletes_metadata_rows(monkeypatch)
     assert calls == [("sessions.list", {"agentId": "worker"})]
 
 
+def test_sessions_cleanup_dry_run_json_reports_stale_and_capped_rows(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 4,
+                "sessions": [
+                    {
+                        "key": "agent:worker:stale",
+                        "sessionKey": "agent:worker:stale",
+                        "updatedAt": 1,
+                    },
+                    {
+                        "key": "agent:worker:newest",
+                        "sessionKey": "agent:worker:newest",
+                        "updatedAt": 3_000_000_000_000,
+                    },
+                    {
+                        "key": "agent:worker:recent",
+                        "sessionKey": "agent:worker:recent",
+                        "updatedAt": 2_999_999_999_000,
+                    },
+                    {
+                        "key": "agent:worker:overflow",
+                        "sessionKey": "agent:worker:overflow",
+                        "updatedAt": 2_999_999_998_000,
+                    },
+                ],
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"session": {"maintenance": {"maxEntries": 2}}}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--dry-run",
+            "--json",
+            "--agent",
+            "worker",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["beforeCount"] == 4
+    assert payload["afterCount"] == 2
+    assert payload["pruned"] == 1
+    assert payload["capped"] == 1
+    assert payload["wouldMutate"] is True
+    assert calls == [("sessions.list", {"agentId": "worker"})]
+
+
+def test_sessions_cleanup_enforce_deletes_stale_and_capped_metadata_rows(monkeypatch) -> None:
+    deleted: list[str] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "count": 3,
+                "sessions": [
+                    {
+                        "key": "agent:worker:stale",
+                        "sessionKey": "agent:worker:stale",
+                        "updatedAt": 1,
+                    },
+                    {
+                        "key": "agent:worker:newest",
+                        "sessionKey": "agent:worker:newest",
+                        "updatedAt": 3_000_000_000_000,
+                    },
+                    {
+                        "key": "agent:worker:overflow",
+                        "sessionKey": "agent:worker:overflow",
+                        "updatedAt": 2_999_999_998_000,
+                    },
+                ],
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"session": {"maintenance": {"maxEntries": 1}}}
+
+    class FakeDatabase:
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                gateway_config=FakeGatewayConfig(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--json",
+            "--agent",
+            "worker",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["afterCount"] == 1
+    assert payload["pruned"] == 1
+    assert payload["capped"] == 1
+    assert payload["applied"] is True
+    assert payload["appliedCount"] == 1
+    assert deleted == ["agent:worker:stale", "agent:worker:overflow"]
+
+
+def test_sessions_cleanup_dry_run_json_reports_native_disk_budget_evictions(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "count": 3,
+                "sessions": [
+                    {
+                        "key": "agent:worker:oldest",
+                        "sessionKey": "agent:worker:oldest",
+                        "updatedAt": 2_999_999_997_000,
+                    },
+                    {
+                        "key": "agent:worker:middle",
+                        "sessionKey": "agent:worker:middle",
+                        "updatedAt": 2_999_999_998_000,
+                    },
+                    {
+                        "key": "agent:worker:active",
+                        "sessionKey": "agent:worker:active",
+                        "updatedAt": 3_000_000_000_000,
+                    },
+                ],
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "session": {
+                    "maintenance": {
+                        "maxEntries": 500,
+                        "maxDiskBytes": 1,
+                        "highWaterBytes": 0,
+                    }
+                }
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--dry-run",
+            "--json",
+            "--agent",
+            "worker",
+            "--active-key",
+            "agent:worker:active",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["afterCount"] == 1
+    assert payload["diskBudget"]["removedEntries"] == 2
+    assert payload["diskBudget"]["removedFiles"] == 0
+    assert payload["diskBudget"]["overBudget"] is True
+    assert payload["wouldMutate"] is True
+
+
+def test_sessions_cleanup_enforce_deletes_disk_budget_evicted_metadata_rows(monkeypatch) -> None:
+    deleted: list[str] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "count": 3,
+                "sessions": [
+                    {
+                        "key": "agent:worker:oldest",
+                        "sessionKey": "agent:worker:oldest",
+                        "updatedAt": 2_999_999_997_000,
+                    },
+                    {
+                        "key": "agent:worker:middle",
+                        "sessionKey": "agent:worker:middle",
+                        "updatedAt": 2_999_999_998_000,
+                    },
+                    {
+                        "key": "agent:worker:active",
+                        "sessionKey": "agent:worker:active",
+                        "updatedAt": 3_000_000_000_000,
+                    },
+                ],
+            }
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "session": {
+                    "maintenance": {
+                        "maxEntries": 500,
+                        "maxDiskBytes": 1,
+                        "highWaterBytes": 0,
+                    }
+                }
+            }
+
+    class FakeDatabase:
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                gateway_config=FakeGatewayConfig(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--json",
+            "--agent",
+            "worker",
+            "--active-key",
+            "agent:worker:active",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["afterCount"] == 1
+    assert payload["diskBudget"]["removedEntries"] == 2
+    assert payload["appliedCount"] == 1
+    assert deleted == ["agent:worker:oldest", "agent:worker:middle"]
+
+
+def test_sessions_cleanup_all_agents_dry_run_json_groups_native_agent_summaries(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {
+                        "key": "agent:main:old",
+                        "sessionKey": "agent:main:old",
+                        "updatedAt": 1,
+                    },
+                    {
+                        "key": "agent:work:old",
+                        "sessionKey": "agent:work:old",
+                        "updatedAt": 1,
+                    },
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--all-agents",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["allAgents"] is True
+    assert payload["mode"] == "warn"
+    assert payload["dryRun"] is True
+    assert [store["agentId"] for store in payload["stores"]] == ["main", "work"]
+    assert [store["pruned"] for store in payload["stores"]] == [1, 1]
+    assert calls == [("sessions.list", {"includeGlobal": True})]
+
+
 def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
     calls: list[str] = []
     created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
@@ -5713,6 +6062,175 @@ def test_models_set_image_normalizes_provider_alias(tmp_path, monkeypatch) -> No
     assert snapshot["agents"]["defaults"]["models"]["zai/glm-4.5-image"] == {}
 
 
+def test_models_scan_no_probe_json_calls_scan_runtime_with_options(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    results = [
+        {
+            "id": "meta-llama/llama-3.3-70b-instruct:free",
+            "name": "Llama 3.3 70B Instruct Free",
+            "provider": "openrouter",
+            "modelRef": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+            "contextLength": 131072,
+            "inferredParamB": 70,
+            "tool": {"ok": False, "latencyMs": None, "skipped": True},
+            "image": {"ok": False, "latencyMs": None, "skipped": True},
+        }
+    ]
+
+    class FakeModelScan:
+        async def scan(self, **kwargs):
+            calls.append(kwargs)
+            return results
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_scan=FakeModelScan()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "scan",
+            "--no-probe",
+            "--json",
+            "--min-params",
+            "7",
+            "--max-age-days",
+            "30",
+            "--provider",
+            "meta-llama",
+            "--max-candidates",
+            "2",
+            "--timeout",
+            "1234",
+            "--concurrency",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == results
+    assert calls == [
+        {
+            "min_params": 7,
+            "max_age_days": 30,
+            "provider": "meta-llama",
+            "timeout_ms": 1234,
+            "concurrency": 4,
+            "probe": False,
+        }
+    ]
+
+
+def test_models_scan_yes_applies_default_and_image_model_choices(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "openai/gpt-5.4"},
+                        "imageModel": {"primary": "openai/gpt-image-1"},
+                    }
+                },
+            }
+        )
+    )
+    results = [
+        {
+            "id": "meta-llama/llama-3.3-70b-instruct:free",
+            "name": "Llama 3.3 70B Instruct Free",
+            "provider": "openrouter",
+            "modelRef": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+            "contextLength": 131072,
+            "inferredParamB": 70,
+            "tool": {"ok": True, "latencyMs": 120},
+            "image": {"ok": True, "latencyMs": 180},
+        },
+        {
+            "id": "qwen/qwen3-coder:free",
+            "name": "Qwen3 Coder Free",
+            "provider": "openrouter",
+            "modelRef": "openrouter/qwen/qwen3-coder:free",
+            "contextLength": 65536,
+            "inferredParamB": 30,
+            "tool": {"ok": True, "latencyMs": 90},
+            "image": {"ok": False, "latencyMs": None, "skipped": True},
+        },
+    ]
+
+    class FakeModelScan:
+        async def scan(self, **kwargs):
+            return results
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(gateway_config=gateway_config, model_scan=FakeModelScan())
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "scan", "--yes", "--set-default", "--set-image", "--max-candidates", "1"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    selected = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+    assert f"Fallbacks: {selected}" in result.stdout
+    assert f"Image model: {selected}" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    defaults = snapshot["agents"]["defaults"]
+    assert defaults["model"] == {"primary": selected, "fallbacks": [selected]}
+    assert defaults["imageModel"] == {"primary": selected, "fallbacks": [selected]}
+    assert defaults["models"][selected] == {}
+
+
+def test_models_scan_human_noninteractive_requires_yes(monkeypatch) -> None:
+    class FakeModelScan:
+        async def scan(self, **kwargs):
+            return [
+                {
+                    "id": "meta-llama/llama-3.3-70b-instruct:free",
+                    "name": "Llama 3.3 70B Instruct Free",
+                    "provider": "openrouter",
+                    "modelRef": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "contextLength": 131072,
+                    "inferredParamB": 70,
+                    "tool": {"ok": True, "latencyMs": 120},
+                    "image": {"ok": False, "latencyMs": None, "skipped": True},
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_scan=FakeModelScan()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "scan"])
+
+    assert result.exit_code == 1, result.stdout
+    assert "Non-interactive scan: pass --yes to apply defaults." in result.stderr
+
+
 def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypatch) -> None:
     gateway_config = GatewayConfigService(
         assistant_name="OpenZues",
@@ -6561,6 +7079,87 @@ def test_models_status_probe_json_uses_model_auth_runtime(monkeypatch) -> None:
     }
     assert gateway_calls == [("models.list", {})]
     assert auth_calls == [{"providers": ["openai"], "probe": True}]
+
+
+def test_models_status_probe_json_uses_gateway_auth_status_when_runtime_missing(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "models.authStatus":
+                return {
+                    "ts": 1234,
+                    "providers": [
+                        {
+                            "provider": "openai",
+                            "displayName": "OpenAI",
+                            "status": "ok",
+                            "profiles": [
+                                {
+                                    "profileId": "openai-default",
+                                    "type": "oauth",
+                                    "status": "ok",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--probe", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auth"] == {
+        "status": "ok",
+        "providersWithOAuth": ["openai (1)"],
+        "missingProvidersInUse": [],
+        "providers": [
+            {
+                "provider": "openai",
+                "displayName": "OpenAI",
+                "status": "ok",
+                "profiles": [
+                    {"profileId": "openai-default", "type": "oauth", "status": "ok"}
+                ],
+            }
+        ],
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": [
+                {
+                    "provider": "openai",
+                    "profileId": "openai-default",
+                    "type": "oauth",
+                    "status": "ok",
+                }
+            ],
+            "providers": [{"provider": "openai", "profiles": 1}],
+        },
+        "probes": {"openai": {"status": "ok"}},
+    }
+    assert calls == [("models.list", {}), ("models.authStatus", {"refresh": True})]
 
 
 def test_models_status_check_exits_nonzero_for_known_auth_problem(monkeypatch) -> None:

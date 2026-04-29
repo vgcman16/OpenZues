@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import inspect
 import json
 import os
 import re
@@ -65,6 +66,7 @@ from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
+from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
@@ -782,6 +784,7 @@ class CliServices:
     gateway_commands: GatewayCommandsService
     gateway_config: GatewayConfigService
     gateway_logs: GatewayLogsService
+    model_scan: GatewayModelScanService
     gateway_node_methods: GatewayNodeMethodService
     ops_mesh: OpsMeshService
     recall: RecallService
@@ -859,6 +862,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         resolve_targets=ops_mesh.resolve_channel_targets,
     )
     gateway_logs = GatewayLogsService(logs_root=app_settings.data_dir.parent / "logs")
+    model_scan = GatewayModelScanService()
     control_chat = ControlChatService(
         database,
         mission_service,
@@ -905,6 +909,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
                 gateway_commands=gateway_commands,
                 gateway_node_methods=None,
                 gateway_logs=gateway_logs,
+                model_scan=model_scan,
                 ops_mesh=ops_mesh,
                 recall=None,
                 hermes_platform=None,
@@ -976,6 +981,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_commands=gateway_commands,
         gateway_config=gateway_config,
         gateway_logs=gateway_logs,
+        model_scan=model_scan,
         gateway_node_methods=gateway_node_methods,
         ops_mesh=ops_mesh,
         recall=recall,
@@ -2373,21 +2379,325 @@ def _emit_sessions_inventory(payload: dict[str, object], *, json_output: bool) -
         )
 
 
+_SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
+_SESSION_CLEANUP_DEFAULT_MAX_ENTRIES = 500
+_SESSION_CLEANUP_DISK_HIGH_WATER_RATIO = 0.8
+_SESSION_CLEANUP_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?\s*$", re.I)
+_SESSION_CLEANUP_BYTE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?\s*$", re.I)
+
+
+def _sessions_cleanup_parse_duration_ms(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        if value < 0:
+            return None
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    match = _SESSION_CLEANUP_DURATION_RE.match(value)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = (match.group(2) or "d").lower()
+    multipliers = {
+        "ms": 1,
+        "s": 1000,
+        "m": 60 * 1000,
+        "h": 60 * 60 * 1000,
+        "d": 24 * 60 * 60 * 1000,
+    }
+    return int(amount * multipliers[unit])
+
+
+def _sessions_cleanup_parse_positive_int(value: object, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int | float):
+        if value < 0:
+            return default
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            try:
+                parsed = int(float(text))
+            except ValueError:
+                return default
+            return parsed if parsed >= 0 else default
+    return default
+
+
+def _sessions_cleanup_parse_byte_size(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        if value < 0:
+            return None
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    match = _SESSION_CLEANUP_BYTE_RE.match(value)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = (match.group(2) or "b").lower()
+    multipliers = {
+        "b": 1,
+        "kb": 1024,
+        "mb": 1024 * 1024,
+        "gb": 1024 * 1024 * 1024,
+    }
+    return int(amount * multipliers[unit])
+
+
+def _sessions_cleanup_maintenance_config(services: object) -> dict[str, int | None]:
+    maintenance: dict[str, object] = {}
+    gateway_config = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(gateway_config, "build_snapshot", None)
+    if callable(build_snapshot):
+        try:
+            snapshot = build_snapshot()
+        except Exception:
+            snapshot = None
+        if isinstance(snapshot, dict):
+            session_config = snapshot.get("session")
+            if isinstance(session_config, dict):
+                raw_maintenance = session_config.get("maintenance")
+                if isinstance(raw_maintenance, dict):
+                    maintenance = raw_maintenance
+
+    prune_after_ms = (
+        _sessions_cleanup_parse_duration_ms(
+            maintenance.get("pruneAfter") or maintenance.get("pruneDays")
+        )
+        or _SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS
+    )
+    max_entries = _sessions_cleanup_parse_positive_int(
+        maintenance.get("maxEntries"),
+        default=_SESSION_CLEANUP_DEFAULT_MAX_ENTRIES,
+    )
+    max_disk_bytes = _sessions_cleanup_parse_byte_size(maintenance.get("maxDiskBytes"))
+    raw_high_water_bytes = _sessions_cleanup_parse_byte_size(maintenance.get("highWaterBytes"))
+    high_water_bytes: int | None
+    if max_disk_bytes is None:
+        high_water_bytes = None
+    elif raw_high_water_bytes is not None:
+        high_water_bytes = min(raw_high_water_bytes, max_disk_bytes)
+    elif max_disk_bytes <= 0:
+        high_water_bytes = 0
+    else:
+        high_water_bytes = max(
+            1,
+            min(max_disk_bytes, int(max_disk_bytes * _SESSION_CLEANUP_DISK_HIGH_WATER_RATIO)),
+        )
+    return {
+        "pruneAfterMs": prune_after_ms,
+        "maxEntries": max_entries,
+        "maxDiskBytes": max_disk_bytes,
+        "highWaterBytes": high_water_bytes,
+    }
+
+
+def _sessions_cleanup_updated_at_ms(row: dict[str, object]) -> int | None:
+    for key in ("updatedAt", "updatedAtMs", "lastActivity"):
+        value = row.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int | float):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                continue
+            try:
+                return int(float(text))
+            except ValueError:
+                try:
+                    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                    return int(parsed.timestamp() * 1000)
+                except ValueError:
+                    continue
+    return None
+
+
+def _sessions_cleanup_sort_updated_at_ms(row: dict[str, object]) -> int:
+    updated_at = _sessions_cleanup_updated_at_ms(row)
+    return updated_at if updated_at is not None else -1
+
+
+def _sessions_cleanup_estimated_row_bytes(key: str, row: dict[str, object]) -> int:
+    try:
+        encoded = json.dumps({key: row}, sort_keys=True, separators=(",", ":"), default=str)
+    except TypeError:
+        encoded = key
+    return len(encoded.encode("utf-8"))
+
+
+def _sessions_cleanup_disk_budget_plan(
+    *,
+    row_by_key: dict[str, dict[str, object]],
+    remaining_keys: list[str],
+    active_key: str | None,
+    max_disk_bytes: int | None,
+    high_water_bytes: int | None,
+) -> tuple[dict[str, object] | None, list[str]]:
+    if max_disk_bytes is None or high_water_bytes is None:
+        return None, []
+    entry_sizes = {
+        key: _sessions_cleanup_estimated_row_bytes(key, row_by_key[key])
+        for key in remaining_keys
+    }
+    total_before = sum(entry_sizes.values())
+    if total_before <= max_disk_bytes:
+        return (
+            {
+                "totalBytesBefore": total_before,
+                "totalBytesAfter": total_before,
+                "removedFiles": 0,
+                "removedEntries": 0,
+                "freedBytes": 0,
+                "maxBytes": max_disk_bytes,
+                "highWaterBytes": high_water_bytes,
+                "overBudget": False,
+            },
+            [],
+        )
+
+    normalized_active_key = active_key.strip().lower() if active_key is not None else None
+    total_after = total_before
+    evicted_keys: list[str] = []
+    for key in sorted(
+        remaining_keys,
+        key=lambda candidate: _sessions_cleanup_sort_updated_at_ms(row_by_key[candidate]),
+    ):
+        if total_after <= high_water_bytes:
+            break
+        if normalized_active_key is not None and key.lower() == normalized_active_key:
+            continue
+        total_after -= entry_sizes.get(key, 0)
+        evicted_keys.append(key)
+
+    freed_bytes = max(0, total_before - total_after)
+    return (
+        {
+            "totalBytesBefore": total_before,
+            "totalBytesAfter": total_after,
+            "removedFiles": 0,
+            "removedEntries": len(evicted_keys),
+            "freedBytes": freed_bytes,
+            "maxBytes": max_disk_bytes,
+            "highWaterBytes": high_water_bytes,
+            "overBudget": True,
+        },
+        evicted_keys,
+    )
+
+
+def _sessions_cleanup_planned_keys(
+    sessions: list[object],
+    *,
+    missing_keys: list[str],
+    services: object,
+    active_key: str | None = None,
+) -> dict[str, object]:
+    row_by_key: dict[str, dict[str, object]] = {}
+    ordered_keys: list[str] = []
+    for item in sessions:
+        if not isinstance(item, dict):
+            continue
+        key = _sessions_cli_session_key(item)
+        if not key or key in row_by_key:
+            continue
+        row_by_key[key] = item
+        ordered_keys.append(key)
+
+    missing_set = {key for key in missing_keys if key in row_by_key}
+    maintenance = _sessions_cleanup_maintenance_config(services)
+    prune_after_ms = maintenance["pruneAfterMs"]
+    resolved_prune_after_ms = (
+        prune_after_ms
+        if isinstance(prune_after_ms, int)
+        else _SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS
+    )
+    raw_max_entries = maintenance["maxEntries"]
+    max_entries = (
+        raw_max_entries
+        if isinstance(raw_max_entries, int)
+        else _SESSION_CLEANUP_DEFAULT_MAX_ENTRIES
+    )
+    cutoff_ms = int(time.time() * 1000) - (
+        resolved_prune_after_ms
+    )
+    stale_keys: list[str] = []
+    for key in ordered_keys:
+        if key in missing_set:
+            continue
+        updated_at = _sessions_cleanup_updated_at_ms(row_by_key[key])
+        if updated_at is not None and updated_at < cutoff_ms:
+            stale_keys.append(key)
+
+    removed_before_cap = missing_set | set(stale_keys)
+    remaining_keys = [key for key in ordered_keys if key not in removed_before_cap]
+    capped_keys: list[str] = []
+    if len(remaining_keys) > max_entries:
+        sorted_remaining = sorted(
+            remaining_keys,
+            key=lambda key: _sessions_cleanup_sort_updated_at_ms(row_by_key[key]),
+            reverse=True,
+        )
+        capped_keys = sorted_remaining[max_entries:]
+    remaining_after_cap = [key for key in remaining_keys if key not in set(capped_keys)]
+    disk_budget, disk_keys = _sessions_cleanup_disk_budget_plan(
+        row_by_key=row_by_key,
+        remaining_keys=remaining_after_cap,
+        active_key=active_key,
+        max_disk_bytes=(
+            maintenance["maxDiskBytes"] if isinstance(maintenance["maxDiskBytes"], int) else None
+        ),
+        high_water_bytes=(
+            maintenance["highWaterBytes"]
+            if isinstance(maintenance["highWaterBytes"], int)
+            else None
+        ),
+    )
+
+    return {
+        "missing": list(missing_set),
+        "stale": stale_keys,
+        "capped": capped_keys,
+        "disk": disk_keys,
+        "diskBudget": disk_budget,
+    }
+
+
 def _sessions_cleanup_summary(
     payload: dict[str, object],
     *,
+    services: object,
     agent_id: str | None,
     mode: str,
     dry_run: bool,
     missing_keys: list[str] | None = None,
+    active_key: str | None = None,
 ) -> dict[str, object]:
     raw_sessions = payload.get("sessions")
     sessions = raw_sessions if isinstance(raw_sessions, list) else []
     count = payload.get("count")
     if not isinstance(count, int) or isinstance(count, bool):
         count = len(sessions)
-    missing_count = len(missing_keys or [])
-    after_count = max(0, count - missing_count)
+    plan = _sessions_cleanup_planned_keys(
+        sessions,
+        missing_keys=missing_keys or [],
+        services=services,
+        active_key=active_key,
+    )
+    missing_count = len(cast(list[str], plan["missing"]))
+    pruned_count = len(cast(list[str], plan["stale"])) if dry_run or mode == "enforce" else 0
+    capped_count = len(cast(list[str], plan["capped"])) if dry_run or mode == "enforce" else 0
+    disk_count = len(cast(list[str], plan["disk"])) if dry_run or mode == "enforce" else 0
+    disk_budget = plan["diskBudget"] if dry_run or mode == "enforce" else None
+    after_count = max(0, count - missing_count - pruned_count - capped_count - disk_count)
     summary: dict[str, object] = {
         "agentId": agent_id or "default",
         "storePath": "native-gateway-session-store",
@@ -2396,15 +2706,58 @@ def _sessions_cleanup_summary(
         "beforeCount": count,
         "afterCount": after_count,
         "missing": missing_count,
-        "pruned": 0,
-        "capped": 0,
-        "diskBudget": None,
-        "wouldMutate": missing_count > 0,
+        "pruned": pruned_count,
+        "capped": capped_count,
+        "diskBudget": disk_budget,
+        "wouldMutate": (
+            missing_count > 0 or pruned_count > 0 or capped_count > 0 or disk_count > 0
+        ),
     }
     if not dry_run:
         summary["applied"] = True
         summary["appliedCount"] = after_count
     return summary
+
+
+def _sessions_cleanup_agent_id_for_row(row: object) -> str:
+    if not isinstance(row, dict):
+        return "unknown"
+    key = _sessions_cli_session_key(row)
+    agent_id = _agent_id_from_session_key(key)
+    if agent_id is not None:
+        return agent_id
+    if key == "global":
+        return "global"
+    return "unknown"
+
+
+def _sessions_cleanup_grouped_summaries(
+    payload: dict[str, object],
+    *,
+    services: object,
+    mode: str,
+    dry_run: bool,
+    missing_keys: list[str],
+    active_key: str | None,
+) -> list[dict[str, object]]:
+    raw_sessions = payload.get("sessions")
+    sessions = raw_sessions if isinstance(raw_sessions, list) else []
+    grouped: dict[str, list[object]] = {}
+    for row in sessions:
+        agent_id = _sessions_cleanup_agent_id_for_row(row)
+        grouped.setdefault(agent_id, []).append(row)
+    return [
+        _sessions_cleanup_summary(
+            {"count": len(rows), "sessions": rows},
+            services=services,
+            agent_id=agent_id,
+            mode=mode,
+            dry_run=dry_run,
+            missing_keys=missing_keys,
+            active_key=active_key,
+        )
+        for agent_id, rows in grouped.items()
+    ]
 
 
 async def _sessions_cleanup_missing_metadata_keys(
@@ -5780,6 +6133,271 @@ async def _clear_models_auth_order_payload(
     return dict(gateway_config.clear_model_auth_order(provider=provider, agent=agent))
 
 
+def _parse_model_scan_number(
+    value: str | None,
+    *,
+    option: str,
+    minimum: float,
+    allow_zero: bool,
+) -> int | float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        comparator = ">=" if allow_zero else ">"
+        raise ValueError(f"{option} must be {comparator} {minimum:g}") from exc
+    valid = parsed >= minimum if allow_zero else parsed > minimum
+    if not valid:
+        comparator = ">=" if allow_zero else ">"
+        raise ValueError(f"{option} must be {comparator} {minimum:g}")
+    return int(parsed) if parsed.is_integer() else parsed
+
+
+def _parse_model_scan_int(
+    value: str | None,
+    *,
+    option: str,
+    default: int | None = None,
+) -> int | None:
+    parsed = _parse_model_scan_number(
+        value,
+        option=option,
+        minimum=0,
+        allow_zero=False,
+    )
+    if parsed is None:
+        return default
+    if not isinstance(parsed, int):
+        raise ValueError(f"{option} must be > 0")
+    return parsed
+
+
+def _model_scan_result_ref(entry: dict[str, object]) -> str | None:
+    for key in ("modelRef", "model_ref", "ref"):
+        value = _optional_cli_string(entry.get(key))
+        if value is not None:
+            return value
+    model_id = _optional_cli_string(entry.get("id"))
+    if model_id is None:
+        return None
+    return model_id if model_id.startswith("openrouter/") else f"openrouter/{model_id}"
+
+
+def _model_scan_probe_ok(entry: dict[str, object], key: str) -> bool:
+    probe = entry.get(key)
+    return isinstance(probe, dict) and probe.get("ok") is True
+
+
+def _model_scan_latency(entry: dict[str, object], key: str) -> float:
+    probe = entry.get(key)
+    if not isinstance(probe, dict):
+        return float("inf")
+    value = probe.get("latencyMs")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return float("inf")
+    return float(value)
+
+
+def _model_scan_numeric(entry: dict[str, object], key: str) -> float:
+    value = entry.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def _sort_model_scan_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        results,
+        key=lambda entry: (
+            0 if _model_scan_probe_ok(entry, "image") else 1,
+            _model_scan_latency(entry, "tool"),
+            -_model_scan_numeric(entry, "contextLength"),
+            -_model_scan_numeric(entry, "inferredParamB"),
+            _model_scan_result_ref(entry) or "",
+        ),
+    )
+
+
+def _sort_model_scan_image_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        results,
+        key=lambda entry: (
+            _model_scan_latency(entry, "image"),
+            -_model_scan_numeric(entry, "contextLength"),
+            -_model_scan_numeric(entry, "inferredParamB"),
+            _model_scan_result_ref(entry) or "",
+        ),
+    )
+
+
+async def _call_model_scan_runtime(
+    services: CliServices,
+    *,
+    min_params: int | float | None,
+    max_age_days: int | float | None,
+    provider: str | None,
+    timeout_ms: int | None,
+    concurrency: int | None,
+    probe: bool,
+) -> list[dict[str, object]]:
+    runtime = getattr(services, "model_scan", None) or GatewayModelScanService()
+    scan = getattr(runtime, "scan", None)
+    if not callable(scan):
+        raise ValueError("model scan runtime is unavailable.")
+    result = scan(
+        min_params=min_params,
+        max_age_days=max_age_days,
+        provider=provider,
+        timeout_ms=timeout_ms,
+        concurrency=concurrency,
+        probe=probe,
+    )
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, list):
+        raise ValueError("model scan runtime returned an invalid result.")
+    return [dict(item) for item in result if isinstance(item, dict)]
+
+
+async def _build_models_scan_payload(
+    services: CliServices,
+    *,
+    min_params: str | None,
+    max_age_days: str | None,
+    provider: str | None,
+    max_candidates: str,
+    timeout: str | None,
+    concurrency: str | None,
+    probe: bool,
+    yes: bool,
+    no_input: bool,
+    set_default: bool,
+    set_image: bool,
+    json_output: bool,
+) -> dict[str, object]:
+    min_param_value = _parse_model_scan_number(
+        min_params,
+        option="--min-params",
+        minimum=0,
+        allow_zero=True,
+    )
+    max_age_value = _parse_model_scan_number(
+        max_age_days,
+        option="--max-age-days",
+        minimum=0,
+        allow_zero=True,
+    )
+    max_candidate_value = _parse_model_scan_int(
+        max_candidates,
+        option="--max-candidates",
+        default=6,
+    ) or 6
+    timeout_ms = _parse_model_scan_int(timeout, option="--timeout")
+    concurrency_value = _parse_model_scan_int(concurrency, option="--concurrency")
+    results = await _call_model_scan_runtime(
+        services,
+        min_params=min_param_value,
+        max_age_days=max_age_value,
+        provider=provider,
+        timeout_ms=timeout_ms,
+        concurrency=concurrency_value,
+        probe=probe,
+    )
+    if not probe:
+        return {
+            "probe": False,
+            "results": results,
+            "jsonPayload": results,
+            "metadataOnly": True,
+        }
+    tool_ok = [entry for entry in results if _model_scan_probe_ok(entry, "tool")]
+    if not tool_ok:
+        raise ValueError("No tool-capable OpenRouter free models found.")
+    tool_sorted = _sort_model_scan_results(tool_ok)
+    image_sorted = _sort_model_scan_image_results(
+        [entry for entry in results if _model_scan_probe_ok(entry, "image")]
+    )
+    image_preferred = [entry for entry in tool_sorted if _model_scan_probe_ok(entry, "image")]
+    preselect_pool = image_preferred or tool_sorted
+    selected = [
+        ref
+        for entry in preselect_pool[:max_candidate_value]
+        for ref in (_model_scan_result_ref(entry),)
+        if ref is not None
+    ]
+    selected_images = [
+        ref
+        for entry in image_sorted[:max_candidate_value]
+        for ref in (_model_scan_result_ref(entry),)
+        if ref is not None
+    ]
+    if not sys.stdin.isatty() and not yes and not no_input and not json_output:
+        raise ValueError("Non-interactive scan: pass --yes to apply defaults.")
+    if not selected:
+        raise ValueError("No models selected for fallbacks.")
+    if set_image and not selected_images:
+        raise ValueError("No image-capable models selected for image model.")
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model scan config runtime is unavailable.")
+    applied = gateway_config.apply_model_scan_selection(
+        selected=selected,
+        selected_images=selected_images,
+        set_default=set_default,
+        set_image=set_image,
+    )
+    selected = [
+        item
+        for item in applied.get("selected", selected)
+        if isinstance(item, str) and item.strip()
+    ]
+    selected_images = [
+        item
+        for item in applied.get("selectedImages", selected_images)
+        if isinstance(item, str) and item.strip()
+    ]
+    return {
+        "probe": True,
+        "results": results,
+        "selected": selected,
+        "selectedImages": selected_images,
+        "setDefault": set_default,
+        "setImage": set_image,
+        "warnings": [],
+    }
+
+
+def _emit_models_scan(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload.get("jsonPayload", payload), indent=2))
+        return
+    results = payload.get("results")
+    result_count = len(results) if isinstance(results, list) else 0
+    if payload.get("probe") is False:
+        typer.echo(
+            f"Found {result_count} OpenRouter free models "
+            "(metadata only; pass --probe to test tools/images)."
+        )
+        return
+    raw_selected = payload.get("selected")
+    selected = [item for item in raw_selected if isinstance(item, str)] if isinstance(
+        raw_selected,
+        list,
+    ) else []
+    raw_selected_images = payload.get("selectedImages")
+    selected_images = [
+        item for item in raw_selected_images if isinstance(item, str)
+    ] if isinstance(raw_selected_images, list) else []
+    typer.echo(f"Fallbacks: {', '.join(selected)}")
+    if selected_images:
+        typer.echo(f"Image fallbacks: {', '.join(selected_images)}")
+    if payload.get("setDefault") and selected:
+        typer.echo(f"Default model: {selected[0]}")
+    if payload.get("setImage") and selected_images:
+        typer.echo(f"Image model: {selected_images[0]}")
+
+
 async def _set_default_model_payload(
     services: CliServices,
     *,
@@ -5920,6 +6538,96 @@ async def _build_models_list_payload(
     return {"models": models}
 
 
+def _auth_payload_from_gateway_status(
+    payload: dict[str, object],
+    *,
+    providers_in_use: list[str],
+    probe: bool,
+) -> dict[str, object]:
+    raw_providers = payload.get("providers")
+    providers = [
+        dict(provider)
+        for provider in (raw_providers if isinstance(raw_providers, list) else [])
+        if isinstance(provider, dict)
+    ]
+    provider_ids = {
+        provider_id
+        for provider in providers
+        for provider_id in (_optional_cli_string(provider.get("provider")),)
+        if provider_id is not None
+    }
+    missing = [
+        provider
+        for provider in providers_in_use
+        if provider not in provider_ids
+        or any(
+            _optional_cli_string(entry.get("provider")) == provider
+            and (_optional_cli_string(entry.get("status")) or "missing")
+            in {"missing", "expired"}
+            for entry in providers
+        )
+    ]
+    oauth_profiles: list[dict[str, object]] = []
+    oauth_provider_rows: list[dict[str, object]] = []
+    providers_with_oauth: list[str] = []
+    for provider in providers:
+        provider_id = _optional_cli_string(provider.get("provider"))
+        if provider_id is None:
+            continue
+        raw_profiles = provider.get("profiles")
+        profiles = [
+            dict(profile)
+            for profile in (raw_profiles if isinstance(raw_profiles, list) else [])
+            if isinstance(profile, dict)
+        ]
+        oauth_like = [
+            profile
+            for profile in profiles
+            if _optional_cli_string(profile.get("type")) in {"oauth", "token"}
+        ]
+        if oauth_like:
+            providers_with_oauth.append(f"{provider_id} ({len(oauth_like)})")
+            oauth_provider_rows.append({"provider": provider_id, "profiles": len(oauth_like)})
+        for profile in oauth_like:
+            row = dict(profile)
+            row.setdefault("provider", provider_id)
+            oauth_profiles.append(row)
+    provider_statuses = {
+        (_optional_cli_string(provider.get("status")) or "missing")
+        for provider in providers
+    }
+    if missing or provider_statuses & {"missing", "expired"}:
+        status = "error"
+    elif provider_statuses & {"expiring"}:
+        status = "expiring"
+    elif providers:
+        status = "ok"
+    else:
+        status = "unavailable"
+    probes: dict[str, object] | None
+    if probe:
+        probes = {
+            provider_id: {"status": _optional_cli_string(provider.get("status")) or "missing"}
+            for provider in providers
+            for provider_id in (_optional_cli_string(provider.get("provider")),)
+            if provider_id is not None
+        }
+    else:
+        probes = None
+    return {
+        "status": status,
+        "providersWithOAuth": providers_with_oauth,
+        "missingProvidersInUse": missing,
+        "providers": providers,
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": oauth_profiles,
+            "providers": oauth_provider_rows,
+        },
+        "probes": probes,
+    }
+
+
 async def _build_models_status_payload(
     services: CliServices,
     *,
@@ -5983,6 +6691,23 @@ async def _build_models_status_payload(
                 auth_payload.update(dict(runtime_auth))
             else:
                 auth_payload.update(dict(runtime_status))
+    elif auth_runtime is None and probe:
+        try:
+            runtime_status = await _call_gateway_node_method(
+                services,
+                "models.authStatus",
+                {"refresh": probe},
+            )
+        except RuntimeError:
+            runtime_status = {}
+        if runtime_status:
+            auth_payload.update(
+                _auth_payload_from_gateway_status(
+                    runtime_status,
+                    providers_in_use=providers_in_use,
+                    probe=probe,
+                )
+            )
     return {
         "ok": True,
         "defaultModel": default_label,
@@ -9181,6 +9906,95 @@ def models_set_image_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Image model: {payload.get('target')}")
+
+
+@models_app.command("scan")
+def models_scan_command(
+    min_params: str | None = typer.Option(
+        None,
+        "--min-params",
+        help="Minimum parameter size in billions.",
+    ),
+    max_age_days: str | None = typer.Option(
+        None,
+        "--max-age-days",
+        help="Skip models older than N days.",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Filter by OpenRouter provider prefix.",
+    ),
+    max_candidates: str = typer.Option(
+        "6",
+        "--max-candidates",
+        help="Maximum fallback candidates.",
+    ),
+    timeout: str | None = typer.Option(
+        None,
+        "--timeout",
+        help="Per-probe timeout in milliseconds.",
+    ),
+    concurrency: str | None = typer.Option(
+        None,
+        "--concurrency",
+        help="Probe concurrency.",
+    ),
+    probe: bool = typer.Option(
+        True,
+        "--probe/--no-probe",
+        help="Run live probes or only list metadata candidates.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Accept defaults without prompting.",
+    ),
+    no_input: bool = typer.Option(
+        False,
+        "--no-input",
+        help="Disable prompts and use defaults.",
+    ),
+    set_default: bool = typer.Option(
+        False,
+        "--set-default",
+        help="Set agents.defaults.model to the first selection.",
+    ),
+    set_image: bool = typer.Option(
+        False,
+        "--set-image",
+        help="Set agents.defaults.imageModel to the first image selection.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit scan results as JSON.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_scan_payload(
+                    services,
+                    min_params=min_params,
+                    max_age_days=max_age_days,
+                    provider=provider,
+                    max_candidates=max_candidates,
+                    timeout=timeout,
+                    concurrency=concurrency,
+                    probe=probe,
+                    yes=yes,
+                    no_input=no_input,
+                    set_default=set_default,
+                    set_image=set_image,
+                    json_output=json_output,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_models_scan(payload, json_output=json_output)
 
 
 @models_auth_app.command("login")
@@ -12970,13 +13784,48 @@ def sessions_cleanup_command(
         )
         if fix_missing and not dry_run:
             await _sessions_cleanup_delete_metadata_keys(services, missing_keys)
-        return _sessions_cleanup_summary(
-            inventory,
-            agent_id=normalized_agent,
-            mode=mode,
-            dry_run=dry_run,
-            missing_keys=missing_keys,
-        )
+        if include_all_agents and json_output:
+            summary: dict[str, object] = {
+                "allAgents": True,
+                "mode": mode,
+                "dryRun": dry_run,
+                "stores": _sessions_cleanup_grouped_summaries(
+                    inventory,
+                    services=services,
+                    mode=mode,
+                    dry_run=dry_run,
+                    missing_keys=missing_keys,
+                    active_key=active_key,
+                ),
+            }
+        else:
+            summary = _sessions_cleanup_summary(
+                inventory,
+                services=services,
+                agent_id=normalized_agent,
+                mode=mode,
+                dry_run=dry_run,
+                missing_keys=missing_keys,
+                active_key=active_key,
+            )
+        if not dry_run and mode == "enforce":
+            raw_sessions = inventory.get("sessions")
+            sessions = raw_sessions if isinstance(raw_sessions, list) else []
+            cleanup_plan = _sessions_cleanup_planned_keys(
+                sessions,
+                missing_keys=missing_keys,
+                services=services,
+                active_key=active_key,
+            )
+            await _sessions_cleanup_delete_metadata_keys(
+                services,
+                [
+                    *cast(list[str], cleanup_plan["stale"]),
+                    *cast(list[str], cleanup_plan["capped"]),
+                    *cast(list[str], cleanup_plan["disk"]),
+                ],
+            )
+        return summary
 
     result = _run(_run_with_services(_action))
     _emit_sessions_cleanup(result, json_output=json_output)
