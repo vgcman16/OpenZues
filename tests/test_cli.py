@@ -6210,6 +6210,30 @@ def test_models_auth_paste_token_calls_model_auth_runtime(monkeypatch) -> None:
     ]
 
 
+def test_models_auth_add_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeModelAuth:
+        async def add(self) -> dict[str, object]:
+            calls.append("add")
+            return {
+                "provider": "custom",
+                "status": "interactive",
+                "message": "Interactive auth helper started.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "auth", "add"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Interactive auth helper started." in result.stdout
+    assert calls == ["add"]
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

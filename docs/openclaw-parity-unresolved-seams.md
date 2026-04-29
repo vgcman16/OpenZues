@@ -249,7 +249,11 @@ setup-token` now forwards `--provider` and `--yes` through the native fakeable
 model-auth runtime while preserving the same unavailable boundary when no
 setup-token owner is wired. `models auth paste-token` now forwards `--provider`,
 `--profile-id`, and `--expires-in` through the same runtime boundary. The
-remaining provider-auth CLI head is `models auth add`.
+remaining provider-auth CLI head is `models auth add`. `models auth add` now
+forwards to the native fakeable model-auth runtime's interactive add helper, so
+no smaller provider-auth CLI command remains. The next model CLI queue head is
+root model mutation (`models set` / `models set-image`), then non-interactive
+`models scan` posture.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`

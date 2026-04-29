@@ -3493,6 +3493,19 @@ async def _build_models_auth_paste_token_payload(
     return payload
 
 
+async def _build_models_auth_add_payload(services: CliServices) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    add = getattr(runtime, "add", None)
+    if not callable(add):
+        add = getattr(runtime, "add_auth", None)
+    if not callable(add):
+        add = getattr(runtime, "addAuth", None)
+    if not callable(add):
+        raise ValueError("model auth add is unavailable until model auth runtime is wired.")
+    result = await add()
+    return dict(result) if isinstance(result, dict) else {}
+
+
 async def _build_capability_model_auth_logout_payload(
     services: CliServices,
     *,
@@ -9143,6 +9156,16 @@ def models_auth_login_command(
                 )
             )
         )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("add")
+def models_auth_add_command() -> None:
+    try:
+        payload = _run(_run_with_services(_build_models_auth_add_payload))
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
