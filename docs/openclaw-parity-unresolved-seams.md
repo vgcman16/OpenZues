@@ -1067,9 +1067,11 @@ rule, and the mutation commands preserve the upstream id/patch method shapes.
 `cron add --name --cron --message` now also covers the first upstream create
 path with inferred isolated agent turns, `wakeMode="now"`, enabled state, and
 default announce delivery through channel `last`. Remaining cron CLI parity is
-the rest of the larger `cron add` option surface (at/every schedule breadth,
-session and payload variants, model/thinking/tools, delivery flags, and create
-alias), then `cron edit`.
+the rest of the larger `cron add` option surface. Main-session system-event
+jobs now cover `--every`, `--description`, `--session-key`, `--wake
+next-heartbeat`, and `--disabled`; remaining add gaps are at/date schedule
+normalization, create alias, delete-after-run/keep-after-run guards, model and
+delivery flags, and then `cron edit`.
 
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 

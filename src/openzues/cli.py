@@ -9685,6 +9685,7 @@ def cron_disable_command(
 @cron_app.command("add")
 def cron_add_command(
     name: str = typer.Option(..., "--name", help="Cron job name."),
+    description: str | None = typer.Option(None, "--description", help="Optional description."),
     cron_expr: str | None = typer.Option(None, "--cron", help="Cron expression."),
     every: str | None = typer.Option(None, "--every", help="Run every duration, such as 10m."),
     at: str | None = typer.Option(None, "--at", help="Run once at an ISO time."),
@@ -9695,12 +9696,17 @@ def cron_add_command(
         help="Main-session system event payload.",
     ),
     session: str | None = typer.Option(None, "--session", help="Session target."),
+    session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
+    wake: str = typer.Option("now", "--wake", help="Wake mode: now or next-heartbeat."),
     channel: str = typer.Option("last", "--channel", help="Announce delivery channel."),
     disabled: bool = typer.Option(False, "--disabled", help="Create the job disabled."),
     json_output: bool = typer.Option(False, "--json", help="Emit created cron job as JSON."),
 ) -> None:
     schedule = _cron_cli_schedule(cron_expr=cron_expr, every=every, at=at)
     payload = _cron_cli_payload(message=message, system_event=system_event)
+    wake_mode = _optional_cli_string(wake) or "now"
+    if wake_mode not in {"now", "next-heartbeat"}:
+        raise typer.BadParameter("--wake must be now or next-heartbeat")
     session_target = _optional_cli_string(session)
     if session_target is None:
         session_target = "isolated" if payload.get("kind") == "agentTurn" else "main"
@@ -9709,9 +9715,15 @@ def cron_add_command(
         "enabled": not disabled,
         "schedule": schedule,
         "sessionTarget": session_target,
-        "wakeMode": "now",
+        "wakeMode": wake_mode,
         "payload": payload,
     }
+    normalized_description = _optional_cli_string(description)
+    if normalized_description is not None:
+        params["description"] = normalized_description
+    normalized_session_key = _optional_cli_string(session_key)
+    if normalized_session_key is not None:
+        params["sessionKey"] = normalized_session_key
     if payload.get("kind") == "agentTurn" and session_target != "main":
         params["delivery"] = {
             "mode": "announce",

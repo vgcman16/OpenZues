@@ -1301,6 +1301,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`13 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `cron add` now also covers upstream-supported main-session system-event
+  creation with `--every`, `--description`, `--session-key`, `--wake
+  next-heartbeat`, and `--disabled`, forwarding only the supported native
+  `cron.add` fields.
+- Verified the cron add system-event/options slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_main_system_event_every_options_call_gateway_method_owner"` (`1
+  passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`14 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Next cron CLI parity should continue with the remaining upstream `cron add`
   option breadth, then `cron edit`.
 

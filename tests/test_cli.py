@@ -2664,6 +2664,67 @@ def test_cron_add_isolated_cron_message_json_calls_gateway_method_owner(monkeypa
     ]
 
 
+def test_cron_add_main_system_event_every_options_call_gateway_method_owner(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:8", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Hourly heartbeat",
+            "--description",
+            "Keep the main session warm.",
+            "--every",
+            "1h",
+            "--system-event",
+            "Heartbeat from cron.",
+            "--session-key",
+            "agent:main:main",
+            "--wake",
+            "next-heartbeat",
+            "--disabled",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:8"
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Hourly heartbeat",
+                "description": "Keep the main session warm.",
+                "enabled": False,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionKey": "agent:main:main",
+                "sessionTarget": "main",
+                "wakeMode": "next-heartbeat",
+                "payload": {"kind": "systemEvent", "text": "Heartbeat from cron."},
+            },
+        )
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
