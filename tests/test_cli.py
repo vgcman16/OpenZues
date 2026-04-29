@@ -2782,6 +2782,119 @@ def test_cron_create_alias_trims_model_for_agent_turn_payload(monkeypatch) -> No
     ]
 
 
+def test_cron_add_announce_delivery_options_call_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:10", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Announced report",
+            "--cron",
+            "0 9 * * *",
+            "--message",
+            "Send the report.",
+            "--announce",
+            "--channel",
+            "telegram",
+            "--to",
+            "chat-ops",
+            "--account",
+            "ops",
+            "--best-effort-deliver",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Announced report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "0 9 * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {"kind": "agentTurn", "message": "Send the report."},
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "chat-ops",
+                    "accountId": "ops",
+                    "bestEffort": True,
+                },
+            },
+        )
+    ]
+
+
+def test_cron_add_no_deliver_sets_delivery_none(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:11", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Quiet report",
+            "--cron",
+            "30 9 * * *",
+            "--message",
+            "Keep it quiet.",
+            "--no-deliver",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Quiet report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "30 9 * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {"kind": "agentTurn", "message": "Keep it quiet."},
+                "delivery": {"mode": "none", "channel": "last"},
+            },
+        )
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -9705,10 +9705,21 @@ def cron_add_command(
     session: str | None = typer.Option(None, "--session", help="Session target."),
     session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
     wake: str = typer.Option("now", "--wake", help="Wake mode: now or next-heartbeat."),
+    announce: bool = typer.Option(False, "--announce", help="Announce summary delivery."),
+    no_deliver: bool = typer.Option(False, "--no-deliver", help="Disable announce delivery."),
     channel: str = typer.Option("last", "--channel", help="Announce delivery channel."),
+    to: str | None = typer.Option(None, "--to", help="Delivery destination."),
+    account: str | None = typer.Option(None, "--account", help="Delivery account id."),
+    best_effort_deliver: bool = typer.Option(
+        False,
+        "--best-effort-deliver",
+        help="Do not fail the job if delivery fails.",
+    ),
     disabled: bool = typer.Option(False, "--disabled", help="Create the job disabled."),
     json_output: bool = typer.Option(False, "--json", help="Emit created cron job as JSON."),
 ) -> None:
+    if announce and no_deliver:
+        raise typer.BadParameter("Choose at most one of --announce or --no-deliver")
     schedule = _cron_cli_schedule(cron_expr=cron_expr, every=every, at=at)
     payload = _cron_cli_payload(message=message, system_event=system_event, model=model)
     wake_mode = _optional_cli_string(wake) or "now"
@@ -9732,10 +9743,19 @@ def cron_add_command(
     if normalized_session_key is not None:
         params["sessionKey"] = normalized_session_key
     if payload.get("kind") == "agentTurn" and session_target != "main":
-        params["delivery"] = {
-            "mode": "announce",
+        delivery: dict[str, object] = {
+            "mode": "none" if no_deliver else "announce",
             "channel": channel,
         }
+        normalized_to = _optional_cli_string(to)
+        if normalized_to is not None:
+            delivery["to"] = normalized_to
+        normalized_account = _optional_cli_string(account)
+        if normalized_account is not None:
+            delivery["accountId"] = normalized_account
+        if best_effort_deliver:
+            delivery["bestEffort"] = True
+        params["delivery"] = delivery
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await _call_gateway_node_method(services, "cron.add", params)

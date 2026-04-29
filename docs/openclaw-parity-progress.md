@@ -1323,6 +1323,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`15 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `cron add` now preserves upstream delivery flag shaping for native-supported
+  fields: `--announce`, `--no-deliver`, `--channel`, `--to`, `--account`, and
+  `--best-effort-deliver` map into `delivery.mode`, `channel`, `to`,
+  `accountId`, and `bestEffort`.
+- Verified the cron add delivery flag slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_announce_delivery_options_call_gateway_method_owner or
+  cron_add_no_deliver_sets_delivery_none"` (`2 passed`), adjacent CLI pack
+  `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`17 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Next cron CLI parity should continue with the remaining upstream `cron add`
   option breadth, then `cron edit`.
 
