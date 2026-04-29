@@ -223,7 +223,10 @@ Sandbox doctor preflight for `agents.defaults.sandbox.mode`: when mode is
 `non-main` or `all`, the effective backend defaults to Docker, and `docker
 version` is unavailable, the Hermes doctor payload carries the same actionable
 Sandbox warning text while preserving the existing warning surface. The
-top-level `acp` and `acp client` command surfaces now accept the
+top-level human/JSON doctor view now also reports OpenClaw-style session lock
+health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
+liveness, age, stale posture, and read-only guidance without removing files.
+The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
 ACP CLI parity is the real bridge server/client runtime. The unavailable

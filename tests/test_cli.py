@@ -13291,6 +13291,36 @@ def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> N
     ]
 
 
+def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    sessions_dir = data_dir / "agents" / "main" / "sessions"
+    sessions_dir.mkdir(parents=True)
+    lock_path = sessions_dir / "active.jsonl.lock"
+    lock_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "createdAt": datetime.now(UTC).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    _bootstrap_cli_workspace(
+        tmp_path,
+        monkeypatch,
+        task_name="CLI Doctor Session Locks",
+    )
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Session locks" in result.stdout
+    assert "Found 1 session lock file" in result.stdout
+    assert f"pid={os.getpid()} (alive)" in result.stdout
+    assert "stale=no" in result.stdout
+    assert lock_path.exists()
+
+
 def test_hermes_profile_set_updates_saved_defaults(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     hermes_root = tmp_path / "hermes-agent-main"

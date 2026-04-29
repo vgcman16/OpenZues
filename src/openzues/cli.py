@@ -1824,6 +1824,15 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         section = payload.get(key)
         if isinstance(section, dict):
             typer.echo(f"{key}: " + str(section.get("summary") or ""))
+    session_locks = payload.get("session_locks")
+    if isinstance(session_locks, dict):
+        lines = session_locks.get("lines")
+        if isinstance(lines, list) and lines:
+            typer.echo("Session locks")
+            for line in lines:
+                typer.echo(str(line))
+        else:
+            typer.echo("Session locks: " + str(session_locks.get("summary") or ""))
     updates = payload.get("updates")
     if isinstance(updates, dict):
         typer.echo("updates: " + str(updates.get("summary") or ""))
@@ -1897,6 +1906,156 @@ def _with_doctor_sandbox_warnings(
     if warning not in {str(item) for item in warnings}:
         warnings.append(warning)
     next_payload["warnings"] = warnings
+    return next_payload
+
+
+_SESSION_LOCK_STALE_SECONDS = 30 * 60
+
+
+def _doctor_session_lock_payload(data_dir: Path) -> dict[str, object] | None:
+    lock_paths = sorted((data_dir / "agents").glob("*/sessions/*.jsonl.lock"))
+    if not lock_paths:
+        return None
+    locks = [_doctor_session_lock_record(lock_path) for lock_path in lock_paths]
+    stale_count = sum(1 for lock in locks if lock.get("stale") is True)
+    lines = [
+        f"- Found {len(locks)} session lock file{'s' if len(locks) != 1 else ''}.",
+        *[_doctor_session_lock_line(lock) for lock in locks],
+    ]
+    if stale_count:
+        lines.append(f"- {stale_count} lock file{'s are' if stale_count != 1 else ' is'} stale.")
+        lines.append("- Remove stale lock files only after confirming no writer owns them.")
+    return {
+        "summary": lines[0][2:],
+        "count": len(locks),
+        "staleCount": stale_count,
+        "locks": locks,
+        "lines": lines,
+    }
+
+
+def _doctor_session_lock_record(lock_path: Path) -> dict[str, object]:
+    raw_payload: object = {}
+    try:
+        raw_payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw_payload = {}
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    pid = _doctor_session_lock_pid(payload.get("pid"))
+    age_seconds = _doctor_session_lock_age_seconds(payload.get("createdAt"))
+    pid_alive = _doctor_session_lock_pid_alive(pid)
+    stale_reasons: list[str] = []
+    if pid is None:
+        stale_reasons.append("missing pid")
+    elif not pid_alive:
+        stale_reasons.append("dead pid")
+    if age_seconds is None:
+        stale_reasons.append("unknown age")
+    elif age_seconds >= _SESSION_LOCK_STALE_SECONDS:
+        stale_reasons.append("old")
+    return {
+        "path": str(lock_path),
+        "pid": pid,
+        "pidAlive": pid_alive,
+        "ageSeconds": age_seconds,
+        "stale": bool(stale_reasons),
+        "staleReasons": stale_reasons,
+        "removed": False,
+    }
+
+
+def _doctor_session_lock_line(lock: dict[str, object]) -> str:
+    path = str(lock.get("path") or "")
+    pid = lock.get("pid")
+    if isinstance(pid, int):
+        pid_status = f"pid={pid} ({'alive' if lock.get('pidAlive') is True else 'dead'})"
+    else:
+        pid_status = "pid=missing"
+    age_status = f"age={_doctor_session_lock_age_label(lock.get('ageSeconds'))}"
+    raw_stale_reasons = lock.get("staleReasons")
+    stale_reasons = raw_stale_reasons if isinstance(raw_stale_reasons, list) else ["unknown"]
+    stale_status = (
+        "stale=yes (" + ", ".join(str(reason) for reason in stale_reasons or ["unknown"]) + ")"
+        if lock.get("stale") is True
+        else "stale=no"
+    )
+    return f"- {path} {pid_status} {age_status} {stale_status}"
+
+
+def _doctor_session_lock_pid(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if not isinstance(value, str):
+        return None
+    try:
+        pid = int(value)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _doctor_session_lock_pid_alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    if pid == os.getpid():
+        return True
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        output = (result.stdout or "").strip().lower()
+        return result.returncode == 0 and str(pid) in output and "no tasks" not in output
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _doctor_session_lock_age_seconds(value: object) -> int | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        created_at = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - created_at.astimezone(UTC)
+    return max(0, int(age.total_seconds()))
+
+
+def _doctor_session_lock_age_label(value: object) -> str:
+    if not isinstance(value, int):
+        return "unknown"
+    if value < 60:
+        return f"{value}s"
+    minutes, seconds = divmod(value, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds}s"
+    hours, remaining_minutes = divmod(minutes, 60)
+    return f"{hours}h{remaining_minutes}m"
+
+
+def _with_doctor_session_lock_health(
+    payload: dict[str, object],
+    data_dir: Path,
+) -> dict[str, object]:
+    session_locks = _doctor_session_lock_payload(data_dir)
+    if session_locks is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["session_locks"] = session_locks
     return next_payload
 
 
@@ -15520,10 +15679,14 @@ def doctor(
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_doctor_view()
-        return _with_doctor_sandbox_warnings(
+        payload = _with_doctor_sandbox_warnings(
             view.model_dump(mode="json"),
             services.gateway_config,
         )
+        data_dir = getattr(services.settings, "data_dir", None)
+        if isinstance(data_dir, Path):
+            payload = _with_doctor_session_lock_health(payload, data_dir)
+        return payload
 
     payload = _run(_run_with_services(_action))
     _emit_hermes_doctor(payload, json_output=json_output)
