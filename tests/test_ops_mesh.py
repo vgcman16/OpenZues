@@ -3715,11 +3715,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_native
                 "type": "image",
                 "image": {
                     "link": "https://example.com/whatsapp.png",
-                    "caption": (
-                        "Ship native WhatsApp parity.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/whatsapp.png"
-                    ),
+                    "caption": "Ship native WhatsApp parity.",
                 },
             },
             "Authorization",
@@ -3898,12 +3894,7 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
                 "type": "image",
                 "image": {
                     "link": "https://example.com/one.png",
-                    "caption": (
-                        "Ship both WhatsApp images.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/one.png\n"
-                        "2. https://example.com/two.png"
-                    ),
+                    "caption": "Ship both WhatsApp images.",
                 },
             },
             "Authorization",
@@ -4006,11 +3997,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_r
                 "type": "document",
                 "document": {
                     "link": "https://example.com/report.pdf",
-                    "caption": (
-                        "Ship doc reply.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/report.pdf"
-                    ),
+                    "caption": "Ship doc reply.",
                 },
             },
             "Authorization",
@@ -4104,12 +4091,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_gif_vi
                 "type": "video",
                 "video": {
                     "link": "https://example.com/loop.mp4",
-                    "caption": (
-                        "Ship loop.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/loop.mp4\n\n"
-                        "Settings: gifPlayback=true"
-                    ),
+                    "caption": "Ship loop.",
                 },
             },
             "Authorization",

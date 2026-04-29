@@ -437,6 +437,10 @@ WhatsApp native route sends now match OpenClaw's direct text/media outbound
 chunking contract for text-only long sends by splitting bodies into 4000
 character messages and returning the last provider message id instead of
 truncating the payload.
+WhatsApp native media sends now also preserve OpenClaw's leading-caption
+contract: provider-visible image/document/video captions contain only the
+original outbound text, while generated media URL/settings summaries remain
+delivery metadata instead of being appended to captions.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

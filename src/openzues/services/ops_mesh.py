@@ -7032,17 +7032,21 @@ class OpsMeshService:
                     if isinstance(raw_media_urls, list)
                     else None
                 )
+                normalized_media_urls = tuple(
+                    _normalize_direct_channel_media_urls(
+                        media_url=media_url,
+                        media_urls=media_urls,
+                    )
+                )
+                runtime_message = message
+                if resolved_target.channel.lower() == "whatsapp" and normalized_media_urls:
+                    runtime_message = str(payload.get("message") or "").strip()
                 runtime_result = await runtime.deliver_message(
                     session_key=announce_session_key,
-                    message=message,
+                    message=runtime_message,
                     channel=resolved_target.channel,
                     target=runtime_target,
-                    media_urls=tuple(
-                        _normalize_direct_channel_media_urls(
-                            media_url=media_url,
-                            media_urls=media_urls,
-                        )
-                    ),
+                    media_urls=normalized_media_urls,
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
