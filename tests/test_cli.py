@@ -35,6 +35,7 @@ from openzues.schemas import (
 )
 from openzues.services.control_chat import ControlChatPlan
 from openzues.services.device_bootstrap_profile import BOOTSTRAP_HANDOFF_OPERATOR_SCOPES
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_method_policy import list_known_gateway_methods
 from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
@@ -383,6 +384,3475 @@ def test_channels_status_json_includes_saved_notification_routes(tmp_path, monke
         }
     ]
     assert payload["channelDefaultAccountId"]["slack"] == "workspace-bot"
+
+
+def test_channels_status_json_accepts_probe_timeout_options(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channels Probe")
+
+    result = runner.invoke(
+        app,
+        ["channels", "status", "--probe", "--timeout", "2500", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probe"] is True
+    assert payload["timeoutMs"] == 2500
+    assert payload["probeStatus"]["status"] == "unavailable"
+    assert payload["probeStatus"]["reason"] == "native_provider_route_unavailable"
+
+
+def test_channels_status_json_uses_route_backed_slack_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Slack Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Slack Native Probe Route",
+            kind="slack",
+            target="https://slack.com/api",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "slack workspace-bot channel deploy-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="xoxb-probe-token",
+            vault_secret_id=None,
+        )
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "team": "OpenZues",
+            "team_id": "T123",
+            "user": "deploybot",
+            "user_id": "U123",
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        ["channels", "status", "--probe", "--timeout", "2500", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["slack"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "slack",
+        "runtime": "native-provider-backed",
+        "team": "OpenZues",
+        "teamId": "T123",
+        "user": "deploybot",
+        "userId": "U123",
+        "timeoutMs": 2500,
+    }
+    assert slack_posts == [
+        (
+            "https://slack.com/api/auth.test",
+            {},
+            "Authorization",
+            "Bearer xoxb-probe-token",
+        )
+    ]
+
+
+def test_channels_status_json_uses_route_backed_telegram_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Telegram Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Telegram Native Probe Route",
+            kind="telegram",
+            target="https://api.telegram.org",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "alerts",
+                "peer_kind": "channel",
+                "peer_id": "chat:ops",
+                "summary": "telegram alerts channel ops",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="bot123456:ABC",
+            vault_secret_id=None,
+        )
+    )
+    telegram_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        telegram_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "id": 123456,
+                "is_bot": True,
+                "first_name": "Deploy",
+                "username": "deploy_bot",
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["telegram"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "telegram",
+        "runtime": "native-provider-backed",
+        "botId": "123456",
+        "username": "deploy_bot",
+        "firstName": "Deploy",
+        "timeoutMs": 2500,
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:ABC/getMe",
+            {},
+            None,
+            None,
+        )
+    ]
+
+
+def test_channels_status_json_uses_route_backed_discord_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native Probe Route",
+            kind="discord",
+            target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "guild-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel-123",
+                "summary": "discord guild-bot channel channel-123",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="Bot discord-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        discord_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        if target.endswith("/users/@me"):
+            return {"id": "bot-123", "username": "DeployBot"}
+        if target.endswith("/oauth2/applications/@me"):
+            return {
+                "id": "app-123",
+                "flags": (1 << 13) | (1 << 14) | (1 << 18),
+            }
+        raise AssertionError(f"unexpected Discord probe URL: {target}")
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["discord"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "discord",
+        "runtime": "native-provider-backed",
+        "bot": {"id": "bot-123", "username": "DeployBot"},
+        "application": {
+            "id": "app-123",
+            "flags": (1 << 13) | (1 << 14) | (1 << 18),
+            "intents": {
+                "presence": "limited",
+                "guildMembers": "enabled",
+                "messageContent": "enabled",
+            },
+        },
+        "timeoutMs": 2500,
+    }
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me",
+            "Authorization",
+            "Bot discord-token",
+            2.5,
+        ),
+        (
+            "https://discord.com/api/v10/oauth2/applications/@me",
+            "Authorization",
+            "Bot discord-token",
+            2.5,
+        ),
+    ]
+
+
+def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI WhatsApp Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="WhatsApp Native Probe Boundary",
+            kind="whatsapp",
+            target="https://graph.facebook.com/v19.0/phone-number-id/messages",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "whatsapp",
+                "account_id": "business",
+                "peer_kind": "direct",
+                "peer_id": "whatsapp:+15551234567",
+                "summary": "whatsapp business direct +15551234567",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="whatsapp-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["whatsapp"][0]["probe"] == {
+        "status": "unsupported",
+        "reason": "native_provider_probe_unsupported",
+        "provider": "whatsapp",
+        "accountId": "business",
+        "summary": "This channel does not expose an upstream account probe hook.",
+        "timeoutMs": 2500,
+    }
+
+
+def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "channelOrder": ["slack"],
+                "channelLabels": {"slack": "Slack"},
+                "channelDetailLabels": {"slack": "Slack"},
+                "channelMeta": [{"id": "slack", "label": "Slack", "detailLabel": "Slack"}],
+                "channels": {},
+                "channelAccounts": {},
+                "channelDefaultAccountId": {},
+                "routes": [],
+                "routeCount": 0,
+                "enabledCount": 0,
+                "conversationTargetCount": 0,
+                "probe": True,
+                "timeoutMs": 2500,
+                "probeStatus": {
+                    "status": "unavailable",
+                    "reason": "native_probe_runtime_unavailable",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["channels", "status", "--probe", "--timeout", "2500", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("channels.status", {"probe": True, "timeoutMs": 2500})]
+    payload = json.loads(result.stdout)
+    assert payload["probe"] is True
+    assert payload["timeoutMs"] == 2500
+
+
+def test_channels_capabilities_json_filters_channel_and_account(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Slack Route",
+            kind="webhook",
+            target="https://example.invalid/slack",
+            events=["mission/completed"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "slack workspace-bot channel deploy-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token=None,
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--target",
+            "channel:deploy-room",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["timeoutMs"] == 2500
+    assert payload["target"] == "channel:deploy-room"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "slack"
+    assert report["accountId"] == "workspace-bot"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert "send" in report["actions"]
+    assert report["support"]["reply"] is True
+    assert report["probe"]["status"] == "unavailable"
+
+
+def test_channels_capabilities_json_uses_account_probe_result(monkeypatch) -> None:
+    calls: list[tuple[bool | None, int | None]] = []
+
+    class FakeGatewayChannels:
+        async def build_snapshot(
+            self,
+            *,
+            probe: bool | None = None,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            calls.append((probe, timeout_ms))
+            return {
+                "channelOrder": ["slack"],
+                "channelAccounts": {
+                    "slack": [
+                        {
+                            "accountId": "workspace-bot",
+                            "routeCount": 1,
+                            "enabledRouteCount": 1,
+                            "conversationTargetCount": 1,
+                            "probe": {
+                                "ok": True,
+                                "bot": {"username": "deploybot"},
+                                "timeoutMs": timeout_ms,
+                            },
+                        }
+                    ]
+                },
+                "channelDefaultAccountId": {"slack": "workspace-bot"},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_channels=FakeGatewayChannels()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [(True, 2500)]
+    payload = json.loads(result.stdout)
+    report = payload["channels"][0]
+    assert report["probe"] == {
+        "ok": True,
+        "bot": {"username": "deploybot"},
+        "timeoutMs": 2500,
+    }
+
+
+def test_channels_resolve_json_uses_saved_conversation_targets(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Deploy Room",
+            kind="webhook",
+            target="https://example.invalid/slack",
+            events=["mission/completed"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "slack workspace-bot channel deploy-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token=None,
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "deploy-room",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == [
+        {
+            "input": "deploy-room",
+            "resolved": True,
+            "id": "deploy-room",
+            "name": "Deploy Room",
+            "note": "saved conversation target",
+        }
+    ]
+
+
+def test_channels_resolve_json_uses_registered_live_resolver(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeGatewayChannels:
+        async def build_snapshot(self) -> dict[str, object]:
+            return {"routes": []}
+
+        async def resolve_targets(
+            self,
+            *,
+            channel: str | None,
+            account_id: str | None,
+            kind: str,
+            inputs: list[str],
+        ) -> list[dict[str, object]]:
+            calls.append(
+                {
+                    "channel": channel,
+                    "accountId": account_id,
+                    "kind": kind,
+                    "inputs": inputs,
+                }
+            )
+            return [
+                {
+                    "input": "deploy-room",
+                    "resolved": True,
+                    "id": "C123",
+                    "name": "Deploy Room",
+                    "note": "live provider resolver",
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_channels=FakeGatewayChannels()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "deploy-room",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "slack",
+            "accountId": "workspace-bot",
+            "kind": "channel",
+            "inputs": ["deploy-room"],
+        }
+    ]
+    assert json.loads(result.stdout) == [
+        {
+            "input": "deploy-room",
+            "resolved": True,
+            "id": "C123",
+            "name": "Deploy Room",
+            "note": "live provider resolver",
+        }
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_slack_channel_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Slack Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Slack Native Resolve Route",
+            kind="slack",
+            target="https://slack.com/api",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:C999",
+                "summary": "slack workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="xoxb-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "channels": [
+                {
+                    "id": "C123",
+                    "name": "deploy-room",
+                    "is_archived": False,
+                    "is_private": False,
+                }
+            ],
+            "response_metadata": {"next_cursor": ""},
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "#deploy-room",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "#deploy-room",
+            "resolved": True,
+            "id": "C123",
+            "name": "deploy-room",
+        }
+    ]
+    assert slack_posts == [
+        (
+            "https://slack.com/api/conversations.list",
+            {
+                "types": "public_channel,private_channel",
+                "exclude_archived": False,
+                "limit": 1000,
+            },
+            "Authorization",
+            "Bearer xoxb-resolve-token",
+        )
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_slack_user_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Slack User Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Slack Native User Resolve Route",
+            kind="slack",
+            target="https://slack.com/api",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:C999",
+                "summary": "slack workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="xoxb-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "members": [
+                {
+                    "id": "U123",
+                    "name": "deploybot",
+                    "deleted": False,
+                    "is_bot": False,
+                    "is_app_user": False,
+                    "profile": {
+                        "display_name": "Deploy Bot",
+                        "real_name": "Deploy Bot",
+                        "email": "deploy@example.test",
+                    },
+                }
+            ],
+            "response_metadata": {"next_cursor": ""},
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "deploy@example.test",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "user",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "deploy@example.test",
+            "resolved": True,
+            "id": "U123",
+            "name": "Deploy Bot",
+        }
+    ]
+    assert slack_posts == [
+        (
+            "https://slack.com/api/users.list",
+            {
+                "limit": 200,
+            },
+            "Authorization",
+            "Bearer xoxb-resolve-token",
+        )
+    ]
+
+
+def test_channels_resolve_json_auto_groups_route_backed_slack_targets(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Slack Auto Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Slack Native Auto Resolve Route",
+            kind="slack",
+            target="https://slack.com/api",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:C999",
+                "summary": "slack workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="xoxb-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/users.list"):
+            return {
+                "ok": True,
+                "members": [
+                    {
+                        "id": "U123",
+                        "name": "deploybot",
+                        "deleted": False,
+                        "is_bot": False,
+                        "is_app_user": False,
+                        "profile": {
+                            "display_name": "Deploy Bot",
+                            "real_name": "Deploy Bot",
+                        },
+                    }
+                ],
+                "response_metadata": {"next_cursor": ""},
+            }
+        return {
+            "ok": True,
+            "channels": [
+                {
+                    "id": "C123",
+                    "name": "deploy-room",
+                    "is_archived": False,
+                    "is_private": False,
+                }
+            ],
+            "response_metadata": {"next_cursor": ""},
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "@deploybot",
+            "#deploy-room",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "@deploybot",
+            "resolved": True,
+            "id": "U123",
+            "name": "Deploy Bot",
+        },
+        {
+            "input": "#deploy-room",
+            "resolved": True,
+            "id": "C123",
+            "name": "deploy-room",
+        },
+    ]
+    assert slack_posts == [
+        (
+            "https://slack.com/api/users.list",
+            {
+                "limit": 200,
+            },
+            "Authorization",
+            "Bearer xoxb-resolve-token",
+        ),
+        (
+            "https://slack.com/api/conversations.list",
+            {
+                "types": "public_channel,private_channel",
+                "exclude_archived": False,
+                "limit": 1000,
+            },
+            "Authorization",
+            "Bearer xoxb-resolve-token",
+        ),
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_telegram_user_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Telegram Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Telegram Native Resolve Route",
+            kind="telegram",
+            target="https://api.telegram.org",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "workspace-bot",
+                "peer_kind": "direct",
+                "peer_id": "telegram:12345",
+                "summary": "telegram workspace-bot direct fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="123456:ABC",
+            vault_secret_id=None,
+        )
+    )
+    telegram_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        telegram_gets.append((target, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "id": 12345,
+                "username": "opsroom",
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "opsroom",
+            "--channel",
+            "telegram",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "user",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "opsroom",
+            "resolved": True,
+            "id": "12345",
+            "name": "@opsroom",
+        }
+    ]
+    assert telegram_gets == [
+        (
+            "https://api.telegram.org/bot123456:ABC/getChat?chat_id=%40opsroom",
+            None,
+            None,
+        )
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_discord_channel_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native Resolve Route",
+            kind="discord",
+            target="https://discord.com/api/v10",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:222",
+                "summary": "discord workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="discord-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, timeout_seconds
+        discord_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/users/@me/guilds"):
+            return [{"id": "111", "name": "Ops Guild"}]
+        if target.endswith("/channels/222"):
+            return {
+                "id": "222",
+                "name": "deploy-room",
+                "guild_id": "111",
+                "type": 0,
+            }
+        return {}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "<#222>",
+            "--channel",
+            "discord",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "<#222>",
+            "resolved": True,
+            "id": "222",
+            "name": "deploy-room",
+        }
+    ]
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me/guilds",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+        (
+            "https://discord.com/api/v10/channels/222",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_discord_guild_channel_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord Guild Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native Guild Resolve Route",
+            kind="discord",
+            target="https://discord.com/api/v10",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:222",
+                "summary": "discord workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="discord-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, timeout_seconds
+        discord_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/users/@me/guilds"):
+            return [{"id": "111", "name": "Ops Guild"}]
+        if target.endswith("/guilds/111/channels"):
+            return [
+                {
+                    "id": "222",
+                    "name": "deploy-room",
+                    "guild_id": "111",
+                    "type": 0,
+                }
+            ]
+        return {}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "Ops Guild/deploy-room",
+            "--channel",
+            "discord",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "Ops Guild/deploy-room",
+            "resolved": True,
+            "id": "222",
+            "name": "deploy-room",
+        }
+    ]
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me/guilds",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+        (
+            "https://discord.com/api/v10/guilds/111/channels",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_discord_global_channel_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord Global Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native Global Resolve Route",
+            kind="discord",
+            target="https://discord.com/api/v10",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:333",
+                "summary": "discord workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="discord-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, timeout_seconds
+        discord_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/users/@me/guilds"):
+            return [
+                {"id": "111", "name": "Ops Guild"},
+                {"id": "222", "name": "Archive Guild"},
+            ]
+        if target.endswith("/guilds/111/channels"):
+            return [
+                {
+                    "id": "333",
+                    "name": "deploy-room",
+                    "guild_id": "111",
+                    "type": 0,
+                }
+            ]
+        if target.endswith("/guilds/222/channels"):
+            return [
+                {
+                    "id": "444",
+                    "name": "deploy-room",
+                    "guild_id": "222",
+                    "type": 11,
+                    "thread_metadata": {"archived": True},
+                }
+            ]
+        return {}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "#deploy-room",
+            "--channel",
+            "discord",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "#deploy-room",
+            "resolved": True,
+            "id": "333",
+            "name": "deploy-room",
+            "note": "matched multiple; chose Ops Guild",
+        }
+    ]
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me/guilds",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+        (
+            "https://discord.com/api/v10/guilds/111/channels",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+        (
+            "https://discord.com/api/v10/guilds/222/channels",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+    ]
+
+
+def test_channels_resolve_json_uses_route_backed_discord_user_resolver(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord User Resolve")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native User Resolve Route",
+            kind="discord",
+            target="https://discord.com/api/v10",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel:333",
+                "summary": "discord workspace-bot channel fallback",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="discord-resolve-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, timeout_seconds
+        discord_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/users/@me/guilds"):
+            return [{"id": "111", "name": "Ops Guild"}]
+        if target.endswith("/guilds/111/members/search?query=alice&limit=25"):
+            return [
+                {
+                    "nick": "Alice Ops",
+                    "user": {
+                        "id": "999",
+                        "username": "alice",
+                        "global_name": "Alice",
+                        "bot": False,
+                    },
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "Ops Guild/alice",
+            "--channel",
+            "discord",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "user",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "input": "Ops Guild/alice",
+            "resolved": True,
+            "id": "999",
+            "name": "Alice Ops",
+        }
+    ]
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me/guilds",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+        (
+            "https://discord.com/api/v10/guilds/111/members/search?query=alice&limit=25",
+            "Authorization",
+            "Bot discord-resolve-token",
+        ),
+    ]
+
+
+def test_channels_logs_json_filters_channel_and_limits_lines(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Logs")
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "openzues-2026-04-29.log"
+
+    def log_line(
+        *,
+        channel: str,
+        module: str,
+        message: str,
+        timestamp: str,
+    ) -> str:
+        return json.dumps(
+            {
+                "time": timestamp,
+                "0": message,
+                "_meta": {
+                    "logLevelName": "INFO",
+                    "name": json.dumps(
+                        {
+                            "subsystem": f"gateway/channels/{channel}",
+                            "module": module,
+                        }
+                    ),
+                },
+            }
+        )
+
+    log_path.write_text(
+        "\n".join(
+            [
+                log_line(
+                    channel="slack",
+                    module="openzues.slack",
+                    message="old slack delivery",
+                    timestamp="2026-04-29T10:00:00.000Z",
+                ),
+                log_line(
+                    channel="discord",
+                    module="openzues.discord",
+                    message="discord delivery",
+                    timestamp="2026-04-29T10:00:01.000Z",
+                ),
+                log_line(
+                    channel="slack",
+                    module="openzues.slack",
+                    message="new slack delivery",
+                    timestamp="2026-04-29T10:00:02.000Z",
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["channels", "logs", "--channel", "slack", "--lines", "1", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["file"] == str(log_path)
+    assert payload["channel"] == "slack"
+    assert payload["lines"] == [
+        {
+            "time": "2026-04-29T10:00:02.000Z",
+            "level": "info",
+            "subsystem": "gateway/channels/slack",
+            "module": "openzues.slack",
+            "message": "new slack delivery",
+            "raw": log_path.read_text(encoding="utf-8").splitlines()[-1],
+        }
+    ]
+
+
+def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"containers": [], "browsers": []}
+
+
+def test_sandbox_list_json_surfaces_saved_sandbox_runtime_metadata(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "updated_at": "2026-04-29T12:00:00Z",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "runtimeId": 7,
+                        "runtimeThreadId": "thread-7",
+                        "runtimeSessionId": "thread-7",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "sandboxPolicy": {"type": "workspaceWrite"},
+                    },
+                },
+                {
+                    "session_key": "agent:main:subagent:plain-worker",
+                    "metadata": {"label": "Plain worker"},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["browsers"] == []
+    assert payload["containers"] == [
+        {
+            "sessionKey": "agent:main:subagent:sandbox-worker",
+            "runtime": "codex-app-server",
+            "runtimeId": 7,
+            "runtimeThreadId": "thread-7",
+            "runtimeSessionId": "thread-7",
+            "sandboxMode": "workspace-write",
+            "sandboxPolicy": {"type": "workspaceWrite"},
+            "status": "known",
+            "source": "session_metadata",
+            "updatedAt": "2026-04-29T12:00:00Z",
+        }
+    ]
+
+
+def test_sandbox_list_human_output_includes_total_summary(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[container] agent:main:subagent:sandbox-worker (known)" in result.stdout
+    assert "Total: 1 (0 running)" in result.stdout
+
+
+def test_sandbox_list_human_output_warns_on_config_mismatch(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "imageMatch": False,
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "1 runtime(s) with config mismatch detected." in result.stdout
+    assert "sandbox recreate --all" in result.stdout
+
+
+def test_acp_bridge_command_reports_native_runtime_unavailable() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--url",
+            "ws://gateway.invalid/openzues",
+            "--session",
+            "agent:main:main",
+            "--provenance",
+            "meta",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ACP Gateway bridge is not available" in result.stderr
+    assert "sessions spawn --runtime acp" in result.stderr
+
+
+def test_acp_client_command_reports_native_runtime_unavailable() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "client",
+            "--cwd",
+            r"C:\work\OpenZues",
+            "--server",
+            "openzues",
+            "--verbose",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ACP client bridge is not available" in result.stderr
+    assert r"C:\work\OpenZues" in result.stderr
+
+
+def test_acp_bridge_rejects_mixed_token_sources(tmp_path) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    token_file.write_text("file-token\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--token",
+            "inline-token",
+            "--token-file",
+            str(token_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either --token or --token-file for Gateway token." in result.stderr
+    assert "ACP Gateway bridge is not available" not in result.stderr
+
+
+def test_acp_bridge_reports_missing_token_file() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--token-file",
+            r"C:\missing\openzues-acp-token.txt",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Failed to inspect Gateway token file" in result.stderr
+    assert "ACP Gateway bridge is not available" not in result.stderr
+
+
+def test_acp_bridge_warns_for_inline_secrets() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--token",
+            "inline-token",
+            "--password",
+            "inline-password",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--token can be exposed via process listings" in result.stderr
+    assert "--password can be exposed via process listings" in result.stderr
+    assert "ACP Gateway bridge is not available" in result.stderr
+
+
+def test_capability_list_json_surfaces_openclaw_capability_metadata() -> None:
+    result = runner.invoke(app, ["capability", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert any(entry["id"] == "model.run" for entry in payload)
+    image_describe = next(entry for entry in payload if entry["id"] == "image.describe")
+    assert image_describe["transports"] == ["local"]
+    assert "media-understanding" in image_describe["description"]
+
+
+def test_infer_inspect_json_uses_capability_alias() -> None:
+    result = runner.invoke(app, ["infer", "inspect", "--name", "web.fetch", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "id": "web.fetch",
+        "description": "Fetch URL content through configured web fetch providers.",
+        "transports": ["local"],
+        "flags": ["--url", "--provider", "--format", "--json"],
+        "resultShape": "fetch provider result",
+    }
+
+
+def test_sandbox_recreate_session_force_json_forgets_saved_sandbox_metadata(monkeypatch) -> None:
+    deleted: list[str] = []
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "runtimeId": 7,
+                        "runtimeThreadId": "thread-7",
+                        "runtimeSessionId": "thread-7",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "sandboxPolicy": {"type": "workspaceWrite"},
+                    },
+                },
+                {
+                    "session_key": "agent:main:subagent:plain-worker",
+                    "metadata": {"label": "Plain worker"},
+                },
+            ]
+
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "recreate",
+            "--session",
+            "agent:main:subagent:sandbox-worker",
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["successCount"] == 1
+    assert payload["failCount"] == 0
+    assert payload["removed"] == ["agent:main:subagent:sandbox-worker"]
+    assert payload["failed"] == []
+    assert deleted == ["agent:main:subagent:sandbox-worker"]
+
+
+def test_sandbox_recreate_rejects_multiple_targets() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "recreate",
+            "--all",
+            "--session",
+            "agent:main:subagent:sandbox-worker",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Please specify only one of: --all, --session, --agent" in result.stderr
+
+
+def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "runtimeId": 7,
+                        "runtimeThreadId": "thread-7",
+                        "runtimeSessionId": "thread-7",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "sandboxPolicy": {"type": "workspaceWrite"},
+                        "spawnedWorkspaceDir": r"C:\work\OpenZues",
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "explain",
+            "--session",
+            "agent:main:subagent:sandbox-worker",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["docsUrl"] == "https://docs.openclaw.ai/sandbox"
+    assert payload["agentId"] == "main"
+    assert payload["sessionKey"] == "agent:main:subagent:sandbox-worker"
+    assert payload["mainSessionKey"] == "agent:main:main"
+    assert payload["sandbox"]["sessionIsSandboxed"] is True
+    assert payload["sandbox"]["mode"] == "workspace-write"
+    assert payload["sandbox"]["scope"] == "session"
+    assert payload["sandbox"]["workspaceRoot"] == r"C:\work\OpenZues"
+    assert payload["sandbox"]["runtime"] == "codex-app-server"
+    assert payload["sandbox"]["runtimeId"] == 7
+    assert payload["sandbox"]["policy"] == {"type": "workspaceWrite"}
+    assert "agents.defaults.sandbox.mode" in payload["fixIt"]
+
+
+def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "status": "accepted",
+                "runId": "run-42",
+                "childSessionKey": "agent:main:acp:thread-42",
+                "mode": "run",
+                "cleanup": "keep",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "spawn",
+            "--task",
+            "Audit parity.",
+            "--label",
+            "Parity Scout",
+            "--runtime",
+            "acp",
+            "--agent-id",
+            "worker",
+            "--cwd",
+            r"C:\work\OpenZues",
+            "--resume-session-id",
+            "thread-existing",
+            "--stream-to",
+            "parent",
+            "--mode",
+            "run",
+            "--thread",
+            "--sandbox",
+            "inherit",
+            "--run-timeout-seconds",
+            "45",
+            "--cleanup",
+            "keep",
+            "--expects-completion-message",
+            "--requester-session-key",
+            "agent:main:main",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "accepted"
+    assert payload["runId"] == "run-42"
+    assert calls == [
+        (
+            "sessions.spawn",
+            {
+                "task": "Audit parity.",
+                "label": "Parity Scout",
+                "runtime": "acp",
+                "agentId": "worker",
+                "cwd": r"C:\work\OpenZues",
+                "resumeSessionId": "thread-existing",
+                "streamTo": "parent",
+                "mode": "run",
+                "thread": True,
+                "sandbox": "inherit",
+                "runTimeoutSeconds": 45,
+                "cleanup": "keep",
+                "expectsCompletionMessage": True,
+                "requesterSessionKey": "agent:main:main",
+            },
+        )
+    ]
+
+
+def test_sessions_wait_human_output_calls_agent_wait(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "runId": "run-42",
+                "status": "ok",
+                "startedAt": 1_800_000_000_000,
+                "endedAt": 1_800_000_004_000,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "wait",
+            "run-42",
+            "--timeout-ms",
+            "250",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "status: ok" in result.stdout
+    assert "run: run-42" in result.stdout
+    assert calls == [("agent.wait", {"runId": "run-42", "timeoutMs": 250})]
+
+
+def test_plugins_list_json_projects_hermes_plugin_inventory(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": r"C:\Hermes"},
+                "warnings": ["Plugin discovery is using source inventory only."],
+                "plugins": {
+                    "headline": "Plugin and app architecture is mapped",
+                    "summary": "OpenZues inventories live Codex plugins and Hermes plugins.",
+                    "items": [
+                        {
+                            "key": "codex_plugins",
+                            "label": "Live Codex Plugins",
+                            "status": "ready",
+                            "summary": "Connected lanes currently expose 2 plugin surface(s).",
+                            "capabilities": ["plugin inventory"],
+                        },
+                        {
+                            "key": "hermes_plugin:slack",
+                            "label": "Hermes Plugin: Slack",
+                            "status": "advisory",
+                            "summary": "Hermes source tree includes this plugin family.",
+                            "capabilities": ["plugin discovery"],
+                        },
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["workspaceDir"] == r"C:\Hermes"
+    assert payload["diagnostics"] == [
+        {"level": "warn", "message": "Plugin discovery is using source inventory only."}
+    ]
+    assert payload["plugins"] == [
+        {
+            "id": "codex_plugins",
+            "name": "Live Codex Plugins",
+            "status": "loaded",
+            "format": "openzues",
+            "source": "live_codex",
+            "origin": "runtime",
+            "description": "Connected lanes currently expose 2 plugin surface(s).",
+            "capabilities": ["plugin inventory"],
+            "parityStatus": "ready",
+        },
+        {
+            "id": "hermes_plugin:slack",
+            "name": "Hermes Plugin: Slack",
+            "status": "disabled",
+            "format": "hermes",
+            "source": r"C:\Hermes\plugins\slack",
+            "origin": "hermes_source",
+            "description": "Hermes source tree includes this plugin family.",
+            "capabilities": ["plugin discovery"],
+            "parityStatus": "advisory",
+        },
+    ]
+
+
+def test_plugins_list_enabled_filters_loaded_plugins(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "codex_plugins",
+                            "label": "Live Codex Plugins",
+                            "status": "ready",
+                            "summary": "Connected lanes expose plugins.",
+                        },
+                        {
+                            "key": "hermes_plugin:slack",
+                            "label": "Hermes Plugin: Slack",
+                            "status": "advisory",
+                            "summary": "Source-only plugin family.",
+                        },
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--enabled", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert [plugin["id"] for plugin in payload["plugins"]] == ["codex_plugins"]
+
+
+def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"frontend-design": {"enabled": True}},
+                    "installs": {
+                        "frontend-design": {
+                            "source": "marketplace",
+                            "installPath": str(plugin_dir),
+                            "version": "0.2.0",
+                            "marketplaceSource": str(tmp_path / "marketplace.json"),
+                            "marketplacePlugin": "frontend-design",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        }
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == [
+        {
+            "id": "frontend-design",
+            "name": "frontend-design",
+            "status": "loaded",
+            "format": "openclaw-native",
+            "source": str(plugin_dir),
+            "origin": "config",
+            "description": "Installed marketplace plugin.",
+            "capabilities": [],
+            "parityStatus": "configured",
+            "version": "0.2.0",
+            "install": {
+                "source": "marketplace",
+                "installPath": str(plugin_dir),
+                "version": "0.2.0",
+                "marketplaceSource": str(tmp_path / "marketplace.json"),
+                "marketplacePlugin": "frontend-design",
+                "installedAt": "2026-04-29T12:00:00Z",
+            },
+        }
+    ]
+
+
+def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": ["Source-only inventory is advisory."],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "codex_plugins",
+                            "label": "Live Codex Plugins",
+                            "status": "ready",
+                            "summary": "Connected lanes expose plugins.",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "No plugin issues detected." in result.stdout
+
+
+def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "broken_plugin",
+                            "label": "Broken Plugin",
+                            "status": "error",
+                            "summary": "failed to load plugin: boom",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Plugin errors:" in result.stdout
+    assert "- broken_plugin: failed to load plugin: boom (openzues)" in result.stdout
+
+
+def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "legacy-hooks",
+                            "label": "Legacy Hooks",
+                            "status": "ready",
+                            "summary": "Legacy hook-only plugin.",
+                            "shape": "hook-only",
+                            "usesLegacyBeforeAgentStart": True,
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Compatibility:" in result.stdout
+    assert (
+        "- legacy-hooks still uses legacy before_agent_start; keep regression coverage "
+        "on this plugin, and prefer before_model_resolve/before_prompt_build for new "
+        "work. [warn]"
+    ) in result.stdout
+    assert (
+        "- legacy-hooks is hook-only. This remains a supported compatibility path, "
+        "but it has not migrated to explicit capability registration yet. [info]"
+    ) in result.stdout
+
+
+def test_plugins_inspect_json_returns_plugin_detail(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": r"C:\Hermes"},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "hermes_plugin:slack",
+                            "label": "Hermes Plugin: Slack",
+                            "status": "advisory",
+                            "summary": "Hermes source tree includes this plugin family.",
+                            "capabilities": ["plugin discovery", "future activation/config"],
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "hermes_plugin:slack", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "hermes_plugin:slack"
+    assert payload["plugin"]["status"] == "disabled"
+    assert payload["shape"] == "hermes-inventory"
+    assert payload["capabilityMode"] == "inventory"
+    assert payload["capabilities"] == [
+        {"kind": "inventory", "ids": ["plugin discovery", "future activation/config"]}
+    ]
+
+
+def test_plugins_info_alias_json_uses_inspect_payload(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "codex_plugins",
+                            "label": "Live Codex Plugins",
+                            "status": "ready",
+                            "summary": "Connected lanes expose plugins.",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "info", "codex_plugins", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "codex_plugins"
+    assert payload["shape"] == "openzues-runtime-inventory"
+
+
+def test_plugins_marketplace_list_json_reads_local_manifest(tmp_path) -> None:
+    marketplace_dir = tmp_path / "marketplace"
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Local Marketplace",
+                "version": "1.0.0",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.2.0",
+                        "description": "Design helper.",
+                        "source": {"type": "path", "path": "plugins/frontend-design"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["plugins", "marketplace", "list", str(marketplace_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "source": str(manifest_path),
+        "name": "Local Marketplace",
+        "version": "1.0.0",
+        "plugins": [
+            {
+                "name": "frontend-design",
+                "version": "0.2.0",
+                "description": "Design helper.",
+                "source": {"type": "path", "path": "plugins/frontend-design"},
+            }
+        ],
+    }
+
+
+def test_plugins_install_marketplace_json_persists_local_manifest_entry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["existing-plugin"],
+                    "entries": {},
+                    "load": {"paths": []},
+                },
+            }
+        )
+    )
+    marketplace_dir = tmp_path / "marketplace"
+    plugin_dir = marketplace_dir / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Local Marketplace",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.2.0",
+                        "description": "Design helper.",
+                        "source": {"type": "path", "path": "plugins/frontend-design"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "plugins",
+            "install",
+            "frontend-design",
+            "--marketplace",
+            str(marketplace_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["pluginId"] == "frontend-design"
+    assert payload["source"] == "marketplace"
+    assert payload["install"]["source"] == "marketplace"
+    assert payload["install"]["marketplaceName"] == "Local Marketplace"
+    assert payload["install"]["marketplaceSource"] == str(manifest_path)
+    assert payload["install"]["marketplacePlugin"] == "frontend-design"
+    assert payload["install"]["installPath"] == str(plugin_dir.resolve())
+    assert payload["install"]["version"] == "0.2.0"
+    assert payload["restart"] == "gateway"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["existing-plugin", "frontend-design"]
+    assert stored["plugins"]["entries"]["frontend-design"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [str(plugin_dir.resolve())]
+    assert stored["plugins"]["installs"]["frontend-design"]["source"] == "marketplace"
+    assert stored["plugins"]["installs"]["frontend-design"]["installPath"] == str(
+        plugin_dir.resolve()
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceName"] == (
+        "Local Marketplace"
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceSource"] == str(
+        manifest_path
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplacePlugin"] == (
+        "frontend-design"
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["version"] == "0.2.0"
+    assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
+
+
+def test_plugins_uninstall_json_removes_native_install_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "marketplace" / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["existing-plugin", "frontend-design"],
+                    "entries": {
+                        "frontend-design": {
+                            "enabled": True,
+                            "config": {"theme": "quiet"},
+                        },
+                    },
+                    "installs": {
+                        "frontend-design": {
+                            "source": "marketplace",
+                            "installPath": str(plugin_dir),
+                            "marketplaceSource": str(tmp_path / "marketplace"),
+                            "marketplacePlugin": "frontend-design",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "uninstall", "frontend-design", "--force", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "uninstall"
+    assert payload["pluginId"] == "frontend-design"
+    assert payload["actions"] == {
+        "entry": True,
+        "install": True,
+        "allowlist": True,
+        "loadPath": True,
+        "memorySlot": False,
+        "channelConfig": False,
+        "directory": False,
+    }
+    assert payload["restart"] == "gateway"
+    assert plugin_dir.exists()
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["existing-plugin"]
+    assert "entries" not in stored["plugins"]
+    assert "installs" not in stored["plugins"]
+    assert "load" not in stored["plugins"]
+
+
+def test_plugins_update_json_refreshes_local_marketplace_install(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    marketplace_dir = tmp_path / "marketplace"
+    plugin_dir = marketplace_dir / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Local Marketplace",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.2.0",
+                        "source": {"type": "path", "path": "plugins/frontend-design"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["frontend-design"],
+                    "entries": {"frontend-design": {"enabled": True}},
+                    "installs": {
+                        "frontend-design": {
+                            "source": "marketplace",
+                            "installPath": str(plugin_dir),
+                            "version": "0.1.0",
+                            "marketplaceName": "Local Marketplace",
+                            "marketplaceSource": str(manifest_path),
+                            "marketplacePlugin": "frontend-design",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    dry_run = runner.invoke(
+        app,
+        ["plugins", "update", "frontend-design", "--dry-run", "--json"],
+    )
+
+    assert dry_run.exit_code == 0, dry_run.stdout
+    dry_run_payload = json.loads(dry_run.stdout)
+    assert dry_run_payload["ok"] is True
+    assert dry_run_payload["dryRun"] is True
+    assert dry_run_payload["changed"] is False
+    assert dry_run_payload["outcomes"] == [
+        {
+            "pluginId": "frontend-design",
+            "status": "updated",
+            "currentVersion": "0.1.0",
+            "nextVersion": "0.2.0",
+            "message": "Would update frontend-design: 0.1.0 -> 0.2.0.",
+        }
+    ]
+    stored_after_dry_run = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored_after_dry_run["plugins"]["installs"]["frontend-design"]["version"] == "0.1.0"
+
+    update = runner.invoke(
+        app,
+        ["plugins", "update", "frontend-design", "--json"],
+    )
+
+    assert update.exit_code == 0, update.stdout
+    update_payload = json.loads(update.stdout)
+    assert update_payload["ok"] is True
+    assert update_payload["dryRun"] is False
+    assert update_payload["changed"] is True
+    assert update_payload["outcomes"][0] == {
+        "pluginId": "frontend-design",
+        "status": "updated",
+        "currentVersion": "0.1.0",
+        "nextVersion": "0.2.0",
+        "message": "Updated frontend-design: 0.1.0 -> 0.2.0.",
+    }
+    assert update_payload["restart"] == "gateway"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["version"] == "0.2.0"
+    assert stored["plugins"]["installs"]["frontend-design"]["installPath"] == str(
+        plugin_dir.resolve()
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceSource"] == str(
+        manifest_path
+    )
+    assert stored["plugins"]["load"]["paths"] == [str(plugin_dir.resolve())]
+    assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
+
+
+def test_plugins_enable_disable_json_persists_openclaw_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["existing-plugin"],
+                    "entries": {
+                        "demo-plugin": {
+                            "config": {"mode": "test"},
+                        }
+                    },
+                },
+                "channels": {
+                    "slack": {
+                        "botToken": "xoxb-redacted",
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    enable_result = runner.invoke(app, ["plugins", "enable", "demo-plugin", "--json"])
+
+    assert enable_result.exit_code == 0, enable_result.stdout
+    enable_payload = json.loads(enable_result.stdout)
+    assert enable_payload["ok"] is True
+    assert enable_payload["action"] == "enable"
+    assert enable_payload["pluginId"] == "demo-plugin"
+    assert enable_payload["resolvedPluginId"] == "demo-plugin"
+    assert enable_payload["enabled"] is True
+
+    disable_result = runner.invoke(app, ["plugins", "disable", "slack", "--json"])
+
+    assert disable_result.exit_code == 0, disable_result.stdout
+    disable_payload = json.loads(disable_result.stdout)
+    assert disable_payload["ok"] is True
+    assert disable_payload["action"] == "disable"
+    assert disable_payload["pluginId"] == "slack"
+    assert disable_payload["resolvedPluginId"] == "slack"
+    assert disable_payload["enabled"] is False
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["existing-plugin", "demo-plugin"]
+    assert stored["plugins"]["entries"]["demo-plugin"] == {
+        "config": {"mode": "test"},
+        "enabled": True,
+    }
+    assert stored["plugins"]["entries"]["slack"]["enabled"] is False
+    assert stored["channels"]["slack"] == {
+        "botToken": "xoxb-redacted",
+        "enabled": False,
+    }
+
+
+def test_models_list_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "models": [
+            {
+                "id": "gpt-5.4",
+                "name": "gpt-5.4",
+                "provider": "openai",
+                "isDefault": True,
+            }
+        ]
+    }
+    assert calls == [("models.list", {})]
+
+
+def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    },
+                    {
+                        "id": "gpt-5.4-mini",
+                        "name": "gpt-5.4-mini",
+                        "provider": "openai",
+                    },
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["defaultModel"] == "gpt-5.4"
+    assert payload["resolvedDefault"] == "openai/gpt-5.4"
+    assert payload["allowed"] == ["openai/gpt-5.4", "openai/gpt-5.4-mini"]
+    assert payload["fallbacks"] == []
+    assert payload["auth"]["status"] == "unavailable"
+    assert payload["auth"]["probes"] is None
+    assert calls == [("models.list", {})]
+
+
+def test_infer_model_list_json_uses_openclaw_catalog_shape(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "model", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "id": "gpt-5.4",
+            "name": "gpt-5.4",
+            "provider": "openai",
+            "isDefault": True,
+        }
+    ]
+    assert calls == [("models.list", {})]
+
+
+def test_capability_model_inspect_json_matches_provider_model_ref(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {"id": "gpt-5.4-mini", "name": "gpt-5.4-mini", "provider": "openai"},
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    },
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "model", "inspect", "--model", "openai/gpt-5.4", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "id": "gpt-5.4",
+        "name": "gpt-5.4",
+        "provider": "openai",
+        "isDefault": True,
+    }
+    assert calls == [("models.list", {})]
+
+
+def test_infer_model_providers_json_groups_catalog_by_provider(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {"id": "gpt-5.4", "name": "gpt-5.4", "provider": "openai"},
+                    {"id": "gpt-5.4-mini", "name": "gpt-5.4-mini", "provider": "openai"},
+                    {"id": "llama3", "name": "llama3", "provider": "ollama"},
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "model", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "provider": "ollama",
+            "count": 1,
+            "defaults": ["llama3"],
+            "available": True,
+            "configured": False,
+            "selected": False,
+        },
+        {
+            "provider": "openai",
+            "count": 2,
+            "defaults": ["gpt-5.4", "gpt-5.4-mini"],
+            "available": True,
+            "configured": False,
+            "selected": False,
+        },
+    ]
+    assert calls == [("models.list", {})]
+
+
+def test_infer_model_auth_status_json_reuses_model_status_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "model", "auth", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["defaultModel"] == "gpt-5.4"
+    assert payload["resolvedDefault"] == "openai/gpt-5.4"
+    assert payload["auth"]["status"] == "unavailable"
+    assert payload["auth"]["missingProvidersInUse"] == ["openai"]
+    assert calls == [("models.list", {})]
+
+
+def test_capability_model_run_rejects_local_and_gateway_together() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "model",
+            "run",
+            "--prompt",
+            "hello",
+            "--local",
+            "--gateway",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Pass only one of --local or --gateway." in result.stderr
+
+
+def test_infer_model_run_json_wraps_local_control_chat_reply(monkeypatch) -> None:
+    submitted: dict[str, object] = {}
+
+    class FakeControlChat:
+        async def submit(
+            self,
+            prompt: str,
+            dashboard: object,
+            *,
+            session_key: str | None = None,
+        ) -> object:
+            submitted.update(
+                {
+                    "prompt": prompt,
+                    "dashboard": dashboard,
+                    "session_key": session_key,
+                }
+            )
+            return SimpleNamespace(assistant=SimpleNamespace(content="Local reply"))
+
+    async def fake_build_operator_dashboard(_services):
+        return {"dashboard": "ok"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(control_chat=FakeControlChat()))
+
+    monkeypatch.setattr("openzues.cli._build_operator_dashboard", fake_build_operator_dashboard)
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "model",
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "openai/gpt-5.4",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "model.run",
+        "transport": "local",
+        "provider": "openai",
+        "model": "gpt-5.4",
+        "attempts": [],
+        "outputs": [{"text": "Local reply"}],
+    }
+    assert submitted == {
+        "prompt": "hello",
+        "dashboard": {"dashboard": "ok"},
+        "session_key": None,
+    }
+
+
+def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "result": {
+                    "payloads": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
+                    "meta": {"agentMeta": {"provider": "openai", "model": "gpt-5.4"}},
+                }
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "model",
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "openai/gpt-5.4",
+            "--gateway",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "model.run",
+        "transport": "gateway",
+        "provider": "openai",
+        "model": "gpt-5.4",
+        "attempts": [],
+        "outputs": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
+    }
+    assert calls == [
+        (
+            "agent",
+            {
+                "agentId": "main",
+                "message": "hello",
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "idempotencyKey": calls[0][1]["idempotencyKey"],
+            },
+        )
+    ]
+
+
+def test_infer_tts_providers_json_projects_native_provider_catalog(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "tts.providers":
+                return {"providers": ["microsoft", "openai"], "active": "microsoft"}
+            if method == "tts.status":
+                return {
+                    "providerStates": [
+                        {
+                            "id": "microsoft",
+                            "label": "Microsoft",
+                            "available": True,
+                            "selected": True,
+                        },
+                        {
+                            "id": "openai",
+                            "label": "OpenAI",
+                            "available": False,
+                            "selected": False,
+                        },
+                    ]
+                }
+            raise AssertionError(method)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "tts", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "providers": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": True,
+                "id": "microsoft",
+                "name": "Microsoft",
+            },
+            {
+                "available": False,
+                "configured": False,
+                "selected": False,
+                "id": "openai",
+                "name": "OpenAI",
+            },
+        ],
+        "active": "microsoft",
+    }
+    assert calls == [("tts.providers", {}), ("tts.status", {})]
+
+
+def test_capability_tts_providers_rejects_local_and_gateway_together() -> None:
+    result = runner.invoke(
+        app,
+        ["capability", "tts", "providers", "--local", "--gateway", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "Pass only one of --local or --gateway." in result.stderr
+
+
+def test_infer_tts_status_json_tags_gateway_transport(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "enabled": True,
+                "auto": "on",
+                "provider": "microsoft",
+                "fallbackProvider": None,
+                "fallbackProviders": [],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "tts", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "transport": "gateway",
+        "enabled": True,
+        "auto": "on",
+        "provider": "microsoft",
+        "fallbackProvider": None,
+        "fallbackProviders": [],
+    }
+    assert calls == [("tts.status", {})]
+
+
+def test_infer_tts_enable_disable_json_calls_native_state_methods(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"enabled": method == "tts.enable", "provider": "microsoft"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    enable_result = runner.invoke(app, ["infer", "tts", "enable", "--json"])
+    disable_result = runner.invoke(app, ["infer", "tts", "disable", "--json"])
+
+    assert enable_result.exit_code == 0, enable_result.stdout
+    assert json.loads(enable_result.stdout) == {"enabled": True, "provider": "microsoft"}
+    assert disable_result.exit_code == 0, disable_result.stdout
+    assert json.loads(disable_result.stdout) == {"enabled": False, "provider": "microsoft"}
+    assert calls == [("tts.enable", {}), ("tts.disable", {})]
+
+
+def test_capability_tts_set_provider_json_calls_native_state_method(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"enabled": True, "provider": "microsoft"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "tts", "set-provider", "--provider", "edge", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"enabled": True, "provider": "microsoft"}
+    assert calls == [("tts.setProvider", {"provider": "edge"})]
+
+
+def test_infer_tts_convert_gateway_json_wraps_native_audio_result(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "audioPath": "C:\\temp\\speech.wav",
+                "provider": "microsoft",
+                "outputFormat": "wav",
+                "voiceCompatible": True,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "tts",
+            "convert",
+            "--text",
+            "Hello",
+            "--channel",
+            "assistant",
+            "--model",
+            "microsoft/tts-1",
+            "--voice",
+            "Zira",
+            "--gateway",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "tts.convert",
+        "transport": "gateway",
+        "provider": "microsoft",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": "C:\\temp\\speech.wav",
+                "format": "wav",
+                "voiceCompatible": True,
+            }
+        ],
+    }
+    assert calls == [
+        (
+            "tts.convert",
+            {
+                "text": "Hello",
+                "channel": "assistant",
+                "provider": "microsoft",
+                "modelId": "tts-1",
+                "voiceId": "Zira",
+            },
+        )
+    ]
+
+
+def test_infer_tts_voices_json_filters_projected_provider_voices(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "tts.providers":
+                return {
+                    "providers": [
+                        {
+                            "id": "microsoft",
+                            "name": "Microsoft",
+                            "voices": ["Zira", "Guy"],
+                        },
+                        {"id": "openai", "name": "OpenAI", "voices": ["alloy"]},
+                    ],
+                    "active": "microsoft",
+                }
+            if method == "tts.status":
+                return {"providerStates": []}
+            raise AssertionError(method)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["infer", "tts", "voices", "--provider", "microsoft", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == ["Zira", "Guy"]
+    assert calls == [("tts.providers", {}), ("tts.status", {})]
 
 
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
@@ -1164,6 +4634,56 @@ def test_gateway_doctor_human_output_summarizes_sections(tmp_path, monkeypatch) 
     assert "diagnostics:" in result.stdout
 
 
+def test_health_json_surfaces_gateway_readiness_snapshot(monkeypatch) -> None:
+    calls: list[tuple[str, str, float]] = []
+
+    monkeypatch.setattr(
+        cli_module,
+        "_control_plane_base_url",
+        lambda _settings: "http://gateway.test",
+    )
+
+    def fake_watch_api_json(
+        base_url: str,
+        path: str,
+        *,
+        timeout_seconds: float,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        calls.append((base_url, path, timeout_seconds))
+        if path == "/api/health":
+            return {
+                "status": "ok",
+                "control_plane": "leader",
+                "owner_pid": 1234,
+                "lock_path": r"C:\OpenZues\control-plane.lock",
+                "runtime_update": {"status": "idle"},
+            }
+        if path == "/readyz":
+            return {"ready": True, "failing": [], "uptimeMs": 123}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(cli_module, "_watch_api_json", fake_watch_api_json)
+
+    result = runner.invoke(app, ["health", "--json", "--timeout-ms", "2500"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "ok": True,
+        "status": "ok",
+        "controlPlane": "leader",
+        "ownerPid": 1234,
+        "lockPath": r"C:\OpenZues\control-plane.lock",
+        "runtimeUpdate": {"status": "idle"},
+        "readiness": {"ready": True, "failing": [], "uptimeMs": 123},
+    }
+    assert calls == [
+        ("http://gateway.test", "/api/health", 2.5),
+        ("http://gateway.test", "/readyz", 2.5),
+    ]
+
+
 def test_status_json_reuses_gateway_contract_and_surfaces_queue_plan(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
@@ -1225,6 +4745,83 @@ def test_status_json_prefers_live_status_payload_when_available(tmp_path, monkey
     assert payload["brief"]["headline"] == "Live dashboard headline"
     assert payload["summary"] == "Live dashboard summary"
     assert payload["instance_summary"]["connected_count"] == 1
+
+
+def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
+    tmp_path, monkeypatch
+) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    health_calls: list[int] = []
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {"headline": "Live dashboard headline", "summary": "Live dashboard summary"}
+
+    async def fake_live_health(
+        _settings: Settings,
+        *,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        health_calls.append(timeout_ms)
+        return {
+            "ok": True,
+            "status": "ok",
+            "controlPlane": "leader",
+            "readiness": {"ready": True, "failing": []},
+        }
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+    monkeypatch.setattr(cli_module, "_build_live_health_payload", fake_live_health)
+
+    result = runner.invoke(
+        app,
+        [
+            "status",
+            "--json",
+            "--deep",
+            "--usage",
+            "--all",
+            "--timeout",
+            "5000",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert health_calls == [5000]
+    assert payload["headline"] == "Live dashboard headline"
+    assert payload["health"]["status"] == "ok"
+    assert payload["lastHeartbeat"] is None
+    assert payload["usage"]["status"] == "unavailable"
+    assert payload["usage"]["timeoutMs"] == 5000
+    assert payload["securityAudit"]["status"] == "unavailable"
+
+
+def test_status_all_human_output_renders_pasteable_diagnosis(
+    tmp_path, monkeypatch
+) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {
+            "headline": "Live dashboard headline",
+            "summary": "Live dashboard summary",
+            "mission_summary": {"active_count": 1, "blocked_count": 0},
+            "instance_summary": {"connected_count": 1, "total_count": 2},
+            "gateway_capability": {"summary": "Gateway route is configured."},
+        }
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+
+    result = runner.invoke(app, ["status", "--all", "--timeout", "5000"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "OpenClaw status --all" in result.stdout
+    assert "Overview" in result.stdout
+    assert "Channels" in result.stdout
+    assert "Agents" in result.stdout
+    assert "Diagnosis (read-only)" in result.stdout
+    assert "Live dashboard headline" in result.stdout
+    assert "timeout: 5000 ms" in result.stdout
 
 
 def test_routes_list_json_surfaces_saved_notification_routes(tmp_path, monkeypatch) -> None:
@@ -1315,6 +4912,157 @@ def test_routes_create_command_productizes_native_provider_routes(tmp_path, monk
     assert len(routes) == 1
     assert routes[0]["kind"] == "whatsapp"
     assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+
+
+def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "sessionKey": "agent:main:channel:slack:account:workspace:peer:channel:C123",
+                "deliveryId": 41,
+                "messageId": "slack-41",
+                "channel": "slack",
+                "transport": {"transport": "slack", "messageId": "slack-41"},
+                "provider": "slack",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "send",
+            "--channel",
+            "slack",
+            "--to",
+            "channel:C123",
+            "--message",
+            "Deploy is green.",
+            "--account",
+            "workspace",
+            "--thread",
+            "1700.2",
+            "--reply-to",
+            "1699.1",
+            "--media-url",
+            "https://example.invalid/report.png",
+            "--gif-playback",
+            "--silent",
+            "--force-document",
+            "--agent-id",
+            "main",
+            "--session-key",
+            "agent:main:main",
+            "--idempotency-key",
+            "cli-send-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["deliveryId"] == 41
+    assert payload["messageId"] == "slack-41"
+    assert payload["transport"]["transport"] == "slack"
+    assert calls == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": "Deploy is green.",
+            "media_urls": ["https://example.invalid/report.png"],
+            "gif_playback": True,
+            "reply_to_id": "1699.1",
+            "silent": True,
+            "force_document": True,
+            "account_id": "workspace",
+            "agent_id": "main",
+            "thread_id": "1700.2",
+            "session_key": "agent:main:main",
+            "idempotency_key": "cli-send-1",
+        }
+    ]
+
+
+def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "sessionKey": "agent:main:channel:telegram:account:ops:peer:channel:deploy",
+                "deliveryId": 42,
+                "messageId": "telegram-poll-42",
+                "pollId": "poll-42",
+                "channel": "telegram",
+                "transport": {"transport": "telegram", "messageId": "telegram-poll-42"},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "telegram",
+            "--to",
+            "channel:deploy",
+            "--question",
+            "Ship the release?",
+            "--option",
+            "yes",
+            "--option",
+            "no",
+            "--max-selections",
+            "1",
+            "--duration-seconds",
+            "3600",
+            "--silent",
+            "--anonymous",
+            "--account",
+            "ops",
+            "--thread",
+            "123",
+            "--idempotency-key",
+            "cli-poll-1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "ok: True" in result.stdout
+    assert "delivery: 42" in result.stdout
+    assert "message: telegram-poll-42" in result.stdout
+    assert "poll: poll-42" in result.stdout
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "channel:deploy",
+            "question": "Ship the release?",
+            "options": ["yes", "no"],
+            "max_selections": 1,
+            "duration_seconds": 3600,
+            "duration_hours": None,
+            "silent": True,
+            "is_anonymous": True,
+            "account_id": "ops",
+            "thread_id": "123",
+            "idempotency_key": "cli-poll-1",
+        }
+    ]
 
 
 def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, monkeypatch) -> None:

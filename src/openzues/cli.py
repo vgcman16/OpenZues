@@ -5,6 +5,7 @@ import codecs
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -15,13 +16,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import typer
 import uvicorn
 
+from openzues import __version__
 from openzues.app import build_brief, build_launchpad, build_radar
 from openzues.database import Database
 from openzues.schemas import (
@@ -52,11 +54,19 @@ from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
+from openzues.services.gateway_acp_spawn import RuntimeManagerAcpSpawnService
 from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
+from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
+from openzues.services.gateway_models import GatewayModelsService
+from openzues.services.gateway_node_methods import GatewayNodeMethodService
+from openzues.services.gateway_node_registry import GatewayNodeRegistry
+from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
+from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
 from openzues.services.hermes_runtime_profile import load_saved_runtime_preferences
@@ -87,6 +97,259 @@ _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
 _BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
+_CHANNEL_LOG_DEFAULT_LIMIT = 200
+_CHANNEL_LOG_MAX_BYTES = 1_000_000
+_CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
+    "discord": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": True,
+        "reactions": True,
+        "polls": True,
+    },
+    "slack": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": True,
+        "reactions": True,
+    },
+    "telegram": {
+        "chatTypes": ["direct", "group", "channel"],
+        "reply": True,
+        "media": True,
+        "polls": True,
+    },
+    "whatsapp": {
+        "chatTypes": ["direct", "group"],
+        "reply": True,
+        "media": True,
+    },
+}
+_CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
+    {
+        "id": "model.run",
+        "description": "Run a one-shot text inference turn through the agent runtime.",
+        "transports": ["local", "gateway"],
+        "flags": ["--prompt", "--model", "--local", "--gateway", "--json"],
+        "resultShape": "normalized payloads plus provider/model attribution",
+    },
+    {
+        "id": "model.list",
+        "description": "List known models from the model catalog.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "catalog entries",
+    },
+    {
+        "id": "model.inspect",
+        "description": "Inspect one model catalog entry.",
+        "transports": ["local"],
+        "flags": ["--model", "--json"],
+        "resultShape": "single catalog entry",
+    },
+    {
+        "id": "model.providers",
+        "description": "List model providers discovered from the catalog.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids with counts and defaults",
+    },
+    {
+        "id": "model.auth.login",
+        "description": "Run the existing provider auth login flow.",
+        "transports": ["local"],
+        "flags": ["--provider"],
+        "resultShape": "interactive auth result",
+    },
+    {
+        "id": "model.auth.logout",
+        "description": "Remove saved auth profiles for one provider.",
+        "transports": ["local"],
+        "flags": ["--provider", "--json"],
+        "resultShape": "removed profile ids",
+    },
+    {
+        "id": "model.auth.status",
+        "description": "Show configured model auth state.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "model status summary",
+    },
+    {
+        "id": "image.generate",
+        "description": "Generate raster images with configured image providers.",
+        "transports": ["local"],
+        "flags": [
+            "--prompt",
+            "--model",
+            "--count",
+            "--size",
+            "--aspect-ratio",
+            "--resolution",
+            "--output",
+            "--json",
+        ],
+        "resultShape": "saved image files plus attempts",
+    },
+    {
+        "id": "image.edit",
+        "description": "Generate edited images from one or more input files.",
+        "transports": ["local"],
+        "flags": ["--file", "--prompt", "--model", "--output", "--json"],
+        "resultShape": "saved image files plus attempts",
+    },
+    {
+        "id": "image.describe",
+        "description": "Describe one image file through media-understanding providers.",
+        "transports": ["local"],
+        "flags": ["--file", "--prompt", "--model", "--json"],
+        "resultShape": "normalized text output",
+    },
+    {
+        "id": "image.describe-many",
+        "description": "Describe multiple image files independently.",
+        "transports": ["local"],
+        "flags": ["--file", "--prompt", "--model", "--json"],
+        "resultShape": "one text output per file",
+    },
+    {
+        "id": "image.providers",
+        "description": "List image generation providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and defaults",
+    },
+    {
+        "id": "audio.transcribe",
+        "description": "Transcribe one audio file.",
+        "transports": ["local"],
+        "flags": ["--file", "--model", "--json"],
+        "resultShape": "normalized text output",
+    },
+    {
+        "id": "audio.providers",
+        "description": "List audio transcription providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and capabilities",
+    },
+    {
+        "id": "tts.convert",
+        "description": "Convert text to speech.",
+        "transports": ["local", "gateway"],
+        "flags": [
+            "--text",
+            "--channel",
+            "--voice",
+            "--model",
+            "--output",
+            "--local",
+            "--gateway",
+            "--json",
+        ],
+        "resultShape": "saved audio file plus attempts",
+    },
+    {
+        "id": "tts.voices",
+        "description": "List voices for a speech provider.",
+        "transports": ["local"],
+        "flags": ["--provider", "--json"],
+        "resultShape": "voice entries",
+    },
+    {
+        "id": "tts.providers",
+        "description": "List speech providers.",
+        "transports": ["local", "gateway"],
+        "flags": ["--local", "--gateway", "--json"],
+        "resultShape": "provider ids, configured state, models, voices",
+    },
+    {
+        "id": "tts.status",
+        "description": "Show gateway-managed TTS state.",
+        "transports": ["gateway"],
+        "flags": ["--gateway", "--json"],
+        "resultShape": "enabled/provider state",
+    },
+    {
+        "id": "tts.enable",
+        "description": "Enable TTS in prefs.",
+        "transports": ["local", "gateway"],
+        "flags": ["--local", "--gateway", "--json"],
+        "resultShape": "enabled state",
+    },
+    {
+        "id": "tts.disable",
+        "description": "Disable TTS in prefs.",
+        "transports": ["local", "gateway"],
+        "flags": ["--local", "--gateway", "--json"],
+        "resultShape": "enabled state",
+    },
+    {
+        "id": "tts.set-provider",
+        "description": "Set the active TTS provider.",
+        "transports": ["local", "gateway"],
+        "flags": ["--provider", "--local", "--gateway", "--json"],
+        "resultShape": "selected provider",
+    },
+    {
+        "id": "video.generate",
+        "description": "Generate video files with configured video providers.",
+        "transports": ["local"],
+        "flags": ["--prompt", "--model", "--output", "--json"],
+        "resultShape": "saved video files plus attempts",
+    },
+    {
+        "id": "video.describe",
+        "description": "Describe one video file through media-understanding providers.",
+        "transports": ["local"],
+        "flags": ["--file", "--model", "--json"],
+        "resultShape": "normalized text output",
+    },
+    {
+        "id": "video.providers",
+        "description": "List video generation and description providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and defaults",
+    },
+    {
+        "id": "web.search",
+        "description": "Run provider-backed web search.",
+        "transports": ["local"],
+        "flags": ["--query", "--provider", "--limit", "--json"],
+        "resultShape": "search provider result",
+    },
+    {
+        "id": "web.fetch",
+        "description": "Fetch URL content through configured web fetch providers.",
+        "transports": ["local"],
+        "flags": ["--url", "--provider", "--format", "--json"],
+        "resultShape": "fetch provider result",
+    },
+    {
+        "id": "web.providers",
+        "description": "List web search and fetch providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids grouped by family",
+    },
+    {
+        "id": "embedding.create",
+        "description": "Create embeddings through embedding providers.",
+        "transports": ["local"],
+        "flags": ["--text", "--provider", "--model", "--json"],
+        "resultShape": "vectors with provider/model attribution",
+    },
+    {
+        "id": "embedding.providers",
+        "description": "List embedding providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and default models",
+    },
+)
 _WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
 
 
@@ -100,6 +363,21 @@ hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
+acp_app = typer.Typer(
+    help="Run an ACP bridge backed by the Gateway.",
+    invoke_without_command=True,
+)
+sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
+sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
+capability_app = typer.Typer(
+    help="Run provider-backed inference commands through a stable CLI surface."
+)
+capability_model_app = typer.Typer(help="Inspect text inference model catalog metadata.")
+capability_model_auth_app = typer.Typer(help="Inspect model provider auth metadata.")
+capability_tts_app = typer.Typer(help="Inspect text-to-speech runtime metadata.")
+plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
+plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
+models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -119,6 +397,17 @@ app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
+app.add_typer(acp_app, name="acp")
+app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(sessions_app, name="sessions")
+capability_app.add_typer(capability_model_app, name="model")
+capability_model_app.add_typer(capability_model_auth_app, name="auth")
+capability_app.add_typer(capability_tts_app, name="tts")
+app.add_typer(capability_app, name="capability")
+app.add_typer(capability_app, name="infer")
+app.add_typer(plugins_app, name="plugins")
+app.add_typer(models_app, name="models")
+plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -239,6 +528,106 @@ async def _try_live_status_payload(app_settings: Settings) -> dict[str, object] 
     return payload if isinstance(payload, dict) else None
 
 
+async def _build_live_health_payload(
+    app_settings: Settings,
+    *,
+    timeout_ms: int,
+) -> dict[str, object]:
+    base_url = _control_plane_base_url(app_settings)
+    timeout_seconds = timeout_ms / 1000
+    health = await asyncio.to_thread(
+        _watch_api_json,
+        base_url,
+        "/api/health",
+        timeout_seconds=timeout_seconds,
+    )
+    if not isinstance(health, dict):
+        raise RuntimeError("Gateway health response was not an object.")
+    try:
+        readiness = await asyncio.to_thread(
+            _watch_api_json,
+            base_url,
+            "/readyz",
+            timeout_seconds=timeout_seconds,
+        )
+    except RuntimeError as exc:
+        readiness = {
+            "ready": False,
+            "failing": ["control-plane"],
+            "error": str(exc),
+        }
+    if not isinstance(readiness, dict):
+        readiness = {"ready": False, "failing": ["control-plane"]}
+    status = _optional_cli_string(health.get("status")) or "unknown"
+    control_plane = _optional_cli_string(health.get("controlPlane"))
+    if control_plane is None:
+        control_plane = _optional_cli_string(health.get("control_plane"))
+    runtime_update = health.get("runtimeUpdate")
+    if not isinstance(runtime_update, dict):
+        runtime_update = health.get("runtime_update")
+    return {
+        "ok": status == "ok",
+        "status": status,
+        "controlPlane": control_plane,
+        "ownerPid": health.get("ownerPid", health.get("owner_pid")),
+        "lockPath": health.get("lockPath", health.get("lock_path")),
+        "runtimeUpdate": dict(runtime_update) if isinstance(runtime_update, dict) else {},
+        "readiness": dict(readiness),
+    }
+
+
+def _build_status_usage_unavailable_payload(*, timeout_ms: int) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "summary": (
+            "Provider usage snapshots are not available from the native OpenZues CLI runtime yet."
+        ),
+        "reason": "Provider usage snapshots require the model provider usage runtime.",
+        "timeoutMs": timeout_ms,
+    }
+
+
+def _build_status_security_audit_unavailable_payload() -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "summary": (
+            "Security audit snapshots are not available from the native OpenZues CLI runtime yet."
+        ),
+        "reason": "Security audit snapshots require the OpenZues runtime bridge audit adapter.",
+        "findings": [],
+    }
+
+
+async def _build_status_runtime_sections(
+    app_settings: Settings,
+    *,
+    deep: bool,
+    usage: bool,
+    all_output: bool,
+    timeout_ms: int,
+) -> dict[str, object]:
+    sections: dict[str, object] = {}
+    if deep:
+        try:
+            sections["health"] = await _build_live_health_payload(
+                app_settings,
+                timeout_ms=timeout_ms,
+            )
+        except RuntimeError as exc:
+            sections["health"] = {
+                "status": "unavailable",
+                "summary": "Gateway health probe is unavailable.",
+                "error": str(exc),
+            }
+    if deep or usage:
+        sections["lastHeartbeat"] = None
+    if usage:
+        sections["usage"] = _build_status_usage_unavailable_payload(timeout_ms=timeout_ms)
+    if all_output:
+        sections["securityAudit"] = _build_status_security_audit_unavailable_payload()
+    return sections
+
+
 async def _try_live_gateway_capability_view(
     app_settings: Settings,
 ) -> GatewayCapabilityView | None:
@@ -305,6 +694,9 @@ class CliServices:
     gateway_agents: GatewayAgentsService
     gateway_channels: GatewayChannelsService
     gateway_commands: GatewayCommandsService
+    gateway_config: GatewayConfigService
+    gateway_logs: GatewayLogsService
+    gateway_node_methods: GatewayNodeMethodService
     ops_mesh: OpsMeshService
     recall: RecallService
     hermes_platform: HermesPlatformService
@@ -339,6 +731,16 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     gateway_agents = GatewayAgentsService(database=database)
     gateway_commands = GatewayCommandsService()
+    gateway_config = GatewayConfigService(
+        assistant_name=app_settings.app_name,
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version=__version__,
+        local_media_preview_roots=[],
+        embed_sandbox="scripts",
+        allow_external_embed_urls=False,
+        data_dir=app_settings.data_dir,
+    )
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
     onboarding = OnboardingService(
         database,
@@ -367,12 +769,87 @@ async def _build_services(app_settings: Settings) -> CliServices:
     )
     gateway_channels = GatewayChannelsService(
         list_notification_route_views=ops_mesh.list_notification_route_views,
+        probe_account=ops_mesh.probe_channel_account,
+        resolve_targets=ops_mesh.resolve_channel_targets,
     )
+    gateway_logs = GatewayLogsService(logs_root=app_settings.data_dir.parent / "logs")
     control_chat = ControlChatService(
         database,
         mission_service,
         manager,
         hub,
+    )
+
+    async def submit_gateway_chat_message(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+        bootstrap_context_mode: str | None = None,
+        bootstrap_context_run_kind: str | None = None,
+    ) -> dict[str, object]:
+        del (
+            thinking,
+            deliver,
+            timeout_ms,
+            channel,
+            to,
+            bootstrap_context_mode,
+            bootstrap_context_run_kind,
+        )
+        dashboard_services = cast(
+            CliServices,
+            SimpleNamespace(
+                settings=app_settings,
+                database=database,
+                manager=manager,
+                control_chat=control_chat,
+                project_service=project_service,
+                mission_service=mission_service,
+                access=access,
+                onboarding=onboarding,
+                gateway_capability=gateway_capability,
+                gateway_agents=gateway_agents,
+                gateway_channels=gateway_channels,
+                gateway_commands=gateway_commands,
+                gateway_node_methods=None,
+                gateway_logs=gateway_logs,
+                ops_mesh=ops_mesh,
+                recall=None,
+                hermes_platform=None,
+                gateway_bootstrap=gateway_bootstrap,
+                runtime_updates=runtime_updates,
+                setup=setup,
+            ),
+        )
+        dashboard = await _build_operator_dashboard(dashboard_services)
+        await control_chat.submit(message, cast(DashboardView, dashboard), session_key=session_key)
+        return {"runId": idempotency_key, "status": "ok"}
+
+    gateway_node_methods = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        agents_service=gateway_agents,
+        channels_service=gateway_channels,
+        commands_service=gateway_commands,
+        config_service=gateway_config,
+        list_notification_route_views=ops_mesh.list_notification_route_views,
+        logs_service=gateway_logs,
+        models_service=GatewayModelsService(list_instance_views=manager.list_views),
+        send_channel_message_service=ops_mesh.send_direct_channel_message,
+        send_channel_poll_service=ops_mesh.send_direct_channel_poll,
+        acp_spawn_service=RuntimeManagerAcpSpawnService(manager),
+        sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=ops_mesh.list_notification_route_views
+        ),
+        chat_send_service=submit_gateway_chat_message,
     )
     ops_mesh.session_delivery_service = control_chat.append_session_assistant_message
     recall = RecallService(mission_service, database)
@@ -411,6 +888,9 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_agents=gateway_agents,
         gateway_channels=gateway_channels,
         gateway_commands=gateway_commands,
+        gateway_config=gateway_config,
+        gateway_logs=gateway_logs,
+        gateway_node_methods=gateway_node_methods,
         ops_mesh=ops_mesh,
         recall=recall,
         hermes_platform=hermes_platform,
@@ -461,6 +941,33 @@ def _emit_payload(payload: object, *, json_output: bool) -> None:
             typer.echo(f"api_key: {api_key}")
         return
     typer.echo(str(payload))
+
+
+def _emit_health(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    status = str(payload.get("status") or "unknown")
+    typer.echo(f"Gateway health: {status}")
+    control_plane = str(payload.get("controlPlane") or "").strip()
+    if control_plane:
+        typer.echo(f"control plane: {control_plane}")
+    readiness = payload.get("readiness")
+    if isinstance(readiness, dict):
+        ready = readiness.get("ready") is True
+        typer.echo(f"readiness: {'ready' if ready else 'not ready'}")
+        failing = readiness.get("failing")
+        if isinstance(failing, list) and failing:
+            typer.echo("failing: " + ", ".join(str(item) for item in failing))
+    runtime_update = payload.get("runtimeUpdate")
+    if isinstance(runtime_update, dict) and runtime_update:
+        update_status = str(
+            runtime_update.get("status")
+            or runtime_update.get("state")
+            or runtime_update.get("summary")
+            or "available"
+        )
+        typer.echo(f"runtime update: {update_status}")
 
 
 def _emit_agents_inventory(payload: dict[str, object], *, json_output: bool) -> None:
@@ -611,6 +1118,99 @@ def _emit_channel_inventory(payload: dict[str, object], *, json_output: bool) ->
                 if bits:
                     line += ": " + ", ".join(bits)
                 typer.echo(line)
+
+
+def _emit_channel_capabilities(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    reports = payload.get("channels")
+    if not isinstance(reports, list) or not reports:
+        typer.echo("No channel capabilities found.")
+        return
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        channel = str(report.get("channel") or "channel").strip()
+        account_id = str(report.get("accountId") or "default").strip()
+        typer.echo(f"{channel}:{account_id}")
+        support = report.get("support")
+        if isinstance(support, dict):
+            bits: list[str] = []
+            chat_types = support.get("chatTypes")
+            if isinstance(chat_types, list) and chat_types:
+                bits.append("chatTypes=" + ",".join(str(item) for item in chat_types))
+            for key in (
+                "polls",
+                "reactions",
+                "edit",
+                "unsend",
+                "reply",
+                "effects",
+                "groupManagement",
+                "threads",
+                "media",
+                "nativeCommands",
+                "blockStreaming",
+            ):
+                if support.get(key) is True:
+                    bits.append(key)
+            typer.echo("  Support: " + (" ".join(bits) if bits else "none"))
+        actions = report.get("actions")
+        if isinstance(actions, list) and actions:
+            typer.echo("  Actions: " + ", ".join(str(action) for action in actions))
+        probe = report.get("probe")
+        if isinstance(probe, dict):
+            typer.echo("  Probe: " + str(probe.get("status") or "unknown"))
+
+
+def _emit_channel_resolve_results(
+    results: list[dict[str, object]],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(results, json_output=True)
+        return
+    if not results:
+        typer.echo("No channel targets resolved.")
+        return
+    for result in results:
+        entry = str(result.get("input") or "").strip()
+        if result.get("resolved") is True and result.get("id"):
+            name = str(result.get("name") or "").strip()
+            note = str(result.get("note") or "").strip()
+            line = f"{entry} -> {result['id']}"
+            if name:
+                line += f" ({name})"
+            if note:
+                line += f" [{note}]"
+            typer.echo(line)
+            continue
+        typer.echo(f"{entry} -> unresolved")
+
+
+def _emit_channel_logs(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"Log file: {payload.get('file') or ''}")
+    channel = str(payload.get("channel") or "all").strip()
+    if channel and channel != "all":
+        typer.echo(f"Channel: {channel}")
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines:
+        typer.echo("No matching log lines.")
+        return
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        parts = [
+            str(line.get(key) or "").strip()
+            for key in ("time", "level", "message")
+            if str(line.get(key) or "").strip()
+        ]
+        typer.echo(" ".join(parts))
 
 
 def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
@@ -1155,6 +1755,83 @@ def _emit_continue_action(payload: dict[str, object], *, json_output: bool) -> N
         typer.echo(f"mission: {mission_id}")
 
 
+def _emit_status_all_report(payload: dict[str, object]) -> None:
+    typer.echo("OpenClaw status --all")
+    typer.echo("")
+    typer.echo("Overview")
+    headline = str(payload.get("headline") or "").strip()
+    if headline:
+        typer.echo(f"headline: {headline}")
+    summary = str(payload.get("summary") or "").strip()
+    if summary:
+        typer.echo(f"summary: {summary}")
+    mission_summary = payload.get("mission_summary")
+    if isinstance(mission_summary, dict):
+        typer.echo(
+            "missions: "
+            f"{mission_summary.get('active_count', 0)} active, "
+            f"{mission_summary.get('blocked_count', 0)} blocked, "
+            f"{mission_summary.get('paused_count', 0)} paused, "
+            f"{mission_summary.get('failed_count', 0)} failed"
+        )
+    instance_summary = payload.get("instance_summary")
+    if isinstance(instance_summary, dict):
+        typer.echo(
+            "lanes: "
+            f"{instance_summary.get('connected_count', 0)} connected / "
+            f"{instance_summary.get('total_count', 0)} total"
+        )
+    gateway_capability = payload.get("gateway_capability")
+    if isinstance(gateway_capability, dict):
+        gateway_summary = str(gateway_capability.get("summary") or "").strip()
+        if gateway_summary:
+            typer.echo(f"gateway: {gateway_summary}")
+
+    typer.echo("")
+    typer.echo("Channels")
+    if isinstance(gateway_capability, dict):
+        connected_lane_health = gateway_capability.get("connected_lane_health")
+        if isinstance(connected_lane_health, dict):
+            typer.echo("lane health: " + str(connected_lane_health.get("summary") or ""))
+        warnings = gateway_capability.get("warnings")
+        if isinstance(warnings, list) and warnings:
+            for warning in warnings[:5]:
+                typer.echo("warning: " + str(warning))
+        else:
+            typer.echo("warning: none")
+    else:
+        typer.echo("warning: gateway capability unavailable")
+
+    typer.echo("")
+    typer.echo("Agents")
+    status_plan = payload.get("status_plan")
+    if isinstance(status_plan, dict):
+        action_kind = str(status_plan.get("action_kind") or "observe").strip()
+        typer.echo(f"status action: {action_kind}")
+    queue_plan = payload.get("queue_plan")
+    if isinstance(queue_plan, dict):
+        signal_id = str(queue_plan.get("signal_id") or "").strip()
+        if signal_id:
+            typer.echo(f"attention signal: {signal_id}")
+
+    typer.echo("")
+    typer.echo("Diagnosis (read-only)")
+    status_all = payload.get("status_all")
+    if isinstance(status_all, dict):
+        timeout_ms = status_all.get("timeoutMs")
+        if timeout_ms is not None:
+            typer.echo(f"timeout: {timeout_ms} ms")
+    health = payload.get("health")
+    if isinstance(health, dict):
+        typer.echo("health: " + str(health.get("status") or "unknown"))
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        typer.echo("usage: " + str(usage.get("status") or "unknown"))
+    security_audit = payload.get("securityAudit")
+    if isinstance(security_audit, dict):
+        typer.echo("security audit: " + str(security_audit.get("status") or "unknown"))
+
+
 def _emit_attention_queue_action(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1187,6 +1864,9 @@ def _emit_attention_queue_action(payload: dict[str, object], *, json_output: boo
 def _emit_status(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
+        return
+    if isinstance(payload.get("status_all"), dict):
+        _emit_status_all_report(payload)
         return
 
     headline = str(payload.get("headline") or "").strip()
@@ -1457,6 +2137,2188 @@ def _emit_outbound_delivery_replay(payload: dict[str, object], *, json_output: b
         error = str(item.get("error") or "").strip()
         if error:
             typer.echo(f"  error: {error}")
+
+
+def _emit_direct_channel_delivery(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    delivery_id = payload.get("deliveryId") or payload.get("delivery_id")
+    if delivery_id is not None:
+        typer.echo(f"delivery: {delivery_id}")
+    channel = str(payload.get("channel") or "").strip()
+    if channel:
+        typer.echo(f"channel: {channel}")
+    session_key = str(payload.get("sessionKey") or payload.get("session_key") or "").strip()
+    if session_key:
+        typer.echo(f"session: {session_key}")
+    run_id = str(payload.get("runId") or payload.get("run_id") or "").strip()
+    if run_id:
+        typer.echo(f"run: {run_id}")
+    message_id = str(payload.get("messageId") or payload.get("message_id") or "").strip()
+    if message_id:
+        typer.echo(f"message: {message_id}")
+    poll_id = str(payload.get("pollId") or payload.get("poll_id") or "").strip()
+    if poll_id:
+        typer.echo(f"poll: {poll_id}")
+
+
+def _emit_session_method_result(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    status = str(payload.get("status") or "").strip()
+    if status:
+        typer.echo(f"status: {status}")
+    run_id = str(payload.get("runId") or payload.get("run_id") or "").strip()
+    if run_id:
+        typer.echo(f"run: {run_id}")
+    child_session_key = str(
+        payload.get("childSessionKey") or payload.get("sessionKey") or ""
+    ).strip()
+    if child_session_key:
+        typer.echo(f"session: {child_session_key}")
+    mode = str(payload.get("mode") or "").strip()
+    if mode:
+        typer.echo(f"mode: {mode}")
+    cleanup = str(payload.get("cleanup") or "").strip()
+    if cleanup:
+        typer.echo(f"cleanup: {cleanup}")
+    note = str(payload.get("note") or "").strip()
+    if note:
+        typer.echo(f"note: {note}")
+    error = str(payload.get("error") or "").strip()
+    if error:
+        typer.echo(f"error: {error}")
+
+
+def _emit_plugins_inventory(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    verbose: bool = False,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugins = payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    if not plugin_rows:
+        typer.echo("No plugins found.")
+        return
+    loaded_count = sum(
+        1
+        for plugin in plugin_rows
+        if isinstance(plugin, dict) and str(plugin.get("status") or "") == "loaded"
+    )
+    typer.echo(f"Plugins ({loaded_count}/{len(plugin_rows)} loaded)")
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        name = str(plugin.get("name") or plugin.get("id") or "").strip()
+        plugin_id = str(plugin.get("id") or "").strip()
+        status = str(plugin.get("status") or "").strip()
+        format_name = str(plugin.get("format") or "openzues").strip()
+        description = _first_text_line(plugin.get("description"), limit=72)
+        heading = f"- {name or plugin_id} {status} [{format_name}]".strip()
+        if plugin_id and name and plugin_id != name:
+            heading += f" ({plugin_id})"
+        if description:
+            heading += f" - {description}"
+        typer.echo(heading)
+        if not verbose:
+            continue
+        source = str(plugin.get("source") or "").strip()
+        origin = str(plugin.get("origin") or "").strip()
+        parity_status = str(plugin.get("parityStatus") or "").strip()
+        if source:
+            typer.echo(f"  source: {source}")
+        if origin:
+            typer.echo(f"  origin: {origin}")
+        if parity_status:
+            typer.echo(f"  parity: {parity_status}")
+        capabilities = plugin.get("capabilities")
+        if isinstance(capabilities, list) and capabilities:
+            typer.echo(
+                "  capabilities: "
+                + ", ".join(str(item) for item in capabilities if str(item).strip())
+            )
+
+
+def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    errors = payload.get("errors")
+    diagnostics = payload.get("diagnostics")
+    compatibility = payload.get("compatibility")
+    error_rows = errors if isinstance(errors, list) else []
+    diagnostic_rows = diagnostics if isinstance(diagnostics, list) else []
+    compatibility_rows = compatibility if isinstance(compatibility, list) else []
+    if not error_rows and not diagnostic_rows and not compatibility_rows:
+        typer.echo("No plugin issues detected.")
+        return
+    if error_rows:
+        typer.echo("Plugin errors:")
+        for entry in error_rows:
+            if not isinstance(entry, dict):
+                continue
+            plugin_id = str(entry.get("id") or "").strip()
+            error = str(entry.get("error") or "failed to load").strip()
+            source = str(entry.get("source") or "").strip()
+            suffix = f" ({source})" if source else ""
+            typer.echo(f"- {plugin_id}: {error}{suffix}")
+    if diagnostic_rows:
+        if error_rows:
+            typer.echo("")
+        typer.echo("Diagnostics:")
+        for entry in diagnostic_rows:
+            if not isinstance(entry, dict):
+                continue
+            plugin_id = str(entry.get("pluginId") or "").strip()
+            message = str(entry.get("message") or "").strip()
+            prefix = f"{plugin_id}: " if plugin_id else ""
+            typer.echo(f"- {prefix}{message}")
+    if compatibility_rows:
+        if error_rows or diagnostic_rows:
+            typer.echo("")
+        typer.echo("Compatibility:")
+        for entry in compatibility_rows:
+            if not isinstance(entry, dict):
+                continue
+            message = _format_plugin_compatibility_notice(entry)
+            severity = str(entry.get("severity") or "info").strip()
+            typer.echo(f"- {message} [{severity}]")
+
+
+def _emit_plugins_toggle(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugin_id = str(payload.get("pluginId") or payload.get("resolvedPluginId") or "").strip()
+    action = str(payload.get("action") or "").strip()
+    enabled = payload.get("enabled")
+    if action == "enable" and enabled is not True:
+        reason = str(payload.get("reason") or "unknown reason").strip()
+        typer.echo(f'Plugin "{plugin_id}" could not be enabled ({reason}).')
+        return
+    verb = "Enabled" if action == "enable" else "Disabled"
+    typer.echo(f'{verb} plugin "{plugin_id}". Restart the gateway to apply.')
+
+
+def _emit_plugins_install(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugin_id = str(payload.get("pluginId") or "").strip()
+    install = payload.get("install")
+    install_payload = install if isinstance(install, dict) else {}
+    source = str(payload.get("source") or install_payload.get("source") or "").strip()
+    install_path = str(install_payload.get("installPath") or "").strip()
+    suffix = f" from {source}" if source else ""
+    typer.echo(f'Installed plugin "{plugin_id}"{suffix}.')
+    if install_path:
+        typer.echo(f"path: {install_path}")
+    typer.echo("Restart the gateway to apply changes.")
+
+
+def _emit_plugins_uninstall(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugin_id = str(payload.get("pluginId") or "").strip()
+    actions = payload.get("actions")
+    action_payload = actions if isinstance(actions, dict) else {}
+    removed = [
+        label
+        for key, label in (
+            ("entry", "config entry"),
+            ("install", "install record"),
+            ("allowlist", "allowlist"),
+            ("loadPath", "load path"),
+            ("memorySlot", "memory slot"),
+            ("channelConfig", "channel config"),
+            ("directory", "directory"),
+        )
+        if action_payload.get(key) is True
+    ]
+    if payload.get("dryRun") is True:
+        typer.echo(
+            f'Plugin "{plugin_id}" would remove: '
+            + (", ".join(removed) if removed else "nothing")
+        )
+        typer.echo("Dry run, no changes made.")
+        return
+    typer.echo(
+        f'Uninstalled plugin "{plugin_id}". Removed: '
+        + (", ".join(removed) if removed else "nothing")
+        + "."
+    )
+    typer.echo("Restart the gateway to apply changes.")
+
+
+def _emit_plugins_update(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    outcomes = payload.get("outcomes")
+    outcome_rows = outcomes if isinstance(outcomes, list) else []
+    if not outcome_rows:
+        typer.echo("No tracked plugins to update.")
+        return
+    for outcome in outcome_rows:
+        if not isinstance(outcome, dict):
+            continue
+        message = str(outcome.get("message") or "").strip()
+        if message:
+            typer.echo(message)
+    if payload.get("dryRun") is True:
+        typer.echo("Dry run, no changes made.")
+    elif payload.get("changed") is True:
+        typer.echo("Restart the gateway to load plugins.")
+
+
+def _emit_plugins_marketplace_list(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugins = payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    if not plugin_rows:
+        typer.echo(f"No plugins found in marketplace {payload.get('source')}.")
+        return
+    typer.echo(f"Marketplace {payload.get('name') or payload.get('source')}")
+    for item in plugin_rows:
+        if not isinstance(item, dict):
+            continue
+        name = _optional_cli_string(item.get("name")) or "(unknown)"
+        version = _optional_cli_string(item.get("version"))
+        description = _optional_cli_string(item.get("description"))
+        suffix = f" v{version}" if version is not None else ""
+        detail = f" - {description}" if description is not None else ""
+        typer.echo(f"{name}{suffix}{detail}")
+
+
+def _emit_acp_bridge_unavailable(
+    *,
+    kind: str,
+    context: dict[str, object],
+) -> None:
+    typer.echo(
+        f"ACP {kind} bridge is not available in the native OpenZues CLI yet.",
+        err=True,
+    )
+    typer.echo(
+        "Use `openzues sessions spawn --runtime acp` for Gateway-tracked ACP child runs.",
+        err=True,
+    )
+    for key, value in context.items():
+        if value in (None, "", False):
+            continue
+        typer.echo(f"{key}: {value}", err=True)
+
+
+def _validate_acp_provenance(value: str | None) -> str | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    if normalized not in {"off", "meta", "meta+receipt"}:
+        raise ValueError("Invalid --provenance value. Use off, meta, or meta+receipt.")
+    return normalized
+
+
+def _read_acp_secret_file(path: str, *, label: str) -> str:
+    normalized_path = _optional_cli_string(path)
+    if normalized_path is None:
+        raise ValueError(f"Failed to inspect Gateway {label} file: path is empty.")
+    secret_path = Path(normalized_path)
+    try:
+        return secret_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"Failed to inspect Gateway {label} file: {normalized_path}"
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            f"Failed to read Gateway {label} file: {normalized_path}: {exc}"
+        ) from exc
+
+
+def _resolve_acp_gateway_auth_options(
+    *,
+    token: str | None,
+    token_file: str | None,
+    password: str | None,
+    password_file: str | None,
+) -> dict[str, object]:
+    normalized_token = _optional_cli_string(token)
+    normalized_token_file = _optional_cli_string(token_file)
+    normalized_password = _optional_cli_string(password)
+    normalized_password_file = _optional_cli_string(password_file)
+    if normalized_token is not None and normalized_token_file is not None:
+        raise ValueError("Use either --token or --token-file for Gateway token.")
+    if normalized_password is not None and normalized_password_file is not None:
+        raise ValueError("Use either --password or --password-file for Gateway password.")
+
+    warnings: list[str] = []
+    if normalized_token is not None:
+        warnings.append("--token can be exposed via process listings; prefer --token-file.")
+    if normalized_password is not None:
+        warnings.append(
+            "--password can be exposed via process listings; prefer --password-file."
+        )
+
+    resolved_token = (
+        _read_acp_secret_file(normalized_token_file, label="token")
+        if normalized_token_file is not None
+        else normalized_token
+    )
+    resolved_password = (
+        _read_acp_secret_file(normalized_password_file, label="password")
+        if normalized_password_file is not None
+        else normalized_password
+    )
+    return {
+        "gatewayToken": resolved_token,
+        "gatewayPassword": resolved_password,
+        "tokenFile": normalized_token_file,
+        "passwordFile": normalized_password_file,
+        "warnings": warnings,
+    }
+
+
+def _emit_models_list(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    plain: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_models = payload.get("models")
+    if isinstance(raw_models, list):
+        models = [item for item in raw_models if isinstance(item, dict)]
+    else:
+        models = []
+    if not models:
+        typer.echo("No models found.")
+        return
+    if plain:
+        for item in models:
+            model_id = _optional_cli_string(item.get("id"))
+            provider = _optional_cli_string(item.get("provider"))
+            if model_id is None:
+                continue
+            typer.echo(f"{provider}/{model_id}" if provider else model_id)
+        return
+    typer.echo(f"Models ({len(models)})")
+    for item in models:
+        model_id = _optional_cli_string(item.get("id")) or "(unknown)"
+        name = _optional_cli_string(item.get("name"))
+        provider = _optional_cli_string(item.get("provider"))
+        default = " default" if item.get("isDefault") is True else ""
+        label = name or model_id
+        prefix = f"{provider}/" if provider else ""
+        typer.echo(f"- {prefix}{model_id}: {label}{default}")
+
+
+def _emit_models_status(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    plain: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    resolved_default = _optional_cli_string(payload.get("resolvedDefault"))
+    if plain:
+        typer.echo(resolved_default or "")
+        return
+    typer.echo("Model status")
+    default_model = _optional_cli_string(payload.get("defaultModel"))
+    if default_model is not None:
+        typer.echo(f"default: {default_model}")
+    if resolved_default is not None:
+        typer.echo(f"resolved: {resolved_default}")
+    allowed = payload.get("allowed")
+    if isinstance(allowed, list):
+        typer.echo("configured models: " + (", ".join(str(item) for item in allowed) or "all"))
+    auth = payload.get("auth")
+    if isinstance(auth, dict):
+        typer.echo(f"auth: {auth.get('status') or 'unknown'}")
+
+
+def _model_catalog_entries(payload: dict[str, object]) -> list[dict[str, object]]:
+    raw_models = payload.get("models")
+    if not isinstance(raw_models, list):
+        return []
+    return [dict(item) for item in raw_models if isinstance(item, dict)]
+
+
+def _model_catalog_ref(entry: dict[str, object]) -> str | None:
+    model_id = _optional_cli_string(entry.get("id"))
+    if model_id is None:
+        return None
+    provider = _optional_cli_string(entry.get("provider"))
+    if provider is None:
+        return model_id
+    return f"{provider}/{model_id}"
+
+
+def _build_capability_model_providers_payload(
+    models: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for entry in models:
+        provider = _optional_cli_string(entry.get("provider"))
+        model_id = _optional_cli_string(entry.get("id"))
+        if provider is None or model_id is None:
+            continue
+        current = grouped.setdefault(
+            provider,
+            {
+                "provider": provider,
+                "count": 0,
+                "defaults": [],
+                "available": True,
+                "configured": False,
+                "selected": False,
+            },
+        )
+        current_count = current.get("count")
+        current["count"] = (current_count if isinstance(current_count, int) else 0) + 1
+        defaults = cast("list[str]", current["defaults"])
+        if len(defaults) < 3:
+            defaults.append(model_id)
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def _emit_capability_provider_summary(payload: object, *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if isinstance(payload, list):
+        for entry in payload:
+            typer.echo(json.dumps(entry))
+        return
+    typer.echo(json.dumps(payload, indent=2))
+
+
+def _resolve_capability_model_run_transport(*, local: bool, gateway: bool) -> str:
+    if local and gateway:
+        raise ValueError("Pass only one of --local or --gateway.")
+    return "gateway" if gateway else "local"
+
+
+def _split_capability_model_ref(model_ref: str | None) -> tuple[str | None, str | None]:
+    normalized = _optional_cli_string(model_ref)
+    if normalized is None:
+        return None, None
+    slash = normalized.find("/")
+    if slash <= 0 or slash == len(normalized) - 1:
+        return None, normalized
+    return normalized[:slash], normalized[slash + 1 :]
+
+
+def _capability_model_run_outputs_from_payloads(
+    raw_payloads: object,
+) -> list[dict[str, object]]:
+    if not isinstance(raw_payloads, list):
+        return []
+    outputs: list[dict[str, object]] = []
+    for item in raw_payloads:
+        if not isinstance(item, dict):
+            continue
+        output: dict[str, object] = {}
+        text = item.get("text")
+        if isinstance(text, str):
+            output["text"] = text
+        if "mediaUrl" in item:
+            media_url = item.get("mediaUrl")
+            if media_url is None or isinstance(media_url, str):
+                output["mediaUrl"] = media_url
+        media_urls = item.get("mediaUrls")
+        if isinstance(media_urls, list):
+            output["mediaUrls"] = [
+                media_url for media_url in media_urls if isinstance(media_url, str)
+            ]
+        if not output:
+            output = dict(item)
+        outputs.append(output)
+    return outputs
+
+
+def _normalize_capability_model_run_envelope(
+    result: dict[str, object],
+    *,
+    transport: str,
+    provider: str | None,
+    model: str | None,
+) -> dict[str, object]:
+    payload_source: dict[str, object] = result
+    nested_result = result.get("result")
+    if isinstance(nested_result, dict):
+        payload_source = nested_result
+    meta = payload_source.get("meta")
+    agent_meta = meta.get("agentMeta") if isinstance(meta, dict) else None
+    resolved_provider = provider
+    resolved_model = model
+    if isinstance(agent_meta, dict):
+        resolved_provider = _optional_cli_string(agent_meta.get("provider")) or resolved_provider
+        resolved_model = _optional_cli_string(agent_meta.get("model")) or resolved_model
+    outputs = _capability_model_run_outputs_from_payloads(payload_source.get("payloads"))
+    if not outputs:
+        run_id = _optional_cli_string(result.get("runId")) or _optional_cli_string(
+            payload_source.get("runId")
+        )
+        status = _optional_cli_string(result.get("status")) or _optional_cli_string(
+            payload_source.get("status")
+        )
+        fallback: dict[str, object] = {}
+        if run_id is not None:
+            fallback["runId"] = run_id
+        if status is not None:
+            fallback["status"] = status
+        outputs = [fallback or dict(payload_source)]
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "model.run",
+        "transport": transport,
+        "attempts": [],
+        "outputs": outputs,
+    }
+    if resolved_provider is not None:
+        envelope["provider"] = resolved_provider
+    if resolved_model is not None:
+        envelope["model"] = resolved_model
+    return envelope
+
+
+async def _build_capability_model_run_payload(
+    services: CliServices,
+    *,
+    prompt: str,
+    model_ref: str | None,
+    transport: str,
+) -> dict[str, object]:
+    provider, model = _split_capability_model_ref(model_ref)
+    if transport == "gateway":
+        params: dict[str, object] = {
+            "agentId": "main",
+            "message": prompt,
+            "idempotencyKey": f"model-run-{secrets.token_urlsafe(18)}",
+        }
+        if provider is not None:
+            params["provider"] = provider
+        if model is not None:
+            params["model"] = model
+        result = await _call_gateway_node_method(services, "agent", params)
+        return _normalize_capability_model_run_envelope(
+            result,
+            transport=transport,
+            provider=provider,
+            model=model,
+        )
+
+    control_chat = getattr(services, "control_chat", None)
+    if control_chat is None:
+        raise ValueError("model.run local transport is unavailable until control chat is wired.")
+    dashboard = await _build_operator_dashboard(services)
+    response = await control_chat.submit(
+        prompt,
+        cast("DashboardView", dashboard),
+        session_key=None,
+    )
+    assistant = getattr(response, "assistant", None)
+    reply = getattr(assistant, "content", None)
+    text = reply if isinstance(reply, str) else ""
+    return _normalize_capability_model_run_envelope(
+        {
+            "payloads": [{"text": text}],
+            "meta": {"agentMeta": {"provider": provider, "model": model}},
+        },
+        transport=transport,
+        provider=provider,
+        model=model,
+    )
+
+
+def _emit_capability_model_run(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"{payload.get('capability') or 'model.run'} via {payload.get('transport')}")
+    provider = _optional_cli_string(payload.get("provider"))
+    model = _optional_cli_string(payload.get("model"))
+    if provider is not None:
+        typer.echo(f"provider: {provider}")
+    if model is not None:
+        typer.echo(f"model: {model}")
+    outputs = payload.get("outputs")
+    output_items = [item for item in outputs if isinstance(item, dict)] if isinstance(
+        outputs,
+        list,
+    ) else []
+    typer.echo(f"outputs: {len(output_items)}")
+    for output in output_items:
+        path_value = _optional_cli_string(output.get("path"))
+        text_value = _optional_cli_string(output.get("text"))
+        if path_value is not None:
+            typer.echo(path_value)
+        elif text_value is not None:
+            typer.echo(text_value)
+        else:
+            typer.echo(json.dumps(output))
+
+
+def _capability_tts_provider_state_map(
+    status_payload: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    raw_states = status_payload.get("providerStates")
+    if not isinstance(raw_states, list):
+        return {}
+    states: dict[str, dict[str, object]] = {}
+    for state in raw_states:
+        if not isinstance(state, dict):
+            continue
+        provider_id = _optional_cli_string(state.get("id"))
+        if provider_id is not None:
+            states[provider_id] = dict(state)
+    return states
+
+
+def _capability_tts_provider_entry(
+    raw_provider: object,
+    *,
+    active: str | None,
+    states: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    if isinstance(raw_provider, str):
+        provider_id = _optional_cli_string(raw_provider)
+        raw_entry: dict[str, object] = {}
+    elif isinstance(raw_provider, dict):
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        raw_entry = dict(raw_provider)
+    else:
+        return None
+    if provider_id is None:
+        return None
+    state = states.get(provider_id, {})
+    selected = bool(state.get("selected")) or active == provider_id
+    entry: dict[str, object] = {
+        "available": bool(state.get("available")) if "available" in state else True,
+        "configured": bool(raw_entry.get("configured")) if "configured" in raw_entry else selected,
+        "selected": selected,
+        "id": provider_id,
+    }
+    label = (
+        _optional_cli_string(raw_entry.get("name"))
+        or _optional_cli_string(raw_entry.get("label"))
+        or _optional_cli_string(state.get("label"))
+    )
+    if label is not None:
+        entry["name"] = label
+    for key in ("models", "voices"):
+        value = raw_entry.get(key)
+        if isinstance(value, list):
+            entry[key] = list(value)
+    return entry
+
+
+async def _build_capability_tts_providers_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    provider_payload = await _call_gateway_node_method(services, "tts.providers", {})
+    status_payload = await _call_gateway_node_method(services, "tts.status", {})
+    raw_providers = provider_payload.get("providers")
+    active = _optional_cli_string(provider_payload.get("active"))
+    states = _capability_tts_provider_state_map(status_payload)
+    providers: list[dict[str, object]] = []
+    if isinstance(raw_providers, list):
+        for raw_provider in raw_providers:
+            entry = _capability_tts_provider_entry(
+                raw_provider,
+                active=active,
+                states=states,
+            )
+            if entry is not None:
+                providers.append(entry)
+    return {"providers": providers, "active": active}
+
+
+async def _build_capability_tts_status_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    payload = await _call_gateway_node_method(services, "tts.status", {})
+    return {"transport": "gateway", **payload}
+
+
+async def _build_capability_tts_state_payload(
+    services: CliServices,
+    *,
+    method: str,
+    provider: str | None = None,
+) -> dict[str, object]:
+    params: dict[str, object] = {}
+    if provider is not None:
+        params["provider"] = provider
+    return await _call_gateway_node_method(services, method, params)
+
+
+async def _build_capability_tts_convert_payload(
+    services: CliServices,
+    *,
+    text: str,
+    channel: str | None,
+    voice: str | None,
+    model_ref: str | None,
+    output: str | None,
+    transport: str,
+) -> dict[str, object]:
+    provider, model_id = _split_capability_model_ref(model_ref)
+    if _optional_cli_string(model_ref) is not None and provider is None:
+        raise ValueError("TTS model overrides must use the form <provider/model>.")
+    params: dict[str, object] = {"text": text}
+    normalized_channel = _optional_cli_string(channel)
+    normalized_voice = _optional_cli_string(voice)
+    if normalized_channel is not None:
+        params["channel"] = normalized_channel
+    if provider is not None:
+        params["provider"] = provider
+    if model_id is not None:
+        params["modelId"] = model_id
+    if normalized_voice is not None:
+        params["voiceId"] = normalized_voice
+    result = await _call_gateway_node_method(services, "tts.convert", params)
+    audio_path = _optional_cli_string(result.get("audioPath"))
+    output_path = audio_path
+    normalized_output = _optional_cli_string(output)
+    if normalized_output is not None and audio_path is not None:
+        target = Path(normalized_output).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(audio_path, target)
+        output_path = str(target)
+    output_payload: dict[str, object] = {}
+    if output_path is not None:
+        output_payload["path"] = output_path
+    output_format = _optional_cli_string(result.get("outputFormat"))
+    if output_format is not None:
+        output_payload["format"] = output_format
+    voice_compatible = result.get("voiceCompatible")
+    if isinstance(voice_compatible, bool):
+        output_payload["voiceCompatible"] = voice_compatible
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "tts.convert",
+        "transport": transport,
+        "attempts": [],
+        "outputs": [output_payload],
+    }
+    result_provider = _optional_cli_string(result.get("provider")) or provider
+    if result_provider is not None:
+        envelope["provider"] = result_provider
+    return envelope
+
+
+async def _build_capability_tts_voices_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+) -> list[object]:
+    provider_payload = await _build_capability_tts_providers_payload(services)
+    selected_provider = _optional_cli_string(provider) or _optional_cli_string(
+        provider_payload.get("active")
+    )
+    raw_providers = provider_payload.get("providers")
+    if not isinstance(raw_providers, list):
+        return []
+    for entry in raw_providers:
+        if not isinstance(entry, dict):
+            continue
+        provider_id = _optional_cli_string(entry.get("id"))
+        if selected_provider is None or provider_id == selected_provider:
+            voices = entry.get("voices")
+            return list(voices) if isinstance(voices, list) else []
+    return []
+
+
+def _capability_list_payload() -> list[dict[str, object]]:
+    return [
+        {
+            "id": entry["id"],
+            "transports": list(cast("list[str]", entry["transports"])),
+            "description": entry["description"],
+        }
+        for entry in _CAPABILITY_METADATA
+    ]
+
+
+def _capability_inspect_payload(name: str) -> dict[str, object]:
+    normalized = name.strip()
+    for entry in _CAPABILITY_METADATA:
+        if entry["id"] == normalized:
+            payload = dict(entry)
+            payload["transports"] = list(cast("list[str]", entry["transports"]))
+            payload["flags"] = list(cast("list[str]", entry["flags"]))
+            return payload
+    raise ValueError(f"Unknown capability: {name}")
+
+
+def _emit_capability_list(payload: list[dict[str, object]], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    for entry in payload:
+        typer.echo(json.dumps(entry, separators=(",", ":")))
+
+
+def _emit_capability_inspect(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(json.dumps(payload, indent=2))
+
+
+def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if isinstance(payload, list):
+        if not payload:
+            typer.echo("No plugins found.")
+            return
+        for item in payload:
+            if isinstance(item, dict):
+                plugin = item.get("plugin")
+                if isinstance(plugin, dict):
+                    typer.echo(
+                        f"{plugin.get('name') or plugin.get('id')} "
+                        f"({plugin.get('status') or 'unknown'})"
+                    )
+        return
+    if not isinstance(payload, dict):
+        typer.echo(str(payload))
+        return
+    plugin = payload.get("plugin")
+    if not isinstance(plugin, dict):
+        _emit_payload(payload, json_output=False)
+        return
+    typer.echo(str(plugin.get("name") or plugin.get("id") or "Plugin"))
+    plugin_id = str(plugin.get("id") or "").strip()
+    if plugin_id:
+        typer.echo(f"id: {plugin_id}")
+    status = str(plugin.get("status") or "").strip()
+    if status:
+        typer.echo(f"status: {status}")
+    format_name = str(plugin.get("format") or "").strip()
+    if format_name:
+        typer.echo(f"format: {format_name}")
+    source = str(plugin.get("source") or "").strip()
+    if source:
+        typer.echo(f"source: {source}")
+    shape = str(payload.get("shape") or "").strip()
+    if shape:
+        typer.echo(f"shape: {shape}")
+
+
+def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    containers = payload.get("containers")
+    browsers = payload.get("browsers")
+    container_rows = containers if isinstance(containers, list) else []
+    browser_rows = browsers if isinstance(browsers, list) else []
+    if not container_rows and not browser_rows:
+        typer.echo("No sandbox runtimes found.")
+        _emit_sandbox_inventory_summary(container_rows, browser_rows)
+        return
+    for item in container_rows:
+        if not isinstance(item, dict):
+            continue
+        session_key = str(item.get("sessionKey") or "").strip()
+        runtime = str(item.get("runtime") or "").strip()
+        mode = str(item.get("sandboxMode") or "").strip()
+        status = str(item.get("status") or "").strip() or "known"
+        label = session_key or runtime or "sandbox"
+        typer.echo(f"[container] {label} ({status})")
+        if runtime:
+            typer.echo(f"  runtime: {runtime}")
+        if mode:
+            typer.echo(f"  mode: {mode}")
+    for item in browser_rows:
+        if not isinstance(item, dict):
+            continue
+        session_key = str(item.get("sessionKey") or "").strip()
+        runtime = str(item.get("runtime") or "").strip()
+        status = str(item.get("status") or "").strip() or "known"
+        label = session_key or runtime or "browser"
+        typer.echo(f"[browser] {label} ({status})")
+    _emit_sandbox_inventory_summary(container_rows, browser_rows)
+
+
+def _emit_sandbox_inventory_summary(
+    containers: list[object],
+    browsers: list[object],
+) -> None:
+    total_count = len(containers) + len(browsers)
+    items = [*containers, *browsers]
+    running_count = sum(
+        1 for item in items if _sandbox_inventory_is_running(item)
+    )
+    mismatch_count = sum(
+        1 for item in items if isinstance(item, dict) and item.get("imageMatch") is False
+    )
+    typer.echo(f"Total: {total_count} ({running_count} running)")
+    if mismatch_count > 0:
+        typer.echo("")
+        typer.echo(f"{mismatch_count} runtime(s) with config mismatch detected.")
+        typer.echo("Run 'openclaw sandbox recreate --all' to update all runtimes.")
+
+
+def _sandbox_inventory_is_running(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("running") is True:
+        return True
+    status = str(item.get("status") or "").strip().lower()
+    return status == "running"
+
+
+def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo("Effective sandbox:")
+    for key in ("agentId", "sessionKey", "mainSessionKey"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            typer.echo(f"  {key}: {value}")
+    sandbox = payload.get("sandbox")
+    if isinstance(sandbox, dict):
+        runtime_label = "sandboxed" if sandbox.get("sessionIsSandboxed") else "direct"
+        typer.echo(f"  runtime: {runtime_label}")
+        typer.echo(
+            "  mode: "
+            + str(sandbox.get("mode") or "off")
+            + " scope: "
+            + str(sandbox.get("scope") or "session")
+        )
+        workspace_access = str(sandbox.get("workspaceAccess") or "").strip()
+        workspace_root = str(sandbox.get("workspaceRoot") or "").strip()
+        if workspace_access or workspace_root:
+            typer.echo(
+                "  workspaceAccess: "
+                + (workspace_access or "(unknown)")
+                + " workspaceRoot: "
+                + (workspace_root or "(unknown)")
+            )
+    fix_it = payload.get("fixIt")
+    if isinstance(fix_it, list) and fix_it:
+        typer.echo("")
+        typer.echo("Fix-it:")
+        for item in fix_it:
+            typer.echo(f"  - {item}")
+
+
+def _emit_sandbox_recreate(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    containers = payload.get("containers")
+    browsers = payload.get("browsers")
+    container_count = len(containers) if isinstance(containers, list) else 0
+    browser_count = len(browsers) if isinstance(browsers, list) else 0
+    if container_count + browser_count == 0:
+        typer.echo("No sandbox runtimes found matching the criteria.")
+        return
+    typer.echo("")
+    typer.echo("Sandbox runtimes to be recreated:")
+    typer.echo("")
+    if isinstance(containers, list) and containers:
+        typer.echo("Sandbox Runtimes:")
+        for item in containers:
+            if not isinstance(item, dict):
+                continue
+            session_key = str(item.get("sessionKey") or "").strip()
+            runtime = str(item.get("runtime") or "session_metadata").strip()
+            status = str(item.get("status") or "known").strip()
+            typer.echo(f"  - {session_key or runtime} [{runtime}] ({status})")
+    if isinstance(browsers, list) and browsers:
+        typer.echo("")
+        typer.echo("Browser Containers:")
+        for item in browsers:
+            if not isinstance(item, dict):
+                continue
+            session_key = str(item.get("sessionKey") or "").strip()
+            status = str(item.get("status") or "known").strip()
+            typer.echo(f"  - {session_key or 'browser'} ({status})")
+    typer.echo("")
+    typer.echo(f"Total: {container_count + browser_count} runtime(s)")
+    if payload.get("cancelled"):
+        typer.echo("Cancelled.")
+        return
+    typer.echo("")
+    typer.echo(
+        f"Done: {payload.get('successCount', 0)} removed, "
+        f"{payload.get('failCount', 0)} failed"
+    )
+    if payload.get("successCount"):
+        typer.echo("")
+        typer.echo("Runtimes will be automatically recreated when the agent is next used.")
+
+
+async def _build_sandbox_inventory_payload(
+    services: CliServices,
+    *,
+    browser_only: bool,
+) -> dict[str, object]:
+    containers: list[dict[str, object]] = []
+    browsers: list[dict[str, object]] = []
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if callable(list_rows):
+        rows = await list_rows()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = _sandbox_inventory_item_from_metadata_row(row)
+            if item is None:
+                continue
+            containers.append(item)
+    containers.sort(key=lambda item: str(item.get("sessionKey") or ""))
+    if browser_only:
+        containers = []
+    return {"containers": containers, "browsers": browsers}
+
+
+async def _build_sandbox_recreate_payload(
+    services: CliServices,
+    *,
+    all_runtimes: bool,
+    session_key: str | None,
+    agent_id: str | None,
+    browser_only: bool,
+    force: bool,
+) -> dict[str, object]:
+    normalized_session, normalized_agent = _validate_sandbox_recreate_selection(
+        all_runtimes=all_runtimes,
+        session_key=session_key,
+        agent_id=agent_id,
+    )
+
+    containers: list[dict[str, object]] = []
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if callable(list_rows) and not browser_only:
+        for row in await list_rows():
+            if not isinstance(row, dict):
+                continue
+            item = _sandbox_inventory_item_from_metadata_row(row)
+            if item is None:
+                continue
+            item_session_key = _optional_cli_string(item.get("sessionKey"))
+            if item_session_key is None:
+                continue
+            if normalized_session is not None and item_session_key != normalized_session:
+                continue
+            if normalized_agent is not None and not _sandbox_session_matches_agent(
+                item_session_key,
+                normalized_agent,
+            ):
+                continue
+            containers.append(item)
+    containers.sort(key=lambda item: str(item.get("sessionKey") or ""))
+    browsers: list[dict[str, object]] = []
+    removed: list[str] = []
+    failed: list[dict[str, object]] = []
+    if not force:
+        return {
+            "ok": False,
+            "cancelled": True,
+            "force": False,
+            "containers": containers,
+            "browsers": browsers,
+            "successCount": 0,
+            "failCount": 0,
+            "removed": removed,
+            "failed": failed,
+        }
+
+    delete_metadata = getattr(database, "delete_gateway_session_metadata", None)
+    for item in containers:
+        item_session_key = _optional_cli_string(item.get("sessionKey"))
+        if item_session_key is None:
+            continue
+        if not callable(delete_metadata):
+            failed.append(
+                {
+                    "sessionKey": item_session_key,
+                    "error": "Gateway session metadata removal is unavailable.",
+                }
+            )
+            continue
+        try:
+            await delete_metadata(item_session_key)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            failed.append({"sessionKey": item_session_key, "error": str(exc)})
+        else:
+            removed.append(item_session_key)
+
+    return {
+        "ok": len(failed) == 0,
+        "cancelled": False,
+        "force": True,
+        "containers": containers,
+        "browsers": browsers,
+        "successCount": len(removed),
+        "failCount": len(failed),
+        "removed": removed,
+        "failed": failed,
+    }
+
+
+def _validate_sandbox_recreate_selection(
+    *,
+    all_runtimes: bool,
+    session_key: str | None,
+    agent_id: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_session = _optional_cli_string(session_key)
+    normalized_agent = _optional_cli_string(agent_id)
+    selected_count = sum(
+        1
+        for selected in (
+            all_runtimes,
+            normalized_session is not None,
+            normalized_agent is not None,
+        )
+        if selected
+    )
+    if selected_count == 0:
+        raise ValueError("Please specify --all, --session <key>, or --agent <id>")
+    if selected_count > 1:
+        raise ValueError("Please specify only one of: --all, --session, --agent")
+    return normalized_session, normalized_agent
+
+
+async def _build_sandbox_explain_payload(
+    services: CliServices,
+    *,
+    session_key: str | None,
+    agent_id: str | None,
+) -> dict[str, object]:
+    resolved_agent_id = (
+        _optional_cli_string(agent_id)
+        or _agent_id_from_session_key(session_key)
+        or "main"
+    )
+    resolved_session_key = _optional_cli_string(session_key) or _main_session_key_for_agent(
+        resolved_agent_id
+    )
+    main_session_key = _main_session_key_for_agent(resolved_agent_id)
+    metadata = await _sandbox_metadata_for_session(services, resolved_session_key)
+    sandboxed = bool(metadata.get("sandboxed")) if metadata is not None else False
+    sandbox_mode = (
+        _optional_cli_string(metadata.get("sandboxMode"))
+        if metadata is not None
+        else None
+    )
+    sandbox_policy = metadata.get("sandboxPolicy") if metadata is not None else None
+    workspace_root = (
+        _optional_cli_string(metadata.get("spawnedWorkspaceDir"))
+        if metadata is not None
+        else None
+    )
+    sandbox: dict[str, object] = {
+        "mode": sandbox_mode or ("workspace-write" if sandboxed else "off"),
+        "scope": "session",
+        "workspaceAccess": sandbox_mode or ("workspace-write" if sandboxed else "direct"),
+        "workspaceRoot": workspace_root,
+        "sessionIsSandboxed": sandboxed,
+        "tools": {
+            "allow": [],
+            "deny": [],
+            "sources": {
+                "allow": {"source": "openzues-metadata"},
+                "deny": {"source": "openzues-metadata"},
+            },
+        },
+    }
+    if metadata is not None:
+        for key in ("runtime", "runtimeThreadId", "runtimeSessionId"):
+            value = _optional_cli_string(metadata.get(key))
+            if value is not None:
+                sandbox[key] = value
+        runtime_id = metadata.get("runtimeId")
+        if isinstance(runtime_id, int) and not isinstance(runtime_id, bool):
+            sandbox["runtimeId"] = runtime_id
+        if isinstance(sandbox_policy, dict):
+            sandbox["policy"] = dict(sandbox_policy)
+    return {
+        "docsUrl": "https://docs.openclaw.ai/sandbox",
+        "agentId": resolved_agent_id,
+        "sessionKey": resolved_session_key,
+        "mainSessionKey": main_session_key,
+        "sandbox": sandbox,
+        "elevated": {
+            "enabled": False,
+            "channel": None,
+            "allowedByConfig": False,
+            "alwaysAllowedByConfig": False,
+            "allowFrom": {"global": None, "agent": None},
+            "failures": [],
+        },
+        "fixIt": [
+            "agents.defaults.sandbox.mode",
+            "agents.list[].sandbox.mode",
+            "tools.sandbox.tools.allow",
+            "tools.sandbox.tools.alsoAllow",
+            "tools.sandbox.tools.deny",
+            "agents.list[].tools.sandbox.tools.allow",
+            "agents.list[].tools.sandbox.tools.alsoAllow",
+            "agents.list[].tools.sandbox.tools.deny",
+            "tools.elevated.enabled",
+        ],
+    }
+
+
+async def _sandbox_metadata_for_session(
+    services: CliServices,
+    session_key: str,
+) -> dict[str, object] | None:
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if not callable(list_rows):
+        return None
+    for row in await list_rows():
+        if not isinstance(row, dict):
+            continue
+        row_session_key = _optional_cli_string(row.get("session_key"))
+        if row_session_key != session_key:
+            continue
+        metadata = row.get("metadata")
+        return dict(metadata) if isinstance(metadata, dict) else None
+    return None
+
+
+def _agent_id_from_session_key(session_key: str | None) -> str | None:
+    normalized = _optional_cli_string(session_key)
+    if normalized is None:
+        return None
+    parts = normalized.split(":")
+    if len(parts) >= 2 and parts[0].lower() == "agent":
+        return parts[1] or None
+    return None
+
+
+def _main_session_key_for_agent(agent_id: str) -> str:
+    return f"agent:{agent_id}:main"
+
+
+def _sandbox_session_matches_agent(session_key: str, agent_id: str) -> bool:
+    agent_prefix = f"agent:{agent_id}"
+    return session_key == agent_prefix or session_key.startswith(f"{agent_prefix}:")
+
+
+def _sandbox_inventory_item_from_metadata_row(row: dict[str, object]) -> dict[str, object] | None:
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    sandbox_policy = metadata.get("sandboxPolicy")
+    sandboxed = metadata.get("sandboxed") is True
+    sandbox_mode = _optional_cli_string(metadata.get("sandboxMode"))
+    if not sandboxed and sandbox_mode is None and not isinstance(sandbox_policy, dict):
+        return None
+    session_key = _optional_cli_string(row.get("session_key"))
+    if session_key is None:
+        return None
+    item: dict[str, object] = {
+        "sessionKey": session_key,
+        "status": "known",
+        "source": "session_metadata",
+    }
+    for source_key, output_key in (
+        ("runtime", "runtime"),
+        ("runtimeThreadId", "runtimeThreadId"),
+        ("runtimeSessionId", "runtimeSessionId"),
+    ):
+        value = _optional_cli_string(metadata.get(source_key))
+        if value is not None:
+            item[output_key] = value
+    runtime_id = metadata.get("runtimeId")
+    if isinstance(runtime_id, int) and not isinstance(runtime_id, bool):
+        item["runtimeId"] = runtime_id
+    if sandbox_mode is not None:
+        item["sandboxMode"] = sandbox_mode
+    if isinstance(sandbox_policy, dict):
+        item["sandboxPolicy"] = dict(sandbox_policy)
+    image_match = metadata.get("imageMatch")
+    if isinstance(image_match, bool):
+        item["imageMatch"] = image_match
+    image = _optional_cli_string(metadata.get("image"))
+    if image is not None:
+        item["image"] = image
+    updated_at = _optional_cli_string(row.get("updated_at"))
+    if updated_at is not None:
+        item["updatedAt"] = updated_at
+    return item
+
+
+def _optional_cli_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text
+
+
+def _gateway_node_method_service(services: CliServices) -> Any:
+    gateway = getattr(services, "gateway_node_methods", None)
+    if gateway is None:
+        gateway = getattr(services, "gateway_node_method_service", None)
+    if gateway is None or not callable(getattr(gateway, "call", None)):
+        raise RuntimeError("Gateway method service is unavailable.")
+    return gateway
+
+
+async def _call_gateway_node_method(
+    services: CliServices,
+    method: str,
+    params: dict[str, object],
+) -> dict[str, object]:
+    result = await _gateway_node_method_service(services).call(method, params)
+    if isinstance(result, dict):
+        return result
+    return {"status": "ok", "result": result}
+
+
+def _model_payload(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if not callable(model_dump):
+        return {}
+    payload = model_dump(mode="json")
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+async def _build_plugins_inventory_payload(
+    services: CliServices,
+    *,
+    enabled_only: bool,
+) -> dict[str, object]:
+    view = await services.hermes_platform.get_doctor_view()
+    view_payload = _model_payload(view)
+    profile = view_payload.get("profile")
+    profile_payload = profile if isinstance(profile, dict) else {}
+    workspace_dir = _optional_cli_string(profile_payload.get("hermes_source_path"))
+    plugins_deck = view_payload.get("plugins")
+    deck_payload = plugins_deck if isinstance(plugins_deck, dict) else {}
+    raw_items = deck_payload.get("items")
+    items = raw_items if isinstance(raw_items, list) else []
+    plugins: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        plugin = _plugin_record_from_deck_item(item, workspace_dir=workspace_dir)
+        if plugin is not None:
+            plugins.append(plugin)
+    gateway_config = getattr(services, "gateway_config", None)
+    if isinstance(gateway_config, GatewayConfigService):
+        existing_ids = {str(plugin.get("id") or "") for plugin in plugins}
+        for plugin in _plugin_records_from_config_snapshot(gateway_config.build_snapshot()):
+            plugin_id = str(plugin.get("id") or "")
+            if plugin_id not in existing_ids:
+                plugins.append(plugin)
+                existing_ids.add(plugin_id)
+    if enabled_only:
+        plugins = [
+            plugin
+            for plugin in plugins
+            if str(plugin.get("status") or "").strip() == "loaded"
+        ]
+    warnings = view_payload.get("warnings")
+    diagnostics = [
+        {"level": "warn", "message": str(warning)}
+        for warning in (warnings if isinstance(warnings, list) else [])
+        if str(warning).strip()
+    ]
+    return {
+        "workspaceDir": workspace_dir,
+        "plugins": plugins,
+        "diagnostics": diagnostics,
+    }
+
+
+async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, object]:
+    inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    plugins = inventory.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    errors: list[dict[str, object]] = []
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        if str(plugin.get("status") or "").strip() != "error":
+            continue
+        errors.append(
+            {
+                "id": str(plugin.get("id") or "").strip(),
+                "source": str(plugin.get("source") or "").strip(),
+                "error": str(plugin.get("description") or "failed to load").strip(),
+            }
+        )
+    raw_diagnostics = inventory.get("diagnostics")
+    diagnostic_rows = raw_diagnostics if isinstance(raw_diagnostics, list) else []
+    diagnostics = [
+        diagnostic
+        for diagnostic in diagnostic_rows
+        if isinstance(diagnostic, dict)
+        and str(diagnostic.get("level") or "").strip() == "error"
+    ]
+    compatibility = [
+        notice
+        for plugin in plugin_rows
+        if isinstance(plugin, dict)
+        for notice in _plugin_compatibility_notices(plugin)
+    ]
+    issue_count = len(errors) + len(diagnostics) + len(compatibility)
+    return {
+        "ok": issue_count == 0,
+        "summary": (
+            "No plugin issues detected."
+            if issue_count == 0
+            else f"{issue_count} plugin issue(s) detected."
+        ),
+        "workspaceDir": inventory.get("workspaceDir"),
+        "errors": errors,
+        "diagnostics": diagnostics,
+        "compatibility": compatibility,
+        "docs": "https://docs.openclaw.ai/plugin",
+    }
+
+
+async def _build_plugins_toggle_payload(
+    services: CliServices,
+    *,
+    plugin_id: str,
+    enabled: bool,
+) -> dict[str, object]:
+    result = services.gateway_config.set_plugin_enabled(plugin_id, enabled)
+    return {
+        "ok": True,
+        "action": "enable" if enabled else "disable",
+        "pluginId": result.get("pluginId"),
+        "resolvedPluginId": result.get("resolvedPluginId"),
+        "enabled": result.get("enabled"),
+        "reason": result.get("reason"),
+        "channelSynced": result.get("channelSynced"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": "gateway",
+    }
+
+
+def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
+    manifest_path = _resolve_plugins_marketplace_manifest_path(source)
+    try:
+        parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: {exc}") from exc
+    except OSError as exc:
+        raise ValueError(f"failed to read marketplace manifest at {manifest_path}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: expected object")
+    raw_plugins = parsed.get("plugins")
+    if not isinstance(raw_plugins, list):
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: missing plugins[]")
+    plugins: list[dict[str, object]] = []
+    for raw_plugin in raw_plugins:
+        if not isinstance(raw_plugin, dict):
+            raise ValueError(f"invalid marketplace entry in {manifest_path}: expected object")
+        name = _optional_cli_string(raw_plugin.get("name"))
+        if name is None:
+            raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
+        source_value = raw_plugin.get("source")
+        if not isinstance(source_value, (str, dict)):
+            raise ValueError(
+                f'invalid marketplace entry "{name}" in {manifest_path}: missing source'
+            )
+        plugin: dict[str, object] = {"name": name}
+        for key in ("version", "description"):
+            value = _optional_cli_string(raw_plugin.get(key))
+            if value is not None:
+                plugin[key] = value
+        plugin["source"] = dict(source_value) if isinstance(source_value, dict) else source_value
+        plugins.append(plugin)
+    payload: dict[str, object] = {
+        "source": str(manifest_path),
+        "plugins": plugins,
+    }
+    name = _optional_cli_string(parsed.get("name"))
+    if name is not None:
+        payload["name"] = name
+    version = _optional_cli_string(parsed.get("version"))
+    if version is not None:
+        payload["version"] = version
+    return payload
+
+
+async def _build_plugins_marketplace_install_payload(
+    services: CliServices,
+    *,
+    plugin_id: str,
+    marketplace: str,
+    force: bool,
+) -> dict[str, object]:
+    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace)
+    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
+    plugins = marketplace_payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        raise ValueError("plugin id is required")
+    match = next(
+        (
+            plugin
+            for plugin in plugin_rows
+            if isinstance(plugin, dict)
+            and str(plugin.get("name") or "").strip() == requested_id
+        ),
+        None,
+    )
+    if match is None:
+        raise ValueError(
+            f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
+        )
+    install_path = _resolve_marketplace_plugin_install_path(
+        manifest_path=manifest_path,
+        source=match.get("source"),
+        plugin_name=requested_id,
+    )
+    result = services.gateway_config.record_marketplace_plugin_install(
+        plugin_id=requested_id,
+        install_path=str(install_path),
+        marketplace_source=str(manifest_path),
+        marketplace_plugin=requested_id,
+        marketplace_name=_optional_cli_string(marketplace_payload.get("name")),
+        version=_optional_cli_string(match.get("version")),
+        force=force,
+    )
+    install = result.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result.get("pluginId") or requested_id,
+        "source": "marketplace",
+        "marketplace": {
+            "source": str(manifest_path),
+            "name": marketplace_payload.get("name"),
+            "version": marketplace_payload.get("version"),
+        },
+        "install": install_payload,
+        "loadPath": result.get("loadPath"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+    }
+
+
+async def _build_plugins_uninstall_payload(
+    services: CliServices,
+    *,
+    plugin_id: str,
+    dry_run: bool,
+) -> dict[str, object]:
+    result = (
+        services.gateway_config.preview_plugin_uninstall(plugin_id)
+        if dry_run
+        else services.gateway_config.uninstall_plugin(plugin_id)
+    )
+    actions = result.get("actions")
+    warnings = result.get("warnings")
+    return {
+        "ok": True,
+        "action": "uninstall",
+        "pluginId": result.get("pluginId") or plugin_id,
+        "dryRun": dry_run,
+        "actions": dict(actions) if isinstance(actions, dict) else {},
+        "warnings": list(warnings) if isinstance(warnings, list) else [],
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+    }
+
+
+async def _build_plugins_update_payload(
+    services: CliServices,
+    *,
+    plugin_id: str | None,
+    all_plugins: bool,
+    dry_run: bool,
+) -> dict[str, object]:
+    requested_id = _optional_cli_string(plugin_id)
+    if all_plugins and requested_id is not None:
+        raise ValueError("Pass either a plugin id or --all, not both.")
+    snapshot = services.gateway_config.build_snapshot()
+    plugins = snapshot.get("plugins")
+    plugins_config = plugins if isinstance(plugins, dict) else {}
+    installs = plugins_config.get("installs")
+    install_records = installs if isinstance(installs, dict) else {}
+    if all_plugins:
+        targets = [str(plugin_id) for plugin_id in install_records]
+    elif requested_id is not None:
+        targets = [requested_id]
+    else:
+        raise ValueError("Provide a plugin id, or use --all.")
+    outcomes: list[dict[str, object]] = []
+    changed = False
+    for target in targets:
+        record = install_records.get(target)
+        if not isinstance(record, dict):
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "skipped",
+                    "message": f'No install record for "{target}".',
+                }
+            )
+            continue
+        source = _optional_cli_string(record.get("source"))
+        if source != "marketplace":
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "skipped",
+                    "message": f'Skipping "{target}" (source: {source or "unknown"}).',
+                }
+            )
+            continue
+        marketplace_source = _optional_cli_string(record.get("marketplaceSource"))
+        marketplace_plugin = _optional_cli_string(record.get("marketplacePlugin"))
+        if marketplace_source is None or marketplace_plugin is None:
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "skipped",
+                    "message": f'Skipping "{target}" (missing marketplace source metadata).',
+                }
+            )
+            continue
+        try:
+            update = _resolve_local_marketplace_update(
+                plugin_id=target,
+                marketplace_source=marketplace_source,
+                marketplace_plugin=marketplace_plugin,
+                current_record=record,
+            )
+        except ValueError as exc:
+            outcomes.append(
+                {
+                    "pluginId": target,
+                    "status": "error",
+                    "message": f"Failed to update {target}: {exc}",
+                }
+            )
+            continue
+        current_version = update["currentVersion"]
+        next_version = update["nextVersion"]
+        current_label = current_version or "unknown"
+        next_label = next_version or "unknown"
+        same_version = (
+            current_version is not None
+            and next_version is not None
+            and current_version == next_version
+        )
+        if dry_run:
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f"{target} is up to date ({current_label})."
+                if same_version
+                else f"Would update {target}: {current_label} -> {next_label}."
+            )
+        else:
+            if not same_version:
+                marketplace_name = cast(str | None, update["marketplaceName"])
+                version = cast(str | None, next_version)
+                result = services.gateway_config.record_marketplace_plugin_install(
+                    plugin_id=target,
+                    install_path=str(update["installPath"]),
+                    marketplace_source=str(update["manifestPath"]),
+                    marketplace_plugin=marketplace_plugin,
+                    marketplace_name=marketplace_name,
+                    version=version,
+                    force=True,
+                )
+                changed = changed or result.get("ok") is True
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f"{target} already at {current_label}."
+                if same_version
+                else f"Updated {target}: {current_label} -> {next_label}."
+            )
+        outcome: dict[str, object] = {
+            "pluginId": target,
+            "status": status,
+            "message": message,
+        }
+        if current_version is not None:
+            outcome["currentVersion"] = current_version
+        if next_version is not None:
+            outcome["nextVersion"] = next_version
+        outcomes.append(outcome)
+    return {
+        "ok": True,
+        "action": "update",
+        "dryRun": dry_run,
+        "changed": changed,
+        "outcomes": outcomes,
+        "restart": "gateway" if changed else None,
+    }
+
+
+def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
+    normalized_source = _optional_cli_string(source)
+    if normalized_source is None:
+        raise ValueError("marketplace source is required")
+    if re.match(r"^(https?|ssh)://", normalized_source, flags=re.IGNORECASE):
+        raise ValueError(f"unsupported marketplace source: {normalized_source}")
+    source_path = Path(normalized_source).expanduser()
+    if source_path.is_file():
+        return source_path.resolve()
+    if source_path.is_dir():
+        for relative in (
+            Path(".claude-plugin") / "marketplace.json",
+            Path("marketplace.json"),
+        ):
+            candidate = source_path / relative
+            if candidate.is_file():
+                return candidate.resolve()
+    raise ValueError(f"marketplace manifest not found under {normalized_source}")
+
+
+def _resolve_marketplace_plugin_install_path(
+    *,
+    manifest_path: Path,
+    source: object,
+    plugin_name: str,
+) -> Path:
+    if isinstance(source, dict):
+        source_type = _optional_cli_string(source.get("type"))
+        if source_type not in (None, "path"):
+            raise ValueError(
+                f'unsupported marketplace source for plugin "{plugin_name}": {source_type}'
+            )
+        source_path_value = _optional_cli_string(source.get("path"))
+    else:
+        source_path_value = _optional_cli_string(source)
+    if source_path_value is None:
+        raise ValueError(f'plugin "{plugin_name}" is missing a local source path')
+    if re.match(r"^(https?|ssh|git)://", source_path_value, flags=re.IGNORECASE):
+        raise ValueError(
+            f'unsupported marketplace source for plugin "{plugin_name}": remote sources'
+        )
+    marketplace_root = (
+        manifest_path.parent.parent
+        if manifest_path.parent.name == ".claude-plugin"
+        else manifest_path.parent
+    ).resolve()
+    candidate = Path(source_path_value)
+    if not candidate.is_absolute():
+        candidate = marketplace_root / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(marketplace_root)
+    except ValueError as exc:
+        raise ValueError(
+            f'plugin "{plugin_name}" source escapes marketplace root: {source_path_value}'
+        ) from exc
+    if not resolved.exists():
+        raise ValueError(
+            f'plugin "{plugin_name}" source not found in marketplace root: {source_path_value}'
+        )
+    return resolved
+
+
+def _resolve_local_marketplace_update(
+    *,
+    plugin_id: str,
+    marketplace_source: str,
+    marketplace_plugin: str,
+    current_record: dict[str, object],
+) -> dict[str, object]:
+    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace_source)
+    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
+    plugins = marketplace_payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    match = next(
+        (
+            plugin
+            for plugin in plugin_rows
+            if isinstance(plugin, dict)
+            and str(plugin.get("name") or "").strip() == marketplace_plugin
+        ),
+        None,
+    )
+    if match is None:
+        raise ValueError(
+            f'plugin "{marketplace_plugin}" was not found in marketplace {manifest_path}'
+        )
+    install_path = _resolve_marketplace_plugin_install_path(
+        manifest_path=manifest_path,
+        source=match.get("source"),
+        plugin_name=marketplace_plugin,
+    )
+    return {
+        "pluginId": plugin_id,
+        "manifestPath": manifest_path,
+        "installPath": install_path,
+        "marketplaceName": _optional_cli_string(marketplace_payload.get("name")),
+        "currentVersion": _optional_cli_string(current_record.get("version")),
+        "nextVersion": _optional_cli_string(match.get("version")),
+    }
+
+
+async def _build_models_list_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+    local_only: bool,
+) -> dict[str, object]:
+    payload = await _call_gateway_node_method(services, "models.list", {})
+    raw_models = payload.get("models")
+    if not isinstance(raw_models, list):
+        return {"models": []}
+    provider_filter = _optional_cli_string(provider)
+    normalized_provider = provider_filter.lower() if provider_filter is not None else None
+    models: list[dict[str, object]] = []
+    for item in raw_models:
+        if not isinstance(item, dict):
+            continue
+        model = dict(item)
+        model_provider = _optional_cli_string(model.get("provider"))
+        if normalized_provider is not None:
+            if model_provider is None or model_provider.lower() != normalized_provider:
+                continue
+        if local_only and str(model_provider or "").lower() not in {"local", "ollama", "lmstudio"}:
+            continue
+        models.append(model)
+    return {"models": models}
+
+
+async def _build_models_status_payload(
+    services: CliServices,
+    *,
+    probe: bool,
+) -> dict[str, object]:
+    catalog = await _build_models_list_payload(
+        services,
+        provider=None,
+        local_only=False,
+    )
+    raw_models = catalog.get("models")
+    models = [item for item in raw_models if isinstance(item, dict)] if isinstance(
+        raw_models,
+        list,
+    ) else []
+    default_model = next(
+        (item for item in models if item.get("isDefault") is True),
+        models[0] if models else None,
+    )
+    default_label = _model_display_label(default_model) if default_model is not None else None
+    resolved_default = _model_reference(default_model) if default_model is not None else None
+    allowed = [
+        model_ref
+        for model_ref in (_model_reference(item) for item in models)
+        if model_ref is not None
+    ]
+    providers_in_use = sorted(
+        {
+            provider
+            for provider in (_optional_cli_string(item.get("provider")) for item in models)
+            if provider is not None
+        }
+    )
+    probes: dict[str, object] | None = None
+    if probe:
+        probes = {
+            "status": "unavailable",
+            "reason": "models status probes require the model auth health runtime.",
+        }
+    return {
+        "ok": True,
+        "defaultModel": default_label,
+        "resolvedDefault": resolved_default,
+        "fallbacks": [],
+        "imageModel": None,
+        "imageFallbacks": [],
+        "aliases": {},
+        "allowed": allowed,
+        "auth": {
+            "status": "unavailable",
+            "providersWithOAuth": [],
+            "missingProvidersInUse": providers_in_use,
+            "providers": [],
+            "unusableProfiles": [],
+            "oauth": {
+                "profiles": [],
+                "providers": [],
+            },
+            "probes": probes,
+        },
+    }
+
+
+def _model_reference(model: dict[str, object] | None) -> str | None:
+    if model is None:
+        return None
+    model_id = _model_display_label(model)
+    if model_id is None:
+        return None
+    provider = _optional_cli_string(model.get("provider"))
+    return f"{provider}/{model_id}" if provider is not None else model_id
+
+
+def _model_display_label(model: dict[str, object]) -> str | None:
+    return _optional_cli_string(model.get("id")) or _optional_cli_string(model.get("name"))
+
+
+async def _build_plugin_inspect_payload(
+    services: CliServices,
+    *,
+    plugin_id: str | None,
+    inspect_all: bool,
+) -> dict[str, object] | list[dict[str, object]]:
+    inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    plugins = inventory.get("plugins")
+    plugin_rows = [plugin for plugin in plugins if isinstance(plugin, dict)] if isinstance(
+        plugins,
+        list,
+    ) else []
+    if inspect_all:
+        return [_plugin_inspect_report(plugin) for plugin in plugin_rows]
+    normalized_id = _optional_cli_string(plugin_id)
+    if normalized_id is None:
+        raise ValueError("Provide a plugin id or use --all.")
+    plugin = _find_plugin_record(plugin_rows, normalized_id)
+    if plugin is None:
+        raise KeyError(normalized_id)
+    return _plugin_inspect_report(plugin)
+
+
+def _find_plugin_record(
+    plugins: list[dict[str, object]],
+    plugin_id: str,
+) -> dict[str, object] | None:
+    needle = plugin_id.strip().lower()
+    for plugin in plugins:
+        candidate_id = str(plugin.get("id") or "").strip().lower()
+        candidate_name = str(plugin.get("name") or "").strip().lower()
+        if needle in {candidate_id, candidate_name}:
+            return plugin
+    return None
+
+
+def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
+    capabilities = plugin.get("capabilities")
+    capability_ids = [
+        str(capability)
+        for capability in (capabilities if isinstance(capabilities, list) else [])
+        if str(capability).strip()
+    ]
+    return {
+        "plugin": dict(plugin),
+        "shape": _plugin_inspect_shape(plugin),
+        "capabilityMode": "inventory",
+        "capabilities": [{"kind": "inventory", "ids": capability_ids}]
+        if capability_ids
+        else [],
+        "compatibility": _plugin_compatibility_notices(plugin),
+        "bundleCapabilities": [],
+        "typedHooks": [],
+        "customHooks": [],
+        "tools": [],
+        "commands": [],
+        "cliCommands": [],
+        "services": [],
+        "gatewayMethods": [],
+        "mcpServers": [],
+        "lspServers": [],
+        "httpRouteCount": 0,
+        "policy": {},
+        "diagnostics": [],
+        "install": None,
+    }
+
+
+def _plugin_inspect_shape(plugin: dict[str, object]) -> str:
+    shape = _optional_cli_string(plugin.get("shape"))
+    if shape is not None:
+        return shape
+    plugin_id = str(plugin.get("id") or "").strip()
+    if plugin_id.startswith("hermes_plugin:"):
+        return "hermes-inventory"
+    if plugin_id.startswith("codex_"):
+        return "openzues-runtime-inventory"
+    return "openzues-inventory"
+
+
+def _plugin_compatibility_notices(plugin: dict[str, object]) -> list[dict[str, object]]:
+    plugin_id = str(plugin.get("id") or "").strip()
+    if not plugin_id:
+        return []
+    notices: list[dict[str, object]] = []
+    if plugin.get("usesLegacyBeforeAgentStart") is True:
+        notices.append(
+            {
+                "pluginId": plugin_id,
+                "code": "legacy-before-agent-start",
+                "severity": "warn",
+                "message": (
+                    "still uses legacy before_agent_start; keep regression coverage "
+                    "on this plugin, and prefer before_model_resolve/before_prompt_build "
+                    "for new work."
+                ),
+            }
+        )
+    if _plugin_inspect_shape(plugin) == "hook-only":
+        notices.append(
+            {
+                "pluginId": plugin_id,
+                "code": "hook-only",
+                "severity": "info",
+                "message": (
+                    "is hook-only. This remains a supported compatibility path, but it "
+                    "has not migrated to explicit capability registration yet."
+                ),
+            }
+        )
+    return notices
+
+
+def _format_plugin_compatibility_notice(notice: dict[str, object]) -> str:
+    plugin_id = str(notice.get("pluginId") or "").strip()
+    message = str(notice.get("message") or "").strip()
+    return f"{plugin_id} {message}".strip()
+
+
+def _plugin_record_from_deck_item(
+    item: dict[str, object],
+    *,
+    workspace_dir: str | None,
+) -> dict[str, object] | None:
+    plugin_id = _optional_cli_string(item.get("key"))
+    if plugin_id is None:
+        return None
+    name = _optional_cli_string(item.get("label")) or plugin_id
+    parity_status = _optional_cli_string(item.get("status")) or "advisory"
+    capabilities = item.get("capabilities")
+    capability_list = [
+        str(capability)
+        for capability in (capabilities if isinstance(capabilities, list) else [])
+        if str(capability).strip()
+    ]
+    record: dict[str, object] = {
+        "id": plugin_id,
+        "name": name,
+        "status": _openclaw_plugin_status(parity_status),
+        "format": "openzues",
+        "source": "openzues",
+        "origin": "runtime",
+        "description": str(item.get("summary") or "").strip(),
+        "capabilities": capability_list,
+        "parityStatus": parity_status,
+    }
+    if plugin_id.startswith("codex_"):
+        record["source"] = "live_codex"
+        record["origin"] = "runtime"
+    elif plugin_id.startswith("hermes_plugin:"):
+        plugin_name = plugin_id.partition(":")[2].strip()
+        record["format"] = "hermes"
+        record["origin"] = "hermes_source"
+        record["source"] = (
+            str(Path(workspace_dir) / "plugins" / plugin_name)
+            if workspace_dir is not None and plugin_name
+            else "hermes_source"
+        )
+    shape = _optional_cli_string(item.get("shape"))
+    if shape is not None:
+        record["shape"] = shape
+    if item.get("usesLegacyBeforeAgentStart") is True:
+        record["usesLegacyBeforeAgentStart"] = True
+    return record
+
+
+def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
+    plugins = snapshot.get("plugins")
+    plugins_config = plugins if isinstance(plugins, dict) else {}
+    entries = plugins_config.get("entries")
+    entry_records = entries if isinstance(entries, dict) else {}
+    installs = plugins_config.get("installs")
+    install_records = installs if isinstance(installs, dict) else {}
+    plugin_ids = sorted(
+        {
+            *(str(key) for key in entry_records),
+            *(str(key) for key in install_records),
+        }
+    )
+    records: list[dict[str, object]] = []
+    for plugin_id in plugin_ids:
+        entry = entry_records.get(plugin_id)
+        entry_payload = entry if isinstance(entry, dict) else {}
+        install = install_records.get(plugin_id)
+        install_payload = install if isinstance(install, dict) else {}
+        install_source = _optional_cli_string(install_payload.get("source"))
+        install_path = _optional_cli_string(install_payload.get("installPath"))
+        source_path = _optional_cli_string(install_payload.get("sourcePath"))
+        version = _optional_cli_string(install_payload.get("version"))
+        enabled = entry_payload.get("enabled")
+        status = "disabled" if enabled is False else "loaded"
+        description = (
+            f"Installed {install_source} plugin."
+            if install_source is not None
+            else "Configured plugin."
+        )
+        record: dict[str, object] = {
+            "id": plugin_id,
+            "name": plugin_id,
+            "status": status,
+            "format": "openclaw-native",
+            "source": install_path or source_path or f"plugins.entries.{plugin_id}",
+            "origin": "config",
+            "description": description,
+            "capabilities": [],
+            "parityStatus": "configured",
+        }
+        if version is not None:
+            record["version"] = version
+        if install_payload:
+            record["install"] = dict(install_payload)
+        shape = _optional_cli_string(entry_payload.get("shape"))
+        if shape is not None:
+            record["shape"] = shape
+        if entry_payload.get("usesLegacyBeforeAgentStart") is True:
+            record["usesLegacyBeforeAgentStart"] = True
+        records.append(record)
+    return records
+
+
+def _openclaw_plugin_status(parity_status: str) -> str:
+    normalized = parity_status.strip().lower()
+    if normalized in {"ready", "partial"}:
+        return "loaded"
+    if normalized == "error":
+        return "error"
+    return "disabled"
 
 
 def _first_text_line(value: object, *, limit: int = 220) -> str:
@@ -2832,6 +5694,472 @@ def _build_status_payload(
     }
 
 
+def _build_channel_capabilities_report(
+    *,
+    channel_id: str,
+    account_id: str,
+    account_summary: dict[str, object] | None,
+    timeout_ms: int,
+) -> dict[str, object]:
+    route_count = account_summary.get("routeCount") if account_summary is not None else None
+    enabled_route_count = (
+        account_summary.get("enabledRouteCount") if account_summary is not None else None
+    )
+    configured = (
+        isinstance(route_count, int)
+        and not isinstance(route_count, bool)
+        and route_count > 0
+    )
+    enabled = (
+        isinstance(enabled_route_count, int)
+        and not isinstance(enabled_route_count, bool)
+        and enabled_route_count > 0
+    )
+    support = dict(_CHANNEL_CAPABILITY_SUPPORT.get(channel_id, {"chatTypes": ["direct"]}))
+    actions = ["send", "broadcast"]
+    if support.get("polls") is True:
+        actions.append("poll")
+    probe = account_summary.get("probe") if account_summary is not None else None
+    if not isinstance(probe, dict):
+        probe = {
+            "status": "unavailable",
+            "reason": "native_probe_runtime_unavailable",
+            "summary": "Native channel capability probes are not available yet.",
+            "timeoutMs": timeout_ms,
+        }
+    return {
+        "channel": channel_id,
+        "accountId": account_id,
+        "configured": configured,
+        "enabled": enabled,
+        "support": support,
+        "actions": actions,
+        "probe": probe,
+    }
+
+
+def _account_summaries_by_id(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list):
+        return {}
+    result: dict[str, dict[str, object]] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        account_id = _optional_cli_string(item.get("accountId"))
+        if account_id is None:
+            continue
+        result[account_id] = dict(item)
+    return result
+
+
+async def _build_channel_capabilities_payload(
+    services: CliServices,
+    *,
+    channel: str | None,
+    account: str | None,
+    target: str | None,
+    timeout_ms: int,
+) -> dict[str, object]:
+    normalized_channel = (_optional_cli_string(channel) or "all").lower()
+    normalized_account = _optional_cli_string(account)
+    normalized_target = _optional_cli_string(target)
+    if normalized_account is not None and normalized_channel == "all":
+        raise ValueError("--account requires a specific --channel.")
+    if normalized_target is not None and normalized_channel == "all":
+        raise ValueError("--target requires a specific --channel.")
+
+    snapshot = await services.gateway_channels.build_snapshot(
+        probe=True,
+        timeout_ms=timeout_ms,
+    )
+    channel_order = [
+        str(item).strip().lower()
+        for item in snapshot.get("channelOrder", [])
+        if str(item).strip()
+    ]
+    selected_channels = (
+        channel_order if normalized_channel == "all" else [normalized_channel]
+    )
+    if normalized_channel != "all" and normalized_channel not in channel_order:
+        raise ValueError(f'Unknown channel "{normalized_channel}".')
+
+    channel_accounts = snapshot.get("channelAccounts")
+    default_accounts = snapshot.get("channelDefaultAccountId")
+    if not isinstance(channel_accounts, dict):
+        channel_accounts = {}
+    if not isinstance(default_accounts, dict):
+        default_accounts = {}
+
+    reports: list[dict[str, object]] = []
+    for channel_id in selected_channels:
+        accounts_by_id = _account_summaries_by_id(channel_accounts.get(channel_id))
+        account_ids = (
+            [normalized_account]
+            if normalized_account is not None
+            else sorted(accounts_by_id)
+            or [
+                _optional_cli_string(default_accounts.get(channel_id))
+                or "default"
+            ]
+        )
+        for account_id in account_ids:
+            reports.append(
+                _build_channel_capabilities_report(
+                    channel_id=channel_id,
+                    account_id=account_id,
+                    account_summary=accounts_by_id.get(account_id),
+                    timeout_ms=timeout_ms,
+                )
+            )
+
+    return {
+        "channels": reports,
+        "timeoutMs": timeout_ms,
+        "target": normalized_target,
+    }
+
+
+def _normalize_channel_resolve_kind(kind: str | None) -> str:
+    normalized = (_optional_cli_string(kind) or "auto").lower()
+    valid_kinds = {"auto", "user", "group", "channel"}
+    if normalized not in valid_kinds:
+        raise ValueError("--kind must be one of: auto, user, group, channel.")
+    return normalized
+
+
+def _channel_target_field(target: dict[str, object], *names: str) -> str | None:
+    for name in names:
+        text = _optional_cli_string(target.get(name))
+        if text is not None:
+            return text
+    return None
+
+
+def _channel_resolve_kind_matches(target_kind: str | None, requested_kind: str) -> bool:
+    if requested_kind == "auto":
+        return True
+    normalized_target_kind = (target_kind or "").strip().lower()
+    if requested_kind == "group":
+        return normalized_target_kind in {"group", "channel"}
+    return normalized_target_kind == requested_kind
+
+
+def _detect_channel_resolve_auto_kind(entry: str, channel: str | None) -> str:
+    trimmed = entry.strip()
+    if not trimmed:
+        return "group"
+    if trimmed.startswith("@"):
+        return "user"
+    if re.match(r"^<@!?", trimmed):
+        return "user"
+    if re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", trimmed):
+        return "user"
+    if re.match(r"^user:", trimmed, re.IGNORECASE):
+        return "user"
+
+    normalized_channel = (_optional_cli_string(channel) or "").lower()
+    lowered = trimmed.lower()
+    if normalized_channel and lowered.startswith(f"{normalized_channel}:"):
+        remainder = lowered[len(normalized_channel) + 1 :]
+        if remainder.startswith(
+            (
+                "group:",
+                "channel:",
+                "room:",
+                "conversation:",
+                "spaces/",
+                "channels/",
+            )
+        ):
+            return "group"
+        return "user"
+    return "group"
+
+
+def _channel_resolve_route_targets(
+    snapshot: dict[str, object],
+    *,
+    channel: str | None,
+    account: str | None,
+    kind: str,
+) -> list[dict[str, str]]:
+    normalized_channel = _optional_cli_string(channel)
+    normalized_account = _optional_cli_string(account)
+    routes = snapshot.get("routes")
+    if not isinstance(routes, list):
+        return []
+
+    matches: list[dict[str, str]] = []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        target = route.get("conversation_target")
+        if not isinstance(target, dict):
+            target = route.get("conversationTarget")
+        if not isinstance(target, dict):
+            continue
+        typed_target = cast(dict[str, object], target)
+        target_channel = _channel_target_field(typed_target, "channel")
+        if normalized_channel is not None and (
+            target_channel is None or target_channel.lower() != normalized_channel.lower()
+        ):
+            continue
+        target_account = _channel_target_field(typed_target, "account_id", "accountId")
+        if normalized_account is not None and (
+            target_account is None or target_account != normalized_account
+        ):
+            continue
+        target_kind = _channel_target_field(typed_target, "peer_kind", "peerKind")
+        if not _channel_resolve_kind_matches(target_kind, kind):
+            continue
+        target_id = _channel_target_field(typed_target, "peer_id", "peerId")
+        if target_id is None:
+            continue
+        summary = _channel_target_field(typed_target, "summary")
+        route_name = _optional_cli_string(route.get("name"))
+        matches.append(
+            {
+                "id": target_id,
+                "name": route_name or summary or target_id,
+                "summary": summary or "",
+                "channel": target_channel or "",
+                "account": target_account or "",
+                "kind": target_kind or "",
+            }
+        )
+    return matches
+
+
+def _channel_resolve_match_entry(
+    entry: str,
+    targets: list[dict[str, str]],
+) -> dict[str, str] | None:
+    normalized_entry = entry.strip().lower()
+    for target in targets:
+        candidates = {
+            target.get("id", ""),
+            target.get("name", ""),
+            target.get("summary", ""),
+        }
+        if any(candidate.strip().lower() == normalized_entry for candidate in candidates):
+            return target
+    return None
+
+
+def _normalize_channel_resolve_result(
+    entry: str,
+    result: dict[str, object],
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "input": _optional_cli_string(result.get("input")) or entry,
+        "resolved": bool(result.get("resolved")),
+    }
+    for key in ("id", "name", "error", "note"):
+        text = _optional_cli_string(result.get(key))
+        if text is not None:
+            payload[key] = text
+    return payload
+
+
+async def _build_channel_resolve_results(
+    services: CliServices,
+    *,
+    entries: list[str],
+    channel: str | None,
+    account: str | None,
+    kind: str | None,
+) -> list[dict[str, object]]:
+    normalized_entries = [entry.strip() for entry in entries if entry.strip()]
+    if not normalized_entries:
+        raise ValueError("At least one entry is required.")
+    normalized_kind = _normalize_channel_resolve_kind(kind)
+    snapshot = await services.gateway_channels.build_snapshot()
+    targets = _channel_resolve_route_targets(
+        snapshot,
+        channel=channel,
+        account=account,
+        kind=normalized_kind,
+    )
+
+    route_results: dict[str, dict[str, object]] = {}
+    unresolved_entries: list[str] = []
+    for entry in normalized_entries:
+        target = _channel_resolve_match_entry(entry, targets)
+        if target is None:
+            unresolved_entries.append(entry)
+            continue
+        route_results[entry] = {
+            "input": entry,
+            "resolved": True,
+            "id": target["id"],
+            "name": target["name"],
+            "note": "saved conversation target",
+        }
+    live_results: dict[str, dict[str, object]] = {}
+    resolver = getattr(services.gateway_channels, "resolve_targets", None)
+    if unresolved_entries and callable(resolver):
+        grouped_entries: dict[str, list[str]] = {}
+        for entry in unresolved_entries:
+            resolver_kind = (
+                _detect_channel_resolve_auto_kind(entry, channel)
+                if normalized_kind == "auto"
+                else normalized_kind
+            )
+            grouped_entries.setdefault(resolver_kind, []).append(entry)
+        for resolver_kind, resolver_inputs in grouped_entries.items():
+            resolved_live = await resolver(
+                channel=_optional_cli_string(channel),
+                account_id=_optional_cli_string(account),
+                kind=resolver_kind,
+                inputs=resolver_inputs,
+            )
+            if isinstance(resolved_live, list):
+                for item in resolved_live:
+                    if not isinstance(item, dict):
+                        continue
+                    input_value = _optional_cli_string(item.get("input"))
+                    if input_value is None:
+                        continue
+                    live_results[input_value] = _normalize_channel_resolve_result(
+                        input_value,
+                        cast(dict[str, object], item),
+                    )
+    results: list[dict[str, object]] = []
+    for entry in normalized_entries:
+        results.append(
+            route_results.get(entry)
+            or live_results.get(entry)
+            or {
+                "input": entry,
+                "resolved": False,
+                "note": "native provider resolver unavailable",
+            }
+        )
+    return results
+
+
+def _normalize_channel_logs_channel(channel: str | None) -> str:
+    normalized = (_optional_cli_string(channel) or "all").lower()
+    if normalized == "all" or normalized in _CHANNEL_CAPABILITY_SUPPORT:
+        return normalized
+    return "all"
+
+
+def _coerce_channel_logs_limit(lines: str | int | None) -> int:
+    try:
+        value = int(str(lines).strip()) if lines is not None else _CHANNEL_LOG_DEFAULT_LIMIT
+    except ValueError:
+        return _CHANNEL_LOG_DEFAULT_LIMIT
+    if value <= 0:
+        return _CHANNEL_LOG_DEFAULT_LIMIT
+    return value
+
+
+def _parse_channel_log_meta_name(raw: object) -> dict[str, str]:
+    if not isinstance(raw, str):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, str] = {}
+    for source_key, target_key in (("subsystem", "subsystem"), ("module", "module")):
+        text = _optional_cli_string(parsed.get(source_key))
+        if text is not None:
+            result[target_key] = text
+    return result
+
+
+def _extract_channel_log_message(parsed: dict[str, object]) -> str:
+    parts: list[str] = []
+    numeric_keys = sorted(
+        (key for key in parsed if key.isdecimal()),
+        key=lambda item: int(item),
+    )
+    for key in numeric_keys:
+        value = parsed.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+        elif value is not None:
+            parts.append(json.dumps(value))
+    return " ".join(parts)
+
+
+def _parse_channel_log_line(raw: str) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    typed_parsed = cast(dict[str, object], parsed)
+    meta = typed_parsed.get("_meta")
+    typed_meta = cast(dict[str, object], meta) if isinstance(meta, dict) else {}
+    name_meta = _parse_channel_log_meta_name(typed_meta.get("name"))
+    result: dict[str, object] = {}
+    time_text = _optional_cli_string(typed_parsed.get("time")) or _optional_cli_string(
+        typed_meta.get("date")
+    )
+    if time_text is not None:
+        result["time"] = time_text
+    level = _optional_cli_string(typed_meta.get("logLevelName"))
+    if level is not None:
+        result["level"] = level.lower()
+    result.update(name_meta)
+    result["message"] = _extract_channel_log_message(typed_parsed)
+    result["raw"] = raw
+    return result
+
+
+def _channel_log_matches_channel(line: dict[str, object], channel: str) -> bool:
+    if channel == "all":
+        return True
+    subsystem = _optional_cli_string(line.get("subsystem")) or ""
+    module = _optional_cli_string(line.get("module")) or ""
+    return f"gateway/channels/{channel}" in subsystem or channel in module
+
+
+async def _build_channel_logs_payload(
+    services: CliServices,
+    *,
+    channel: str | None,
+    lines: str | int | None,
+) -> dict[str, object]:
+    normalized_channel = _normalize_channel_logs_channel(channel)
+    limit = _coerce_channel_logs_limit(lines)
+    try:
+        tail = await services.gateway_logs.read_tail(
+            limit=limit * 4,
+            max_bytes=_CHANNEL_LOG_MAX_BYTES,
+        )
+    except GatewayLogsUnavailableError as exc:
+        raise ValueError(str(exc)) from exc
+    raw_lines = tail.get("lines")
+    if not isinstance(raw_lines, list):
+        raw_lines = []
+    parsed_lines = [
+        parsed
+        for parsed in (
+            _parse_channel_log_line(str(raw_line))
+            for raw_line in raw_lines
+            if isinstance(raw_line, str)
+        )
+        if parsed is not None
+    ]
+    filtered_lines = [
+        line
+        for line in parsed_lines
+        if _channel_log_matches_channel(line, normalized_channel)
+    ]
+    return {
+        "file": str(tail.get("file") or ""),
+        "channel": normalized_channel,
+        "lines": filtered_lines[-limit:],
+    }
+
+
 async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
     live_dashboard = await _try_live_dashboard_view(services.settings)
     if live_dashboard is not None:
@@ -3091,6 +6419,40 @@ def learn(
     _emit_cortex(payload, json_output=json_output)
 
 
+@app.command("health")
+def health_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the gateway health snapshot as JSON.",
+    ),
+    timeout_ms: int = typer.Option(
+        10_000,
+        "--timeout-ms",
+        "--timeout",
+        min=1,
+        help="Connection timeout in milliseconds.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _build_live_health_payload(
+                _runtime_settings(),
+                timeout_ms=timeout_ms,
+            )
+        )
+    except RuntimeError as exc:
+        if json_output:
+            _emit_payload(
+                {"ok": False, "status": "unreachable", "error": str(exc)},
+                json_output=True,
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_health(payload, json_output=json_output)
+
+
 @app.command("status")
 def status_command(
     json_output: bool = typer.Option(
@@ -3098,13 +6460,60 @@ def status_command(
         "--json",
         help="Emit the operator status summary as JSON.",
     ),
+    all_output: bool = typer.Option(
+        False,
+        "--all",
+        help="Include read-only runtime breadth diagnostics.",
+    ),
+    usage: bool = typer.Option(
+        False,
+        "--usage",
+        help="Include model provider usage/quota snapshots when available.",
+    ),
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help="Probe the live gateway health surface when available.",
+    ),
+    timeout_ms: int = typer.Option(
+        10000,
+        "--timeout",
+        "--timeout-ms",
+        min=1,
+        help="Probe timeout in milliseconds.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable verbose status logging where supported.",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Alias for --verbose.",
+    ),
 ) -> None:
+    del verbose, debug
+
     async def _action(services: CliServices) -> dict[str, object]:
         live_status = await _try_live_status_payload(services.settings)
         if live_status is not None:
-            return live_status
-        dashboard = await _build_operator_dashboard(services)
-        return _build_status_payload(dashboard)
+            payload = dict(live_status)
+        else:
+            dashboard = await _build_operator_dashboard(services)
+            payload = _build_status_payload(dashboard)
+        payload.update(
+            await _build_status_runtime_sections(
+                services.settings,
+                deep=deep,
+                usage=usage,
+                all_output=all_output,
+                timeout_ms=timeout_ms,
+            )
+        )
+        if all_output and not json_output:
+            payload["status_all"] = {"timeoutMs": timeout_ms}
+        return payload
 
     payload = _run(_run_with_services(_action))
     _emit_status(payload, json_output=json_output)
@@ -3629,16 +7038,1148 @@ def agents_list(
 
 @channels_app.command("status")
 def channels_status(
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help="Probe channel credentials when a provider probe runtime is available.",
+    ),
+    timeout_ms: int = typer.Option(
+        10000,
+        "--timeout",
+        min=1,
+        help="Probe timeout in milliseconds.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
         help="Emit the notification route channel inventory as JSON.",
     ),
 ) -> None:
-    payload = _run(
-        _run_with_services(lambda services: services.gateway_channels.build_snapshot())
-    )
+    async def _action(services: CliServices) -> dict[str, object]:
+        gateway = _gateway_node_method_service(services)
+        result = await gateway.call(
+            "channels.status",
+            {
+                "probe": probe,
+                "timeoutMs": timeout_ms,
+            },
+        )
+        return cast(dict[str, object], result)
+
+    payload = _run(_run_with_services(_action))
     _emit_channel_inventory(payload, json_output=json_output)
+
+
+@channels_app.command("capabilities")
+def channels_capabilities(
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Channel id to inspect, or all when omitted.",
+    ),
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="Account id to inspect; requires --channel.",
+    ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        help="Channel target for permission audit.",
+    ),
+    timeout_ms: int = typer.Option(
+        10000,
+        "--timeout",
+        min=1,
+        help="Probe timeout in milliseconds.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit provider capabilities as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_channel_capabilities_payload(
+            services,
+            channel=channel,
+            account=account,
+            target=target,
+            timeout_ms=timeout_ms,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_channel_capabilities(payload, json_output=json_output)
+
+
+@channels_app.command("resolve")
+def channels_resolve(
+    entries: Annotated[list[str], typer.Argument(help="Entries to resolve.")],
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Channel id to resolve against.",
+    ),
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="Account id to resolve against.",
+    ),
+    kind: str = typer.Option(
+        "auto",
+        "--kind",
+        help="Target kind (auto, user, group, channel).",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit resolved targets as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_channel_resolve_results(
+            services,
+            entries=entries,
+            channel=channel,
+            account=account,
+            kind=kind,
+        )
+
+    try:
+        results = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_channel_resolve_results(results, json_output=json_output)
+
+
+@channels_app.command("logs")
+def channels_logs(
+    channel: str = typer.Option(
+        "all",
+        "--channel",
+        help="Channel id to filter, or all.",
+    ),
+    lines: str = typer.Option(
+        str(_CHANNEL_LOG_DEFAULT_LIMIT),
+        "--lines",
+        help="Number of lines to show.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit recent channel logs as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_channel_logs_payload(
+            services,
+            channel=channel,
+            lines=lines,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_channel_logs(payload, json_output=json_output)
+
+
+@models_app.command("list")
+def models_list_command(
+    all_models: bool = typer.Option(
+        False,
+        "--all",
+        help="Show the full available catalog when the runtime exposes it.",
+    ),
+    local_only: bool = typer.Option(
+        False,
+        "--local",
+        help="Filter to local model providers.",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Filter to one provider.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit model catalog as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit one model id per line.",
+    ),
+) -> None:
+    _ = all_models
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_list_payload(
+            services,
+            provider=provider,
+            local_only=local_only,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_list(payload, json_output=json_output, plain=plain)
+
+
+@models_app.command("status")
+def models_status_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit configured model status as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit the resolved default model only.",
+    ),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help="Include probe posture when a model auth runtime is available.",
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Exit non-zero when model auth is known unhealthy.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_status_payload(services, probe=probe)
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_status(payload, json_output=json_output, plain=plain)
+    if check and payload.get("ok") is not True:
+        raise typer.Exit(code=1)
+
+
+@plugins_app.command("list")
+def plugins_list_command(
+    enabled_only: bool = typer.Option(
+        False,
+        "--enabled",
+        help="Only include plugin records that are currently loaded.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Show detailed plugin inventory in human output.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit plugin inventory as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_inventory_payload(
+            services,
+            enabled_only=enabled_only,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_plugins_inventory(payload, json_output=json_output, verbose=verbose)
+
+
+def _plugins_toggle_command_impl(
+    plugin_id: str,
+    *,
+    enabled: bool,
+    json_output: bool,
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_toggle_payload(
+            services,
+            plugin_id=plugin_id,
+            enabled=enabled,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_toggle(payload, json_output=json_output)
+
+
+@plugins_app.command("install")
+def plugins_install_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id or marketplace plugin name."),
+    marketplace: str | None = typer.Option(
+        None,
+        "--marketplace",
+        help="Install from a local Claude-compatible marketplace path or manifest.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Update an existing native marketplace install record.",
+    ),
+    link: bool = typer.Option(
+        False,
+        "--link",
+        "-l",
+        help="Accepted for OpenClaw CLI compatibility; not supported for marketplace installs.",
+    ),
+    pin: bool = typer.Option(
+        False,
+        "--pin",
+        help="Accepted for OpenClaw CLI compatibility; not supported for marketplace installs.",
+    ),
+    dangerously_force_unsafe_install: bool = typer.Option(
+        False,
+        "--dangerously-force-unsafe-install",
+        help="Accepted for OpenClaw CLI compatibility; local marketplace install is metadata-only.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit install result as JSON."),
+) -> None:
+    del dangerously_force_unsafe_install
+    if marketplace is None:
+        typer.echo(
+            "Native plugin install currently supports local marketplace installs via "
+            "--marketplace.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if link:
+        typer.echo("`--link` is not supported with `--marketplace`.", err=True)
+        raise typer.Exit(code=1)
+    if pin:
+        typer.echo("`--pin` is not supported with `--marketplace`.", err=True)
+        raise typer.Exit(code=1)
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_marketplace_install_payload(
+            services,
+            plugin_id=plugin_id,
+            marketplace=marketplace,
+            force=force,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_install(payload, json_output=json_output)
+
+
+@plugins_app.command("uninstall")
+def plugins_uninstall_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id."),
+    keep_files: bool = typer.Option(
+        False,
+        "--keep-files",
+        help="Accepted for OpenClaw CLI compatibility; native local installs keep files.",
+    ),
+    keep_config: bool = typer.Option(
+        False,
+        "--keep-config",
+        help="Deprecated OpenClaw alias for --keep-files.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be removed without writing config.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit uninstall result as JSON."),
+) -> None:
+    del keep_files
+    if keep_config and not json_output:
+        typer.echo("`--keep-config` is deprecated, use `--keep-files`.")
+    if not dry_run and not force:
+        if not typer.confirm(f'Uninstall plugin "{plugin_id}"?'):
+            typer.echo("Cancelled.")
+            return
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_uninstall_payload(
+            services,
+            plugin_id=plugin_id,
+            dry_run=dry_run,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_uninstall(payload, json_output=json_output)
+
+
+@plugins_app.command("update")
+def plugins_update_command(
+    plugin_id: str | None = typer.Argument(None, help="Plugin id."),
+    all_plugins: bool = typer.Option(False, "--all", help="Update all tracked plugins."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would change without writing config.",
+    ),
+    dangerously_force_unsafe_install: bool = typer.Option(
+        False,
+        "--dangerously-force-unsafe-install",
+        help="Accepted for OpenClaw CLI compatibility; native updates are metadata-only.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit update result as JSON."),
+) -> None:
+    del dangerously_force_unsafe_install
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_update_payload(
+            services,
+            plugin_id=plugin_id,
+            all_plugins=all_plugins,
+            dry_run=dry_run,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_update(payload, json_output=json_output)
+
+
+@plugins_app.command("enable")
+def plugins_enable_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit enable result as JSON."),
+) -> None:
+    _plugins_toggle_command_impl(plugin_id, enabled=True, json_output=json_output)
+
+
+@plugins_app.command("disable")
+def plugins_disable_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit disable result as JSON."),
+) -> None:
+    _plugins_toggle_command_impl(plugin_id, enabled=False, json_output=json_output)
+
+
+def _plugins_inspect_command_impl(
+    plugin_id: str | None,
+    *,
+    inspect_all: bool,
+    json_output: bool,
+) -> None:
+    if inspect_all and _optional_cli_string(plugin_id) is not None:
+        raise typer.BadParameter("Pass either a plugin id or --all, not both.")
+
+    async def _action(services: CliServices) -> dict[str, object] | list[dict[str, object]]:
+        return await _build_plugin_inspect_payload(
+            services,
+            plugin_id=plugin_id,
+            inspect_all=inspect_all,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except KeyError as exc:
+        missing = str(exc.args[0]) if exc.args else str(plugin_id or "")
+        typer.echo(f"Plugin not found: {missing}", err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugin_inspect(payload, json_output=json_output)
+
+
+@plugins_app.command("inspect")
+def plugins_inspect_command(
+    plugin_id: str | None = typer.Argument(None, help="Plugin id."),
+    inspect_all: bool = typer.Option(False, "--all", help="Inspect all plugins."),
+    json_output: bool = typer.Option(False, "--json", help="Emit plugin details as JSON."),
+) -> None:
+    _plugins_inspect_command_impl(
+        plugin_id,
+        inspect_all=inspect_all,
+        json_output=json_output,
+    )
+
+
+@plugins_app.command("info")
+def plugins_info_command(
+    plugin_id: str | None = typer.Argument(None, help="Plugin id."),
+    inspect_all: bool = typer.Option(False, "--all", help="Inspect all plugins."),
+    json_output: bool = typer.Option(False, "--json", help="Emit plugin details as JSON."),
+) -> None:
+    _plugins_inspect_command_impl(
+        plugin_id,
+        inspect_all=inspect_all,
+        json_output=json_output,
+    )
+
+
+@plugins_app.command("doctor")
+def plugins_doctor_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit plugin diagnostics as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_doctor_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_plugins_doctor(payload, json_output=json_output)
+
+
+@plugins_marketplace_app.command("list")
+def plugins_marketplace_list_command(
+    source: str = typer.Argument(..., help="Local marketplace path or manifest file."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit marketplace plugins as JSON.",
+    ),
+) -> None:
+    try:
+        payload = _build_plugins_marketplace_list_payload(source)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_marketplace_list(payload, json_output=json_output)
+
+
+@acp_app.callback()
+def acp_bridge_command(
+    ctx: typer.Context,
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Gateway WebSocket URL.",
+    ),
+    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    token_file: str | None = typer.Option(
+        None,
+        "--token-file",
+        help="Read gateway token from file.",
+    ),
+    password: str | None = typer.Option(None, "--password", help="Gateway password."),
+    password_file: str | None = typer.Option(
+        None,
+        "--password-file",
+        help="Read gateway password from file.",
+    ),
+    session: str | None = typer.Option(None, "--session", help="Default session key."),
+    session_label: str | None = typer.Option(
+        None,
+        "--session-label",
+        help="Default session label to resolve.",
+    ),
+    require_existing: bool = typer.Option(
+        False,
+        "--require-existing",
+        help="Fail if the session key/label does not exist.",
+    ),
+    reset_session: bool = typer.Option(
+        False,
+        "--reset-session",
+        help="Reset the session key before first use.",
+    ),
+    no_prefix_cwd: bool = typer.Option(
+        False,
+        "--no-prefix-cwd",
+        help="Do not prefix prompts with the working directory.",
+    ),
+    provenance: str | None = typer.Option(
+        None,
+        "--provenance",
+        help="ACP provenance mode: off, meta, or meta+receipt.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    try:
+        provenance_mode = _validate_acp_provenance(provenance)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    try:
+        auth_options = _resolve_acp_gateway_auth_options(
+            token=token,
+            token_file=token_file,
+            password=password,
+            password_file=password_file,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    warnings = auth_options.get("warnings")
+    if isinstance(warnings, list):
+        for warning in warnings:
+            typer.echo(str(warning), err=True)
+    _emit_acp_bridge_unavailable(
+        kind="Gateway",
+        context={
+            "url": url,
+            "session": session,
+            "sessionLabel": session_label,
+            "requireExisting": require_existing,
+            "resetSession": reset_session,
+            "prefixCwd": not no_prefix_cwd,
+            "provenance": provenance_mode,
+            "verbose": verbose,
+            "tokenFile": auth_options.get("tokenFile"),
+            "passwordFile": auth_options.get("passwordFile"),
+            "token": "provided" if auth_options.get("gatewayToken") else None,
+            "password": "provided" if auth_options.get("gatewayPassword") else None,
+        },
+    )
+    raise typer.Exit(code=1)
+
+
+@acp_app.command("client")
+def acp_client_command(
+    cwd: str | None = typer.Option(None, "--cwd", help="Working directory."),
+    server: str | None = typer.Option(
+        None,
+        "--server",
+        help="ACP server command.",
+    ),
+    server_args: Annotated[
+        list[str] | None,
+        typer.Option("--server-args", help="Extra arguments for the ACP server."),
+    ] = None,
+    server_verbose: bool = typer.Option(
+        False,
+        "--server-verbose",
+        help="Enable verbose logging on the ACP server.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose client logging."),
+) -> None:
+    _emit_acp_bridge_unavailable(
+        kind="client",
+        context={
+            "cwd": cwd,
+            "server": server,
+            "serverArgs": " ".join(server_args or []),
+            "serverVerbose": server_verbose,
+            "verbose": verbose,
+        },
+    )
+    raise typer.Exit(code=1)
+
+
+@capability_app.command("list")
+def capability_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    _emit_capability_list(_capability_list_payload(), json_output=json_output)
+
+
+@capability_app.command("inspect")
+def capability_inspect_command(
+    name: str = typer.Option(..., "--name", help="Capability id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        payload = _capability_inspect_payload(name)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_inspect(payload, json_output=json_output)
+
+
+@capability_model_app.command("run")
+def capability_model_run_command(
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        transport = _resolve_capability_model_run_transport(
+            local=local,
+            gateway=gateway,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_model_run_payload(
+            services,
+            prompt=prompt,
+            model_ref=model,
+            transport=transport,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_model_app.command("list")
+def capability_model_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        payload = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+        return _model_catalog_entries(payload)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_app.command("inspect")
+def capability_model_inspect_command(
+    model: str = typer.Option(..., "--model", help="Model id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        payload = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+        target = model.strip()
+        for entry in _model_catalog_entries(payload):
+            if _model_catalog_ref(entry) == target:
+                return entry
+        for entry in _model_catalog_entries(payload):
+            if _optional_cli_string(entry.get("id")) == target:
+                return entry
+        raise ValueError(f"Model not found: {target}")
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_app.command("providers")
+def capability_model_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        payload = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+        return _build_capability_model_providers_payload(_model_catalog_entries(payload))
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_auth_app.command("status")
+def capability_model_auth_status_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_status_payload(services, probe=False)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("providers")
+def capability_tts_providers_command(
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("voices")
+def capability_tts_voices_command(
+    provider: str | None = typer.Option(None, "--provider", help="Speech provider id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[object]:
+        return await _build_capability_tts_voices_payload(
+            services,
+            provider=provider,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("convert")
+def capability_tts_convert_command(
+    text: str = typer.Option(..., "--text", help="Input text."),
+    channel: str | None = typer.Option(None, "--channel", help="Channel hint."),
+    voice: str | None = typer.Option(None, "--voice", help="Voice hint."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        transport = _resolve_capability_model_run_transport(
+            local=local,
+            gateway=gateway,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_convert_payload(
+            services,
+            text=text,
+            channel=channel,
+            voice=voice,
+            model_ref=model,
+            output=output,
+            transport=transport,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_tts_app.command("status")
+def capability_tts_status_command(
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    _ = gateway
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_status_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("enable")
+def capability_tts_enable_command(
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(services, method="tts.enable")
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("disable")
+def capability_tts_disable_command(
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(services, method="tts.disable")
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("set-provider")
+def capability_tts_set_provider_command(
+    provider: str = typer.Option(..., "--provider", help="Speech provider id."),
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(
+            services,
+            method="tts.setProvider",
+            provider=provider,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@sandbox_app.command("list")
+def sandbox_list_command(
+    browser_only: bool = typer.Option(
+        False,
+        "--browser",
+        help="List browser sandbox runtimes only.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit sandbox inventory as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_sandbox_inventory_payload(
+            services,
+            browser_only=browser_only,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_sandbox_inventory(payload, json_output=json_output)
+
+
+@sandbox_app.command("recreate")
+def sandbox_recreate_command(
+    all_runtimes: bool = typer.Option(
+        False,
+        "--all",
+        help="Recreate all saved sandbox runtimes.",
+    ),
+    session_key: str | None = typer.Option(
+        None,
+        "--session",
+        help="Session key to recreate.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id to recreate, including subagent sessions.",
+    ),
+    browser_only: bool = typer.Option(
+        False,
+        "--browser",
+        help="Only recreate browser sandbox runtimes.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip confirmation and remove matching runtime records.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit sandbox recreation result as JSON.",
+    ),
+) -> None:
+    try:
+        _validate_sandbox_recreate_selection(
+            all_runtimes=all_runtimes,
+            session_key=session_key,
+            agent_id=agent_id,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_sandbox_recreate_payload(
+            services,
+            all_runtimes=all_runtimes,
+            session_key=session_key,
+            agent_id=agent_id,
+            browser_only=browser_only,
+            force=force,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_sandbox_recreate(payload, json_output=json_output)
+    if payload.get("failCount"):
+        raise typer.Exit(code=1)
+
+
+@sandbox_app.command("explain")
+def sandbox_explain_command(
+    session_key: str | None = typer.Option(
+        None,
+        "--session",
+        help="Session key to inspect.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id to inspect.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit effective sandbox posture as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_sandbox_explain_payload(
+            services,
+            session_key=session_key,
+            agent_id=agent_id,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_sandbox_explain(payload, json_output=json_output)
+
+
+@sessions_app.command("spawn")
+def sessions_spawn_command(
+    task: str = typer.Option(..., "--task", "-t", help="Task to hand to the spawned session."),
+    label: str | None = typer.Option(None, "--label", help="Optional child session label."),
+    runtime: str | None = typer.Option(
+        None,
+        "--runtime",
+        help="Spawn runtime: subagent or acp.",
+    ),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Target agent id."),
+    cwd: str | None = typer.Option(None, "--cwd", help="Workspace directory for the child turn."),
+    resume_session_id: str | None = typer.Option(
+        None,
+        "--resume-session-id",
+        help="ACP runtime session/thread id to resume.",
+    ),
+    stream_to: str | None = typer.Option(
+        None,
+        "--stream-to",
+        help='ACP stream target, currently "parent".',
+    ),
+    mode: str | None = typer.Option(None, "--mode", help="Spawn mode: run or session."),
+    thread: bool = typer.Option(
+        False,
+        "--thread",
+        help="Create a persistent child thread when a provider binder is available.",
+    ),
+    sandbox: str | None = typer.Option(
+        None,
+        "--sandbox",
+        help="Sandbox posture: inherit or require.",
+    ),
+    run_timeout_seconds: int | None = typer.Option(
+        None,
+        "--run-timeout-seconds",
+        min=0,
+        help="Run timeout in seconds.",
+    ),
+    cleanup: str | None = typer.Option(
+        None,
+        "--cleanup",
+        help="Cleanup mode: delete or keep.",
+    ),
+    expects_completion_message: bool | None = typer.Option(
+        None,
+        "--expects-completion-message/--no-expects-completion-message",
+        help="Whether terminal waits announce completion to the parent session.",
+    ),
+    requester_session_key: str | None = typer.Option(
+        None,
+        "--requester-session-key",
+        help="Parent/requester session key for spawn tracking.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the spawn result as JSON."),
+) -> None:
+    params: dict[str, object] = {"task": task}
+    for key, value in (
+        ("label", label),
+        ("runtime", runtime),
+        ("agentId", agent_id),
+        ("cwd", cwd),
+        ("resumeSessionId", resume_session_id),
+        ("streamTo", stream_to),
+        ("mode", mode),
+        ("sandbox", sandbox),
+        ("cleanup", cleanup),
+        ("requesterSessionKey", requester_session_key),
+    ):
+        normalized = _optional_cli_string(value)
+        if normalized is not None:
+            params[key] = normalized
+    if thread:
+        params["thread"] = True
+    if run_timeout_seconds is not None:
+        params["runTimeoutSeconds"] = run_timeout_seconds
+    if expects_completion_message is not None:
+        params["expectsCompletionMessage"] = expects_completion_message
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "sessions.spawn", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_session_method_result(result, json_output=json_output)
+
+
+@sessions_app.command("wait")
+def sessions_wait_command(
+    run_id: str = typer.Argument(..., help="Run id returned by sessions spawn/send."),
+    timeout_ms: int | None = typer.Option(
+        None,
+        "--timeout-ms",
+        min=0,
+        help="Maximum wait time in milliseconds.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the wait result as JSON."),
+) -> None:
+    params: dict[str, object] = {"runId": run_id}
+    if timeout_ms is not None:
+        params["timeoutMs"] = timeout_ms
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "agent.wait", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_session_method_result(result, json_output=json_output)
 
 
 @app.command("launch")
@@ -3924,6 +8465,148 @@ def routes_create_command(
 
     result = _run(_run_with_services(_action))
     _emit_payload(result, json_output=json_output)
+
+
+@routes_app.command("send")
+def routes_send_command(
+    channel: str = typer.Option(..., "--channel", help="Outbound provider channel."),
+    to: str = typer.Option(..., "--to", help="Explicit provider target."),
+    message: str = typer.Option("", "--message", "-m", help="Message text to send."),
+    media_urls: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--media-url",
+            help="Media URL to attach. Repeat for multiple media items.",
+        ),
+    ] = None,
+    gif_playback: bool = typer.Option(
+        False,
+        "--gif-playback",
+        help="Ask capable providers to send animated media as a GIF.",
+    ),
+    reply_to_id: str | None = typer.Option(
+        None,
+        "--reply-to",
+        help="Provider message id to reply to.",
+    ),
+    silent: bool = typer.Option(
+        False,
+        "--silent",
+        help="Send without notification when supported.",
+    ),
+    force_document: bool = typer.Option(
+        False,
+        "--force-document",
+        help="Send media as a document when supported.",
+    ),
+    account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Originating agent id."),
+    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    session_key: str | None = typer.Option(
+        None,
+        "--session-key",
+        help="Originating OpenZues session key.",
+    ),
+    idempotency_key: str | None = typer.Option(
+        None,
+        "--idempotency-key",
+        help="Stable idempotency key for retry-safe delivery.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the send result as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await services.ops_mesh.send_direct_channel_message(
+            channel=channel,
+            to=to,
+            message=message,
+            media_urls=list(media_urls or []),
+            gif_playback=True if gif_playback else None,
+            reply_to_id=reply_to_id,
+            silent=True if silent else None,
+            force_document=True if force_document else None,
+            account_id=account_id,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            session_key=session_key,
+            idempotency_key=idempotency_key,
+        )
+
+    result = _run(_run_with_services(_action))
+    _emit_direct_channel_delivery(result, json_output=json_output)
+
+
+@routes_app.command("poll")
+def routes_poll_command(
+    channel: str = typer.Option(..., "--channel", help="Outbound provider channel."),
+    to: str = typer.Option(..., "--to", help="Explicit provider target."),
+    question: str = typer.Option(..., "--question", help="Poll question."),
+    options: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--option",
+            "-o",
+            help="Poll option. Repeat for each choice.",
+        ),
+    ] = None,
+    max_selections: int | None = typer.Option(
+        None,
+        "--max-selections",
+        min=1,
+        help="Maximum selectable poll options.",
+    ),
+    duration_seconds: int | None = typer.Option(
+        None,
+        "--duration-seconds",
+        min=1,
+        help="Poll duration in seconds.",
+    ),
+    duration_hours: int | None = typer.Option(
+        None,
+        "--duration-hours",
+        min=1,
+        help="Poll duration in hours.",
+    ),
+    silent: bool = typer.Option(
+        False,
+        "--silent",
+        help="Send without notification when supported.",
+    ),
+    is_anonymous: bool | None = typer.Option(
+        None,
+        "--anonymous/--named",
+        help="Request anonymous or named poll behavior when supported.",
+    ),
+    account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
+    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    idempotency_key: str | None = typer.Option(
+        None,
+        "--idempotency-key",
+        help="Stable idempotency key for retry-safe delivery.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the poll result as JSON."),
+) -> None:
+    poll_options = [str(option).strip() for option in options or [] if str(option).strip()]
+    if len(poll_options) < 2:
+        raise typer.BadParameter("provide at least two --option values")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await services.ops_mesh.send_direct_channel_poll(
+            channel=channel,
+            to=to,
+            question=question,
+            options=poll_options,
+            max_selections=max_selections,
+            duration_seconds=duration_seconds,
+            duration_hours=duration_hours,
+            silent=True if silent else None,
+            is_anonymous=is_anonymous,
+            account_id=account_id,
+            thread_id=thread_id,
+            idempotency_key=idempotency_key,
+        )
+
+    result = _run(_run_with_services(_action))
+    _emit_direct_channel_delivery(result, json_output=json_output)
 
 
 @routes_app.command("list")

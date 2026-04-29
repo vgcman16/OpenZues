@@ -57,7 +57,10 @@ from openzues.services.gateway_node_registry import (
     GatewayNodeRegistry,
     KnownNode,
 )
-from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeService
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginRuntimeExecutorSpec,
+    GatewayPluginRuntimeService,
+)
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_clawhub import GatewaySkillClawHubService
@@ -1993,6 +1996,69 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
 
 
 @pytest.mark.asyncio
+async def test_tools_catalog_projects_plugin_groups_and_honors_include_plugins_false() -> None:
+    async def fake_executor(tool: str, args: dict[str, object]) -> dict[str, object]:
+        return {"tool": tool, "args": args}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="matrix_room",
+                executor=fake_executor,
+                plugin_id="matrix",
+                plugin_name="Matrix",
+                description="Summarized Matrix room helper.",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="safe",
+                executor=fake_executor,
+                plugin_id="collision",
+                plugin_name="Collision",
+                description="This should not shadow a core tool.",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="disabled_tool",
+                executor=fake_executor,
+                enabled=False,
+                plugin_id="disabled",
+                plugin_name="Disabled",
+                description="This should not be visible.",
+            ),
+        ]
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call("tools.catalog", {})
+    plugin_groups = [group for group in payload["groups"] if group["source"] == "plugin"]
+
+    assert plugin_groups == [
+        {
+            "id": "plugin:matrix",
+            "label": "matrix",
+            "source": "plugin",
+            "pluginId": "matrix",
+            "tools": [
+                {
+                    "id": "matrix_room",
+                    "label": "matrix_room",
+                    "description": "Summarized Matrix room helper.",
+                    "source": "plugin",
+                    "pluginId": "matrix",
+                    "defaultProfiles": [],
+                }
+            ],
+        }
+    ]
+
+    core_only = await service.call("tools.catalog", {"includePlugins": False})
+
+    assert [group["source"] for group in core_only["groups"]] == ["core"]
+
+
+@pytest.mark.asyncio
 async def test_tools_effective_returns_bounded_effective_inventory_from_session_toolsets() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -2101,6 +2167,60 @@ async def test_tools_effective_uses_resolved_subagent_store_key() -> None:
         "search",
         "delegation",
         "debugging",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tools_effective_projects_plugin_group_from_runtime_specs(tmp_path: Path) -> None:
+    async def fake_executor(tool: str, args: dict[str, object]) -> dict[str, object]:
+        return {"tool": tool, "args": args}
+
+    database = Database(tmp_path / "gateway-tools-effective-plugins.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"toolsets": []},
+    )
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="matrix_room",
+                executor=fake_executor,
+                plugin_id="matrix",
+                plugin_name="Matrix",
+                description="Summarized Matrix room helper.",
+            )
+        ]
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call(
+        "tools.effective",
+        {"sessionKey": session_key, "agentId": "main"},
+    )
+
+    assert payload["groups"] == [
+        {
+            "id": "plugin",
+            "label": "Connected tools",
+            "source": "plugin",
+            "tools": [
+                {
+                    "id": "matrix_room",
+                    "label": "matrix_room",
+                    "description": "Summarized Matrix room helper.",
+                    "rawDescription": "Summarized Matrix room helper.",
+                    "source": "plugin",
+                    "pluginId": "matrix",
+                }
+            ],
+        }
     ]
 
 
@@ -5454,6 +5574,252 @@ async def test_tools_invoke_uses_plugin_runtime_service_for_owner_only_executor(
     assert payload == {"ok": True, "result": {"ok": True, "result": "owner"}}
     assert observed_calls[0][0].startswith("http-")
     assert observed_calls[0][1] == {"mode": "owner"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_runs_registry_plugin_executor_in_registration_order(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-registry-order.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["registry_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+    before_call_payloads: list[dict[str, object]] = []
+
+    async def first_executor(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "executor": "first", "mode": args.get("mode")}
+
+    async def duplicate_executor(
+        tool_call_id: str,
+        args: dict[str, object],
+    ) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "executor": "duplicate"}
+
+    class OrderedPluginRegistry:
+        def list_executors(self) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+            return (
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_tool",
+                    executor=first_executor,
+                    plugin_id="alpha",
+                    plugin_name="Alpha",
+                ),
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_tool",
+                    executor=duplicate_executor,
+                    plugin_id="beta",
+                    plugin_name="Beta",
+                ),
+            )
+
+    async def before_call(payload: dict[str, object]) -> dict[str, object]:
+        before_call_payloads.append(payload)
+        return {"params": {"mode": "rewritten"}}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            executor_registry=OrderedPluginRegistry(),
+        ),
+        tools_invoke_before_call=before_call,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "registry_tool", "args": {"mode": "original"}},
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {"ok": True, "executor": "first", "mode": "rewritten"},
+    }
+    assert before_call_payloads[0]["toolName"] == "registry_tool"
+    assert before_call_payloads[0]["params"] == {"mode": "original"}
+    assert len(observed_calls) == 1
+    assert observed_calls[0][0].startswith("http-")
+    assert observed_calls[0][1] == {"mode": "rewritten"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_keeps_core_mapping_before_registry_plugin_executor(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-core-wins.db")
+    await database.initialize()
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def plugin_executor(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "executor": "plugin"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="agents_list",
+                    executor=plugin_executor,
+                    plugin_id="shadow-core",
+                ),
+            ),
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "agents_list"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["agents"][0]["id"] == "main"
+    assert observed_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_keeps_registry_owner_only_executor_hidden_from_non_owner(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-registry-owner.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["registry_owner_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def plugin_executor(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "mode": args.get("mode")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_owner_tool",
+                    executor=plugin_executor,
+                    owner_only=True,
+                    plugin_id="owner-plugin",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "tools.invoke",
+            {"tool": "registry_owner_tool", "args": {"mode": "hidden"}},
+            requester=GatewayNodeMethodRequester(caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,)),
+        )
+
+    assert exc_info.value.status_code == 404
+    assert observed_calls == []
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "registry_owner_tool", "args": {"mode": "owner"}},
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "mode": "owner"}}
+    assert observed_calls[0][0].startswith("http-")
+    assert observed_calls[0][1] == {"mode": "owner"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_skips_disabled_registry_plugin_executor(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-registry-disabled.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["registry_optional_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[str] = []
+
+    async def disabled_executor(_tool_call_id: str, _args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append("disabled")
+        return {"ok": True, "executor": "disabled"}
+
+    async def enabled_executor(_tool_call_id: str, _args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append("enabled")
+        return {"ok": True, "executor": "enabled"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_optional_tool",
+                    executor=disabled_executor,
+                    enabled=False,
+                    plugin_id="missing-optional-dependency",
+                ),
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_optional_tool",
+                    executor=enabled_executor,
+                    plugin_id="enabled-plugin",
+                ),
+            ),
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "registry_optional_tool"})
+
+    assert payload == {"ok": True, "result": {"ok": True, "executor": "enabled"}}
+    assert observed_calls == ["enabled"]
 
 
 @pytest.mark.asyncio
@@ -10577,6 +10943,81 @@ async def test_sessions_reset_uses_resolved_custom_subagent_store_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_reset_closes_acp_runtime_before_resetting_metadata(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-reset-acp-cleanup.db")
+    await database.initialize()
+    session_key = "agent:main:acp:thread-reset-1"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "runtime": "acp",
+            "runtimeThreadId": "thread-reset-1",
+            "runtimeSessionId": "thread-reset-1",
+            "label": "ACP reset runtime",
+            "modelProvider": "openai",
+            "model": "stale-runtime-model",
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="ACP transcript should be reset.",
+        session_key=session_key,
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpCleanupService:
+        async def cancel_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "cancel", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+        async def close_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "close", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpCleanupService(),
+    )
+
+    payload = await service.call("sessions.reset", {"key": session_key}, now_ms=888)
+
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert calls == [
+        {
+            "method": "cancel",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-reset-1",
+            "runtime_session_id": "thread-reset-1",
+            "reason": "session-reset",
+        },
+        {
+            "method": "close",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-reset-1",
+            "runtime_session_id": "thread-reset-1",
+            "reason": "session-reset",
+            "discard_persistent_state": True,
+            "require_acp_session": False,
+            "allow_backend_unavailable": True,
+        },
+    ]
+    assert await database.count_control_chat_messages(session_key=session_key) == 0
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"] == {
+        "runtime": "acp",
+        "runtimeThreadId": "thread-reset-1",
+        "runtimeSessionId": "thread-reset-1",
+        "label": "ACP reset runtime",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_removes_metadata_backed_session_and_transcript() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -10709,6 +11150,66 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
     ]
     assert [event["payload"]["reason"] for event in sessions_changed] == ["delete"]
     assert sessions_changed[0]["payload"]["sessionKey"] == session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_closes_acp_runtime_before_metadata_delete(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-delete-acp-cleanup.db")
+    await database.initialize()
+    session_key = "agent:main:acp:thread-delete-1"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "runtime": "acp",
+            "runtimeThreadId": "thread-delete-1",
+            "runtimeSessionId": "thread-delete-1",
+            "label": "ACP runtime",
+        },
+    )
+
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpCleanupService:
+        async def cancel_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "cancel", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+        async def close_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "close", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpCleanupService(),
+    )
+
+    payload = await service.call("sessions.delete", {"key": session_key}, now_ms=777)
+
+    assert payload == {"ok": True, "key": session_key, "deleted": True, "archived": []}
+    assert calls == [
+        {
+            "method": "cancel",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-delete-1",
+            "runtime_session_id": "thread-delete-1",
+            "reason": "session-delete",
+        },
+        {
+            "method": "close",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-delete-1",
+            "runtime_session_id": "thread-delete-1",
+            "reason": "session-delete",
+            "discard_persistent_state": True,
+            "require_acp_session": False,
+            "allow_backend_unavailable": True,
+        },
+    ]
+    assert await database.get_gateway_session_metadata(session_key) is None
 
 
 @pytest.mark.asyncio
@@ -14142,11 +14643,102 @@ async def test_sessions_spawn_rejects_required_sandbox_without_sandbox_runtime(t
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_rejects_required_sandbox_when_target_config_is_off(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-config-off.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "off",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"runId": "run-should-not-start", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {"task": "Run this in a sandbox.", "sandbox": "require"},
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "error": (
+            'sessions_spawn sandbox="require" needs a sandboxed target runtime. '
+            'Pick a sandboxed agentId or use sandbox="inherit".'
+        ),
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_required_sandbox_dispatches_when_runtime_wired(
     tmp_path,
 ) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-sandbox-runtime.db")
     await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                },
+            }
+        )
+    )
     calls: list[dict[str, object]] = []
 
     async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
@@ -14157,6 +14749,7 @@ async def test_sessions_spawn_required_sandbox_dispatches_when_runtime_wired(
         GatewayNodeRegistry(),
         database=database,
         sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
         sandbox_chat_send_service=fake_sandbox_chat_send_service,
     )
 
@@ -14187,6 +14780,34 @@ async def test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata(
 ) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-sandbox-runtime-metadata.db")
     await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                },
+            }
+        )
+    )
 
     async def fake_sandbox_chat_send_service(**_kwargs: object) -> dict[str, object]:
         return {
@@ -14205,6 +14826,7 @@ async def test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata(
         GatewayNodeRegistry(),
         database=database,
         sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
         sandbox_chat_send_service=fake_sandbox_chat_send_service,
     )
 
@@ -14230,6 +14852,257 @@ async def test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata(
     assert metadata["sandboxed"] is True
     assert metadata["sandboxMode"] == "workspace-write"
     assert metadata["sandboxPolicy"] == {"type": "workspaceWrite"}
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_rejects_sandboxed_requester_to_unsandboxed_target(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-requester.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                    "list": [
+                        {
+                            "id": "openzues",
+                            "sandbox": {
+                                "mode": "off",
+                            },
+                        }
+                    ],
+                },
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "allowAgents": ["openzues"],
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"runId": "run-should-not-start", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try to escape the parent sandbox.",
+            "agentId": "openzues",
+            "sandbox": "inherit",
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "error": (
+            "Sandboxed sessions cannot spawn unsandboxed subagents. Set a sandboxed "
+            "target agent or use the same agent runtime."
+        ),
+        "role": "openzues",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_inherit_dispatches_sandboxed_config_target(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-inherit.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    chat_calls: list[dict[str, object]] = []
+    sandbox_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        chat_calls.append(dict(kwargs))
+        return {"runId": "run-chat-child", "status": "ok"}
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        sandbox_calls.append(dict(kwargs))
+        return {
+            "runId": "run-sandbox-child",
+            "status": "ok",
+            "runtime": "codex-app-server",
+            "runtimeId": 8,
+            "runtimeThreadId": "thread-sandbox-child",
+            "runtimeSessionId": "thread-sandbox-child",
+            "sandboxed": True,
+            "sandboxMode": "workspace-write",
+            "sandboxPolicy": {"type": "workspaceWrite"},
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Inherit the configured sandbox.",
+            "sandbox": "inherit",
+        },
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert payload["runId"] == "run-sandbox-child"
+    assert chat_calls == []
+    assert sandbox_calls[0]["sandbox"] == "require"
+    assert sandbox_calls[0]["sandbox_mode"] == "workspace-write"
+    assert sandbox_calls[0]["session_key"] == child_session_key
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["runtime"] == "codex-app-server"
+    assert metadata["sandboxed"] is True
+    assert metadata["sandboxMode"] == "workspace-write"
+    assert metadata["sandboxConfigMode"] == "all"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-ro.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "workspaceAccess": "ro",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    sandbox_calls: list[dict[str, object]] = []
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        sandbox_calls.append(dict(kwargs))
+        sandbox_mode = str(kwargs.get("sandbox_mode") or "")
+        return {
+            "runId": "run-read-only-child",
+            "status": "ok",
+            "runtime": "codex-app-server",
+            "runtimeId": 9,
+            "runtimeThreadId": "thread-read-only-child",
+            "runtimeSessionId": "thread-read-only-child",
+            "sandboxed": True,
+            "sandboxMode": sandbox_mode,
+            "sandboxPolicy": {"type": "readOnly"},
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Inspect through a read-only workspace sandbox.",
+            "sandbox": "inherit",
+        },
+    )
+
+    metadata_row = await database.get_gateway_session_metadata(str(payload["childSessionKey"]))
+    assert payload["status"] == "accepted"
+    assert sandbox_calls[0]["sandbox_mode"] == "read-only"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["sandboxMode"] == "read-only"
+    assert metadata["sandboxPolicy"] == {"type": "readOnly"}
+    assert metadata["sandboxWorkspaceAccess"] == "ro"
 
 
 @pytest.mark.asyncio
@@ -14617,6 +15490,62 @@ async def test_sessions_spawn_thread_mode_uses_thread_binding_hook(tmp_path) -> 
         "accountId": "default",
         "threadId": "1710000000.000100",
     }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_delivers_initial_child_run_to_bound_origin(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-bound-delivery.db")
+    await database.initialize()
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-thread-bound-delivery-1", "status": "ok"}
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        del parent, child, context
+        return {
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "workspace-bot",
+            "threadId": "1710000000.000200",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Start directly in the bound thread.",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:C123",
+            message_account_id="workspace-bot",
+            message_thread_id="1710000000.000200",
+        ),
+    )
+
+    assert payload["status"] == "accepted"
+    assert len(send_calls) == 1
+    assert send_calls[0]["deliver"] is True
+    assert send_calls[0]["channel"] == "slack"
+    assert send_calls[0]["to"] == "channel:C123"
+    assert send_calls[0]["account_id"] == "workspace-bot"
+    assert send_calls[0]["thread_id"] == "1710000000.000200"
 
 
 @pytest.mark.asyncio
@@ -17190,6 +18119,120 @@ async def test_agent_wait_announces_spawn_completion_to_parent_session(tmp_path)
         "Child produced the requested result."
     )
     assert parent_messages[0]["session_key"] == parent_session_key
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_thread_bound_completion_uses_completion_delivery_route(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-thread-bound-completion.db")
+    await database.initialize()
+    direct_sends: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-thread-bound-completion-1", "status": "ok"}
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        del parent, child, context
+        return {
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "workspace-bot",
+            "threadId": "1710000000.000300",
+        }
+
+    async def fake_send_channel_message_service(**kwargs: object) -> dict[str, object]:
+        direct_sends.append(dict(kwargs))
+        return {
+            "ok": True,
+            "deliveryId": 42,
+            "messageId": "msg-thread-bound-completion-1",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        send_channel_message_service=fake_send_channel_message_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {"task": "Complete and announce in the bound thread.", "thread": True},
+        now_ms=447,
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:C123",
+            message_account_id="workspace-bot",
+            message_thread_id="1710000000.000300",
+        ),
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    mission_id = await database.create_mission(
+        name="Thread Bound Spawn Completion Child",
+        objective="Finish the thread-bound child and announce to the bound thread.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-bound-completion",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Thread child produced the requested result.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-thread-bound-completion-1", "timeoutMs": 0},
+    )
+
+    assert wait_payload["status"] == "ok"
+    assert direct_sends == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": (
+                f"Subagent {child_session_key} completed: "
+                "Thread child produced the requested result."
+            ),
+            "account_id": "workspace-bot",
+            "thread_id": "1710000000.000300",
+            "session_key": child_session_key,
+            "idempotency_key": "subagent-completion:run-thread-bound-completion-1",
+        }
+    ]
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["completionDeliveryResult"] == {
+        "ok": True,
+        "deliveryId": 42,
+        "messageId": "msg-thread-bound-completion-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -28860,6 +29903,65 @@ async def test_channels_status_returns_notification_route_inventory() -> None:
     assert channels["channelDefaultAccountId"]["slack"] == "workspace-bot"
     assert channels["routes"][0]["name"] == "Deploy Room"
     assert channels["routes"][0]["conversation_target"]["channel"] == "slack"
+
+
+@pytest.mark.asyncio
+async def test_channels_status_probe_uses_registered_account_probe() -> None:
+    async def fake_list_notification_route_views() -> list[NotificationRouteView]:
+        return [
+            NotificationRouteView(
+                id=7,
+                name="Deploy Room",
+                kind="webhook",
+                target="https://example.invalid/deploy-room",
+                events=["mission/completed"],
+                conversation_target=ConversationTargetView(
+                    channel="slack",
+                    account_id="workspace-bot",
+                    peer_kind="channel",
+                    peer_id="deploy-room",
+                    summary="slack workspace-bot channel deploy-room",
+                ),
+                enabled=True,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        ]
+
+    probe_calls: list[tuple[str, str, int]] = []
+
+    async def fake_probe_account(
+        *,
+        channel: str,
+        account_id: str,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        probe_calls.append((channel, account_id, timeout_ms))
+        return {
+            "ok": True,
+            "bot": {"username": "deploybot"},
+            "timeoutMs": timeout_ms,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        channels_service=GatewayChannelsService(
+            list_notification_route_views=fake_list_notification_route_views,
+            probe_account=fake_probe_account,
+        ),
+    )
+
+    channels = await service.call("channels.status", {"probe": True, "timeoutMs": 2500})
+
+    assert probe_calls == [("slack", "workspace-bot", 2500)]
+    assert channels["probe"] is True
+    assert channels["timeoutMs"] == 2500
+    assert channels["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert channels["channelAccounts"]["slack"][0]["probe"] == {
+        "ok": True,
+        "bot": {"username": "deploybot"},
+        "timeoutMs": 2500,
+    }
 
 
 @pytest.mark.asyncio

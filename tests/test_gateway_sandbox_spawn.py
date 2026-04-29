@@ -86,6 +86,30 @@ async def test_runtime_manager_sandbox_chat_send_starts_workspace_write_turn() -
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_sandbox_chat_send_reports_read_only_policy() -> None:
+    manager = _FakeRuntimeManager()
+    service = RuntimeManagerSandboxChatSendService(manager)
+
+    result = await service(
+        session_key="agent:main:subagent:child",
+        message="Inspect the sandboxed work.",
+        idempotency_key="idem-read-only",
+        thinking=None,
+        deliver=None,
+        timeout_ms=12_000,
+        sandbox="require",
+        sandbox_mode="read-only",
+    )
+
+    assert result["status"] == "ok"
+    assert result["sandboxed"] is True
+    assert result["sandboxMode"] == "read-only"
+    assert result["sandboxPolicy"] == {"type": "readOnly"}
+    assert manager.calls[0][1]["sandbox_mode"] == "read-only"
+    assert manager.calls[1][1]["sandbox_mode"] == "read-only"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_sandbox_chat_send_preserves_forbidden_when_unavailable() -> None:
     class EmptyRuntimeManager:
         async def list_views(self) -> list[_RuntimeView]:

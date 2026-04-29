@@ -14,6 +14,29 @@ class GatewayAcpSpawnService(Protocol):
     ) -> dict[str, object]:
         """Start an ACP-backed child run and return an OpenClaw-shaped result."""
 
+    async def cancel_session(
+        self,
+        *,
+        session_key: str,
+        runtime_thread_id: str | None,
+        runtime_session_id: str | None,
+        reason: str,
+    ) -> dict[str, object]:
+        """Cancel any active ACP runtime work before a session mutation."""
+
+    async def close_session(
+        self,
+        *,
+        session_key: str,
+        runtime_thread_id: str | None,
+        runtime_session_id: str | None,
+        reason: str,
+        discard_persistent_state: bool,
+        require_acp_session: bool,
+        allow_backend_unavailable: bool,
+    ) -> dict[str, object]:
+        """Close ACP runtime handles before local session state is removed."""
+
 
 def _optional_string(value: object) -> str | None:
     if not isinstance(value, str):
@@ -53,6 +76,20 @@ class RuntimeManagerAcpSpawnService:
         task = _optional_string(params.get("task"))
         if task is None:
             return {"status": "error", "error": "task is required"}
+        requested_mode = _optional_string(params.get("mode"))
+        thread_requested = params.get("thread") is True
+        mode = requested_mode if requested_mode in {"run", "session"} else (
+            "session" if thread_requested else "run"
+        )
+        if mode == "session" and not thread_requested:
+            return {
+                "status": "error",
+                "errorCode": "thread_required",
+                "error": (
+                    'mode="session" requires thread=true so the ACP session can stay '
+                    "bound to a thread."
+                ),
+            }
         instance_id = await self._select_instance_id()
         if instance_id is None:
             return {
@@ -61,11 +98,6 @@ class RuntimeManagerAcpSpawnService:
             }
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
-        requested_mode = _optional_string(params.get("mode"))
-        thread_requested = params.get("thread") is True
-        mode = requested_mode if requested_mode in {"run", "session"} else (
-            "session" if thread_requested else "run"
-        )
         try:
             thread_id: str | None
             if resume_session_id is not None:
@@ -124,3 +156,43 @@ class RuntimeManagerAcpSpawnService:
             ):
                 return instance_id
         return fallback
+
+    async def cancel_session(
+        self,
+        *,
+        session_key: str,
+        runtime_thread_id: str | None,
+        runtime_session_id: str | None,
+        reason: str,
+    ) -> dict[str, object]:
+        del session_key, runtime_session_id, reason
+        if runtime_thread_id is None:
+            return {"status": "ok", "cancelled": False, "reason": "missing_runtime_thread_id"}
+        instance_id = await self._select_instance_id()
+        if instance_id is None:
+            return {"status": "ok", "cancelled": False, "reason": "runtime_unavailable"}
+        result = await self._manager.interrupt_turn(instance_id, runtime_thread_id)
+        cancelled = bool(result.get("ok")) if isinstance(result, dict) else True
+        return {"status": "ok", "cancelled": cancelled}
+
+    async def close_session(
+        self,
+        *,
+        session_key: str,
+        runtime_thread_id: str | None,
+        runtime_session_id: str | None,
+        reason: str,
+        discard_persistent_state: bool,
+        require_acp_session: bool,
+        allow_backend_unavailable: bool,
+    ) -> dict[str, object]:
+        del (
+            session_key,
+            runtime_thread_id,
+            runtime_session_id,
+            reason,
+            discard_persistent_state,
+            require_acp_session,
+            allow_backend_unavailable,
+        )
+        return {"status": "ok", "closed": True}

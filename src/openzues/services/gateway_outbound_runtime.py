@@ -41,15 +41,21 @@ def _native_result_field(result: object, key: str) -> object | None:
 def _native_result_payload(result: object) -> dict[str, object]:
     payload: dict[str, object] = {}
     for key in (
+        "runtime",
+        "messageId",
+        "channel",
         "chatId",
         "channelId",
+        "roomId",
         "toJid",
         "conversationId",
+        "timestamp",
         "pollId",
         "mediaId",
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "meta",
     ):
         value = _native_result_field(result, key)
         if value in (None, "", [], {}):

@@ -1679,16 +1679,53 @@ class ControlUiGatewayAgentSubagentsConfigView(BaseModel):
     require_agent_id: bool = Field(default=False, alias="requireAgentId")
 
 
+class ControlUiGatewayAgentSandboxConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    mode: Literal["off", "non-main", "all"] | None = None
+    backend: str | None = None
+    workspace_access: Literal["none", "ro", "rw"] | None = Field(
+        default=None,
+        alias="workspaceAccess",
+    )
+    session_tools_visibility: Literal["spawned", "all"] | None = Field(
+        default=None,
+        alias="sessionToolsVisibility",
+    )
+    scope: Literal["session", "agent", "shared"] | None = None
+    workspace_root: str | None = Field(default=None, alias="workspaceRoot")
+    docker: dict[str, Any] | None = None
+    ssh: dict[str, Any] | None = None
+    browser: dict[str, Any] | None = None
+    prune: dict[str, Any] | None = None
+
+
 class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
+    sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
+
+
+class ControlUiGatewayAgentConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str | None = None
+    workspace: str | None = None
+    agent_dir: str | None = Field(default=None, alias="agentDir")
+    subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
+    sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
 
 
 class ControlUiGatewayAgentsConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     defaults: ControlUiGatewayAgentDefaultsConfigView | None = None
+    agent_list: list[ControlUiGatewayAgentConfigView] | None = Field(
+        default=None,
+        alias="list",
+    )
 
 
 class ControlUiGatewayToolsConfigView(BaseModel):
@@ -1764,9 +1801,12 @@ class ControlUiBootstrapConfigView(BaseModel):
         alias="embedSandbox",
     )
     allow_external_embed_urls: bool = Field(default=False, alias="allowExternalEmbedUrls")
+    agents: ControlUiGatewayAgentsConfigView | None = None
     gateway: ControlUiGatewayConfigView | None = None
     session: ControlUiSessionConfigView | None = None
     tools: ControlUiToolsConfigView | None = None
+    plugins: dict[str, Any] | None = None
+    channels: dict[str, Any] | None = None
 
 
 class SetupFootprintResourceView(BaseModel):

@@ -24,6 +24,17 @@ creation/resume, child turn start, durable ACP session metadata, tracked
 `agent.wait` cleanup, and parent completion announcements. The old unavailable
 boundary remains only when no ACP spawn service is registered, and ACP preflight
 errors for attachments, `lightContext`, and `sandbox="require"` are preserved.
+ACP `mode="session"` now also matches OpenClaw's guard by returning
+`errorCode="thread_required"` unless `thread=true`, before dispatching any
+RuntimeManager thread or turn.
+ACP-backed `sessions.delete` and `sessions.reset` now run OpenClaw-shaped
+runtime cleanup before mutating local session state: cancel first, then close
+with `discardPersistentState=true`, `requireAcpSession=false`, and
+`allowBackendUnavailable=true`. The production RuntimeManager ACP adapter
+best-effort interrupts active Codex app-server turns during cancel, while the
+local metadata/transcript mutation remains native to OpenZues. Remaining ACP
+parity is the standalone ACP bridge server/client harness and deeper protocol
+session presentation, permission, and replay breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
@@ -31,8 +42,27 @@ app-server child turns with an explicit `workspace-write` sandbox override,
 calls Windows sandbox setup before dispatch, persists `sandboxed`,
 `sandboxMode`, sandbox policy, runtime id, runtime thread/session ids, and
 still returns the existing precise forbidden response when no sandbox runtime
-is available. Remaining sandbox parity is config-driven per-agent sandbox
-target selection and deeper media/workspace staging behavior from OpenClaw.
+is available. `sandbox="require"` now also resolves OpenClaw's
+`agents.defaults.sandbox` plus `agents.list[].sandbox` target posture before
+dispatching; targets whose effective sandbox `mode` is `off` keep the same
+forbidden response even when a sandbox send adapter is wired. Remaining sandbox
+parity is deeper media/workspace staging behavior from OpenClaw. Sandboxed
+requesters now also match OpenClaw's guard by forbidding unsandboxed child
+targets even when the caller leaves `sandbox="inherit"`, and effectively
+sandboxed `mode="all"` / `mode="non-main"` child targets now dispatch through
+the native sandbox runtime even when the caller uses inherited sandbox policy.
+The native sandbox adapter now preserves read-only Codex sandbox policy metadata
+when dispatched with `sandbox_mode="read-only"`; remaining staging work is
+limited to deeper OpenClaw media/workspace filesystem staging. Explicit
+`workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
+while omitted/`"rw"` access keeps the writable workspace sandbox path.
+The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
+`containers` / `browsers` arrays sourced from saved sandbox session metadata,
+`sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,
+`agentId`, `sessionKey`, `mainSessionKey`, `sandbox`, `elevated`, and `fixIt`
+fields backed by saved sandbox runtime metadata, and `sandbox recreate` target
+validation plus `--force` cleanup for saved sandbox runtime metadata so stale
+runtime posture is forgotten and recreated on the next use.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
@@ -44,21 +74,207 @@ the bound thread. Binder results must now report both `status="ok"` and
 still return the upstream-shaped error before child dispatch. Remaining
 lifecycle parity is deeper provider-native unbind/end-hook behavior and
 ACP/session binding policy breadth.
+Initial thread-bound child runs now dispatch through the chat-send adapter with
+the bound `channel`, `to`, `account_id`, and `thread_id` kwargs instead of
+starting as an unbound control-chat-only turn.
+Terminal `agent.wait` completion announcements now also use the saved
+`completionDelivery` route through the direct channel-send service and persist
+the provider delivery result/error on the child session metadata.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
 `replyToMessageId`, `silent`, `forceDocument`, media, account, and thread)
 through gateway `send`, `OpsMeshService`, shared outbound runtime requests,
 route-backed providers, and Telegram native document/reply/silent/thread
-payloads. Remaining provider work is broader per-provider option coverage and
-CLI/runtime send surfaces.
+payloads. The provider runtime result envelope now also persists `messageId`,
+`runtime`, `channel`, `roomId`, `timestamp`, and safe `meta` fields, Slack
+route sends use `replyToId` as the thread fallback, Discord route sends preserve
+reply and silent flags, and saved failed `gateway/send` / `gateway/poll` rows
+replay through provider-native runtime calls with their original OpenClaw-style
+delivery options. The CLI now exposes `routes send` and `routes poll` as thin
+JSON/human wrappers over the same native direct send/poll runtime owner,
+including reply/thread/media/silent/document/idempotency options. Remaining
+provider work is deeper provider-specific edge cases not yet exposed by focused
+tests and broader non-route CLI ergonomics.
+WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
+`context.message_id` and switch URL media sends to `type="document"` /
+`document.link` when `forceDocument=true`, while retaining saved delivery
+payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
+now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
+WhatsApp video/GIF outbound behavior while keeping the existing caption and
+saved delivery metadata path.
+Telegram topic-qualified native polls now have the same focused proof as
+topic-qualified sends: parent supergroup routes accept
+`telegram:group:<chatId>:topic:<threadId>` targets, and the Bot API
+`sendPoll` payload carries `message_thread_id`.
+`channels.status --probe` now has the first production route-backed account
+probe: enabled native Slack routes call Slack `auth.test` through the stored
+route secret, while configured/no-account cases return an honest
+`native_provider_route_unavailable` posture instead of a vacuous success.
+Telegram native routes now probe Bot API `getMe` through the saved bot token
+and return provider bot metadata through the same channel status account probe
+envelope.
+Discord native routes now probe Discord API `/users/@me` and
+`/oauth2/applications/@me` with the saved bot token, returning bot identity and
+privileged intent metadata through the same account probe envelope.
+WhatsApp matches the upstream channel plugin's no-`probeAccount` posture: route
+status reports an unsupported/no-hook probe envelope without degrading the
+overall `channels.status --probe` result.
+
+Current queue-head adjustment: the CLI now exposes `sessions spawn` and
+`sessions wait` as thin JSON/human wrappers over the production
+`GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
+service builder wires the same native ACP spawn, sandbox-required child-turn,
+route-backed thread binder, direct send/poll, config, model inventory, and
+control-chat submit seams used by the app-server path. Top-level
+`status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
+`--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
+native live health probe for `--deep`, and projects honest unavailable JSON
+sections for provider usage and security-audit runtime adapters that do not
+yet exist. Text-mode `status --all` now renders the OpenClaw-shaped
+pasteable report skeleton with overview, channel, agent, and read-only
+diagnosis sections backed by the same native status payload. Remaining
+CLI/runtime parity includes ACP/sandbox status commands, deeper model
+auth/probe inspection, provider usage/security-audit runtime adapters,
+plugin/runtime inspection, doctor readiness checks, non-metadata external
+sandbox container cleanup, and broader TUI ergonomics. The existing
+`sandbox list` human output now also mirrors OpenClaw's total/running summary
+line and config-mismatch recreate hint after listing native saved sandbox
+runtimes. The top-level `acp` and `acp client` command surfaces now accept the
+upstream option shape and return precise native-unavailable bridge errors that
+point users to the supported `sessions spawn --runtime acp` path; remaining
+ACP CLI parity is the real bridge server/client runtime. The unavailable
+boundary now validates provenance modes, rejects mixed inline/file secret
+sources, validates secret-file readability, and warns when inline token or
+password flags are used.
+The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
+wrapper over the production `models.list` gateway method owner, including
+provider/local filters without duplicating the model catalog runtime, and
+`models status` projects the same catalog into OpenClaw-style
+default/resolved/allowed/auth status fields while keeping live auth probes
+unavailable until the native model auth health runtime exists. Top-level `health`
+now queries the live gateway `/api/health` and `/readyz` owners, emits
+OpenClaw-shaped JSON/human readiness fields, and propagates the configured
+connection timeout. `channels status --probe --timeout <ms> --json` now
+accepts the upstream options and preserves probe/timeout metadata with an
+honest unavailable provider-probe posture. The CLI now routes status probes
+through the `channels.status` gateway method owner, and the channel inventory
+service has a fakeable account-probe adapter that records per-account probe
+results when one is registered; remaining channel CLI parity is provider-specific
+credential probe implementations and production provider-backed live resolve
+adapters.
+`channels capabilities --channel/--account/--target --timeout
+--json` now returns a native OpenClaw-shaped capability report over
+route-backed channel metadata, including support/actions and the same account
+probe result used by `channels.status` when one is available, otherwise an
+honest unavailable probe envelope. `channels resolve` now accepts upstream-shaped
+entries/channel/account/kind/JSON options, resolves saved route-backed
+conversation targets first, and falls through to a fakeable live target
+resolver for provider adapters before returning OpenClaw-shaped unresolved
+rows. `channels logs` now reads the native workspace log tail, parses
+OpenClaw-shaped structured log lines, filters by channel, applies the upstream
+limit-after-filtering rule, and emits JSON/human output.
+Slack native routes now provide the first production live target resolver slice:
+channel/group resolution calls Slack `conversations.list` through the stored
+route token and matches channel ids, mentions, and names. Slack user resolution
+now also calls Slack `users.list` through the same native route token and
+matches user ids, mentions, names, display/real names, and email addresses.
+`channels resolve` now mirrors OpenClaw's auto-kind batching for live resolver
+entries so user-looking inputs are sent to user resolution and group-looking
+inputs are sent to group/channel resolution while preserving output order.
+Telegram native routes now support the upstream username resolver slice:
+`channels resolve --channel telegram --kind user` calls Bot API `getChat` with
+the stored route token and returns the numeric chat id plus normalized
+`@username` display.
+The CLI now exposes OpenClaw's metadata-only `infer` / `capability` command
+alias for `list` and `inspect --name`, returning canonical capability ids,
+descriptions, transports, flags, and result shapes from
+`src/cli/capability-cli.ts`. The nested `infer model` / `capability model`
+catalog commands now also cover `run`, `list`, `inspect --model`, `providers`,
+and `auth status`, using the native control-chat, `agent`, `models.list`, and
+model-status gateway method owners while preserving OpenClaw's model-run
+capability envelope, raw catalog-array, provider-summary, and model-auth status
+JSON shapes. Remaining `infer` parity is deeper `model run` final-wait/provider
+override behavior in the gateway `agent` method, model auth login/logout
+mutation, image/audio/video/web/embedding runtime commands, deeper TTS
+provider/runtime breadth beyond the now-landed CLI family, and any
+gateway-backed capability transports not already covered by native OpenZues
+command families. The first TTS slices now project the native
+`tts.providers`, `tts.status`, `tts.enable`, `tts.disable`, and
+`tts.setProvider` method owners plus the native `tts.convert` runtime into
+OpenClaw-shaped provider objects, gateway-tagged status JSON, raw
+state-mutation payloads, provider voice lists, and `tts.convert` capability
+envelopes for the `infer` / `capability` alias family.
+Discord native routes now have the first production live resolver slice:
+channel-id inputs and channel mentions call `/users/@me/guilds` plus
+`/channels/{id}` with the stored route token and return OpenClaw-shaped
+channel id/name rows. Guild-qualified Discord channel names now also call
+`/guilds/{guildId}/channels` and match OpenClaw-style normalized channel
+slugs. Global `#channel` inputs now search all bot guilds, prefer active
+non-thread channels, and report the upstream multiple-match note.
+Discord user resolution now searches guild members with the saved route token
+for guild-qualified names and preserves the OpenClaw-shaped id/name/note
+projection.
+Telegram native sends now parse topic-qualified targets like
+`telegram:group:<chatId>:topic:<threadId>` into a base `chat_id` plus
+`message_thread_id` instead of treating the full target as the chat id.
+Telegram parent supergroup routes now also match topic-qualified sends for the
+same chat id, while topic-specific routes remain specific to their thread id.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
 first, config allow/deny gating, owner-only hiding, before-call hooks, and
-OpenClaw-shaped plugin executor error projection. Remaining tool parity is
-loading richer plugin registry/config executor order from real plugin metadata
-instead of injected Python executors only.
+OpenClaw-shaped plugin executor error projection. The service now also accepts
+ordered registry/config executor specs, preserves first registered plugin-name
+winner semantics among enabled entries, skips later duplicates, keeps core mappings ahead of
+registry-backed plugins, and applies owner-only visibility to registry tools.
+`tools.catalog` now also appends OpenClaw-shaped `plugin:<pluginId>` groups
+from the same enabled plugin runtime specs by default, suppresses core-name
+collisions, and honors `includePlugins=false` for core-only catalog reads.
+`tools.effective` now projects the same runtime specs as upstream-style
+`source="plugin"` entries under the `Connected tools` group while filtering
+empty groups from plugin-only sessions. Remaining tool parity is future
+production plugin metadata discovery beyond the fakeable registry adapter and
+deeper marketplace install/update/uninstall flows.
+
+Current queue-head adjustment: the CLI now exposes `plugins list` with
+OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
+output projected from the existing Hermes/OpenZues plugin inventory deck. The
+surface supports `--enabled`, `--verbose`, and `--json`, maps ready/partial
+inventory to loaded plugins, keeps source-only Hermes families disabled, and
+does not introduce a second plugin scanner. `plugins doctor` now reports plugin
+load errors from the same projection and preserves OpenClaw's
+`No plugin issues detected.` clean snapshot behavior. `plugins inspect` and
+its `plugins info` alias now return OpenClaw-shaped JSON reports with
+`plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
+install placeholders projected from the same inventory, and `inspect --all`
+returns all records. `plugins enable` / `plugins disable` now write through the
+existing gateway config owner with OpenClaw-shaped
+`plugins.entries.<id>.enabled` persistence, preserve existing entry config,
+append configured allowlists on enable, and mirror built-in channel plugin
+toggles into `channels.<id>.enabled` for channel-backed providers. Remaining
+plugin CLI parity is remote marketplace clone/update breadth and deeper
+production plugin manifest/runtime metadata discovery. `plugins marketplace list` now
+supports local Claude-compatible marketplace manifests from
+`.claude-plugin/marketplace.json` or `marketplace.json`, returning the
+OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while
+leaving remote clone semantics to the heavier packaging/install queue.
+`plugins install <name> --marketplace <local>` now resolves local manifest
+entries, rejects escaping/missing plugin sources, persists an OpenClaw-shaped
+`plugins.installs.<id>` marketplace record, enables the plugin, appends the
+native load path, and returns JSON/human restart posture without importing the
+TypeScript runtime. `plugins uninstall` now removes native plugin config
+entries, install records, allowlist entries, load paths, memory slot ownership,
+and owned channel config while keeping local marketplace source directories
+intact and reporting OpenClaw-shaped action metadata. `plugins update` now
+supports local marketplace install records, including `--dry-run`, `--all`,
+skipped/error/updated/unchanged outcomes, manifest version refresh, and
+restart posture without writing during dry-run. `plugins doctor` now reports
+OpenClaw-shaped compatibility notices for legacy `before_agent_start` and
+hook-only plugin inventory signals. `plugins list` now also merges saved
+OpenClaw-shaped `plugins.entries` / `plugins.installs` records from the native
+gateway config owner, so config-installed marketplace plugins are visible even
+when the live platform deck has not loaded them yet.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
@@ -861,6 +1077,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
 - Added a focused Telegram media-group proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) for two-photo media sends, caption placement on the first media item, and saved provider media IDs.
 - Closed the WhatsApp multi-media fallback slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp native sends now split multiple media URLs into multiple Cloud API image messages, captioning the first image and preserving every returned message id as `mediaIds`.
 - Added a focused WhatsApp media proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) for two-image sends, Bearer-token reuse, and saved provider media IDs.
+- Closed the WhatsApp reply/document payload slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp Cloud API direct sends now preserve `replyToId` as `context.message_id` and send forced-document media through `type="document"` / `document.link` while keeping caption text and saved provider result metadata.
+- Added a focused WhatsApp reply-document proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) covering `reply_to_id`, `force_document`, Bearer-token reuse, and saved delivery payload metadata.
+- Closed the WhatsApp GIF/video payload slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp Cloud API direct sends now map `gifPlayback=true` media sends to `type="video"` / `video.link`, with `forceDocument=true` still taking precedence.
+- Added a focused WhatsApp GIF/video proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) covering the native provider payload, caption settings, Bearer-token reuse, and saved `gifPlayback` event metadata.
 - Closed the provider failure-detail polish slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): HTTP provider error bodies are now parsed and included in webhook/provider upload error messages instead of reporting only the status code.
 - Added a focused HTTP-error proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) showing a provider JSON body such as `{"error":"channel_not_found"}` surfaces as `Webhook returned 400: channel_not_found`.
 - Verified this provider-runtime slice with:
@@ -876,6 +1096,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`: clean
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "telegram_media_group or telegram_native_route or tests_slack_native_route or native_adapter_binding or uses_gateway_route_adapter" --basetemp .codex-tmp\pytest-telegram-media-group`: `8 passed`
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "whatsapp_media or whatsapp_native_route or telegram_media_group" --basetemp .codex-tmp\pytest-whatsapp-media`: `4 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "preserves_whatsapp_reply_document"`: `1 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_native_route or whatsapp_media or preserves_whatsapp_reply_document or splits_whatsapp_media"`: `4 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "telegram_native_route or discord_native_route or send_direct_channel_message_uses_whatsapp_native_route or preserves_whatsapp_reply_document"`: `6 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_gif_video_payload"`: `1 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_gif_video_payload or preserves_whatsapp_reply_document or splits_whatsapp_media or whatsapp_native_route or whatsapp_media"`: `5 passed`
+  - `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean
+  - `mypy src\openzues\services\ops_mesh.py`: clean
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "post_json_webhook_includes_provider_http_error_body or whatsapp_media or telegram_media_group" --basetemp .codex-tmp\pytest-webhook-error`: `3 passed`
 - Queue head narrowed after this run: provider-shaped runtime callbacks, route-backed gateway provider adapters, provider-result metadata, native adapter binding, native Slack/Telegram/Discord/WhatsApp provider execution, basic CLI/dashboard setup, native route replay/test dispatch, Telegram multi-media sends, WhatsApp multi-media fallbacks, and provider HTTP failure detail are now real. No smaller provider-runtime blocker remains in this queue; the next move is a final adjacent boundary sweep before moving to the next OpenClaw feature family.
 - Closed the final provider boundary sweep in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\gateway_outbound_runtime.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_outbound_runtime.py) and [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): cron failure direct-delivery branches now require a session-backed deliverer instead of treating provider-backed `gateway/send` route adapters as live cron announce delivery, and route-less webhook replay now distinguishes true ad-hoc webhook rows from notification-route rows that lost their `route_id`.
@@ -1352,6 +1579,79 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   return the specific unsupported-attachments result instead of a generic ACP
   boundary.
 - Verified the ACP preflight seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "light_context_for_acp or acp_attachments_before_runtime_boundary"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `RuntimeManagerAcpSpawnService` now preserves OpenClaw's ACP direct-spawn
+  session-mode policy: `mode="session"` returns `errorCode="thread_required"`
+  unless `thread=true`, and the RuntimeManager thread/turn dispatch path is not
+  touched for that rejected request.
+- Verified the ACP session-mode runtime guard with `python -m pytest tests\test_gateway_acp_spawn.py -q -k "rejects_session_mode_without_thread"`, adjacent `python -m pytest tests\test_gateway_acp_spawn.py -q`, gateway projection `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and spawn"`, `ruff check src\openzues\services\gateway_acp_spawn.py tests\test_gateway_acp_spawn.py`, and `mypy src\openzues\services\gateway_acp_spawn.py`.
+- `channels.status --probe` now wires the production Ops Mesh channel-account
+  probe path into the app and CLI GatewayChannelsService owners. Slack native
+  notification routes probe `auth.test` with the saved bot token; no configured
+  account returns `native_provider_route_unavailable` instead of reporting an
+  empty `ok` probe.
+- Verified the route-backed Slack probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_status_json or channels_capabilities_json or channels_resolve_json"`, gateway projection `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_status"`, `ruff check src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py`.
+- Telegram native notification routes now probe Bot API `getMe` with the saved
+  bot token and return `botId`, `username`, and `firstName` in the account probe
+  result.
+- Verified the route-backed Telegram probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_telegram_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord native notification routes now probe Discord API `users/@me` plus
+  `oauth2/applications/@me` with the saved bot token and return bot identity
+  plus privileged intent metadata.
+- Verified the route-backed Discord probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- WhatsApp route-backed channel status now reflects the upstream plugin's lack
+  of a live `probeAccount` hook as `status="unsupported"` without `ok=false`,
+  so `channels.status --probe` does not degrade a WhatsApp-only account.
+- Verified the WhatsApp no-hook probe seam with `python -m pytest tests\test_cli.py -q -k "whatsapp_no_hook_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or whatsapp_no_hook_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Thread-bound `sessions.spawn` initial child runs now pass the bound delivery
+  origin into the chat-send runtime as `deliver=true`, `channel`, `to`,
+  `account_id`, and `thread_id`, matching the upstream bind-before-run flow.
+- Verified the thread-bound initial child delivery seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode_delivers_initial_child_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or thread_mode_delivers_initial_child_run or sessions_spawn_session_mode"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`.
+- Thread-bound `agent.wait` terminal announcements now deliver through the
+  saved `completionDelivery` channel route via `send_channel_message_service`,
+  while retaining parent transcript announcements and idempotent metadata.
+- Verified the thread-bound completion delivery seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_bound_completion_uses_completion_delivery_route"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion or thread_bound_completion_uses_completion_delivery_route or no_completion_announce or completion_dedupe or sessions_spawn_thread_mode"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Slack route-backed `channels resolve --kind channel` now uses Slack
+  `conversations.list` with the saved route token to resolve channel ids,
+  channel mentions, and names before falling back to unresolved results.
+- Verified the Slack channel resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py src\openzues\app.py src\openzues\cli.py`.
+- Slack route-backed `channels resolve --kind user` now uses Slack `users.list`
+  with the saved route token to resolve user ids, mentions, names, display/real
+  names, and email addresses before falling back to unresolved results.
+- Verified the Slack user resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_user_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- `channels resolve` now mirrors OpenClaw's auto-kind batching for live
+  resolver entries, splitting user-looking inputs to the user resolver and
+  group-looking inputs to the group/channel resolver while preserving command
+  output order.
+- Verified the auto-kind resolver seam with `python -m pytest tests\test_cli.py -q -k "auto_groups_route_backed_slack_targets"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Telegram route-backed `channels resolve --kind user` now calls Bot API
+  `getChat` with the saved route token to resolve usernames to numeric chat ids
+  before returning OpenClaw-shaped resolve rows.
+- Verified the Telegram username resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_telegram_user_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed `channels resolve --kind channel` now calls
+  `/users/@me/guilds` and `/channels/{id}` with the saved route token to resolve
+  channel mentions and channel ids before returning OpenClaw-shaped resolve
+  rows.
+- Verified the Discord channel-id resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed `channels resolve --kind channel` now also resolves
+  `guild/channel` and `guild#channel` inputs by listing `/guilds/{guildId}/channels`
+  and matching normalized OpenClaw-style channel slugs.
+- Verified the Discord guild-channel resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_guild_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed `channels resolve --kind channel` now resolves global
+  `#channel` inputs by searching all bot guilds, preferring active non-thread
+  matches, and preserving OpenClaw's multiple-match note.
+- Verified the Discord global-channel resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_global_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_global_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed `channels resolve --kind user` now resolves
+  guild-qualified user names through `/guilds/{guildId}/members/search`,
+  applies OpenClaw's member scoring, and returns id/name/note rows.
+- Verified the Discord user resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_user_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_user_resolver or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_global_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram native sends now parse topic-qualified targets into base `chat_id`
+  plus `message_thread_id`, matching OpenClaw's `parseTelegramTarget` behavior
+  for `telegram:group:<chatId>:topic:<threadId>`.
+- Verified the Telegram topic-target seam with `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or send_direct_channel_poll_uses_telegram"`, `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram parent supergroup routes now match topic-qualified send targets for
+  the same base chat id, while topic-specific route peer ids still require the
+  same topic id.
+- Verified the Telegram topic parent-route seam with `python -m pytest tests\test_ops_mesh.py -q -k "topic_to_parent"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram"`, `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

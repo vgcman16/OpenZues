@@ -25,29 +25,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
-- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, plugin runtime service envelopes, safe core mappings, plugin error projection, and OpenClaw-style projection/visibility for neighboring session tools.
-- Native runtime seams are now landed for ACP spawn dispatch/tracking, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
+- Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
 
 ## Feature Families
 
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
-| Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke` projections, visibility policy, ACP spawn dispatch/tracking, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
+| Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~96% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort`, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~96% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, and session-key wake routing are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~66% | Status, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Partial | ~85% | Health, status JSON breadth flags, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, direct route send/poll, sandbox inventory/explain/recreate plus human summaries, sessions spawn/wait, models list/status, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records/doctor with compatibility notices/inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
-| Channels + direct announce delivery | Strong partial | ~93% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; broader per-provider option coverage and CLI send breadth remain open. |
+| Channels + direct announce delivery | Strong partial | ~96% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing and parent-route matching, WhatsApp native reply/document/gif-video payloads, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; broader per-provider option coverage remains open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
 | Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
-- Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path, deeper persistent thread unbind/end-hook behavior, and push-native completion delivery beyond the bounded local wait/cleanup/idempotency implementation.
-- Broader provider-native outbound runtime breadth for all provider-specific reply/silent/document/media options and CLI send/poll surfaces.
+- Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
+- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases beyond the verified Telegram topic-qualified send/poll paths.
+- Remote marketplace clone/update breadth and deeper manifest/runtime plugin metadata inventory beyond saved config records and the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
@@ -77,11 +78,263 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_gateway_thread_binding.py -q`: 3 passed after requiring `threadBindingReady=true` for successful route-backed subagent thread binding results.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or sessions_spawn_session_mode"`: 5 passed after wiring the production binder while preserving the no-hook error.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode"`: 4 passed after rechecking thread-mode gateway rejection and binding paths.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode_delivers_initial_child_run"`: 1 passed after sending initial thread-bound child runs with bound route kwargs.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or thread_mode_delivers_initial_child_run or sessions_spawn_session_mode"`: 6 passed after rechecking adjacent thread-mode spawn paths.
+- `ruff check src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_node_methods.py`: clean after the thread-bound initial delivery slice.
+- `mypy src\openzues\services\gateway_node_methods.py src\openzues\app.py`: clean after the thread-bound initial delivery slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_bound_completion_uses_completion_delivery_route"`: 1 passed after routing thread-bound completion announcements through direct channel delivery.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion or thread_bound_completion_uses_completion_delivery_route or no_completion_announce or completion_dedupe or sessions_spawn_thread_mode"`: 7 passed after rechecking adjacent completion and thread-mode paths.
+- `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean after the thread-bound completion delivery slice.
+- `mypy src\openzues\services\gateway_node_methods.py`: clean after the thread-bound completion delivery slice.
 - `ruff check src\openzues\services\gateway_thread_binding.py src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`: clean after the route-backed thread binder slice.
 - `mypy src\openzues\services\gateway_thread_binding.py src\openzues\services\gateway_node_methods.py src\openzues\app.py`: clean after the route-backed thread binder slice.
 - `python -m pytest tests\test_gateway_acp_spawn.py -q`: 2 passed after adding the native ACP spawn service.
+- `python -m pytest tests\test_gateway_acp_spawn.py -q`: 3 passed after adding the ACP `mode="session"` / `thread=true` guard.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and spawn"`: 4 passed after rechecking the gateway ACP spawn projection.
+- `ruff check src\openzues\services\gateway_acp_spawn.py tests\test_gateway_acp_spawn.py`: clean after the ACP session-mode guard.
+- `mypy src\openzues\services\gateway_acp_spawn.py`: clean after the ACP session-mode guard.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_reset_closes_acp_runtime_before_resetting_metadata or sessions_delete_closes_acp_runtime_before_metadata_delete"`: 2 passed after adding ACP runtime cleanup before session reset/delete mutation.
+- `python -m pytest tests\test_gateway_acp_spawn.py -q`: 4 passed after adding RuntimeManager ACP cleanup adapter coverage.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_reset or sessions_delete"`: 11 passed after rechecking adjacent session reset/delete paths.
+- `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py`: clean after the ACP cleanup slice.
+- `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py`: clean after the ACP cleanup slice.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn or agent_wait or send_uses_channel_message_runtime or send_preserves_provider_native or tools_invoke"`: 98 passed after ACP, sandbox, thread-binder, provider-send, and plugin-runtime slices.
 - `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message"`: 15 passed after preserving provider-native send options and Telegram document/reply/silent/thread payloads.
+- `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message or send_direct_channel_poll or replay_outbound_deliveries_retries_saved_failed"`: 34 passed after widening provider result metadata, Slack/Discord native option handling, and provider-backed saved send/poll replay.
+- `python -m pytest tests\test_ops_mesh.py -q`: 96 passed after the provider-native outbound replay and metadata slice.
+- `ruff check src\openzues\services\gateway_outbound_runtime.py src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean after the provider-native outbound replay and metadata slice.
+- `mypy src\openzues\services\gateway_outbound_runtime.py src\openzues\services\ops_mesh.py`: clean after the provider-native outbound replay and metadata slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe"`: 1 passed after adding the route-backed Slack channel probe.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_telegram_probe"`: 1 passed after adding the route-backed Telegram channel probe.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_discord_probe"`: 1 passed after adding the route-backed Discord channel probe.
+- `python -m pytest tests\test_cli.py -q -k "whatsapp_no_hook_probe"`: 1 passed after aligning WhatsApp with upstream's no-account-probe posture.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or whatsapp_no_hook_probe or channels_status_json or channels_capabilities_json"`: 9 passed after rechecking channel probe CLI surfaces.
+- `python -m pytest tests\test_cli.py -q -k "channels_status_json or channels_capabilities_json or channels_resolve_json"`: 8 passed after rechecking channel CLI surfaces.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_slack_channel_resolver"`: 1 passed after adding route-backed Slack channel resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or channels_status_json or route_backed_slack_probe"`: 10 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py src\openzues\cli.py tests\test_cli.py`: clean after the Slack channel resolver slice.
+- `mypy src\openzues\services\ops_mesh.py src\openzues\app.py src\openzues\cli.py`: clean after the Slack channel resolver slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_slack_user_resolver"`: 1 passed after adding route-backed Slack user resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`: 11 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Slack user resolver slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Slack user resolver slice.
+- `python -m pytest tests\test_cli.py -q -k "auto_groups_route_backed_slack_targets"`: 1 passed after adding OpenClaw-style auto-kind live resolver grouping.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`: 12 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the auto-kind resolver grouping slice.
+- `mypy src\openzues\cli.py`: clean after the auto-kind resolver grouping slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_telegram_user_resolver"`: 1 passed after adding route-backed Telegram username resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`: 13 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Telegram username resolver slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Telegram username resolver slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_discord_channel_resolver"`: 1 passed after adding route-backed Discord channel-id resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`: 14 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Discord channel resolver slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Discord channel resolver slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_discord_guild_channel_resolver"`: 1 passed after adding route-backed Discord guild-qualified channel-name resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`: 15 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Discord guild-channel resolver slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Discord guild-channel resolver slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_discord_global_channel_resolver"`: 1 passed after adding route-backed Discord global channel-name resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_global_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`: 16 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Discord global-channel resolver slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Discord global-channel resolver slice.
+- `python -m pytest tests\test_cli.py -q -k "route_backed_discord_user_resolver"`: 1 passed after adding route-backed Discord guild-member user resolution.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_discord_user_resolver or route_backed_discord_channel_resolver or route_backed_discord_guild_channel_resolver or route_backed_discord_global_channel_resolver or route_backed_discord_probe or route_backed_telegram_user_resolver or route_backed_telegram_probe or auto_groups_route_backed_slack_targets or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json"`: 17 passed after rechecking adjacent channel CLI paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Discord user resolver slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Discord user resolver slice.
+- `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target"`: 1 passed after parsing Telegram topic-qualified send targets.
+- `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or send_direct_channel_poll_uses_telegram"`: 4 passed after rechecking adjacent Telegram direct send/poll paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean after the Telegram topic-target slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Telegram topic-target slice.
+- `python -m pytest tests\test_ops_mesh.py -q -k "topic_to_parent"`: 1 passed after allowing Telegram parent supergroup routes to match topic-qualified targets.
+- `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram"`: 5 passed after rechecking adjacent Telegram direct send/poll paths.
+- `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean after the Telegram topic parent-route slice.
+- `mypy src\openzues\services\ops_mesh.py`: clean after the Telegram topic parent-route slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_status"`: 2 passed after rechecking the gateway method projection.
+- `ruff check src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py tests\test_cli.py`: clean after the Slack probe slice.
+- `mypy src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py`: clean after the Slack probe slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "registry_plugin_executor or core_mapping_before_registry_plugin or registry_owner_only or skips_disabled_registry_plugin_executor"`: 4 passed after adding ordered registry-backed plugin executor resolution.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke"`: 54 passed after rechecking plugin/core `tools.invoke` behavior.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_get_returns_control_ui_bootstrap_snapshot or config_open_file_returns_snapshot_path_when_owner_is_wired"`: 2 passed after omitting absent `session`/`tools` sections from bootstrap config snapshots.
+- `python -m pytest tests\test_gateway_node_methods.py -q`: 682 passed after the ordered plugin registry slice and adjacent config snapshot cleanup.
+- `ruff check src\openzues\services\gateway_config.py src\openzues\services\gateway_plugin_runtime.py tests\test_gateway_node_methods.py`: clean after the ordered plugin registry slice and config snapshot cleanup.
+- `mypy src\openzues\services\gateway_config.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\gateway_node_methods.py`: clean after the ordered plugin registry slice and config snapshot cleanup.
+- `python -m pytest tests\test_cli.py -q -k "routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 2 passed after adding `routes send` / `routes poll`.
+- `python -m pytest tests\test_cli.py -q -k "routes_"`: 18 passed after rechecking adjacent route CLI surfaces; existing aiosqlite closed-loop warnings remain.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the direct route send/poll CLI slice.
+- `mypy src\openzues\cli.py`: clean after the direct route send/poll CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list_json"`: 2 passed after adding OpenClaw-shaped `sandbox list --json` inventory from saved sandbox runtime metadata.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox inventory CLI slice.
+- `mypy src\openzues\cli.py`: clean after the sandbox inventory CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 2 passed after adding `sessions spawn` / `sessions wait` wrappers around `GatewayNodeMethodService`.
+- `python -m pytest tests\test_cli.py -q -k "sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 6 passed after rechecking adjacent CLI runtime surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sessions spawn/wait CLI slice.
+- `mypy src\openzues\cli.py`: clean after the sessions spawn/wait CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_projects_hermes_plugin_inventory or plugins_list_enabled_filters_loaded_plugins"`: 2 passed after adding `plugins list` over the Hermes/OpenZues plugin inventory deck.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list or sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 8 passed after rechecking adjacent CLI runtime surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin list CLI slice.
+- `mypy src\openzues\cli.py`: clean after the plugin list CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_doctor_human_reports_no_plugin_issues or plugins_doctor_human_reports_error_plugins"`: 2 passed after adding `plugins doctor` over the projected plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_ or sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 10 passed after rechecking adjacent CLI runtime surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin doctor CLI slice.
+- `mypy src\openzues\cli.py`: clean after the plugin doctor CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_inspect_json_returns_plugin_detail or plugins_info_alias_json_uses_inspect_payload"`: 2 passed after adding `plugins inspect` and the `plugins info` alias.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 6 passed after rechecking plugin list/doctor/inspect/info together.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin inspect/info CLI slice.
+- `mypy src\openzues\cli.py`: clean after the plugin inspect/info CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_explain_json_uses_saved_sandbox_metadata"`: 1 passed after adding metadata-backed `sandbox explain`.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_ or sessions_ or plugins_"`: 11 passed after rechecking adjacent sandbox/session/plugin CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox explain CLI slice.
+- `mypy src\openzues\cli.py`: clean after the sandbox explain CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_recreate"`: 2 passed after adding `sandbox recreate` target validation and `--force` cleanup for saved sandbox runtime metadata.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_ or sessions_ or plugins_"`: 13 passed after rechecking adjacent sandbox/session/plugin CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox recreate CLI slice.
+- `mypy src\openzues\cli.py`: clean after the sandbox recreate CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "models_list_json"`: 1 passed after adding `models list --json` over the production gateway method owner.
+- `python -m pytest tests\test_cli.py -q -k "models_list_json or sandbox_ or sessions_ or plugins_"`: 14 passed after rechecking adjacent CLI runtime command registration.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the models list CLI slice.
+- `mypy src\openzues\cli.py`: clean after the models list CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "health_json_surfaces"`: 1 passed after adding top-level `health --json` over the live gateway health/readiness API owners.
+- `python -m pytest tests\test_cli.py -q -k "health_json_surfaces or status_json or gateway_doctor"`: 9 passed after rechecking adjacent top-level health/status/gateway CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the health CLI slice.
+- `mypy src\openzues\cli.py`: clean after the health CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "models_status_json"`: 1 passed after adding bounded `models status --json` default/resolved/allowed/auth projection.
+- `python -m pytest tests\test_cli.py -q -k "models_ or health_json_surfaces or sandbox_ or sessions_ or plugins_"`: 16 passed after rechecking adjacent CLI runtime command surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the models status CLI slice.
+- `mypy src\openzues\cli.py`: clean after the models status CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_marketplace_list"`: 1 passed after adding local `plugins marketplace list --json` manifest parsing.
+- `python -m pytest tests\test_cli.py -q -k "plugins_ or models_ or health_json_surfaces"`: 10 passed after rechecking adjacent plugin/model/health CLI command surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin marketplace list CLI slice.
+- `mypy src\openzues\cli.py`: clean after the plugin marketplace list CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_enable_disable_json"`: 1 passed after adding `plugins enable` / `plugins disable` JSON config mutation.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 8 passed after rechecking plugin list/doctor/inspect/info/marketplace/toggle CLI surfaces.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods or config_schema_lookup_accepts_scoped_plugin_entry_paths"`: 5 passed after rechecking adjacent config mutation/schema behavior.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py src\openzues\schemas.py tests\test_cli.py`: clean after the plugin toggle CLI slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_config.py src\openzues\schemas.py`: clean after the plugin toggle CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_install_marketplace_json_persists_local_manifest_entry"`: 1 passed after adding local marketplace plugin install persistence.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 9 passed after rechecking plugin list/doctor/inspect/info/marketplace/install/toggle CLI surfaces.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods or config_schema_lookup_accepts_scoped_plugin_entry_paths"`: 5 passed after rechecking adjacent config mutation/schema behavior.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py tests\test_cli.py`: clean after the local marketplace plugin install slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_config.py`: clean after the local marketplace plugin install slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_uninstall_json_removes_native_install_metadata"`: 1 passed after adding native plugin uninstall metadata cleanup.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 10 passed after rechecking plugin list/doctor/inspect/info/marketplace/install/uninstall/toggle CLI surfaces.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods or config_schema_lookup_accepts_scoped_plugin_entry_paths"`: 5 passed after rechecking adjacent config mutation/schema behavior.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py tests\test_cli.py`: clean after the native plugin uninstall slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_config.py`: clean after the native plugin uninstall slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_update_json_refreshes_local_marketplace_install"`: 1 passed after adding local marketplace plugin update dry-run/apply behavior.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 11 passed after rechecking plugin list/doctor/inspect/info/marketplace/install/update/uninstall/toggle CLI surfaces.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_write_methods or config_schema_lookup_accepts_scoped_plugin_entry_paths"`: 5 passed after rechecking adjacent config mutation/schema behavior.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py tests\test_cli.py`: clean after the local marketplace plugin update slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_config.py`: clean after the local marketplace plugin update slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_doctor_human_reports_compatibility_notices"`: 1 passed after adding plugin doctor compatibility notices.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 12 passed after rechecking plugin list/doctor/inspect/info/marketplace/install/update/uninstall/toggle CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin doctor compatibility slice.
+- `mypy src\openzues\cli.py`: clean after the plugin doctor compatibility slice.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_includes_saved_config_install_records"`: 1 passed after merging saved plugin config/install records into `plugins list`.
+- `python -m pytest tests\test_cli.py -q -k "plugins_"`: 13 passed after rechecking plugin list/doctor/inspect/info/marketplace/install/update/uninstall/toggle CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin saved-record inventory slice.
+- `mypy src\openzues\cli.py`: clean after the plugin saved-record inventory slice.
+- `python -m pytest tests\test_cli.py -q -k "status_json_breadth_flags"`: 1 passed after adding top-level `status --json` breadth flags and timeout forwarding.
+- `python -m pytest tests\test_cli.py -q -k "status_json or health_json"`: 8 passed after rechecking adjacent status and health JSON surfaces.
+- `python -m pytest tests\test_cli.py -q -k "emit_status_human_output or status_json_reuses_gateway_contract"`: 2 passed after rechecking adjacent status output behavior.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the status JSON breadth slice.
+- `mypy src\openzues\cli.py`: clean after the status JSON breadth slice.
+- `python -m pytest tests\test_cli.py -q -k "status_all_human_output"`: 1 passed after adding OpenClaw-shaped text `status --all` report output.
+- `python -m pytest tests\test_cli.py -q -k "status_all_human_output or status_json or emit_status_human_output"`: 9 passed after rechecking adjacent status human/JSON emitters.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the text `status --all` slice.
+- `mypy src\openzues\cli.py`: clean after the text `status --all` slice.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list_human_output"`: 1 passed after adding OpenClaw's human sandbox list total/running summary.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list or sandbox_recreate or sandbox_explain"`: 6 passed after rechecking adjacent sandbox CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox list summary slice.
+- `mypy src\openzues\cli.py`: clean after the sandbox list summary slice.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list_human_output_warns"`: 1 passed after adding OpenClaw's sandbox list config-mismatch recreate hint.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list or sandbox_recreate or sandbox_explain"`: 7 passed after rechecking adjacent sandbox CLI surfaces with mismatch metadata.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox mismatch summary slice.
+- `mypy src\openzues\cli.py`: clean after the sandbox mismatch summary slice.
+- `python -m pytest tests\test_cli.py -q -k "acp_bridge_command or acp_client_command"`: 2 passed after adding top-level ACP bridge/client command boundaries.
+- `python -m pytest tests\test_cli.py -q -k "acp_ or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 4 passed after rechecking adjacent ACP/session CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the ACP CLI boundary slice.
+- `mypy src\openzues\cli.py`: clean after the ACP CLI boundary slice.
+- `python -m pytest tests\test_cli.py -q -k "acp_bridge_rejects_mixed_token_sources or acp_bridge_reports_missing_token_file or acp_bridge_warns_for_inline_secrets"`: 3 passed after adding ACP CLI secret-source validation and inline secret warnings.
+- `python -m pytest tests\test_cli.py -q -k "acp_ or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 7 passed after rechecking adjacent ACP/session CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the ACP CLI option validation slice.
+- `mypy src\openzues\cli.py`: clean after the ACP CLI option validation slice.
+- `python -m pytest tests\test_cli.py -q -k "capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias"`: 2 passed after adding OpenClaw's metadata-only `infer` / `capability` list and inspect surfaces.
+- `python -m pytest tests\test_cli.py -q -k "capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias or models_list or models_status"`: 4 passed after rechecking adjacent CLI model/runtime metadata commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer` / `capability` metadata slice.
+- `mypy src\openzues\cli.py`: clean after the `infer` / `capability` metadata slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_model_list_json_uses_openclaw_catalog_shape or capability_model_inspect_json_matches_provider_model_ref or infer_model_providers_json_groups_catalog_by_provider"`: 3 passed after adding OpenClaw's nested `infer` / `capability model` catalog commands.
+- `python -m pytest tests\test_cli.py -q -k "infer_model or capability_model or capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias or models_list or models_status"`: 7 passed after rechecking adjacent CLI model/capability metadata commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer` / `capability model` catalog slice.
+- `mypy src\openzues\cli.py`: clean after the `infer` / `capability model` catalog slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_model_auth_status_json_reuses_model_status_payload"`: 1 passed after adding OpenClaw's nested `infer model auth status` alias over the native model status projection.
+- `python -m pytest tests\test_cli.py -q -k "infer_model or capability_model or models_status or models_list"`: 6 passed after rechecking adjacent model/capability CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer model auth status` slice.
+- `mypy src\openzues\cli.py`: clean after the `infer model auth status` slice.
+- `python -m pytest tests\test_cli.py -q -k "capability_model_run_rejects_local_and_gateway_together or infer_model_run_json_wraps_local_control_chat_reply or capability_model_run_gateway_json_wraps_agent_payloads"`: 3 passed after adding OpenClaw's `infer` / `capability model run` transport resolution and capability envelope.
+- `python -m pytest tests\test_cli.py -q -k "infer_model or capability_model or models_status or models_list or capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias"`: 11 passed after rechecking adjacent model/capability CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer model run` envelope slice.
+- `mypy src\openzues\cli.py`: clean after the `infer model run` envelope slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts_providers_json_projects_native_provider_catalog or capability_tts_providers_rejects_local_and_gateway_together"`: 2 passed after adding OpenClaw's `infer` / `capability tts providers` catalog surface.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts or capability_tts or infer_model or capability_model or models_status or models_list"`: 11 passed after rechecking adjacent provider/model CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer tts providers` slice.
+- `mypy src\openzues\cli.py`: clean after the `infer tts providers` slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts_status_json_tags_gateway_transport"`: 1 passed after adding OpenClaw's `infer` / `capability tts status` command.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts or capability_tts or infer_model or capability_model or models_status or models_list"`: 12 passed after rechecking adjacent provider/model CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer tts status` slice.
+- `mypy src\openzues\cli.py`: clean after the `infer tts status` slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts_enable_disable_json_calls_native_state_methods or capability_tts_set_provider_json_calls_native_state_method"`: 2 passed after adding OpenClaw's `infer` / `capability tts` state mutation commands.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts or capability_tts or infer_model or capability_model or models_status or models_list"`: 14 passed after rechecking adjacent provider/model CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer tts` state mutation slice.
+- `mypy src\openzues\cli.py`: clean after the `infer tts` state mutation slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts_convert_gateway_json_wraps_native_audio_result"`: 1 passed after adding OpenClaw's `infer` / `capability tts convert` envelope over the native TTS runtime method.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts or capability_tts or infer_model or capability_model or models_status or models_list"`: 15 passed after rechecking adjacent provider/model CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer tts convert` slice.
+- `mypy src\openzues\cli.py`: clean after the `infer tts convert` slice.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts_voices_json_filters_projected_provider_voices"`: 1 passed after adding OpenClaw's `infer` / `capability tts voices` provider projection.
+- `python -m pytest tests\test_cli.py -q -k "infer_tts or capability_tts or infer_model or capability_model or models_status or models_list"`: 16 passed after rechecking adjacent provider/model CLI commands.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer tts voices` slice.
+- `mypy src\openzues\cli.py`: clean after the `infer tts voices` slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_status_json_accepts_probe_timeout_options"`: 1 passed after adding `channels status --probe --timeout` option metadata.
+- `python -m pytest tests\test_cli.py -q -k "channels_status"`: 2 passed after rechecking adjacent channel status CLI output.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channels status probe-option slice.
+- `mypy src\openzues\cli.py`: clean after the channels status probe-option slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_capabilities_json_filters_channel_and_account"`: 1 passed after adding the native `channels capabilities` report surface.
+- `python -m pytest tests\test_cli.py -q -k "channels_status or channels_capabilities"`: 3 passed after rechecking adjacent channel status/capabilities CLI output.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channels capabilities slice.
+- `mypy src\openzues\cli.py`: clean after the channels capabilities slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json_uses_saved_conversation_targets"`: 1 passed after adding route-backed `channels resolve` JSON output.
+- `python -m pytest tests\test_cli.py -q -k "channels_status or channels_capabilities or channels_resolve"`: 4 passed after rechecking adjacent channel CLI output.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channels resolve slice.
+- `mypy src\openzues\cli.py`: clean after the channels resolve slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_logs_json_filters_channel_and_limits_lines"`: 1 passed after adding structured `channels logs` JSON output.
+- `python -m pytest tests\test_cli.py -q -k "channels_status or channels_capabilities or channels_resolve or channels_logs"`: 5 passed after rechecking adjacent channel CLI output.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channels logs slice.
+- `mypy src\openzues\cli.py`: clean after the channels logs slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_status_json_calls_gateway_method_owner_with_probe"`: 1 passed after routing `channels status --probe` through the gateway method owner.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_status_probe_uses_registered_account_probe"`: 1 passed after adding the fakeable account-probe adapter.
+- `python -m pytest tests\test_cli.py -q -k "channels_status or channels_capabilities or channels_resolve or channels_logs"`: 6 passed after rechecking adjacent channel CLI output.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_status"`: 2 passed after rechecking gateway channel inventory/probe behavior.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\gateway_node_methods.py tests\test_cli.py tests\test_gateway_node_methods.py`: clean after the channel status probe-owner slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\gateway_node_methods.py`: clean after the channel status probe-owner slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_capabilities_json_uses_account_probe_result"`: 1 passed after projecting account probe results into `channels capabilities`.
+- `python -m pytest tests\test_cli.py -q -k "channels_status or channels_capabilities or channels_resolve or channels_logs"`: 7 passed after rechecking adjacent channel CLI output.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channel capabilities probe slice.
+- `mypy src\openzues\cli.py`: clean after the channel capabilities probe slice.
+- `python -m pytest tests\test_cli.py -q -k "channels_resolve_json_uses_registered_live_resolver"`: 1 passed after adding the fakeable live target resolver fallback.
+- `python -m pytest tests\test_cli.py -q -k "channels_status or channels_capabilities or channels_resolve or channels_logs"`: 8 passed after rechecking adjacent channel CLI output.
+- `ruff check src\openzues\cli.py src\openzues\services\gateway_channels.py tests\test_cli.py`: clean after the live channel resolve adapter slice.
+- `mypy src\openzues\cli.py src\openzues\services\gateway_channels.py`: clean after the live channel resolve adapter slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_catalog_projects_plugin_groups"`: 1 passed after adding plugin-published `tools.catalog` groups.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_catalog or tools_effective"`: 7 passed after rechecking adjacent tool catalog/effective behavior.
+- `python -m pytest tests\test_gateway_nodes_api.py -q -k "tools_catalog or tools_effective"`: 3 passed after rechecking HTTP gateway tool catalog/effective behavior.
+- `ruff check src\openzues\services\gateway_tools_catalog.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean after the plugin catalog visibility slice.
+- `mypy src\openzues\services\gateway_tools_catalog.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\gateway_node_methods.py`: clean after the plugin catalog visibility slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_effective_projects_plugin_group_from_runtime_specs"`: 1 passed after adding plugin-published `tools.effective` groups.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_catalog or tools_effective"`: 8 passed after rechecking adjacent tool catalog/effective behavior.
+- `python -m pytest tests\test_gateway_nodes_api.py -q -k "tools_catalog or tools_effective"`: 3 passed after rechecking HTTP gateway tool catalog/effective behavior.
+- `ruff check src\openzues\services\gateway_tools_catalog.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean after the plugin effective visibility slice.
+- `mypy src\openzues\services\gateway_tools_catalog.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\gateway_node_methods.py`: clean after the plugin effective visibility slice.
 - `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
 - `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.
@@ -756,6 +1009,37 @@ These are complete within the bounded OpenZues-local parity contract verified in
   re-checks the active-aware exact run-id lookup before session fallback, so an
   active exact run cannot be completed by an unrelated session terminal row.
 - Verified the active-exact-after-stale-terminal seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_preserves_active_exact_run_after_stale_terminal"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn sandbox="require"` now resolves OpenClaw-style
+  `agents.defaults.sandbox` and `agents.list[].sandbox` target posture before
+  dispatch. Effective `mode="off"` targets return the existing precise
+  forbidden response even when a native sandbox send adapter is wired, while
+  `mode="all"` keeps the native workspace-write sandbox dispatch path.
+- Verified the config-gated required-sandbox seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_required_sandbox_when_target_config_is_off"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\gateway_config.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\gateway_config.py`.
+- `sessions.spawn sandbox="inherit"` now preserves OpenClaw's sandbox escape
+  guard: when the requester session is sandboxed by effective config, spawning
+  an unsandboxed target agent returns the upstream forbidden message before any
+  child dispatch.
+- Verified the sandboxed-requester guard with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_sandboxed_requester_to_unsandboxed_target"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn sandbox="inherit"` now also honors effective sandboxed child
+  targets from `agents.defaults.sandbox.mode="all"` or `"non-main"` by routing
+  through the native sandbox send adapter and persisting the same sandbox
+  runtime metadata as explicit `sandbox="require"` spawns.
+- Verified the inherited sandbox dispatch seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_inherit_dispatches_sandboxed_config_target"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `RuntimeManagerSandboxChatSendService` now reports a read-only sandbox policy
+  when dispatched with `sandbox_mode="read-only"` instead of stamping every
+  sandboxed turn as workspace-write.
+- Verified the adapter policy seam with `python -m pytest tests\test_gateway_sandbox_spawn.py -q -k "read_only_policy"`, adjacent `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_sandbox_spawn.py tests\test_gateway_sandbox_spawn.py`, and `mypy src\openzues\services\gateway_sandbox_spawn.py`.
+- `sessions.spawn` now maps explicit OpenClaw `workspaceAccess="ro"` / `"none"`
+  sandbox config to native `read-only` Codex sandbox turns, preserving
+  `sandboxWorkspaceAccess` and read-only runtime policy metadata on the child
+  session; omitted or `"rw"` access stays on the writable workspace sandbox
+  path.
+- Verified the workspace-access mapping seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Telegram native `sendPoll` topic-qualified targets are now covered by the
+  same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
+  accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
+  carries Bot API `message_thread_id`.
+- Verified the Telegram topic poll proof with `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_poll_parses_telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram_native_route or send_direct_channel_poll_parses_telegram_topic_target"`, and `ruff check tests\test_ops_mesh.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

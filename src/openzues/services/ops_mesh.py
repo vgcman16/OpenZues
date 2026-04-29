@@ -136,6 +136,7 @@ OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
+PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -554,6 +555,208 @@ def _slack_channel_from_result(result: object, fallback: str) -> str:
     return fallback
 
 
+def _parse_slack_channel_resolve_input(raw: str) -> dict[str, str]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<#([A-Z0-9]+)(?:\|([^>]+))?>$", trimmed, re.IGNORECASE)
+    if mention:
+        parsed: dict[str, str] = {"id": str(mention.group(1)).upper()}
+        name = str(mention.group(2) or "").strip()
+        if name:
+            parsed["name"] = name
+        return parsed
+    prefixed = re.sub(r"^(slack:|channel:)", "", trimmed, flags=re.IGNORECASE)
+    if re.match(r"^[CG][A-Z0-9]+$", prefixed, re.IGNORECASE):
+        return {"id": prefixed.upper()}
+    name = prefixed.removeprefix("#").strip()
+    return {"name": name} if name else {}
+
+
+def _unresolved_channel_target(input_value: str, note: str) -> dict[str, object]:
+    return {
+        "input": input_value,
+        "resolved": False,
+        "note": note,
+    }
+
+
+def _resolve_slack_channel_target(
+    input_value: str,
+    channels: list[dict[str, object]],
+) -> dict[str, object]:
+    parsed = _parse_slack_channel_resolve_input(input_value)
+    parsed_id = parsed.get("id")
+    if parsed_id:
+        match = next(
+            (
+                channel
+                for channel in channels
+                if str(channel.get("id") or "").strip().upper() == parsed_id
+            ),
+            None,
+        )
+        payload: dict[str, object] = {
+            "input": input_value,
+            "resolved": True,
+            "id": parsed_id,
+        }
+        name = str((match or {}).get("name") or parsed.get("name") or "").strip()
+        if name:
+            payload["name"] = name
+        if bool((match or {}).get("archived")):
+            payload["note"] = "archived"
+        return payload
+    parsed_name = str(parsed.get("name") or "").strip().lower()
+    if parsed_name:
+        matches = [
+            channel
+            for channel in channels
+            if str(channel.get("name") or "").strip().lower() == parsed_name
+        ]
+        if matches:
+            match = next(
+                (channel for channel in matches if not bool(channel.get("archived"))),
+                matches[0],
+            )
+            payload = {
+                "input": input_value,
+                "resolved": True,
+                "id": str(match.get("id") or ""),
+                "name": str(match.get("name") or ""),
+            }
+            if bool(match.get("archived")):
+                payload["note"] = "archived"
+            return payload
+    return {
+        "input": input_value,
+        "resolved": False,
+    }
+
+
+def _parse_slack_user_resolve_input(raw: str) -> dict[str, str]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<@([A-Z0-9]+)>$", trimmed, re.IGNORECASE)
+    if mention:
+        return {"id": str(mention.group(1)).upper()}
+    prefixed = re.sub(r"^(slack:|user:)", "", trimmed, flags=re.IGNORECASE)
+    if re.match(r"^[A-Z][A-Z0-9]+$", prefixed, re.IGNORECASE):
+        return {"id": prefixed.upper()}
+    if "@" in trimmed and not trimmed.startswith("@"):
+        return {"email": trimmed.lower()}
+    name = trimmed.removeprefix("@").strip()
+    return {"name": name} if name else {}
+
+
+def _slack_user_display_name(user: dict[str, object] | None) -> str:
+    if user is None:
+        return ""
+    for key in ("displayName", "realName", "name"):
+        value = str(user.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _score_slack_user(user: dict[str, object], parsed: dict[str, str]) -> int:
+    score = 0
+    if not bool(user.get("deleted")):
+        score += 3
+    if not bool(user.get("isBot")) and not bool(user.get("isAppUser")):
+        score += 2
+    parsed_email = str(parsed.get("email") or "").strip().lower()
+    if parsed_email and str(user.get("email") or "").strip().lower() == parsed_email:
+        score += 5
+    parsed_name = str(parsed.get("name") or "").strip().lower()
+    if parsed_name:
+        candidates = {
+            str(user.get("name") or "").strip().lower(),
+            str(user.get("displayName") or "").strip().lower(),
+            str(user.get("realName") or "").strip().lower(),
+        }
+        if parsed_name in candidates:
+            score += 2
+    return score
+
+
+def _resolve_slack_user_from_matches(
+    input_value: str,
+    matches: list[dict[str, object]],
+    parsed: dict[str, str],
+) -> dict[str, object]:
+    best = sorted(
+        matches,
+        key=lambda user: _score_slack_user(user, parsed),
+        reverse=True,
+    )[0]
+    payload: dict[str, object] = {
+        "input": input_value,
+        "resolved": True,
+        "id": str(best.get("id") or ""),
+    }
+    name = _slack_user_display_name(best)
+    if name:
+        payload["name"] = name
+    if len(matches) > 1:
+        payload["note"] = "multiple matches; chose best"
+    return payload
+
+
+def _resolve_slack_user_target(
+    input_value: str,
+    users: list[dict[str, object]],
+) -> dict[str, object]:
+    parsed = _parse_slack_user_resolve_input(input_value)
+    parsed_id = parsed.get("id")
+    if parsed_id:
+        match = next(
+            (
+                user
+                for user in users
+                if str(user.get("id") or "").strip().upper() == parsed_id
+            ),
+            None,
+        )
+        payload: dict[str, object] = {
+            "input": input_value,
+            "resolved": True,
+            "id": parsed_id,
+        }
+        name = _slack_user_display_name(match)
+        if name:
+            payload["name"] = name
+        return payload
+    parsed_email = str(parsed.get("email") or "").strip().lower()
+    if parsed_email:
+        matches = [
+            user
+            for user in users
+            if str(user.get("email") or "").strip().lower() == parsed_email
+        ]
+        if matches:
+            return _resolve_slack_user_from_matches(input_value, matches, parsed)
+    parsed_name = str(parsed.get("name") or "").strip().lower()
+    if parsed_name:
+        matches = [
+            user
+            for user in users
+            if parsed_name
+            in {
+                str(user.get("name") or "").strip().lower(),
+                str(user.get("displayName") or "").strip().lower(),
+                str(user.get("realName") or "").strip().lower(),
+            }
+        ]
+        if matches:
+            return _resolve_slack_user_from_matches(input_value, matches, parsed)
+    return {
+        "input": input_value,
+        "resolved": False,
+    }
+
+
 def _slack_media_filename(media_url: str, index: int) -> str:
     parsed = urlparse(media_url)
     name = unquote(Path(parsed.path).name).strip()
@@ -582,15 +785,44 @@ def _telegram_api_endpoint(target: str | None, token: str, method: str) -> str:
     return endpoint
 
 
-def _telegram_chat_id(target: str | None) -> str | None:
+def _strip_telegram_target_prefixes(target: str | None) -> str:
     normalized = str(target or "").strip()
     while ":" in normalized:
         prefix, suffix = normalized.split(":", 1)
-        if prefix.strip().lower() in {"channel", "group", "dm", "direct", "telegram"}:
+        if prefix.strip().lower() in {
+            "channel",
+            "group",
+            "dm",
+            "direct",
+            "telegram",
+            "tg",
+        }:
             normalized = suffix.strip()
             continue
         break
-    return normalized or None
+    return normalized
+
+
+def _parse_telegram_delivery_target(target: str | None) -> dict[str, str]:
+    normalized = _strip_telegram_target_prefixes(target)
+    topic_match = re.match(r"^(.+?):topic:(\d+)$", normalized)
+    if topic_match:
+        return {
+            "chatId": str(topic_match.group(1)).strip(),
+            "threadId": str(topic_match.group(2)).strip(),
+        }
+    colon_match = re.match(r"^(.+):(\d+)$", normalized)
+    if colon_match:
+        return {
+            "chatId": str(colon_match.group(1)).strip(),
+            "threadId": str(colon_match.group(2)).strip(),
+        }
+    return {"chatId": normalized}
+
+
+def _telegram_chat_id(target: str | None) -> str | None:
+    chat_id = _parse_telegram_delivery_target(target).get("chatId")
+    return str(chat_id or "").strip() or None
 
 
 def _telegram_result_items(result: object) -> list[dict[str, Any]]:
@@ -662,6 +894,193 @@ def _telegram_media_ids(result: object) -> list[str]:
                 media_ids.append(file_id)
                 break
     return media_ids
+
+
+DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_APP_FLAG_GATEWAY_PRESENCE = 1 << 12
+DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED = 1 << 13
+DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS = 1 << 14
+DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS_LIMITED = 1 << 15
+DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT = 1 << 18
+DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED = 1 << 19
+
+
+def _discord_api_endpoint(path: str) -> str:
+    normalized = str(path or "").strip().lstrip("/")
+    if not normalized:
+        raise RuntimeError("Discord API path is missing.")
+    return f"{DISCORD_API_BASE}/{normalized}"
+
+
+def _discord_bot_authorization(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if token.lower().startswith("bot "):
+        token = token[4:].strip()
+    if not token:
+        raise RuntimeError("Discord route is missing a bot token secret.")
+    return f"Bot {token}"
+
+
+def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<#(\d+)>$", trimmed)
+    if mention:
+        return {"channelId": str(mention.group(1))}
+    channel_prefix = re.match(r"^(?:channel:|discord:)?(\d+)$", trimmed, re.IGNORECASE)
+    if channel_prefix:
+        return {"channelId": str(channel_prefix.group(1))}
+    guild_prefix = re.match(r"^(?:guild:|server:)(\d+)$", trimmed, re.IGNORECASE)
+    if guild_prefix:
+        return {"guildId": str(guild_prefix.group(1)), "guildOnly": True}
+    split = trimmed.split("/") if "/" in trimmed else trimmed.split("#")
+    if len(split) >= 2:
+        guild = str(split[0] or "").strip()
+        channel = "#".join(split[1:]).strip()
+        if not channel:
+            return {"guild": guild, "guildOnly": True} if guild else {}
+        if guild.isdigit():
+            payload: dict[str, object] = {"guildId": guild}
+            if channel.isdigit():
+                payload["channelId"] = channel
+            else:
+                payload["channel"] = channel
+            return payload
+        return {"guild": guild, "channel": channel}
+    return {"guild": trimmed, "guildOnly": True}
+
+
+def _parse_discord_user_resolve_input(raw: str) -> dict[str, str]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<@!?(\d+)>$", trimmed)
+    if mention:
+        return {"userId": str(mention.group(1))}
+    prefixed = re.match(r"^(?:user:|discord:)?(\d+)$", trimmed, re.IGNORECASE)
+    if prefixed:
+        return {"userId": str(prefixed.group(1))}
+    split = trimmed.split("/") if "/" in trimmed else trimmed.split("#")
+    if len(split) >= 2:
+        guild = str(split[0] or "").strip()
+        user_name = "#".join(split[1:]).strip()
+        if guild.isdigit():
+            return {"guildId": guild, "userName": user_name}
+        return {"guildName": guild, "userName": user_name}
+    return {"userName": trimmed.removeprefix("@")}
+
+
+def _normalize_discord_slug(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = normalized.removeprefix("#")
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
+    return normalized.strip("-")
+
+
+def _discord_guild_match(
+    guilds: list[dict[str, object]],
+    *,
+    guild_id: str | None = None,
+    guild_name: str | None = None,
+) -> dict[str, object] | None:
+    normalized_guild_id = str(guild_id or "").strip()
+    if normalized_guild_id:
+        return next(
+            (
+                guild
+                for guild in guilds
+                if str(guild.get("id") or "").strip() == normalized_guild_id
+            ),
+            None,
+        )
+    slug = _normalize_discord_slug(str(guild_name or ""))
+    if not slug:
+        return None
+    return next(
+        (
+            guild
+            for guild in guilds
+            if str(guild.get("slug") or "").strip() == slug
+        ),
+        None,
+    )
+
+
+def _prefer_active_discord_channel(
+    channels: list[dict[str, object]],
+) -> dict[str, object] | None:
+    if not channels:
+        return None
+
+    def score(channel: dict[str, object]) -> int:
+        channel_type = channel.get("type")
+        is_thread = channel_type in {11, 12}
+        archived = bool(channel.get("archived"))
+        return (0 if archived else 2) + (0 if is_thread else 1)
+
+    return sorted(channels, key=score, reverse=True)[0]
+
+
+def _score_discord_member(member: dict[str, object], query: str) -> int:
+    normalized_query = str(query or "").strip().lower()
+    if not normalized_query:
+        return 0
+    user = member.get("user")
+    if not isinstance(user, dict):
+        return 0
+    candidates = [
+        str(user.get("username") or "").strip().lower(),
+        str(user.get("global_name") or "").strip().lower(),
+        str(member.get("nick") or "").strip().lower(),
+    ]
+    candidates = [candidate for candidate in candidates if candidate]
+    score = 0
+    if any(candidate == normalized_query for candidate in candidates):
+        score += 3
+    if any(normalized_query in candidate for candidate in candidates):
+        score += 1
+    if not bool(user.get("bot")):
+        score += 1
+    return score
+
+
+def _discord_member_display_name(member: dict[str, object]) -> str:
+    user = member.get("user")
+    user_payload = user if isinstance(user, dict) else {}
+    for value in (
+        member.get("nick"),
+        user_payload.get("global_name"),
+        user_payload.get("username"),
+    ):
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return ""
+
+
+def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
+    def resolve(enabled_bit: int, limited_bit: int) -> str:
+        if flags & enabled_bit:
+            return "enabled"
+        if flags & limited_bit:
+            return "limited"
+        return "disabled"
+
+    return {
+        "presence": resolve(
+            DISCORD_APP_FLAG_GATEWAY_PRESENCE,
+            DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED,
+        ),
+        "guildMembers": resolve(
+            DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS,
+            DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS_LIMITED,
+        ),
+        "messageContent": resolve(
+            DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT,
+            DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED,
+        ),
+    }
 
 
 def _discord_webhook_url(target: str | None) -> str:
@@ -756,6 +1175,12 @@ def _whatsapp_contact_id(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> None:
+    normalized_reply_to_id = reply_to_id.strip()
+    if normalized_reply_to_id:
+        payload["context"] = {"message_id": normalized_reply_to_id}
 
 
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
@@ -1130,15 +1555,21 @@ def _serialize_gateway_direct_channel_transport(
 def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, object]:
     payload: dict[str, object] = {}
     for key in (
+        "runtime",
+        "messageId",
+        "channel",
         "chatId",
         "channelId",
+        "roomId",
         "toJid",
         "conversationId",
+        "timestamp",
         "pollId",
         "mediaId",
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "meta",
     ):
         value = result.get(key)
         if value in (None, "", [], {}):
@@ -1147,6 +1578,14 @@ def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, obje
             payload[key] = value
         else:
             payload[key] = str(value)
+    return payload
+
+
+def _serialize_gateway_response_provider_result(
+    result: dict[str, Any],
+) -> dict[str, object]:
+    payload = _serialize_gateway_provider_result(result)
+    payload.pop("runtime", None)
     return payload
 
 
@@ -1430,6 +1869,27 @@ def _conversation_target_key(
     )
 
 
+def _conversation_target_peer_id_matches(
+    *,
+    channel: str,
+    route_peer_id: str,
+    event_peer_id: str,
+) -> bool:
+    if route_peer_id == event_peer_id:
+        return True
+    if channel != "telegram":
+        return False
+    route_target = _parse_telegram_delivery_target(route_peer_id)
+    event_target = _parse_telegram_delivery_target(event_peer_id)
+    route_chat_id = str(route_target.get("chatId") or "").strip().lower()
+    event_chat_id = str(event_target.get("chatId") or "").strip().lower()
+    if not route_chat_id or route_chat_id != event_chat_id:
+        return False
+    route_thread_id = str(route_target.get("threadId") or "").strip()
+    event_thread_id = str(event_target.get("threadId") or "").strip()
+    return not route_thread_id or route_thread_id == event_thread_id
+
+
 def _conversation_target_route_match(
     route_target: dict[str, Any] | ConversationTargetView | None,
     event_target: dict[str, Any] | ConversationTargetView | None,
@@ -1449,7 +1909,11 @@ def _conversation_target_route_match(
 
     if route_peer_kind not in {"", "*"} and route_peer_kind != event_peer_kind:
         return None
-    if route_peer_id not in {"", "*"} and route_peer_id != event_peer_id:
+    if route_peer_id not in {"", "*"} and not _conversation_target_peer_id_matches(
+        channel=route_channel,
+        route_peer_id=route_peer_id,
+        event_peer_id=event_peer_id,
+    ):
         return None
 
     if route_peer_kind not in {"", "*"} or route_peer_id not in {"", "*"}:
@@ -3660,7 +4124,14 @@ class OpsMeshService:
     ) -> tuple[bool, str | None]:
         delivery_id = int(delivery_row["id"])
         route_kind = str(delivery_row.get("route_kind") or "").strip().lower() or "session"
+        event_type = str(delivery_row.get("event_type") or "").strip().lower()
         session_key = str(delivery_row.get("session_key") or "").strip()
+        event_payload = delivery_row.get("event_payload")
+        payload = event_payload if isinstance(event_payload, dict) else {}
+        route_scope = dict(delivery_row.get("route_scope") or {})
+        conversation_target = _normalize_conversation_target(
+            delivery_row.get("conversation_target")
+        ) or _normalize_conversation_target(payload.get("conversationTarget"))
         replay_message = _saved_outbound_delivery_replay_message(delivery_row)
         runtime = self._resolve_outbound_runtime_service()
         attempt_started_at = utcnow()
@@ -3703,10 +4174,102 @@ class OpsMeshService:
             )
             return False, error
         try:
-            runtime_result = await runtime.deliver_message(
-                session_key=session_key,
-                message=replay_message,
-            )
+            if event_type == "gateway/poll":
+                raw_options = payload.get("options")
+                poll_options = (
+                    tuple(str(option).strip() for option in raw_options if str(option).strip())
+                    if isinstance(raw_options, list)
+                    else ()
+                )
+                runtime_result = await runtime.deliver_poll(
+                    session_key=session_key,
+                    message=replay_message,
+                    channel=str(
+                        payload.get("channel")
+                        or (conversation_target or {}).get("channel")
+                        or ""
+                    ).strip()
+                    or None,
+                    target=str(
+                        payload.get("to")
+                        or (conversation_target or {}).get("peer_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    question=str(payload.get("question") or payload.get("summary") or ""),
+                    options=poll_options,
+                    max_selections=_optional_int_payload_value(payload, "maxSelections"),
+                    duration_seconds=_optional_int_payload_value(
+                        payload,
+                        "durationSeconds",
+                    ),
+                    duration_hours=_optional_int_payload_value(payload, "durationHours"),
+                    silent=_optional_bool_payload_value(payload, "silent"),
+                    is_anonymous=_optional_bool_payload_value(payload, "isAnonymous"),
+                    account_id=str(
+                        payload.get("accountId")
+                        or (conversation_target or {}).get("account_id")
+                        or route_scope.get("resolved_account_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    thread_id=str(
+                        payload.get("threadId") or route_scope.get("thread_id") or ""
+                    ).strip()
+                    or None,
+                )
+            elif event_type == "gateway/send":
+                raw_media_url = payload.get("mediaUrl")
+                raw_media_urls = payload.get("mediaUrls")
+                media_url = raw_media_url if isinstance(raw_media_url, str) else None
+                media_urls = (
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                )
+                runtime_result = await runtime.deliver_message(
+                    session_key=session_key,
+                    message=replay_message,
+                    channel=str(
+                        payload.get("channel")
+                        or (conversation_target or {}).get("channel")
+                        or ""
+                    ).strip()
+                    or None,
+                    target=str(
+                        payload.get("to")
+                        or (conversation_target or {}).get("peer_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    media_urls=tuple(
+                        _normalize_direct_channel_media_urls(
+                            media_url=media_url,
+                            media_urls=media_urls,
+                        )
+                    ),
+                    gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
+                    reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    silent=_optional_bool_payload_value(payload, "silent"),
+                    force_document=_optional_bool_payload_value(payload, "forceDocument"),
+                    account_id=str(
+                        payload.get("accountId")
+                        or (conversation_target or {}).get("account_id")
+                        or route_scope.get("resolved_account_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    thread_id=str(
+                        payload.get("threadId") or route_scope.get("thread_id") or ""
+                    ).strip()
+                    or None,
+                    agent_id=str(payload.get("agentId") or "").strip() or None,
+                )
+            else:
+                runtime_result = await runtime.deliver_message(
+                    session_key=session_key,
+                    message=replay_message,
+                )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
             await self.database.update_outbound_delivery(
@@ -3718,6 +4281,11 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
+        delivered_route_scope = dict(route_scope)
+        delivered_route_scope["transport_runtime"] = runtime_result.transport.runtime
+        provider_result = _serialize_gateway_provider_result(runtime_result.native_result)
+        if provider_result:
+            delivered_route_scope["provider_result"] = provider_result
         await self.database.update_outbound_delivery(
             delivery_id,
             delivery_state="delivered",
@@ -3726,6 +4294,7 @@ class OpsMeshService:
             delivered_at=utcnow(),
             last_error=None,
             delivery_message_id=runtime_result.message_id,
+            route_scope=delivered_route_scope,
         )
         return True, None
 
@@ -4784,6 +5353,888 @@ class OpsMeshService:
             return DEFAULT_ACCOUNT_ID
         return sorted(account_ids)[0]
 
+    async def _provider_route_for_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if not normalized_channel:
+            return None
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            route_kind = str(route.get("kind") or "").strip().lower()
+            if route_kind != normalized_channel or route_kind not in NATIVE_PROVIDER_ROUTE_KINDS:
+                continue
+            route_target = _normalize_conversation_target(route.get("conversation_target"))
+            if route_target is None:
+                if normalized_account_id == DEFAULT_ACCOUNT_ID:
+                    return route
+                continue
+            route_channel = str(route_target.get("channel") or "").strip().lower()
+            if route_channel != normalized_channel:
+                continue
+            route_account_id = (
+                normalize_optional_account_id(
+                    str(route_target.get("account_id") or "").strip()
+                )
+                or DEFAULT_ACCOUNT_ID
+            )
+            if route_account_id == normalized_account_id:
+                return route
+        return None
+
+    async def probe_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel=normalized_channel,
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason": "native_provider_route_unavailable",
+                "provider": normalized_channel,
+                "accountId": normalized_account_id,
+                "summary": "No enabled native provider route is configured for this account.",
+                "timeoutMs": timeout_ms,
+            }
+        route_kind = str(route.get("kind") or "").strip().lower()
+        if route_kind not in PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS:
+            return {
+                "status": "unsupported",
+                "reason": "native_provider_probe_unsupported",
+                "provider": route_kind,
+                "accountId": normalized_account_id,
+                "summary": "This channel does not expose an upstream account probe hook.",
+                "timeoutMs": timeout_ms,
+            }
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason": "native_provider_secret_unavailable",
+                "provider": route_kind,
+                "accountId": normalized_account_id,
+                "summary": "Native provider route is missing a credential secret.",
+                "timeoutMs": timeout_ms,
+            }
+        if route_kind == "telegram":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_telegram_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "discord":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_discord_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        try:
+            return await asyncio.to_thread(
+                self._probe_slack_provider_route,
+                route,
+                secret_token,
+                timeout_ms,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": route_kind,
+                "runtime": "native-provider-backed",
+                "accountId": normalized_account_id,
+                "error": str(exc).strip() or type(exc).__name__,
+                "timeoutMs": timeout_ms,
+            }
+
+    def _probe_slack_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "auth.test"),
+            {},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "slack",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "slack",
+            "runtime": "native-provider-backed",
+            "team": str(result.get("team") or ""),
+            "teamId": str(result.get("team_id") or ""),
+            "user": str(result.get("user") or ""),
+            "userId": str(result.get("user_id") or ""),
+            "timeoutMs": timeout_ms,
+        }
+
+    def _probe_telegram_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(str(route.get("target") or ""), token, "getMe"),
+            {},
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "telegram",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        bot = result.get("result")
+        if not isinstance(bot, dict):
+            bot = {}
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "telegram",
+            "runtime": "native-provider-backed",
+            "botId": str(bot.get("id") or ""),
+            "username": str(bot.get("username") or ""),
+            "firstName": str(bot.get("first_name") or ""),
+            "timeoutMs": timeout_ms,
+        }
+
+    async def resolve_channel_targets(
+        self,
+        *,
+        channel: str | None,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        normalized_inputs = [str(input_value).strip() for input_value in inputs]
+        normalized_inputs = [input_value for input_value in normalized_inputs if input_value]
+        if not normalized_inputs:
+            return []
+        normalized_channel = str(channel or "").strip().lower()
+        normalized_kind = str(kind or "").strip().lower()
+        if normalized_channel == "telegram":
+            return await self._resolve_telegram_channel_targets(
+                account_id=account_id,
+                kind=normalized_kind,
+                inputs=normalized_inputs,
+            )
+        if normalized_channel == "discord":
+            return await self._resolve_discord_channel_targets(
+                account_id=account_id,
+                kind=normalized_kind,
+                inputs=normalized_inputs,
+            )
+        if normalized_channel != "slack" or normalized_kind not in {
+            "auto",
+            "channel",
+            "group",
+            "user",
+        }:
+            return [
+                _unresolved_channel_target(input_value, "native provider resolver unavailable")
+                for input_value in normalized_inputs
+            ]
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel=normalized_channel,
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return [
+                _unresolved_channel_target(input_value, "missing Slack route")
+                for input_value in normalized_inputs
+            ]
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return [
+                _unresolved_channel_target(input_value, "missing Slack token")
+                for input_value in normalized_inputs
+            ]
+        if normalized_kind == "user":
+            return await asyncio.to_thread(
+                self._resolve_slack_user_targets,
+                route,
+                secret_token,
+                normalized_inputs,
+            )
+        return await asyncio.to_thread(
+            self._resolve_slack_channel_targets,
+            route,
+            secret_token,
+            normalized_inputs,
+        )
+
+    def _resolve_slack_channel_targets(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        channels: list[dict[str, object]] = []
+        cursor: str | None = None
+        while True:
+            payload: dict[str, object] = {
+                "types": "public_channel,private_channel",
+                "exclude_archived": False,
+                "limit": 1000,
+            }
+            if cursor:
+                payload["cursor"] = cursor
+            result = self._post_json_webhook(
+                _slack_api_endpoint(str(route.get("target") or ""), "conversations.list"),
+                payload,
+                secret_header_name="Authorization",
+                secret_token=_slack_bearer_token(secret_token),
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Slack API returned a non-JSON response.")
+            if result.get("ok") is False:
+                error = str(result.get("error") or "unknown_error")
+                raise RuntimeError(f"Slack API returned {error}.")
+            raw_channels = result.get("channels")
+            if isinstance(raw_channels, list):
+                for channel in raw_channels:
+                    if not isinstance(channel, dict):
+                        continue
+                    channel_id = str(channel.get("id") or "").strip()
+                    channel_name = str(channel.get("name") or "").strip()
+                    if not channel_id or not channel_name:
+                        continue
+                    channels.append(
+                        {
+                            "id": channel_id,
+                            "name": channel_name,
+                            "archived": bool(channel.get("is_archived")),
+                        }
+                    )
+            metadata = result.get("response_metadata")
+            cursor = (
+                str(metadata.get("next_cursor") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            ) or None
+            if cursor is None:
+                break
+        return [_resolve_slack_channel_target(input_value, channels) for input_value in inputs]
+
+    def _resolve_slack_user_targets(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        users: list[dict[str, object]] = []
+        cursor: str | None = None
+        while True:
+            payload: dict[str, object] = {"limit": 200}
+            if cursor:
+                payload["cursor"] = cursor
+            result = self._post_json_webhook(
+                _slack_api_endpoint(str(route.get("target") or ""), "users.list"),
+                payload,
+                secret_header_name="Authorization",
+                secret_token=_slack_bearer_token(secret_token),
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Slack API returned a non-JSON response.")
+            if result.get("ok") is False:
+                error = str(result.get("error") or "unknown_error")
+                raise RuntimeError(f"Slack API returned {error}.")
+            members = result.get("members")
+            if isinstance(members, list):
+                for member in members:
+                    if not isinstance(member, dict):
+                        continue
+                    user_id = str(member.get("id") or "").strip()
+                    user_name = str(member.get("name") or "").strip()
+                    if not user_id or not user_name:
+                        continue
+                    profile = member.get("profile")
+                    if not isinstance(profile, dict):
+                        profile = {}
+                    users.append(
+                        {
+                            "id": user_id,
+                            "name": user_name,
+                            "displayName": str(
+                                profile.get("display_name") or ""
+                            ).strip(),
+                            "realName": str(
+                                profile.get("real_name")
+                                or member.get("real_name")
+                                or ""
+                            ).strip(),
+                            "email": str(profile.get("email") or "").strip().lower(),
+                            "deleted": bool(member.get("deleted")),
+                            "isBot": bool(member.get("is_bot")),
+                            "isAppUser": bool(member.get("is_app_user")),
+                        }
+                    )
+            metadata = result.get("response_metadata")
+            cursor = (
+                str(metadata.get("next_cursor") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            ) or None
+            if cursor is None:
+                break
+        return [_resolve_slack_user_target(input_value, users) for input_value in inputs]
+
+    async def _resolve_telegram_channel_targets(
+        self,
+        *,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        if kind != "user":
+            return [
+                _unresolved_channel_target(
+                    input_value,
+                    "Telegram runtime target resolution only supports usernames for "
+                    "direct-message lookups.",
+                )
+                for input_value in inputs
+            ]
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel="telegram",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return [
+                _unresolved_channel_target(input_value, "missing Telegram route")
+                for input_value in inputs
+            ]
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return [
+                _unresolved_channel_target(
+                    input_value,
+                    "Telegram bot token is required to resolve @username targets.",
+                )
+                for input_value in inputs
+            ]
+        return await asyncio.to_thread(
+            self._resolve_telegram_user_targets,
+            route,
+            secret_token,
+            inputs,
+        )
+
+    def _resolve_telegram_user_targets(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        token = _telegram_bot_token(secret_token)
+        results: list[dict[str, object]] = []
+        for input_value in inputs:
+            trimmed = input_value.strip()
+            if not trimmed:
+                results.append(
+                    _unresolved_channel_target(input_value, "Telegram target is required.")
+                )
+                continue
+            normalized = trimmed if trimmed.startswith("@") else f"@{trimmed}"
+            try:
+                result = self._get_json_provider_url(
+                    f"{_telegram_api_endpoint(str(route.get('target') or ''), token, 'getChat')}"
+                    f"?{urlencode({'chat_id': normalized})}",
+                )
+            except RuntimeError as exc:
+                results.append(_unresolved_channel_target(input_value, str(exc)))
+                continue
+            payload = _telegram_result_payload(result)
+            chat_id = payload.get("id")
+            if chat_id is None:
+                results.append(
+                    _unresolved_channel_target(
+                        input_value,
+                        "Telegram username could not be resolved by the configured bot.",
+                    )
+                )
+                continue
+            results.append(
+                {
+                    "input": input_value,
+                    "resolved": True,
+                    "id": str(chat_id),
+                    "name": normalized,
+                }
+            )
+        return results
+
+    async def _resolve_discord_channel_targets(
+        self,
+        *,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        if kind not in {"auto", "channel", "group", "user"}:
+            return [
+                _unresolved_channel_target(
+                    input_value,
+                    "native provider resolver unavailable",
+                )
+                for input_value in inputs
+            ]
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel="discord",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return [
+                _unresolved_channel_target(input_value, "missing Discord route")
+                for input_value in inputs
+            ]
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return [
+                _unresolved_channel_target(input_value, "missing Discord token")
+                for input_value in inputs
+            ]
+        if kind == "user":
+            return await asyncio.to_thread(
+                self._resolve_discord_user_targets,
+                secret_token,
+                inputs,
+            )
+        return await asyncio.to_thread(
+            self._resolve_discord_group_targets,
+            secret_token,
+            inputs,
+        )
+
+    def _list_discord_guilds(self, authorization: str) -> list[dict[str, object]]:
+        guilds_result = self._get_json_provider_url(
+            _discord_api_endpoint("users/@me/guilds"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        guilds: list[dict[str, object]] = []
+        if not isinstance(guilds_result, list):
+            return guilds
+        for guild in guilds_result:
+            if not isinstance(guild, dict):
+                continue
+            guild_id = str(guild.get("id") or "").strip()
+            guild_name = str(guild.get("name") or "").strip()
+            if guild_id:
+                guilds.append(
+                    {
+                        "id": guild_id,
+                        "name": guild_name,
+                        "slug": _normalize_discord_slug(guild_name),
+                    }
+                )
+        return guilds
+
+    def _resolve_discord_group_targets(
+        self,
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        authorization = _discord_bot_authorization(secret_token)
+        guilds = self._list_discord_guilds(authorization)
+
+        results: list[dict[str, object]] = []
+        for input_value in inputs:
+            parsed = _parse_discord_channel_resolve_input(input_value)
+            channel_id = str(parsed.get("channelId") or "").strip()
+            channel_query = str(parsed.get("channel") or "").strip()
+            guild_query_id = str(parsed.get("guildId") or "").strip()
+            guild_query_name = str(parsed.get("guild") or "").strip()
+            if channel_query and (guild_query_id or guild_query_name):
+                guild = _discord_guild_match(
+                    guilds,
+                    guild_id=guild_query_id,
+                    guild_name=guild_query_name,
+                )
+                if guild is None:
+                    results.append(
+                        _unresolved_channel_target(input_value, "Discord guild not found.")
+                    )
+                    continue
+                channels = self._list_discord_guild_channels(
+                    authorization,
+                    str(guild.get("id") or ""),
+                )
+                normalized_channel_query = _normalize_discord_slug(channel_query)
+                if channel_query.isdigit():
+                    matches = [
+                        channel
+                        for channel in channels
+                        if str(channel.get("id") or "") == channel_query
+                    ]
+                    if not matches:
+                        matches = [
+                            channel
+                            for channel in channels
+                            if str(channel.get("slug") or "") == normalized_channel_query
+                        ]
+                else:
+                    matches = [
+                        channel
+                        for channel in channels
+                        if str(channel.get("slug") or "") == normalized_channel_query
+                    ]
+                match = _prefer_active_discord_channel(matches)
+                if match is None:
+                    guild_name = str(guild.get("name") or "").strip()
+                    note = (
+                        f"channel not found in guild {guild_name}"
+                        if guild_name
+                        else "channel not found"
+                    )
+                    results.append(_unresolved_channel_target(input_value, note))
+                    continue
+                guild_channel_payload: dict[str, object] = {
+                    "input": input_value,
+                    "resolved": True,
+                    "id": str(match.get("id") or ""),
+                }
+                channel_name = str(match.get("name") or "").strip()
+                if channel_name:
+                    guild_channel_payload["name"] = channel_name
+                results.append(guild_channel_payload)
+                continue
+            if channel_query:
+                normalized_channel_query = _normalize_discord_slug(channel_query)
+                candidates: list[dict[str, object]] = []
+                for guild in guilds:
+                    channels = self._list_discord_guild_channels(
+                        authorization,
+                        str(guild.get("id") or ""),
+                    )
+                    for channel in channels:
+                        if str(channel.get("slug") or "") == normalized_channel_query:
+                            candidates.append(channel)
+                match = _prefer_active_discord_channel(candidates)
+                if match is None:
+                    results.append(
+                        _unresolved_channel_target(input_value, "channel not found")
+                    )
+                    continue
+                match_guild_id = str(match.get("guildId") or "").strip()
+                guild = next(
+                    (
+                        entry
+                        for entry in guilds
+                        if str(entry.get("id") or "").strip() == match_guild_id
+                    ),
+                    None,
+                )
+                global_channel_payload: dict[str, object] = {
+                    "input": input_value,
+                    "resolved": True,
+                    "id": str(match.get("id") or ""),
+                }
+                channel_name = str(match.get("name") or "").strip()
+                if channel_name:
+                    global_channel_payload["name"] = channel_name
+                guild_name = str((guild or {}).get("name") or "").strip()
+                if len(candidates) > 1 and guild_name:
+                    global_channel_payload["note"] = f"matched multiple; chose {guild_name}"
+                results.append(global_channel_payload)
+                continue
+            if not channel_id:
+                results.append(
+                    _unresolved_channel_target(
+                        input_value,
+                        "Discord route-backed resolver currently supports channel ids.",
+                    )
+                )
+                continue
+            try:
+                channel_result = self._get_json_provider_url(
+                    _discord_api_endpoint(f"channels/{channel_id}"),
+                    secret_header_name="Authorization",
+                    secret_token=authorization,
+                )
+            except RuntimeError as exc:
+                results.append(_unresolved_channel_target(input_value, str(exc)))
+                continue
+            if not isinstance(channel_result, dict):
+                results.append(_unresolved_channel_target(input_value, "channel not found"))
+                continue
+            resolved_channel_id = str(channel_result.get("id") or "").strip()
+            guild_id = str(channel_result.get("guild_id") or "").strip()
+            if not resolved_channel_id or not guild_id:
+                results.append(_unresolved_channel_target(input_value, "channel not found"))
+                continue
+            guild = next(
+                (entry for entry in guilds if str(entry.get("id") or "") == guild_id),
+                None,
+            )
+            expected_guild_id = str(parsed.get("guildId") or "").strip()
+            channel_name = str(channel_result.get("name") or "").strip()
+            if expected_guild_id and expected_guild_id != guild_id:
+                note = (
+                    f"channel belongs to guild {guild.get('name')}"
+                    if guild and str(guild.get("name") or "").strip()
+                    else "channel belongs to a different guild"
+                )
+                results.append(_unresolved_channel_target(input_value, note))
+                continue
+            payload: dict[str, object] = {
+                "input": input_value,
+                "resolved": True,
+                "id": resolved_channel_id,
+            }
+            if channel_name:
+                payload["name"] = channel_name
+            results.append(payload)
+        return results
+
+    def _resolve_discord_user_targets(
+        self,
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        authorization = _discord_bot_authorization(secret_token)
+        guilds: list[dict[str, object]] | None = None
+        results: list[dict[str, object]] = []
+        for input_value in inputs:
+            parsed = _parse_discord_user_resolve_input(input_value)
+            user_id = str(parsed.get("userId") or "").strip()
+            if user_id:
+                results.append(
+                    {
+                        "input": input_value,
+                        "resolved": True,
+                        "id": user_id,
+                    }
+                )
+                continue
+            query = str(parsed.get("userName") or "").strip()
+            if not query:
+                results.append({"input": input_value, "resolved": False})
+                continue
+            if guilds is None:
+                guilds = self._list_discord_guilds(authorization)
+            guild_list = guilds
+            parsed_guild_id = str(parsed.get("guildId") or "").strip()
+            parsed_guild_name = str(parsed.get("guildName") or "").strip()
+            if parsed_guild_id or parsed_guild_name:
+                guild = _discord_guild_match(
+                    guilds,
+                    guild_id=parsed_guild_id,
+                    guild_name=parsed_guild_name,
+                )
+                guild_list = [guild] if guild is not None else []
+
+            best_member: dict[str, object] | None = None
+            best_score = -1
+            match_count = 0
+            for guild in guild_list:
+                guild_id = str(guild.get("id") or "").strip()
+                if not guild_id:
+                    continue
+                members_result = self._get_json_provider_url(
+                    _discord_api_endpoint(
+                        f"guilds/{guild_id}/members/search?"
+                        f"{urlencode({'query': query, 'limit': '25'})}"
+                    ),
+                    secret_header_name="Authorization",
+                    secret_token=authorization,
+                )
+                if not isinstance(members_result, list):
+                    continue
+                for member in members_result:
+                    if not isinstance(member, dict):
+                        continue
+                    score = _score_discord_member(member, query)
+                    if score == 0:
+                        continue
+                    match_count += 1
+                    if score > best_score:
+                        best_member = member
+                        best_score = score
+            if best_member is None:
+                results.append({"input": input_value, "resolved": False})
+                continue
+            user = best_member.get("user")
+            user_payload = user if isinstance(user, dict) else {}
+            resolved_user_id = str(user_payload.get("id") or "").strip()
+            payload: dict[str, object] = {
+                "input": input_value,
+                "resolved": True,
+                "id": resolved_user_id,
+            }
+            name = _discord_member_display_name(best_member)
+            if name:
+                payload["name"] = name
+            if match_count > 1:
+                payload["note"] = "multiple matches; chose best"
+            results.append(payload)
+        return results
+
+    def _list_discord_guild_channels(
+        self,
+        authorization: str,
+        guild_id: str,
+    ) -> list[dict[str, object]]:
+        channels_result = self._get_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        channels: list[dict[str, object]] = []
+        if not isinstance(channels_result, list):
+            return channels
+        for channel in channels_result:
+            if not isinstance(channel, dict):
+                continue
+            channel_id = str(channel.get("id") or "").strip()
+            channel_name = str(channel.get("name") or "").strip()
+            if not channel_id or not channel_name:
+                continue
+            thread_metadata = channel.get("thread_metadata")
+            archived = (
+                bool(thread_metadata.get("archived"))
+                if isinstance(thread_metadata, dict)
+                else False
+            )
+            channels.append(
+                {
+                    "id": channel_id,
+                    "name": channel_name,
+                    "slug": _normalize_discord_slug(channel_name),
+                    "guildId": guild_id,
+                    "type": channel.get("type"),
+                    "archived": archived,
+                }
+            )
+        return channels
+
+    def _probe_discord_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        del route
+        authorization = _discord_bot_authorization(secret_token)
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        bot_result = self._get_json_provider_url(
+            _discord_api_endpoint("users/@me"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(bot_result, dict):
+            raise RuntimeError("Discord API returned a non-JSON bot response.")
+        bot = {
+            "id": str(bot_result.get("id") or ""),
+            "username": str(bot_result.get("username") or ""),
+        }
+        payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "provider": "discord",
+            "runtime": "native-provider-backed",
+            "bot": bot,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            application_result = self._get_json_provider_url(
+                _discord_api_endpoint("oauth2/applications/@me"),
+                secret_header_name="Authorization",
+                secret_token=authorization,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception:
+            application_result = None
+        if isinstance(application_result, dict):
+            application: dict[str, Any] = {
+                "id": str(application_result.get("id") or ""),
+            }
+            flags = application_result.get("flags")
+            if isinstance(flags, int) and not isinstance(flags, bool):
+                application["flags"] = flags
+                application["intents"] = _discord_privileged_intents_from_flags(flags)
+            payload["application"] = application
+        return payload
+
     async def _resolve_explicit_delivery_conversation_target(
         self,
         conversation_target: ConversationTargetView,
@@ -5389,7 +6840,7 @@ class OpsMeshService:
             response["transport"] = _serialize_gateway_direct_channel_transport(transport)
         provider_result = result.get("provider_result")
         if isinstance(provider_result, dict):
-            response.update(_serialize_gateway_provider_result(provider_result))
+            response.update(_serialize_gateway_response_provider_result(provider_result))
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -5483,7 +6934,7 @@ class OpsMeshService:
             response["transport"] = _serialize_gateway_direct_channel_transport(transport)
         provider_result = result.get("provider_result")
         if isinstance(provider_result, dict):
-            response.update(_serialize_gateway_provider_result(provider_result))
+            response.update(_serialize_gateway_response_provider_result(provider_result))
         message_id = str(result.get("message_id") or "").strip()
         if message_id:
             response["messageId"] = message_id
@@ -6222,6 +7673,38 @@ class OpsMeshService:
         for item_id in stale_ids:
             self._notified_inbox_items.pop(item_id, None)
 
+    def _get_json_provider_url(
+        self,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        headers: dict[str, str] = {}
+        if secret_header_name and secret_token:
+            headers[str(secret_header_name)] = str(secret_token)
+        request = Request(
+            target,
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _post_json_webhook(
         self,
         target: str,
@@ -6421,7 +7904,7 @@ class OpsMeshService:
                 else None
             ),
         )
-        thread_id = str(event.get("threadId") or "").strip()
+        thread_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
         if media_urls and event_type == "gateway/send":
             media_ids = self._upload_slack_media_files(
                 route=route,
@@ -6497,13 +7980,14 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
-        chat_id = _telegram_chat_id(
+        parsed_target = _parse_telegram_delivery_target(
             str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
         )
+        chat_id = str(parsed_target.get("chatId") or "").strip() or None
         if chat_id is None:
             raise RuntimeError("Telegram route is missing a chat target.")
         token = _telegram_bot_token(secret_token)
-        thread_id = str(event.get("threadId") or "").strip()
+        thread_id = str(event.get("threadId") or parsed_target.get("threadId") or "").strip()
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
@@ -6645,6 +8129,8 @@ class OpsMeshService:
             event.get("to") or (conversation_target or {}).get("peer_id") or ""
         ).strip()
         thread_id = str(event.get("threadId") or "").strip()
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
@@ -6683,6 +8169,13 @@ class OpsMeshService:
                     {"image": {"url": media_url}}
                     for media_url in media_urls[:10]
                 ]
+        if silent is True:
+            payload["flags"] = int(payload.get("flags") or 0) | (1 << 12)
+        if reply_to_id and event_type == "gateway/send":
+            payload["message_reference"] = {
+                "message_id": reply_to_id,
+                "fail_if_not_exists": False,
+            }
         if thread_id:
             payload["thread_id"] = thread_id
         result = self._post_json_webhook(
@@ -6759,6 +8252,12 @@ class OpsMeshService:
                 },
             }
         else:
+            reply_to_id = str(event.get("replyToId") or "").strip()
+            force_document = _optional_bool_payload_value(event, "forceDocument") is True
+            gif_playback = _optional_bool_payload_value(event, "gifPlayback") is True
+            media_payload_key = (
+                "document" if force_document else "video" if gif_playback else "image"
+            )
             raw_media_urls = event.get("mediaUrls")
             media_urls = _normalize_direct_channel_media_urls(
                 media_url=(
@@ -6778,17 +8277,20 @@ class OpsMeshService:
                     message_ids: list[str] = []
                     delivered_contact = recipient_id
                     for index, media_url in enumerate(media_urls):
-                        image_payload: dict[str, Any] = {"link": media_url}
+                        media_payload: dict[str, Any] = {"link": media_url}
                         if index == 0 and text:
-                            image_payload["caption"] = text[:1024]
+                            media_payload["caption"] = text[:1024]
+                        message_payload: dict[str, Any] = {
+                            "messaging_product": "whatsapp",
+                            "to": recipient_id,
+                            "type": media_payload_key,
+                            media_payload_key: media_payload,
+                        }
+                        if index == 0:
+                            _whatsapp_apply_reply_context(message_payload, reply_to_id)
                         result = self._post_json_webhook(
                             endpoint,
-                            {
-                                "messaging_product": "whatsapp",
-                                "to": recipient_id,
-                                "type": "image",
-                                "image": image_payload,
-                            },
+                            message_payload,
                             secret_header_name="Authorization",
                             secret_token=bearer_token,
                         )
@@ -6818,16 +8320,18 @@ class OpsMeshService:
                         "mediaIds": message_ids,
                         "mediaUrls": media_urls,
                     }
+                media_payload = {
+                    "link": media_urls[0],
+                }
+                if text:
+                    media_payload["caption"] = text[:1024]
                 payload = {
                     "messaging_product": "whatsapp",
                     "to": recipient_id,
-                    "type": "image",
-                    "image": {
-                        "link": media_urls[0],
-                    },
+                    "type": media_payload_key,
+                    media_payload_key: media_payload,
                 }
-                if text:
-                    payload["image"]["caption"] = text[:1024]
+                _whatsapp_apply_reply_context(payload, reply_to_id)
             else:
                 payload = {
                     "messaging_product": "whatsapp",
@@ -6835,6 +8339,7 @@ class OpsMeshService:
                     "type": "text",
                     "text": {"body": text[:4096]},
                 }
+                _whatsapp_apply_reply_context(payload, reply_to_id)
         result = self._post_json_webhook(
             _whatsapp_messages_endpoint(str(route.get("target") or "")),
             payload,
