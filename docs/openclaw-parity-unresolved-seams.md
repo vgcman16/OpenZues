@@ -73,16 +73,21 @@ Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
-control-chat submit seams used by the app-server path. Remaining CLI/runtime
-parity includes ACP/sandbox status commands, deeper model auth/probe
-inspection, plugin/runtime inspection, doctor readiness checks, non-metadata
-external sandbox container cleanup, and broader TUI ergonomics. The CLI now
-also exposes `models list` as a thin OpenClaw-shaped JSON/human wrapper over
-the production `models.list` gateway method owner, including provider/local
-filters without duplicating the model catalog runtime, and `models status`
-projects the same catalog into OpenClaw-style default/resolved/allowed/auth
-status fields while keeping live auth probes unavailable until the native
-model auth health runtime exists. Top-level `health`
+control-chat submit seams used by the app-server path. Top-level
+`status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
+`--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
+native live health probe for `--deep`, and projects honest unavailable JSON
+sections for provider usage and security-audit runtime adapters that do not
+yet exist. Remaining CLI/runtime parity includes text-mode `status --all`
+pasteable diagnosis output, ACP/sandbox status commands, deeper model
+auth/probe inspection, plugin/runtime inspection, doctor readiness checks,
+non-metadata external sandbox container cleanup, and broader TUI ergonomics.
+The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
+wrapper over the production `models.list` gateway method owner, including
+provider/local filters without duplicating the model catalog runtime, and
+`models status` projects the same catalog into OpenClaw-style
+default/resolved/allowed/auth status fields while keeping live auth probes
+unavailable until the native model auth health runtime exists. Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
 connection timeout.

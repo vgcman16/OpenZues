@@ -305,6 +305,58 @@ async def _build_live_health_payload(
     }
 
 
+def _build_status_usage_unavailable_payload(*, timeout_ms: int) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "summary": (
+            "Provider usage snapshots are not available from the native OpenZues CLI runtime yet."
+        ),
+        "reason": "Provider usage snapshots require the model provider usage runtime.",
+        "timeoutMs": timeout_ms,
+    }
+
+
+def _build_status_security_audit_unavailable_payload() -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "summary": (
+            "Security audit snapshots are not available from the native OpenZues CLI runtime yet."
+        ),
+        "reason": "Security audit snapshots require the OpenZues runtime bridge audit adapter.",
+        "findings": [],
+    }
+
+
+async def _build_status_runtime_sections(
+    app_settings: Settings,
+    *,
+    deep: bool,
+    usage: bool,
+    all_output: bool,
+    timeout_ms: int,
+) -> dict[str, object]:
+    sections: dict[str, object] = {}
+    if deep:
+        try:
+            sections["health"] = await _build_live_health_payload(
+                app_settings,
+                timeout_ms=timeout_ms,
+            )
+        except RuntimeError as exc:
+            sections["health"] = {
+                "status": "unavailable",
+                "summary": "Gateway health probe is unavailable.",
+                "error": str(exc),
+            }
+    if deep or usage:
+        sections["lastHeartbeat"] = None
+    if usage:
+        sections["usage"] = _build_status_usage_unavailable_payload(timeout_ms=timeout_ms)
+    if all_output:
+        sections["securityAudit"] = _build_status_security_audit_unavailable_payload()
+    return sections
+
+
 async def _try_live_gateway_capability_view(
     app_settings: Settings,
 ) -> GatewayCapabilityView | None:
@@ -4440,13 +4492,58 @@ def status_command(
         "--json",
         help="Emit the operator status summary as JSON.",
     ),
+    all_output: bool = typer.Option(
+        False,
+        "--all",
+        help="Include read-only runtime breadth diagnostics.",
+    ),
+    usage: bool = typer.Option(
+        False,
+        "--usage",
+        help="Include model provider usage/quota snapshots when available.",
+    ),
+    deep: bool = typer.Option(
+        False,
+        "--deep",
+        help="Probe the live gateway health surface when available.",
+    ),
+    timeout_ms: int = typer.Option(
+        10000,
+        "--timeout",
+        "--timeout-ms",
+        min=1,
+        help="Probe timeout in milliseconds.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable verbose status logging where supported.",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Alias for --verbose.",
+    ),
 ) -> None:
+    del verbose, debug
+
     async def _action(services: CliServices) -> dict[str, object]:
         live_status = await _try_live_status_payload(services.settings)
         if live_status is not None:
-            return live_status
-        dashboard = await _build_operator_dashboard(services)
-        return _build_status_payload(dashboard)
+            payload = dict(live_status)
+        else:
+            dashboard = await _build_operator_dashboard(services)
+            payload = _build_status_payload(dashboard)
+        payload.update(
+            await _build_status_runtime_sections(
+                services.settings,
+                deep=deep,
+                usage=usage,
+                all_output=all_output,
+                timeout_ms=timeout_ms,
+            )
+        )
+        return payload
 
     payload = _run(_run_with_services(_action))
     _emit_status(payload, json_output=json_output)

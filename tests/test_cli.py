@@ -2030,6 +2030,55 @@ def test_status_json_prefers_live_status_payload_when_available(tmp_path, monkey
     assert payload["instance_summary"]["connected_count"] == 1
 
 
+def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
+    tmp_path, monkeypatch
+) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    health_calls: list[int] = []
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {"headline": "Live dashboard headline", "summary": "Live dashboard summary"}
+
+    async def fake_live_health(
+        _settings: Settings,
+        *,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        health_calls.append(timeout_ms)
+        return {
+            "ok": True,
+            "status": "ok",
+            "controlPlane": "leader",
+            "readiness": {"ready": True, "failing": []},
+        }
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+    monkeypatch.setattr(cli_module, "_build_live_health_payload", fake_live_health)
+
+    result = runner.invoke(
+        app,
+        [
+            "status",
+            "--json",
+            "--deep",
+            "--usage",
+            "--all",
+            "--timeout",
+            "5000",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert health_calls == [5000]
+    assert payload["headline"] == "Live dashboard headline"
+    assert payload["health"]["status"] == "ok"
+    assert payload["lastHeartbeat"] is None
+    assert payload["usage"]["status"] == "unavailable"
+    assert payload["usage"]["timeoutMs"] == 5000
+    assert payload["securityAudit"]["status"] == "unavailable"
+
+
 def test_routes_list_json_surfaces_saved_notification_routes(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)
