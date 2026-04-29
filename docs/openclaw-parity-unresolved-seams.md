@@ -54,6 +54,11 @@ presentation prefix: when a child turn has `cwd`, the adapter sends
 `[Working directory: ...]` before the task text and redacts the user home to
 `~` while preserving Windows backslash separators. Remaining ACP presentation
 parity is deeper bridge server/client protocol metadata and replay behavior.
+RuntimeManager-backed ACP accepted responses now also include OpenClaw's
+mode-specific accepted notes for ordinary run spawns and persistent
+thread-bound session spawns. Remaining ACP presentation parity is deeper
+bridge server/client protocol metadata, replay behavior, and parent-stream
+relay breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

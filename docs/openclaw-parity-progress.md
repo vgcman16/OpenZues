@@ -55,6 +55,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP accepted payloads now include OpenClaw's
+  mode-specific accepted notes: ordinary run spawns return the isolated-session
+  follow-up note, while `mode="session"` / `thread=true` spawns return the
+  persistent in-thread follow-up note.
+- Verified the ACP accepted-note slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -q -k "accepted_note"` (`2 passed`), full
+  ACP adapter proof `python -m pytest tests\test_gateway_acp_spawn.py -q` (`8
+  passed`), adjacent gateway ACP spawn proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`5
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 
 ## Feature Families
 

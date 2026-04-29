@@ -11,6 +11,12 @@ _ACP_TARGET_AGENT_REQUIRED_ERROR = (
     "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
     "or set `acp.defaultAgent` in config."
 )
+_ACP_SPAWN_ACCEPTED_NOTE = (
+    "initial ACP task queued in isolated session; follow-ups continue in the bound thread."
+)
+_ACP_SPAWN_SESSION_ACCEPTED_NOTE = (
+    "thread-bound ACP session stays active after this task; continue in-thread for follow-ups."
+)
 
 
 class GatewayAcpSpawnService(Protocol):
@@ -179,6 +185,11 @@ class RuntimeManagerAcpSpawnService:
             "mode": mode,
             "runtimeThreadId": thread_id,
             "runtimeSessionId": thread_id,
+            "note": (
+                _ACP_SPAWN_SESSION_ACCEPTED_NOTE
+                if mode == "session"
+                else _ACP_SPAWN_ACCEPTED_NOTE
+            ),
         }
 
     async def _select_instance_id(self) -> int | None:
