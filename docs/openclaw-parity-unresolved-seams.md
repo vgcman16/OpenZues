@@ -189,10 +189,13 @@ the stored route token and returns the numeric chat id plus normalized
 The CLI now exposes OpenClaw's metadata-only `infer` / `capability` command
 alias for `list` and `inspect --name`, returning canonical capability ids,
 descriptions, transports, flags, and result shapes from
-`src/cli/capability-cli.ts`. Remaining `infer` parity is the heavier provider
-execution breadth (`model run`, image/audio/video/web/embedding/TTS runtime
-commands) and any gateway-backed capability transports not already covered by
-native OpenZues command families.
+`src/cli/capability-cli.ts`. The nested `infer model` / `capability model`
+catalog commands now also cover `list`, `inspect --model`, and `providers`,
+using the native `models.list` gateway method owner while preserving
+OpenClaw's raw catalog-array and provider-summary JSON shapes. Remaining
+`infer` parity is the heavier provider execution breadth (`model run`,
+image/audio/video/web/embedding/TTS runtime commands) and any gateway-backed
+capability transports not already covered by native OpenZues command families.
 Discord native routes now have the first production live resolver slice:
 channel-id inputs and channel mentions call `/users/@me/guilds` plus
 `/channels/{id}` with the stored route token and return OpenClaw-shaped

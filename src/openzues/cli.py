@@ -371,6 +371,7 @@ sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
 capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
 )
+capability_model_app = typer.Typer(help="Inspect text inference model catalog metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -396,6 +397,7 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
+capability_app.add_typer(capability_model_app, name="model")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -2546,6 +2548,62 @@ def _emit_models_status(
     auth = payload.get("auth")
     if isinstance(auth, dict):
         typer.echo(f"auth: {auth.get('status') or 'unknown'}")
+
+
+def _model_catalog_entries(payload: dict[str, object]) -> list[dict[str, object]]:
+    raw_models = payload.get("models")
+    if not isinstance(raw_models, list):
+        return []
+    return [dict(item) for item in raw_models if isinstance(item, dict)]
+
+
+def _model_catalog_ref(entry: dict[str, object]) -> str | None:
+    model_id = _optional_cli_string(entry.get("id"))
+    if model_id is None:
+        return None
+    provider = _optional_cli_string(entry.get("provider"))
+    if provider is None:
+        return model_id
+    return f"{provider}/{model_id}"
+
+
+def _build_capability_model_providers_payload(
+    models: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for entry in models:
+        provider = _optional_cli_string(entry.get("provider"))
+        model_id = _optional_cli_string(entry.get("id"))
+        if provider is None or model_id is None:
+            continue
+        current = grouped.setdefault(
+            provider,
+            {
+                "provider": provider,
+                "count": 0,
+                "defaults": [],
+                "available": True,
+                "configured": False,
+                "selected": False,
+            },
+        )
+        current_count = current.get("count")
+        current["count"] = (current_count if isinstance(current_count, int) else 0) + 1
+        defaults = cast("list[str]", current["defaults"])
+        if len(defaults) < 3:
+            defaults.append(model_id)
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def _emit_capability_provider_summary(payload: object, *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if isinstance(payload, list):
+        for entry in payload:
+            typer.echo(json.dumps(entry))
+        return
+    typer.echo(json.dumps(payload, indent=2))
 
 
 def _capability_list_payload() -> list[dict[str, object]]:
@@ -7304,6 +7362,66 @@ def capability_inspect_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_capability_inspect(payload, json_output=json_output)
+
+
+@capability_model_app.command("list")
+def capability_model_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        payload = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+        return _model_catalog_entries(payload)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_app.command("inspect")
+def capability_model_inspect_command(
+    model: str = typer.Option(..., "--model", help="Model id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        payload = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+        target = model.strip()
+        for entry in _model_catalog_entries(payload):
+            if _model_catalog_ref(entry) == target:
+                return entry
+        for entry in _model_catalog_entries(payload):
+            if _optional_cli_string(entry.get("id")) == target:
+                return entry
+        raise ValueError(f"Model not found: {target}")
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_app.command("providers")
+def capability_model_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        payload = await _build_models_list_payload(
+            services,
+            provider=None,
+            local_only=False,
+        )
+        return _build_capability_model_providers_payload(_model_catalog_entries(payload))
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
 
 
 @sandbox_app.command("list")

@@ -3276,6 +3276,135 @@ def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     assert calls == [("models.list", {})]
 
 
+def test_infer_model_list_json_uses_openclaw_catalog_shape(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "model", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "id": "gpt-5.4",
+            "name": "gpt-5.4",
+            "provider": "openai",
+            "isDefault": True,
+        }
+    ]
+    assert calls == [("models.list", {})]
+
+
+def test_capability_model_inspect_json_matches_provider_model_ref(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {"id": "gpt-5.4-mini", "name": "gpt-5.4-mini", "provider": "openai"},
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    },
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "model", "inspect", "--model", "openai/gpt-5.4", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "id": "gpt-5.4",
+        "name": "gpt-5.4",
+        "provider": "openai",
+        "isDefault": True,
+    }
+    assert calls == [("models.list", {})]
+
+
+def test_infer_model_providers_json_groups_catalog_by_provider(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {"id": "gpt-5.4", "name": "gpt-5.4", "provider": "openai"},
+                    {"id": "gpt-5.4-mini", "name": "gpt-5.4-mini", "provider": "openai"},
+                    {"id": "llama3", "name": "llama3", "provider": "ollama"},
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "model", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "provider": "ollama",
+            "count": 1,
+            "defaults": ["llama3"],
+            "available": True,
+            "configured": False,
+            "selected": False,
+        },
+        {
+            "provider": "openai",
+            "count": 2,
+            "defaults": ["gpt-5.4", "gpt-5.4-mini"],
+            "available": True,
+            "configured": False,
+            "selected": False,
+        },
+    ]
+    assert calls == [("models.list", {})]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
