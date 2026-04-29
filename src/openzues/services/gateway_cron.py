@@ -431,6 +431,11 @@ class GatewayCronService:
             job_payload["sessionKey"] = session_key
         if bool(payload_state.get("cron_notify_enabled")):
             job_payload["notify"] = True
+        failure_alert = payload_state.get("cron_failure_alert")
+        if failure_alert is False:
+            job_payload["failureAlert"] = False
+        elif isinstance(failure_alert, dict):
+            job_payload["failureAlert"] = dict(failure_alert)
         return job_payload
 
     def _mission_run_entry(
@@ -1291,9 +1296,12 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         raise ValueError(
             "invalid cron.add params: OpenZues currently supports only deleteAfterRun=false"
         )
-    if job_create.get("failureAlert") not in {None, False}:
-        raise ValueError(
-            "invalid cron.add params: OpenZues currently supports only failureAlert=false"
+    cron_failure_alert: dict[str, Any] | Literal[False] | None = None
+    if "failureAlert" in job_create:
+        cron_failure_alert = _normalized_cron_failure_alert(
+            job_create.get("failureAlert"),
+            method="cron.add",
+            label="failureAlert",
         )
     notify = job_create.get("notify")
     if notify is not None and not isinstance(notify, bool):
@@ -1579,6 +1587,7 @@ def build_gateway_cron_task_blueprint(job_create: dict[str, Any]) -> TaskBluepri
         cron_delivery_thread_id=cron_delivery_thread_id,
         cron_delivery_best_effort=cron_delivery_best_effort,
         cron_delivery_failure_destination=cron_delivery_failure_destination,
+        cron_failure_alert=cron_failure_alert,
         cron_notify_enabled=True if notify else None,
         model=model or "gpt-5.4",
         enabled=resolved_enabled,
@@ -1647,9 +1656,11 @@ def build_gateway_cron_job_patch(
             "invalid cron.update params: "
             "OpenZues currently supports only patch.deleteAfterRun=false"
         )
-    if patch.get("failureAlert") not in {None, False}:
-        raise ValueError(
-            "invalid cron.update params: OpenZues currently supports only patch.failureAlert=false"
+    if "failureAlert" in patch:
+        payload_updates["cron_failure_alert"] = _merged_cron_failure_alert_patch(
+            _task_payload_fields(task).get("cron_failure_alert"),
+            patch.get("failureAlert"),
+            label="patch.failureAlert",
         )
     if "notify" in patch:
         notify = patch.get("notify")
@@ -2313,6 +2324,112 @@ def _merged_cron_failure_destination_patch(
                     f"invalid cron.update params: {label}.mode must be one of: announce, webhook"
                 )
             merged["mode"] = lowered
+    return merged
+
+
+def _normalized_cron_failure_alert(
+    value: object,
+    *,
+    method: str,
+    label: str,
+) -> dict[str, Any] | Literal[False] | None:
+    if value is None:
+        return None
+    if value is False:
+        return False
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid {method} params: {label} must be false or an object")
+    _validate_gateway_cron_object_keys(
+        value,
+        method=method,
+        label=label,
+        allowed_keys={"accountId", "after", "channel", "cooldownMs", "mode", "to"},
+    )
+    normalized: dict[str, Any] = {}
+    if "after" in value:
+        after = value.get("after")
+        if isinstance(after, bool) or not isinstance(after, int) or after < 1:
+            raise ValueError(f"invalid {method} params: {label}.after must be a positive integer")
+        normalized["after"] = after
+    if "channel" in value:
+        channel = (
+            _optional_cron_add_string(value.get("channel"), label=f"{label}.channel")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("channel"), label=f"{label}.channel")
+        )
+        if channel is None:
+            raise ValueError(
+                f"invalid {method} params: {label}.channel must be a non-empty string"
+            )
+        normalized["channel"] = channel
+    if "to" in value:
+        to = (
+            _optional_cron_add_string(value.get("to"), label=f"{label}.to")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("to"), label=f"{label}.to")
+        )
+        if to is not None:
+            normalized["to"] = to
+    if "cooldownMs" in value:
+        cooldown_ms = value.get("cooldownMs")
+        if isinstance(cooldown_ms, bool) or not isinstance(cooldown_ms, int) or cooldown_ms < 0:
+            raise ValueError(
+                f"invalid {method} params: {label}.cooldownMs must be a non-negative integer"
+            )
+        normalized["cooldownMs"] = cooldown_ms
+    if "mode" in value:
+        mode = (
+            _optional_cron_add_string(value.get("mode"), label=f"{label}.mode")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("mode"), label=f"{label}.mode")
+        )
+        if mode is None or mode.lower() not in {"announce", "webhook"}:
+            raise ValueError(
+                f"invalid {method} params: {label}.mode must be one of: announce, webhook"
+            )
+        normalized["mode"] = mode.lower()
+    if "accountId" in value:
+        account_id = (
+            _optional_cron_add_string(value.get("accountId"), label=f"{label}.accountId")
+            if method == "cron.add"
+            else _optional_cron_update_string(value.get("accountId"), label=f"{label}.accountId")
+        )
+        if account_id is None:
+            raise ValueError(
+                f"invalid {method} params: {label}.accountId must be a non-empty string"
+            )
+        normalized["accountId"] = account_id
+    return normalized
+
+
+def _merged_cron_failure_alert_patch(
+    existing: object,
+    patch: object,
+    *,
+    label: str,
+) -> dict[str, Any] | Literal[False] | None:
+    if patch is False:
+        return False
+    if patch is None:
+        if existing is False:
+            return False
+        return dict(existing) if isinstance(existing, dict) else None
+    normalized = _normalized_cron_failure_alert(
+        patch,
+        method="cron.update",
+        label=label,
+    )
+    if normalized is False or normalized is None:
+        return normalized
+    merged: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    assert isinstance(patch, dict)
+    for key in ("after", "channel", "to", "cooldownMs", "mode", "accountId"):
+        if key not in patch:
+            continue
+        if key in normalized:
+            merged[key] = normalized[key]
+        else:
+            merged.pop(key, None)
     return merged
 
 

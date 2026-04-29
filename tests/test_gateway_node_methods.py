@@ -22128,6 +22128,82 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_add_accepts_failure_alert_object_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-failure-alert"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-failure-alert.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Alerted Repair",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Repair the lane."},
+            "failureAlert": {
+                "after": 2,
+                "channel": "telegram",
+                "to": "19098680",
+                "cooldownMs": 60_000,
+                "mode": "announce",
+                "accountId": "ops",
+            },
+        },
+    )
+
+    assert created_payloads[0].cron_failure_alert == {
+        "after": 2,
+        "channel": "telegram",
+        "to": "19098680",
+        "cooldownMs": 60_000,
+        "mode": "announce",
+        "accountId": "ops",
+    }
+    assert payload["failureAlert"] == {
+        "after": 2,
+        "channel": "telegram",
+        "to": "19098680",
+        "cooldownMs": 60_000,
+        "mode": "announce",
+        "accountId": "ops",
+    }
+
+
+@pytest.mark.asyncio
 async def test_cron_add_accepts_session_key_routing_hint() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-session-key-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -23859,6 +23935,60 @@ async def test_cron_update_patches_supported_every_agent_turn_fields() -> None:
     assert not bool(updated_record["enabled"])
     assert updated_task["objective_template"] == "Repair the next verified slice."
     assert updated_task["model"] == "gpt-5.4-mini"
+
+
+@pytest.mark.asyncio
+async def test_cron_update_merges_failure_alert_object_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-failure-alert"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-failure-alert.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Alerted Repair",
+        summary="Repair the lane with alerts.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Repair the lane with alerts."),
+            "cron_failure_alert": {
+                "after": 2,
+                "channel": "telegram",
+                "to": "19098680",
+                "cooldownMs": 60_000,
+            },
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "failureAlert": {
+                    "cooldownMs": 120_000,
+                    "mode": "webhook",
+                    "accountId": "ops",
+                }
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    expected = {
+        "after": 2,
+        "channel": "telegram",
+        "to": "19098680",
+        "cooldownMs": 120_000,
+        "mode": "webhook",
+        "accountId": "ops",
+    }
+    assert payload["failureAlert"] == expected
+    assert updated_task is not None
+    assert updated_task["cron_failure_alert"] == expected
 
 
 @pytest.mark.asyncio

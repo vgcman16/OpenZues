@@ -992,6 +992,15 @@ Current queue-head adjustment: `browser.ios.device.list`, `browser.ios.swipe`, a
 
 Current queue-head adjustment: repo-level rotation moved from browser command productization into cron parity. `cron.add` and `cron.update` now accept OpenClaw-style `schedule.kind="cron"` objects with `expr`, optional `tz`, and optional `staggerMs`; cron jobs round-trip through `cron.list`, compute next due time, and launch through `cron.run` with `mode="due"`. The next repo-level method seam should move to gateway session or agent-file surfaces rather than reopening the closed browser command queue.
 
+Current queue-head adjustment: `cron.add` and `cron.update` now also accept and
+round-trip OpenClaw-style per-job `failureAlert` objects. OpenZues persists the
+native alert config in the task-blueprint payload, projects `failureAlert` in
+cron job snapshots, and merges update patches with the same object/`false`
+contract used by OpenClaw. Remaining cron parity is the actual consecutive
+failure alert dispatch/runtime state fields (`lastErrorReason`,
+`lastDurationMs`, `consecutiveErrors`, delivery status, and alert cooldown
+metadata), not the gateway method schema/persistence boundary.
+
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 
 ## Verified This Run
