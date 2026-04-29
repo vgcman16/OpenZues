@@ -2411,6 +2411,24 @@ def _emit_cron_runs(payload: dict[str, object], *, json_output: bool) -> None:
         typer.echo(f"{job_id} {status} {delivery_status} {run_at} {summary}".rstrip())
 
 
+def _cron_run_succeeded(payload: dict[str, object]) -> bool:
+    return bool(payload.get("ok")) and (bool(payload.get("ran")) or bool(payload.get("enqueued")))
+
+
+def _emit_cron_run(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    run_id = str(payload.get("runId") or payload.get("run_id") or "").strip()
+    if run_id:
+        typer.echo(f"run: {run_id}")
+    if "ran" in payload:
+        typer.echo(f"ran: {bool(payload.get('ran'))}")
+    if "enqueued" in payload:
+        typer.echo(f"enqueued: {bool(payload.get('enqueued'))}")
+
+
 def _emit_plugins_inventory(
     payload: dict[str, object],
     *,
@@ -9505,6 +9523,26 @@ def cron_runs_command(
 
     payload = _run(_run_with_services(_action))
     _emit_cron_runs(payload, json_output=json_output)
+
+
+@cron_app.command("run")
+def cron_run_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    due: bool = typer.Option(False, "--due", help="Run only when the job is due."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron run result as JSON."),
+) -> None:
+    params: dict[str, object] = {
+        "id": job_id,
+        "mode": "due" if due else "force",
+    }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.run", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_run(payload, json_output=json_output)
+    if not _cron_run_succeeded(payload):
+        raise typer.Exit(code=1)
 
 
 @sessions_app.command("spawn")
