@@ -5978,6 +5978,7 @@ class GatewayNodeMethodService:
                     session_key=session_key,
                     run_id=None,
                     requester=resolved_requester,
+                    abort_origin="stop-command",
                 )
             timestamp_ms = _timestamp_ms(now_ms)
             inherited_delivery_route = await self._chat_send_inherited_delivery_route(
@@ -6211,6 +6212,7 @@ class GatewayNodeMethodService:
                     session_key=session_key,
                     run_id=None,
                     requester=resolved_requester,
+                    abort_origin="stop-command",
                 )
                 await self._publish_sessions_changed_event(
                     session_key=session_key,
@@ -6381,6 +6383,7 @@ class GatewayNodeMethodService:
                     session_key=session_key,
                     run_id=None,
                     requester=resolved_requester,
+                    abort_origin="stop-command",
                 )
                 if interrupted_active_run and stop_result.get("ok") is True:
                     stop_result = {
@@ -11606,6 +11609,7 @@ class GatewayNodeMethodService:
         session_key: str,
         run_id: str | None,
         requester: GatewayNodeMethodRequester,
+        abort_origin: Literal["rpc", "stop-command"] = "rpc",
     ) -> dict[str, object]:
         if self._chat_abort_service is None:
             raise GatewayNodeMethodError(
@@ -11643,6 +11647,13 @@ class GatewayNodeMethodService:
         )
         if interrupt_result.get("ok") is True:
             aborted_run_id = run_id or tracked_run_id
+            if aborted_run_id is not None:
+                await self._persist_gateway_chat_abort_partial(
+                    session_key=canonical_session_key,
+                    run_id=aborted_run_id,
+                    interrupt_result=interrupt_result,
+                    abort_origin=abort_origin,
+                )
             self._forget_gateway_chat_run(canonical_session_key)
             return {
                 "ok": True,
@@ -11657,6 +11668,51 @@ class GatewayNodeMethodService:
             message="chat.abort failed to interrupt the active control chat run",
             status_code=503,
         )
+
+    async def _persist_gateway_chat_abort_partial(
+        self,
+        *,
+        session_key: str,
+        run_id: str,
+        interrupt_result: dict[str, object],
+        abort_origin: Literal["rpc", "stop-command"],
+    ) -> None:
+        if self._database is None:
+            return
+        partial_text = _gateway_chat_abort_partial_text(interrupt_result)
+        if partial_text is None or not partial_text.strip():
+            return
+        idempotency_key = f"{run_id}:assistant"
+        existing = await self._database.get_control_chat_message_by_metadata_idempotency_key(
+            session_key=session_key,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            return
+        metadata: dict[str, object] = {
+            "idempotencyKey": idempotency_key,
+            "stopReason": "stop",
+            "openclawAbort": {
+                "aborted": True,
+                "origin": abort_origin,
+                "runId": run_id,
+            },
+        }
+        message_id = await self._database.append_control_chat_message(
+            role="assistant",
+            content=partial_text,
+            target_label=None,
+            session_key=session_key,
+            model_provider="openclaw",
+            model="gateway-injected",
+            metadata=metadata,
+        )
+        message_row = await self._database.get_control_chat_message(message_id)
+        if message_row is not None:
+            await self._publish_session_message_events(
+                message_row=message_row,
+                now_ms=_timestamp_ms(None),
+            )
 
     def _tracked_gateway_chat_run_id(self, session_key: str) -> str | None:
         for alias in _session_key_aliases(session_key):
@@ -12069,6 +12125,40 @@ def _can_requester_abort_gateway_chat_run(
         return True
     requester_client_id = _string_or_none(requester.client_id)
     return owner_client_id is not None and requester_client_id == owner_client_id
+
+
+def _gateway_chat_abort_partial_text(result: dict[str, object]) -> str | None:
+    for key in (
+        "partialText",
+        "partialAssistantText",
+        "assistantPartialText",
+        "bufferedText",
+    ):
+        text = _string_or_none(result.get(key))
+        if text is not None:
+            return text
+    partial = result.get("partial")
+    if isinstance(partial, dict):
+        text = _string_or_none(partial.get("text"))
+        if text is not None:
+            return text
+    message = result.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            texts = [
+                text
+                for block in content
+                if isinstance(block, dict)
+                for text in (_string_or_none(block.get("text")),)
+                if text is not None
+            ]
+            if texts:
+                return "".join(texts)
+        text = _string_or_none(message.get("text"))
+        if text is not None:
+            return text
+    return None
 
 
 def _exec_approval_allowed_decisions(ask: object) -> list[str]:
@@ -13794,7 +13884,15 @@ def _project_control_chat_messages(
     *,
     max_chars: int | None,
 ) -> list[dict[str, Any]]:
-    normalized: list[tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]] = []
+    normalized: list[
+        tuple[
+            str,
+            str,
+            dict[str, Any] | None,
+            dict[str, Any] | None,
+            dict[str, Any] | None,
+        ]
+    ] = []
     for row in rows:
         role = str(row.get("role") or "").strip()
         if role not in {"user", "assistant"}:
@@ -13804,13 +13902,22 @@ def _project_control_chat_messages(
             continue
         usage = _chat_history_json_object(row.get("usage_json")) if role == "assistant" else None
         cost = _chat_history_json_object(row.get("cost_json")) if role == "assistant" else None
-        normalized.append((role, text, usage, cost))
+        metadata = (
+            _chat_history_json_object(row.get("metadata_json")) if role == "assistant" else None
+        )
+        normalized.append((role, text, usage, cost, metadata))
 
     if max_chars is None:
         return _cap_chat_history_messages_by_json_bytes(
             [
-                _bounded_chat_history_message_payload(role, text, usage=usage, cost=cost)
-                for role, text, usage, cost in normalized
+                _bounded_chat_history_message_payload(
+                    role,
+                    text,
+                    usage=usage,
+                    cost=cost,
+                    metadata=metadata,
+                )
+                for role, text, usage, cost, metadata in normalized
             ]
         )
     return _cap_chat_history_messages_by_json_bytes(
@@ -13820,8 +13927,9 @@ def _project_control_chat_messages(
                 _chat_history_truncated_text(text, max_chars),
                 usage=usage,
                 cost=cost,
+                metadata=metadata,
             )
-            for role, text, usage, cost in normalized
+            for role, text, usage, cost, metadata in normalized
         ]
     )
 
@@ -14017,12 +14125,17 @@ def _chat_history_message_payload(
     *,
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": role, "content": [{"type": "text", "text": text}]}
     if usage is not None:
         payload["usage"] = usage
     if cost is not None:
         payload["cost"] = cost
+    if metadata is not None:
+        for key in ("idempotencyKey", "stopReason", "openclawAbort"):
+            if key in metadata:
+                payload[key] = metadata[key]
     return payload
 
 
@@ -14032,8 +14145,15 @@ def _bounded_chat_history_message_payload(
     *,
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = _chat_history_message_payload(role, text, usage=usage, cost=cost)
+    payload = _chat_history_message_payload(
+        role,
+        text,
+        usage=usage,
+        cost=cost,
+        metadata=metadata,
+    )
     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     if len(encoded) <= _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES:
         return payload

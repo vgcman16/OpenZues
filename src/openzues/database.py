@@ -182,6 +182,7 @@ class Database:
                     model TEXT,
                     usage_json TEXT,
                     cost_json TEXT,
+                    metadata_json TEXT,
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_control_chat_messages_created
@@ -643,6 +644,7 @@ class Database:
             await self._ensure_column(db, "control_chat_messages", "model", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "usage_json", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "cost_json", "TEXT")
+            await self._ensure_column(db, "control_chat_messages", "metadata_json", "TEXT")
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -3789,6 +3791,7 @@ class Database:
         cost: dict[str, Any] | None = None,
         model_provider: str | None = None,
         model: str | None = None,
+        metadata: dict[str, Any] | None = None,
         created_at: str | None = None,
     ) -> int:
         now = created_at or utcnow()
@@ -3807,9 +3810,10 @@ class Database:
                     model,
                     usage_json,
                     cost_json,
+                    metadata_json,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     role,
@@ -3823,6 +3827,7 @@ class Database:
                     model,
                     json.dumps(usage) if usage is not None else None,
                     json.dumps(cost) if cost is not None else None,
+                    json.dumps(metadata) if metadata is not None else None,
                     now,
                 ),
             )
@@ -3839,6 +3844,32 @@ class Database:
             )
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+    async def get_control_chat_message_by_metadata_idempotency_key(
+        self,
+        *,
+        session_key: str,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        aliases = session_key_lookup_aliases(session_key)
+        normalized_key = str(idempotency_key or "").strip()
+        if not aliases or not normalized_key:
+            return None
+        placeholders = ",".join("?" for _ in aliases)
+        query = f"""
+            SELECT *
+            FROM control_chat_messages
+            WHERE LOWER(TRIM(session_key)) IN ({placeholders})
+              AND json_valid(metadata_json)
+              AND json_extract(metadata_json, '$.idempotencyKey') = ?
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(query, (*aliases, normalized_key))
+            row = await cursor.fetchone()
+            return dict(row) if row is not None else None
 
     async def list_control_chat_messages(
         self,

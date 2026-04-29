@@ -869,6 +869,15 @@ legacy ownerless-run compatibility. The next bounded seam should continue into
 OpenClaw abort partial transcript persistence or the adjacent `agent.wait`
 read model if a focused mismatch is proven.
 
+Current queue-head adjustment: `chat.abort` now persists buffered assistant
+partials returned by the native abort runtime into the SQLite transcript as
+idempotent `runId:assistant` assistant messages with `stopReason="stop"` and
+`openclawAbort` metadata. RPC aborts record `origin="rpc"`, `/stop`-style
+abort commands record `origin="stop-command"`, blank partials are ignored, and
+`chat.history` projects the stored abort metadata. The next bounded seam should
+move to `agent.wait` read-model fidelity or another source-backed
+session/runtime mismatch.
+
 ## How To Read This Queue
 
 - This queue is repo-level and cross-cutting. It is for seams likely to fall between shard workers or cut across cron, session, gateway, delivery, and integration ownership.
@@ -1880,6 +1889,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   admin callers bypass the owner check, and legacy ownerless tracked runs keep
   the historical compatible behavior.
 - Verified the `chat.abort` ownership seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or sessions_steer or sessions_abort or compaction_restore"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `chat.abort` now persists OpenClaw-shaped aborted assistant partials from the
+  native abort adapter. OpenZues stores them once per `runId:assistant` in the
+  SQLite transcript, stamps `stopReason="stop"` plus `openclawAbort` metadata,
+  preserves `/stop` as `origin="stop-command"`, ignores blank partials, and
+  projects the metadata through `chat.history`.
+- Verified the abort partial transcript seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort_persists_partial_assistant_transcript_like_openclaw or chat_send_stop_persists_abort_partial_with_stop_command_origin or chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent transcript proof `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or chat_history or sessions_history"`, shared session read-model proof `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface or transcript_usage or control_chat"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

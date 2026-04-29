@@ -9731,6 +9731,170 @@ async def test_chat_abort_allows_admin_bypass_like_openclaw() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_abort_persists_partial_assistant_transcript_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-partial"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-abort-partial.db")
+    await database.initialize()
+    session_key = "openzues:thread:abort-partial"
+    run_id = "run-chat-abort-partial-1"
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True, "partialText": "Streamed assistant text so far."}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "status",
+            "idempotencyKey": run_id,
+        },
+    )
+    first_abort = await service.call(
+        "chat.abort",
+        {"sessionKey": session_key, "runId": run_id},
+    )
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "status again",
+            "idempotencyKey": run_id,
+        },
+    )
+    second_abort = await service.call(
+        "chat.abort",
+        {"sessionKey": session_key, "runId": run_id},
+    )
+
+    assert first_abort == {"ok": True, "aborted": True, "runIds": [run_id]}
+    assert second_abort == {"ok": True, "aborted": True, "runIds": [run_id]}
+
+    rows = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    assert len(rows) == 1
+    assert rows[0]["role"] == "assistant"
+    assert rows[0]["content"] == "Streamed assistant text so far."
+    metadata = json.loads(str(rows[0]["metadata_json"]))
+    assert metadata == {
+        "idempotencyKey": f"{run_id}:assistant",
+        "stopReason": "stop",
+        "openclawAbort": {
+            "aborted": True,
+            "origin": "rpc",
+            "runId": run_id,
+        },
+    }
+
+    history = await service.call(
+        "chat.history",
+        {"sessionKey": session_key},
+    )
+    assert history["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Streamed assistant text so far."}],
+            "idempotencyKey": f"{run_id}:assistant",
+            "stopReason": "stop",
+            "openclawAbort": {
+                "aborted": True,
+                "origin": "rpc",
+                "runId": run_id,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_send_stop_persists_abort_partial_with_stop_command_origin() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-stop-partial"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-stop-partial.db")
+    await database.initialize()
+    session_key = "openzues:thread:stop-partial"
+    run_id = "run-chat-stop-partial-1"
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True, "partialText": "Partial before /stop."}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "status",
+            "idempotencyKey": run_id,
+        },
+    )
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "/stop",
+            "idempotencyKey": "stop-command-call-1",
+        },
+    )
+
+    assert payload == {"ok": True, "aborted": True, "runIds": [run_id]}
+    rows = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    assert len(rows) == 1
+    metadata = json.loads(str(rows[0]["metadata_json"]))
+    assert metadata["openclawAbort"] == {
+        "aborted": True,
+        "origin": "stop-command",
+        "runId": run_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_abort_uses_resolved_subagent_store_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-subagent-alias"
     shutil.rmtree(tmp_path, ignore_errors=True)
