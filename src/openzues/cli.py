@@ -2600,6 +2600,51 @@ def _build_capability_model_providers_payload(
     return [grouped[key] for key in sorted(grouped)]
 
 
+def _model_auth_runtime(services: CliServices) -> Any:
+    runtime = getattr(services, "model_auth", None)
+    if runtime is None:
+        runtime = getattr(services, "model_auth_service", None)
+    if runtime is None:
+        raise ValueError("model auth runtime is unavailable.")
+    return runtime
+
+
+async def _build_capability_model_auth_login_payload(
+    services: CliServices,
+    *,
+    provider: str,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    login = getattr(runtime, "login", None)
+    if not callable(login):
+        raise ValueError("model auth login is unavailable until model auth runtime is wired.")
+    result = await login(provider)
+    return dict(result) if isinstance(result, dict) else {"provider": provider}
+
+
+async def _build_capability_model_auth_logout_payload(
+    services: CliServices,
+    *,
+    provider: str,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    logout = getattr(runtime, "logout", None)
+    if not callable(logout):
+        raise ValueError("model auth logout is unavailable until model auth runtime is wired.")
+    result = await logout(provider)
+    return dict(result) if isinstance(result, dict) else {"provider": provider}
+
+
+def _emit_capability_model_auth_login(payload: dict[str, object]) -> None:
+    message = _optional_cli_string(payload.get("message"))
+    if message is not None:
+        typer.echo(message)
+        return
+    provider = _optional_cli_string(payload.get("provider")) or "provider"
+    status = _optional_cli_string(payload.get("status")) or "completed"
+    typer.echo(f"Model auth login {status} for {provider}.")
+
+
 def _emit_capability_provider_summary(payload: object, *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -7815,6 +7860,43 @@ def capability_model_auth_status_command(
         return await _build_models_status_payload(services, probe=False)
 
     payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_auth_app.command("login")
+def capability_model_auth_login_command(
+    provider: str = typer.Option(..., "--provider", help="Provider id."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_model_auth_login_payload(
+            services,
+            provider=provider,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@capability_model_auth_app.command("logout")
+def capability_model_auth_logout_command(
+    provider: str = typer.Option(..., "--provider", help="Provider id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_model_auth_logout_payload(
+            services,
+            provider=provider,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     _emit_capability_provider_summary(payload, json_output=json_output)
 
 

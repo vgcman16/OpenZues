@@ -198,8 +198,10 @@ JSON shapes. The gateway `agent` method now accepts model-only and
 provider/model `model run` overrides and persists them through the native
 session metadata path before dispatch; gateway model runs now wait for the
 final `agent.wait` result before projecting OpenClaw-style provider/model
-output envelopes. Remaining `infer` parity is model auth login/logout
-mutation, image/audio/video/web/embedding runtime commands, deeper TTS
+output envelopes. Model auth login/logout CLI commands now dispatch through a
+fakeable native model-auth runtime hook and keep a precise unavailable boundary
+when that runtime is absent. Remaining `infer` parity is production model-auth
+backend wiring, image/audio/video/web/embedding runtime commands, deeper TTS
 provider/runtime breadth beyond the now-landed CLI family, and any
 gateway-backed capability transports not already covered by native OpenZues
 command families. The first TTS slices now project the native

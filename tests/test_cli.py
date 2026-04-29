@@ -3443,6 +3443,62 @@ def test_infer_model_auth_status_json_reuses_model_status_payload(monkeypatch) -
     assert calls == [("models.list", {})]
 
 
+def test_infer_model_auth_login_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeModelAuth:
+        async def login(self, provider: str) -> dict[str, object]:
+            calls.append(("login", provider))
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Login started for {provider}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["infer", "model", "auth", "login", "--provider", "openai-codex"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Login started for openai-codex." in result.stdout
+    assert calls == [("login", "openai-codex")]
+
+
+def test_capability_model_auth_logout_json_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeModelAuth:
+        async def logout(self, provider: str) -> dict[str, object]:
+            calls.append(("logout", provider))
+            return {
+                "provider": provider,
+                "removedProfiles": ["openai-codex:default", "openai-codex:work"],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "model", "auth", "logout", "--provider", "openai-codex", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "provider": "openai-codex",
+        "removedProfiles": ["openai-codex:default", "openai-codex:work"],
+    }
+    assert calls == [("logout", "openai-codex")]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
