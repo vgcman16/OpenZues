@@ -57,7 +57,10 @@ from openzues.services.gateway_node_registry import (
     GatewayNodeRegistry,
     KnownNode,
 )
-from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeService
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginRuntimeExecutorSpec,
+    GatewayPluginRuntimeService,
+)
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_clawhub import GatewaySkillClawHubService
@@ -5454,6 +5457,252 @@ async def test_tools_invoke_uses_plugin_runtime_service_for_owner_only_executor(
     assert payload == {"ok": True, "result": {"ok": True, "result": "owner"}}
     assert observed_calls[0][0].startswith("http-")
     assert observed_calls[0][1] == {"mode": "owner"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_runs_registry_plugin_executor_in_registration_order(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-registry-order.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["registry_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+    before_call_payloads: list[dict[str, object]] = []
+
+    async def first_executor(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "executor": "first", "mode": args.get("mode")}
+
+    async def duplicate_executor(
+        tool_call_id: str,
+        args: dict[str, object],
+    ) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "executor": "duplicate"}
+
+    class OrderedPluginRegistry:
+        def list_executors(self) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+            return (
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_tool",
+                    executor=first_executor,
+                    plugin_id="alpha",
+                    plugin_name="Alpha",
+                ),
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_tool",
+                    executor=duplicate_executor,
+                    plugin_id="beta",
+                    plugin_name="Beta",
+                ),
+            )
+
+    async def before_call(payload: dict[str, object]) -> dict[str, object]:
+        before_call_payloads.append(payload)
+        return {"params": {"mode": "rewritten"}}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            executor_registry=OrderedPluginRegistry(),
+        ),
+        tools_invoke_before_call=before_call,
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "registry_tool", "args": {"mode": "original"}},
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {"ok": True, "executor": "first", "mode": "rewritten"},
+    }
+    assert before_call_payloads[0]["toolName"] == "registry_tool"
+    assert before_call_payloads[0]["params"] == {"mode": "original"}
+    assert len(observed_calls) == 1
+    assert observed_calls[0][0].startswith("http-")
+    assert observed_calls[0][1] == {"mode": "rewritten"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_keeps_core_mapping_before_registry_plugin_executor(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-core-wins.db")
+    await database.initialize()
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def plugin_executor(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "executor": "plugin"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="agents_list",
+                    executor=plugin_executor,
+                    plugin_id="shadow-core",
+                ),
+            ),
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "agents_list"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["agents"][0]["id"] == "main"
+    assert observed_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_keeps_registry_owner_only_executor_hidden_from_non_owner(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-registry-owner.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["registry_owner_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def plugin_executor(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "mode": args.get("mode")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_owner_tool",
+                    executor=plugin_executor,
+                    owner_only=True,
+                    plugin_id="owner-plugin",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "tools.invoke",
+            {"tool": "registry_owner_tool", "args": {"mode": "hidden"}},
+            requester=GatewayNodeMethodRequester(caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,)),
+        )
+
+    assert exc_info.value.status_code == 404
+    assert observed_calls == []
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "registry_owner_tool", "args": {"mode": "owner"}},
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "mode": "owner"}}
+    assert observed_calls[0][0].startswith("http-")
+    assert observed_calls[0][1] == {"mode": "owner"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_skips_disabled_registry_plugin_executor(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-registry-disabled.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["registry_optional_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[str] = []
+
+    async def disabled_executor(_tool_call_id: str, _args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append("disabled")
+        return {"ok": True, "executor": "disabled"}
+
+    async def enabled_executor(_tool_call_id: str, _args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append("enabled")
+        return {"ok": True, "executor": "enabled"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_optional_tool",
+                    executor=disabled_executor,
+                    enabled=False,
+                    plugin_id="missing-optional-dependency",
+                ),
+                GatewayPluginRuntimeExecutorSpec(
+                    tool="registry_optional_tool",
+                    executor=enabled_executor,
+                    plugin_id="enabled-plugin",
+                ),
+            ),
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "registry_optional_tool"})
+
+    assert payload == {"ok": True, "result": {"ok": True, "executor": "enabled"}}
+    assert observed_calls == ["enabled"]
 
 
 @pytest.mark.asyncio

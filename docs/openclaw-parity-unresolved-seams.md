@@ -61,9 +61,12 @@ deeper provider-specific edge cases not yet exposed by focused tests.
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
 first, config allow/deny gating, owner-only hiding, before-call hooks, and
-OpenClaw-shaped plugin executor error projection. Remaining tool parity is
-loading richer plugin registry/config executor order from real plugin metadata
-instead of injected Python executors only.
+OpenClaw-shaped plugin executor error projection. The service now also accepts
+ordered registry/config executor specs, preserves first registered plugin-name
+winner semantics among enabled entries, skips later duplicates, keeps core mappings ahead of
+registry-backed plugins, and applies owner-only visibility to registry tools.
+Remaining tool parity is plugin catalog/effective visibility plus any future
+production plugin metadata discovery beyond the fakeable registry adapter.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default

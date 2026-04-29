@@ -204,7 +204,10 @@ def _merge_config_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[
 
 
 def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    if snapshot.get("gateway") is None:
+    omitted_null_sections = ("gateway", "session", "tools")
+    if any(snapshot.get(section) is None for section in omitted_null_sections):
         snapshot = dict(snapshot)
-        snapshot.pop("gateway", None)
+        for section in omitted_null_sections:
+            if snapshot.get(section) is None:
+                snapshot.pop(section, None)
     return snapshot

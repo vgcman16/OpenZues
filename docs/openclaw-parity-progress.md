@@ -25,7 +25,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
-- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, plugin runtime service envelopes, safe core mappings, plugin error projection, and OpenClaw-style projection/visibility for neighboring session tools.
+- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, and OpenClaw-style projection/visibility for neighboring session tools.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
 
 ## Feature Families
@@ -48,6 +48,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path, deeper persistent thread unbind/end-hook behavior, and push-native completion delivery beyond the bounded local wait/cleanup/idempotency implementation.
 - Broader provider-native outbound runtime breadth for all provider-specific reply/silent/document/media options and CLI send/poll surfaces.
+- Plugin catalog/effective visibility and production plugin metadata inventory beyond the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
@@ -86,6 +87,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_ops_mesh.py -q`: 96 passed after the provider-native outbound replay and metadata slice.
 - `ruff check src\openzues\services\gateway_outbound_runtime.py src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean after the provider-native outbound replay and metadata slice.
 - `mypy src\openzues\services\gateway_outbound_runtime.py src\openzues\services\ops_mesh.py`: clean after the provider-native outbound replay and metadata slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "registry_plugin_executor or core_mapping_before_registry_plugin or registry_owner_only or skips_disabled_registry_plugin_executor"`: 4 passed after adding ordered registry-backed plugin executor resolution.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "tools_invoke"`: 54 passed after rechecking plugin/core `tools.invoke` behavior.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "config_get_returns_control_ui_bootstrap_snapshot or config_open_file_returns_snapshot_path_when_owner_is_wired"`: 2 passed after omitting absent `session`/`tools` sections from bootstrap config snapshots.
+- `python -m pytest tests\test_gateway_node_methods.py -q`: 682 passed after the ordered plugin registry slice and adjacent config snapshot cleanup.
+- `ruff check src\openzues\services\gateway_config.py src\openzues\services\gateway_plugin_runtime.py tests\test_gateway_node_methods.py`: clean after the ordered plugin registry slice and config snapshot cleanup.
+- `mypy src\openzues\services\gateway_config.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\gateway_node_methods.py`: clean after the ordered plugin registry slice and config snapshot cleanup.
 - `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
 - `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.
