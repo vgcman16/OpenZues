@@ -74,9 +74,12 @@ Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
 control-chat submit seams used by the app-server path. Remaining CLI/runtime
-parity includes ACP/sandbox status commands, plugin/runtime inspection, doctor
-readiness checks, non-metadata external sandbox container cleanup, and broader
-TUI ergonomics.
+parity includes ACP/sandbox status commands, deeper model status/probe
+inspection, plugin/runtime inspection, doctor readiness checks, non-metadata
+external sandbox container cleanup, and broader TUI ergonomics. The CLI now
+also exposes `models list` as a thin OpenClaw-shaped JSON/human wrapper over
+the production `models.list` gateway method owner, including provider/local
+filters without duplicating the model catalog runtime.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

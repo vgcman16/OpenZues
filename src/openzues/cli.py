@@ -111,6 +111,7 @@ channels_app = typer.Typer(help="Inspect notification route channels.")
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
+models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -133,6 +134,7 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(plugins_app, name="plugins")
+app.add_typer(models_app, name="models")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -1696,6 +1698,42 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
             typer.echo(f"- {prefix}{message}")
 
 
+def _emit_models_list(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+    plain: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_models = payload.get("models")
+    if isinstance(raw_models, list):
+        models = [item for item in raw_models if isinstance(item, dict)]
+    else:
+        models = []
+    if not models:
+        typer.echo("No models found.")
+        return
+    if plain:
+        for item in models:
+            model_id = _optional_cli_string(item.get("id"))
+            provider = _optional_cli_string(item.get("provider"))
+            if model_id is None:
+                continue
+            typer.echo(f"{provider}/{model_id}" if provider else model_id)
+        return
+    typer.echo(f"Models ({len(models)})")
+    for item in models:
+        model_id = _optional_cli_string(item.get("id")) or "(unknown)"
+        name = _optional_cli_string(item.get("name"))
+        provider = _optional_cli_string(item.get("provider"))
+        default = " default" if item.get("isDefault") is True else ""
+        label = name or model_id
+        prefix = f"{provider}/" if provider else ""
+        typer.echo(f"- {prefix}{model_id}: {label}{default}")
+
+
 def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -2263,6 +2301,33 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "diagnostics": diagnostics,
         "docs": "https://docs.openclaw.ai/plugin",
     }
+
+
+async def _build_models_list_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+    local_only: bool,
+) -> dict[str, object]:
+    payload = await _call_gateway_node_method(services, "models.list", {})
+    raw_models = payload.get("models")
+    if not isinstance(raw_models, list):
+        return {"models": []}
+    provider_filter = _optional_cli_string(provider)
+    normalized_provider = provider_filter.lower() if provider_filter is not None else None
+    models: list[dict[str, object]] = []
+    for item in raw_models:
+        if not isinstance(item, dict):
+            continue
+        model = dict(item)
+        model_provider = _optional_cli_string(model.get("provider"))
+        if normalized_provider is not None:
+            if model_provider is None or model_provider.lower() != normalized_provider:
+                continue
+        if local_only and str(model_provider or "").lower() not in {"local", "ollama", "lmstudio"}:
+            continue
+        models.append(model)
+    return {"models": models}
 
 
 async def _build_plugin_inspect_payload(
@@ -4573,6 +4638,47 @@ def channels_status(
         _run_with_services(lambda services: services.gateway_channels.build_snapshot())
     )
     _emit_channel_inventory(payload, json_output=json_output)
+
+
+@models_app.command("list")
+def models_list_command(
+    all_models: bool = typer.Option(
+        False,
+        "--all",
+        help="Show the full available catalog when the runtime exposes it.",
+    ),
+    local_only: bool = typer.Option(
+        False,
+        "--local",
+        help="Filter to local model providers.",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Filter to one provider.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit model catalog as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit one model id per line.",
+    ),
+) -> None:
+    _ = all_models
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_list_payload(
+            services,
+            provider=provider,
+            local_only=local_only,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_list(payload, json_output=json_output, plain=plain)
 
 
 @plugins_app.command("list")
