@@ -5540,6 +5540,19 @@ async def _build_models_aliases_payload(services: CliServices) -> dict[str, obje
     return {"aliases": aliases}
 
 
+async def _set_model_alias_payload(
+    services: CliServices,
+    *,
+    alias: str,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model alias config runtime is unavailable.")
+    result = gateway_config.set_model_alias(alias=alias, model_ref=model)
+    return dict(result)
+
+
 async def _build_models_list_payload(
     services: CliServices,
     *,
@@ -8816,6 +8829,27 @@ def models_aliases_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_aliases(payload, json_output=json_output, plain=plain)
+
+
+@models_aliases_app.command("add")
+def models_aliases_add_command(
+    alias: str = typer.Argument(..., help="Alias name."),
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _set_model_alias_payload(
+                    services,
+                    alias=alias,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Alias {payload.get('alias')} -> {payload.get('target')}")
 
 
 @models_app.command("status")

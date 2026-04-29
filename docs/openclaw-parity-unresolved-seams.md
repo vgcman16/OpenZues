@@ -205,8 +205,13 @@ provider/local filters without duplicating the model catalog runtime, and
 default/resolved/allowed/auth status fields. `models aliases list` now reads
 OpenClaw-shaped `agents.defaults.models[*].alias` config from the native
 OpenZues config projection, falls back to model-catalog alias metadata when
-available, and supports the upstream JSON/plain/human output shapes. Live auth
-probes remain unavailable until the native model auth health runtime exists.
+available, and supports the upstream JSON/plain/human output shapes. `models
+aliases add` now normalizes aliases, defaults unqualified model ids to the
+OpenAI provider, rejects duplicates pointing elsewhere, and writes the alias
+through `GatewayConfigService` into `agents.defaults.models`. Remaining model
+alias CLI parity is `models aliases remove` plus the broader fallback/auth-order
+mutation cluster. Live auth probes remain unavailable until the native model
+auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
