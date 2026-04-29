@@ -892,6 +892,36 @@ def _discord_bot_authorization(secret_token: str | None) -> str:
     return f"Bot {token}"
 
 
+def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<#(\d+)>$", trimmed)
+    if mention:
+        return {"channelId": str(mention.group(1))}
+    channel_prefix = re.match(r"^(?:channel:|discord:)?(\d+)$", trimmed, re.IGNORECASE)
+    if channel_prefix:
+        return {"channelId": str(channel_prefix.group(1))}
+    guild_prefix = re.match(r"^(?:guild:|server:)(\d+)$", trimmed, re.IGNORECASE)
+    if guild_prefix:
+        return {"guildId": str(guild_prefix.group(1)), "guildOnly": True}
+    split = trimmed.split("/") if "/" in trimmed else trimmed.split("#")
+    if len(split) >= 2:
+        guild = str(split[0] or "").strip()
+        channel = "#".join(split[1:]).strip()
+        if not channel:
+            return {"guild": guild, "guildOnly": True} if guild else {}
+        if guild.isdigit():
+            payload: dict[str, object] = {"guildId": guild}
+            if channel.isdigit():
+                payload["channelId"] = channel
+            else:
+                payload["channel"] = channel
+            return payload
+        return {"guild": guild, "channel": channel}
+    return {"guild": trimmed, "guildOnly": True}
+
+
 def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
     def resolve(enabled_bit: int, limited_bit: int) -> str:
         if flags & enabled_bit:
@@ -5392,6 +5422,12 @@ class OpsMeshService:
                 kind=normalized_kind,
                 inputs=normalized_inputs,
             )
+        if normalized_channel == "discord":
+            return await self._resolve_discord_channel_targets(
+                account_id=account_id,
+                kind=normalized_kind,
+                inputs=normalized_inputs,
+            )
         if normalized_channel != "slack" or normalized_kind not in {
             "auto",
             "channel",
@@ -5638,6 +5674,120 @@ class OpsMeshService:
                     "name": normalized,
                 }
             )
+        return results
+
+    async def _resolve_discord_channel_targets(
+        self,
+        *,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        if kind not in {"auto", "channel", "group"}:
+            return [
+                _unresolved_channel_target(
+                    input_value,
+                    "Discord route-backed resolver currently supports channel targets.",
+                )
+                for input_value in inputs
+            ]
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel="discord",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            return [
+                _unresolved_channel_target(input_value, "missing Discord route")
+                for input_value in inputs
+            ]
+        secret_token = await self._notification_route_secret_token(route)
+        if not secret_token:
+            return [
+                _unresolved_channel_target(input_value, "missing Discord token")
+                for input_value in inputs
+            ]
+        return await asyncio.to_thread(
+            self._resolve_discord_group_targets,
+            secret_token,
+            inputs,
+        )
+
+    def _resolve_discord_group_targets(
+        self,
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        authorization = _discord_bot_authorization(secret_token)
+        guilds_result = self._get_json_provider_url(
+            _discord_api_endpoint("users/@me/guilds"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        guilds: list[dict[str, object]] = []
+        if isinstance(guilds_result, list):
+            for guild in guilds_result:
+                if not isinstance(guild, dict):
+                    continue
+                guild_id = str(guild.get("id") or "").strip()
+                guild_name = str(guild.get("name") or "").strip()
+                if guild_id:
+                    guilds.append({"id": guild_id, "name": guild_name})
+
+        results: list[dict[str, object]] = []
+        for input_value in inputs:
+            parsed = _parse_discord_channel_resolve_input(input_value)
+            channel_id = str(parsed.get("channelId") or "").strip()
+            if not channel_id:
+                results.append(
+                    _unresolved_channel_target(
+                        input_value,
+                        "Discord route-backed resolver currently supports channel ids.",
+                    )
+                )
+                continue
+            try:
+                channel_result = self._get_json_provider_url(
+                    _discord_api_endpoint(f"channels/{channel_id}"),
+                    secret_header_name="Authorization",
+                    secret_token=authorization,
+                )
+            except RuntimeError as exc:
+                results.append(_unresolved_channel_target(input_value, str(exc)))
+                continue
+            if not isinstance(channel_result, dict):
+                results.append(_unresolved_channel_target(input_value, "channel not found"))
+                continue
+            resolved_channel_id = str(channel_result.get("id") or "").strip()
+            guild_id = str(channel_result.get("guild_id") or "").strip()
+            if not resolved_channel_id or not guild_id:
+                results.append(_unresolved_channel_target(input_value, "channel not found"))
+                continue
+            guild = next(
+                (entry for entry in guilds if str(entry.get("id") or "") == guild_id),
+                None,
+            )
+            expected_guild_id = str(parsed.get("guildId") or "").strip()
+            channel_name = str(channel_result.get("name") or "").strip()
+            if expected_guild_id and expected_guild_id != guild_id:
+                note = (
+                    f"channel belongs to guild {guild.get('name')}"
+                    if guild and str(guild.get("name") or "").strip()
+                    else "channel belongs to a different guild"
+                )
+                results.append(_unresolved_channel_target(input_value, note))
+                continue
+            payload: dict[str, object] = {
+                "input": input_value,
+                "resolved": True,
+                "id": resolved_channel_id,
+            }
+            if channel_name:
+                payload["name"] = channel_name
+            results.append(payload)
         return results
 
     def _probe_discord_provider_route(
