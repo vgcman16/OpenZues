@@ -2095,10 +2095,18 @@ def _emit_sandbox_inventory_summary(
     browsers: list[object],
 ) -> None:
     total_count = len(containers) + len(browsers)
+    items = [*containers, *browsers]
     running_count = sum(
-        1 for item in [*containers, *browsers] if _sandbox_inventory_is_running(item)
+        1 for item in items if _sandbox_inventory_is_running(item)
+    )
+    mismatch_count = sum(
+        1 for item in items if isinstance(item, dict) and item.get("imageMatch") is False
     )
     typer.echo(f"Total: {total_count} ({running_count} running)")
+    if mismatch_count > 0:
+        typer.echo("")
+        typer.echo(f"{mismatch_count} runtime(s) with config mismatch detected.")
+        typer.echo("Run 'openclaw sandbox recreate --all' to update all runtimes.")
 
 
 def _sandbox_inventory_is_running(item: object) -> bool:
@@ -2478,6 +2486,12 @@ def _sandbox_inventory_item_from_metadata_row(row: dict[str, object]) -> dict[st
         item["sandboxMode"] = sandbox_mode
     if isinstance(sandbox_policy, dict):
         item["sandboxPolicy"] = dict(sandbox_policy)
+    image_match = metadata.get("imageMatch")
+    if isinstance(image_match, bool):
+        item["imageMatch"] = image_match
+    image = _optional_cli_string(metadata.get("image"))
+    if image is not None:
+        item["image"] = image
     updated_at = _optional_cli_string(row.get("updated_at"))
     if updated_at is not None:
         item["updatedAt"] = updated_at

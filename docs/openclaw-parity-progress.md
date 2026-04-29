@@ -158,6 +158,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "sandbox_list or sandbox_recreate or sandbox_explain"`: 6 passed after rechecking adjacent sandbox CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox list summary slice.
 - `mypy src\openzues\cli.py`: clean after the sandbox list summary slice.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list_human_output_warns"`: 1 passed after adding OpenClaw's sandbox list config-mismatch recreate hint.
+- `python -m pytest tests\test_cli.py -q -k "sandbox_list or sandbox_recreate or sandbox_explain"`: 7 passed after rechecking adjacent sandbox CLI surfaces with mismatch metadata.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sandbox mismatch summary slice.
+- `mypy src\openzues\cli.py`: clean after the sandbox mismatch summary slice.
 - `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
 - `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.

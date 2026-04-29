@@ -86,7 +86,8 @@ auth/probe inspection, provider usage/security-audit runtime adapters,
 plugin/runtime inspection, doctor readiness checks, non-metadata external
 sandbox container cleanup, and broader TUI ergonomics. The existing
 `sandbox list` human output now also mirrors OpenClaw's total/running summary
-line after listing native saved sandbox runtimes.
+line and config-mismatch recreate hint after listing native saved sandbox
+runtimes.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
