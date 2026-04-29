@@ -152,7 +152,9 @@ OpenClaw-shaped structured log lines, filters by channel, applies the upstream
 limit-after-filtering rule, and emits JSON/human output.
 Slack native routes now provide the first production live target resolver slice:
 channel/group resolution calls Slack `conversations.list` through the stored
-route token and matches channel ids, mentions, and names.
+route token and matches channel ids, mentions, and names. Slack user resolution
+now also calls Slack `users.list` through the same native route token and
+matches user ids, mentions, names, display/real names, and email addresses.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
@@ -1547,6 +1549,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `conversations.list` with the saved route token to resolve channel ids,
   channel mentions, and names before falling back to unresolved results.
 - Verified the Slack channel resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_channel_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\services\ops_mesh.py src\openzues\app.py src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py src\openzues\app.py src\openzues\cli.py`.
+- Slack route-backed `channels resolve --kind user` now uses Slack `users.list`
+  with the saved route token to resolve user ids, mentions, names, display/real
+  names, and email addresses before falling back to unresolved results.
+- Verified the Slack user resolver seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_user_resolver"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_resolve_json or route_backed_slack_channel_resolver or route_backed_slack_user_resolver or channels_status_json or route_backed_slack_probe"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

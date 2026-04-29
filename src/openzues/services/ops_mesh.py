@@ -634,6 +634,129 @@ def _resolve_slack_channel_target(
     }
 
 
+def _parse_slack_user_resolve_input(raw: str) -> dict[str, str]:
+    trimmed = raw.strip()
+    if not trimmed:
+        return {}
+    mention = re.match(r"^<@([A-Z0-9]+)>$", trimmed, re.IGNORECASE)
+    if mention:
+        return {"id": str(mention.group(1)).upper()}
+    prefixed = re.sub(r"^(slack:|user:)", "", trimmed, flags=re.IGNORECASE)
+    if re.match(r"^[A-Z][A-Z0-9]+$", prefixed, re.IGNORECASE):
+        return {"id": prefixed.upper()}
+    if "@" in trimmed and not trimmed.startswith("@"):
+        return {"email": trimmed.lower()}
+    name = trimmed.removeprefix("@").strip()
+    return {"name": name} if name else {}
+
+
+def _slack_user_display_name(user: dict[str, object] | None) -> str:
+    if user is None:
+        return ""
+    for key in ("displayName", "realName", "name"):
+        value = str(user.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _score_slack_user(user: dict[str, object], parsed: dict[str, str]) -> int:
+    score = 0
+    if not bool(user.get("deleted")):
+        score += 3
+    if not bool(user.get("isBot")) and not bool(user.get("isAppUser")):
+        score += 2
+    parsed_email = str(parsed.get("email") or "").strip().lower()
+    if parsed_email and str(user.get("email") or "").strip().lower() == parsed_email:
+        score += 5
+    parsed_name = str(parsed.get("name") or "").strip().lower()
+    if parsed_name:
+        candidates = {
+            str(user.get("name") or "").strip().lower(),
+            str(user.get("displayName") or "").strip().lower(),
+            str(user.get("realName") or "").strip().lower(),
+        }
+        if parsed_name in candidates:
+            score += 2
+    return score
+
+
+def _resolve_slack_user_from_matches(
+    input_value: str,
+    matches: list[dict[str, object]],
+    parsed: dict[str, str],
+) -> dict[str, object]:
+    best = sorted(
+        matches,
+        key=lambda user: _score_slack_user(user, parsed),
+        reverse=True,
+    )[0]
+    payload: dict[str, object] = {
+        "input": input_value,
+        "resolved": True,
+        "id": str(best.get("id") or ""),
+    }
+    name = _slack_user_display_name(best)
+    if name:
+        payload["name"] = name
+    if len(matches) > 1:
+        payload["note"] = "multiple matches; chose best"
+    return payload
+
+
+def _resolve_slack_user_target(
+    input_value: str,
+    users: list[dict[str, object]],
+) -> dict[str, object]:
+    parsed = _parse_slack_user_resolve_input(input_value)
+    parsed_id = parsed.get("id")
+    if parsed_id:
+        match = next(
+            (
+                user
+                for user in users
+                if str(user.get("id") or "").strip().upper() == parsed_id
+            ),
+            None,
+        )
+        payload: dict[str, object] = {
+            "input": input_value,
+            "resolved": True,
+            "id": parsed_id,
+        }
+        name = _slack_user_display_name(match)
+        if name:
+            payload["name"] = name
+        return payload
+    parsed_email = str(parsed.get("email") or "").strip().lower()
+    if parsed_email:
+        matches = [
+            user
+            for user in users
+            if str(user.get("email") or "").strip().lower() == parsed_email
+        ]
+        if matches:
+            return _resolve_slack_user_from_matches(input_value, matches, parsed)
+    parsed_name = str(parsed.get("name") or "").strip().lower()
+    if parsed_name:
+        matches = [
+            user
+            for user in users
+            if parsed_name
+            in {
+                str(user.get("name") or "").strip().lower(),
+                str(user.get("displayName") or "").strip().lower(),
+                str(user.get("realName") or "").strip().lower(),
+            }
+        ]
+        if matches:
+            return _resolve_slack_user_from_matches(input_value, matches, parsed)
+    return {
+        "input": input_value,
+        "resolved": False,
+    }
+
+
 def _slack_media_filename(media_url: str, index: int) -> str:
     parsed = urlparse(media_url)
     name = unquote(Path(parsed.path).name).strip()
@@ -5267,6 +5390,7 @@ class OpsMeshService:
             "auto",
             "channel",
             "group",
+            "user",
         }:
             return [
                 _unresolved_channel_target(input_value, "native provider resolver unavailable")
@@ -5291,6 +5415,13 @@ class OpsMeshService:
                 _unresolved_channel_target(input_value, "missing Slack token")
                 for input_value in normalized_inputs
             ]
+        if normalized_kind == "user":
+            return await asyncio.to_thread(
+                self._resolve_slack_user_targets,
+                route,
+                secret_token,
+                normalized_inputs,
+            )
         return await asyncio.to_thread(
             self._resolve_slack_channel_targets,
             route,
@@ -5350,6 +5481,69 @@ class OpsMeshService:
             if cursor is None:
                 break
         return [_resolve_slack_channel_target(input_value, channels) for input_value in inputs]
+
+    def _resolve_slack_user_targets(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        inputs: list[str],
+    ) -> list[dict[str, object]]:
+        users: list[dict[str, object]] = []
+        cursor: str | None = None
+        while True:
+            payload: dict[str, object] = {"limit": 200}
+            if cursor:
+                payload["cursor"] = cursor
+            result = self._post_json_webhook(
+                _slack_api_endpoint(str(route.get("target") or ""), "users.list"),
+                payload,
+                secret_header_name="Authorization",
+                secret_token=_slack_bearer_token(secret_token),
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Slack API returned a non-JSON response.")
+            if result.get("ok") is False:
+                error = str(result.get("error") or "unknown_error")
+                raise RuntimeError(f"Slack API returned {error}.")
+            members = result.get("members")
+            if isinstance(members, list):
+                for member in members:
+                    if not isinstance(member, dict):
+                        continue
+                    user_id = str(member.get("id") or "").strip()
+                    user_name = str(member.get("name") or "").strip()
+                    if not user_id or not user_name:
+                        continue
+                    profile = member.get("profile")
+                    if not isinstance(profile, dict):
+                        profile = {}
+                    users.append(
+                        {
+                            "id": user_id,
+                            "name": user_name,
+                            "displayName": str(
+                                profile.get("display_name") or ""
+                            ).strip(),
+                            "realName": str(
+                                profile.get("real_name")
+                                or member.get("real_name")
+                                or ""
+                            ).strip(),
+                            "email": str(profile.get("email") or "").strip().lower(),
+                            "deleted": bool(member.get("deleted")),
+                            "isBot": bool(member.get("is_bot")),
+                            "isAppUser": bool(member.get("is_app_user")),
+                        }
+                    )
+            metadata = result.get("response_metadata")
+            cursor = (
+                str(metadata.get("next_cursor") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            ) or None
+            if cursor is None:
+                break
+        return [_resolve_slack_user_target(input_value, users) for input_value in inputs]
 
     def _probe_discord_provider_route(
         self,
