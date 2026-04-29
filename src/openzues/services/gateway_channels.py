@@ -60,6 +60,18 @@ class GatewayChannelAccountProbe(Protocol):
         ...
 
 
+class GatewayChannelTargetResolver(Protocol):
+    async def __call__(
+        self,
+        *,
+        channel: str | None,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, Any]]:
+        ...
+
+
 def _resolve_channel_label(channel_id: str) -> str:
     normalized = channel_id.strip().replace("-", " ").replace("_", " ")
     return " ".join(part.capitalize() for part in normalized.split()) or channel_id
@@ -79,9 +91,11 @@ class GatewayChannelsService:
         *,
         list_notification_route_views: Callable[[], Awaitable[list[NotificationRouteView]]],
         probe_account: GatewayChannelAccountProbe | None = None,
+        resolve_targets: GatewayChannelTargetResolver | None = None,
     ) -> None:
         self._list_notification_route_views = list_notification_route_views
         self._probe_account = probe_account
+        self._resolve_targets = resolve_targets
 
     async def build_snapshot(
         self,
@@ -232,6 +246,31 @@ class GatewayChannelsService:
             "timeoutMs": timeout_ms,
         }
 
+    async def resolve_targets(
+        self,
+        *,
+        channel: str | None,
+        account_id: str | None,
+        kind: str,
+        inputs: list[str],
+    ) -> list[dict[str, Any]]:
+        if not inputs:
+            return []
+        if self._resolve_targets is None:
+            return [_unresolved_target_payload(input_value) for input_value in inputs]
+        try:
+            return await self._resolve_targets(
+                channel=channel,
+                account_id=account_id,
+                kind=kind,
+                inputs=inputs,
+            )
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            return [
+                _unresolved_target_payload(input_value, error=str(exc))
+                for input_value in inputs
+            ]
+
 
 def _unavailable_probe_payload(timeout_ms: int) -> dict[str, Any]:
     return {
@@ -241,3 +280,14 @@ def _unavailable_probe_payload(timeout_ms: int) -> dict[str, Any]:
         "summary": "Native provider credential probes are not available yet.",
         "timeoutMs": timeout_ms,
     }
+
+
+def _unresolved_target_payload(input_value: str, *, error: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "input": input_value,
+        "resolved": False,
+        "note": "native provider resolver unavailable",
+    }
+    if error:
+        payload["error"] = error
+    return payload

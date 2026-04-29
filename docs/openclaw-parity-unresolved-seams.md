@@ -108,15 +108,17 @@ honest unavailable provider-probe posture. The CLI now routes status probes
 through the `channels.status` gateway method owner, and the channel inventory
 service has a fakeable account-probe adapter that records per-account probe
 results when one is registered; remaining channel CLI parity is provider-specific
-credential probe implementations and provider-backed live resolve adapters.
+credential probe implementations and production provider-backed live resolve
+adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
 probe result used by `channels.status` when one is available, otherwise an
 honest unavailable probe envelope. `channels resolve` now accepts upstream-shaped
-entries/channel/account/kind/JSON options and resolves saved route-backed
-conversation targets into OpenClaw-shaped result rows before provider-native
-lookup exists. `channels logs` now reads the native workspace log tail, parses
+entries/channel/account/kind/JSON options, resolves saved route-backed
+conversation targets first, and falls through to a fakeable live target
+resolver for provider adapters before returning OpenClaw-shaped unresolved
+rows. `channels logs` now reads the native workspace log tail, parses
 OpenClaw-shaped structured log lines, filters by channel, applies the upstream
 limit-after-filtering rule, and emits JSON/human output.
 

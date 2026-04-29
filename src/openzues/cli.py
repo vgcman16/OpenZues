@@ -4750,6 +4750,21 @@ def _channel_resolve_match_entry(
     return None
 
 
+def _normalize_channel_resolve_result(
+    entry: str,
+    result: dict[str, object],
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "input": _optional_cli_string(result.get("input")) or entry,
+        "resolved": bool(result.get("resolved")),
+    }
+    for key in ("id", "name", "error", "note"):
+        text = _optional_cli_string(result.get(key))
+        if text is not None:
+            payload[key] = text
+    return payload
+
+
 async def _build_channel_resolve_results(
     services: CliServices,
     *,
@@ -4770,25 +4785,49 @@ async def _build_channel_resolve_results(
         kind=normalized_kind,
     )
 
-    results: list[dict[str, object]] = []
+    route_results: dict[str, dict[str, object]] = {}
+    unresolved_entries: list[str] = []
     for entry in normalized_entries:
         target = _channel_resolve_match_entry(entry, targets)
         if target is None:
-            results.append(
-                {
-                    "input": entry,
-                    "resolved": False,
-                    "note": "native provider resolver unavailable",
-                }
-            )
+            unresolved_entries.append(entry)
             continue
+        route_results[entry] = {
+            "input": entry,
+            "resolved": True,
+            "id": target["id"],
+            "name": target["name"],
+            "note": "saved conversation target",
+        }
+    live_results: dict[str, dict[str, object]] = {}
+    resolver = getattr(services.gateway_channels, "resolve_targets", None)
+    if unresolved_entries and callable(resolver):
+        resolved_live = await resolver(
+            channel=_optional_cli_string(channel),
+            account_id=_optional_cli_string(account),
+            kind=normalized_kind,
+            inputs=unresolved_entries,
+        )
+        if isinstance(resolved_live, list):
+            for item in resolved_live:
+                if not isinstance(item, dict):
+                    continue
+                input_value = _optional_cli_string(item.get("input"))
+                if input_value is None:
+                    continue
+                live_results[input_value] = _normalize_channel_resolve_result(
+                    input_value,
+                    cast(dict[str, object], item),
+                )
+    results: list[dict[str, object]] = []
+    for entry in normalized_entries:
         results.append(
-            {
+            route_results.get(entry)
+            or live_results.get(entry)
+            or {
                 "input": entry,
-                "resolved": True,
-                "id": target["id"],
-                "name": target["name"],
-                "note": "saved conversation target",
+                "resolved": False,
+                "note": "native provider resolver unavailable",
             }
         )
     return results

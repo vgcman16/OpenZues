@@ -624,6 +624,80 @@ def test_channels_resolve_json_uses_saved_conversation_targets(tmp_path, monkeyp
     ]
 
 
+def test_channels_resolve_json_uses_registered_live_resolver(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeGatewayChannels:
+        async def build_snapshot(self) -> dict[str, object]:
+            return {"routes": []}
+
+        async def resolve_targets(
+            self,
+            *,
+            channel: str | None,
+            account_id: str | None,
+            kind: str,
+            inputs: list[str],
+        ) -> list[dict[str, object]]:
+            calls.append(
+                {
+                    "channel": channel,
+                    "accountId": account_id,
+                    "kind": kind,
+                    "inputs": inputs,
+                }
+            )
+            return [
+                {
+                    "input": "deploy-room",
+                    "resolved": True,
+                    "id": "C123",
+                    "name": "Deploy Room",
+                    "note": "live provider resolver",
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_channels=FakeGatewayChannels()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "resolve",
+            "deploy-room",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--kind",
+            "channel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "slack",
+            "accountId": "workspace-bot",
+            "kind": "channel",
+            "inputs": ["deploy-room"],
+        }
+    ]
+    assert json.loads(result.stdout) == [
+        {
+            "input": "deploy-room",
+            "resolved": True,
+            "id": "C123",
+            "name": "Deploy Room",
+            "note": "live provider resolver",
+        }
+    ]
+
+
 def test_channels_logs_json_filters_channel_and_limits_lines(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Logs")
     logs_dir = tmp_path / "logs"
