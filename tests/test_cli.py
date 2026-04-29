@@ -2368,6 +2368,83 @@ def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
     assert "agents.defaults.sandbox.mode" in payload["fixIt"]
 
 
+def test_sandbox_explain_json_projects_config_sandbox_tool_policy(monkeypatch) -> None:
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "scope": "agent",
+                            "workspaceAccess": "none",
+                        }
+                    },
+                    "list": [
+                        {
+                            "id": "tavern",
+                            "tools": {
+                                "sandbox": {
+                                    "tools": {
+                                        "alsoAllow": ["message", "tts"],
+                                    }
+                                }
+                            },
+                        }
+                    ],
+                },
+                "tools": {
+                    "sandbox": {
+                        "tools": {
+                            "allow": ["browser"],
+                            "deny": ["shell"],
+                        }
+                    }
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=None,
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "explain",
+            "--agent",
+            "tavern",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["agentId"] == "tavern"
+    assert payload["mainSessionKey"] == "agent:tavern:main"
+    assert payload["sandbox"]["mode"] == "all"
+    assert payload["sandbox"]["scope"] == "agent"
+    assert payload["sandbox"]["workspaceAccess"] == "none"
+    assert payload["sandbox"]["sessionIsSandboxed"] is True
+    assert payload["sandbox"]["tools"]["allow"] == ["browser", "message", "tts", "image"]
+    assert payload["sandbox"]["tools"]["deny"] == ["shell"]
+    assert payload["sandbox"]["tools"]["sources"]["allow"] == {
+        "source": "agent",
+        "key": "agents.list[].tools.sandbox.tools.alsoAllow",
+    }
+    assert payload["sandbox"]["tools"]["sources"]["deny"] == {
+        "source": "global",
+        "key": "tools.sandbox.tools.deny",
+    }
+    assert "agents.defaults.sandbox.mode=off" in payload["fixIt"]
+
+
 def test_cron_status_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -104,6 +104,38 @@ _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
 _CHANNEL_LOG_DEFAULT_LIMIT = 200
 _CHANNEL_LOG_MAX_BYTES = 1_000_000
+_DEFAULT_SANDBOX_TOOL_ALLOW = [
+    "exec",
+    "process",
+    "read",
+    "write",
+    "edit",
+    "apply_patch",
+    "image",
+    "sessions_list",
+    "sessions_history",
+    "sessions_send",
+    "sessions_spawn",
+    "sessions_yield",
+    "subagents",
+    "session_status",
+]
+_DEFAULT_SANDBOX_TOOL_DENY = [
+    "browser",
+    "canvas",
+    "nodes",
+    "cron",
+    "gateway",
+    "discord",
+    "imessage",
+    "line",
+    "matrix",
+    "signal",
+    "slack",
+    "telegram",
+    "whatsapp",
+    "xmtp",
+]
 _AcpClientRunner = Callable[[AcpClientSpawnPlan], int | None]
 _acp_client_runner: _AcpClientRunner | None = None
 _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
@@ -5424,6 +5456,7 @@ async def _build_sandbox_explain_payload(
     session_key: str | None,
     agent_id: str | None,
 ) -> dict[str, object]:
+    config_snapshot = _gateway_config_snapshot_for_cli(services)
     resolved_agent_id = (
         _optional_cli_string(agent_id)
         or _agent_id_from_session_key(session_key)
@@ -5434,6 +5467,10 @@ async def _build_sandbox_explain_payload(
     )
     main_session_key = _main_session_key_for_agent(resolved_agent_id)
     metadata = await _sandbox_metadata_for_session(services, resolved_session_key)
+    config = _sandbox_explain_config_for_agent(
+        config_snapshot,
+        agent_id=resolved_agent_id,
+    )
     sandboxed = bool(metadata.get("sandboxed")) if metadata is not None else False
     sandbox_mode = (
         _optional_cli_string(metadata.get("sandboxMode"))
@@ -5446,19 +5483,43 @@ async def _build_sandbox_explain_payload(
         if metadata is not None
         else None
     )
+    metadata_scope = (
+        _optional_cli_string(metadata.get("sandboxScope"))
+        if metadata is not None
+        else None
+    )
+    config_mode = _sandbox_explain_mode(config.get("mode"))
+    config_scope = _sandbox_explain_scope(config.get("scope"))
+    config_workspace_access = _sandbox_explain_workspace_access(
+        config.get("workspaceAccess")
+    )
+    config_workspace_root = _optional_cli_string(config.get("workspaceRoot"))
+    if metadata is None:
+        sandboxed = config_mode == "all" or (
+            config_mode == "non-main"
+            and resolved_session_key.strip() != main_session_key.strip()
+        )
+    tool_policy = _sandbox_tool_policy_from_snapshot(
+        config_snapshot,
+        agent_id=resolved_agent_id,
+    )
     sandbox: dict[str, object] = {
-        "mode": sandbox_mode or ("workspace-write" if sandboxed else "off"),
-        "scope": "session",
-        "workspaceAccess": sandbox_mode or ("workspace-write" if sandboxed else "direct"),
-        "workspaceRoot": workspace_root,
+        "mode": sandbox_mode or config_mode,
+        "scope": metadata_scope or ("session" if metadata is not None else config_scope),
+        "workspaceAccess": (
+            sandbox_mode
+            or (
+                "workspace-write"
+                if metadata is not None and sandboxed
+                else config_workspace_access
+            )
+        ),
+        "workspaceRoot": workspace_root or config_workspace_root,
         "sessionIsSandboxed": sandboxed,
         "tools": {
-            "allow": [],
-            "deny": [],
-            "sources": {
-                "allow": {"source": "openzues-metadata"},
-                "deny": {"source": "openzues-metadata"},
-            },
+            "allow": tool_policy["allow"],
+            "deny": tool_policy["deny"],
+            "sources": tool_policy["sources"],
         },
     }
     if metadata is not None:
@@ -5485,17 +5546,7 @@ async def _build_sandbox_explain_payload(
             "allowFrom": {"global": None, "agent": None},
             "failures": [],
         },
-        "fixIt": [
-            "agents.defaults.sandbox.mode",
-            "agents.list[].sandbox.mode",
-            "tools.sandbox.tools.allow",
-            "tools.sandbox.tools.alsoAllow",
-            "tools.sandbox.tools.deny",
-            "agents.list[].tools.sandbox.tools.allow",
-            "agents.list[].tools.sandbox.tools.alsoAllow",
-            "agents.list[].tools.sandbox.tools.deny",
-            "tools.elevated.enabled",
-        ],
+        "fixIt": _sandbox_explain_fix_it(sandbox_mode or config_mode),
     }
 
 
@@ -5516,6 +5567,307 @@ async def _sandbox_metadata_for_session(
         metadata = row.get("metadata")
         return dict(metadata) if isinstance(metadata, dict) else None
     return None
+
+
+def _gateway_config_snapshot_for_cli(services: object) -> dict[str, Any]:
+    config_service = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {}
+    snapshot = build_snapshot()
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _sandbox_explain_config_for_agent(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, object]:
+    resolved: dict[str, object] = {}
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        defaults_config = agents_config.get("defaults")
+        if isinstance(defaults_config, dict):
+            default_sandbox = defaults_config.get("sandbox")
+            if isinstance(default_sandbox, dict):
+                resolved.update(default_sandbox)
+        agent_config = _sandbox_explain_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        if isinstance(agent_config, dict):
+            agent_sandbox = agent_config.get("sandbox")
+            if isinstance(agent_sandbox, dict):
+                resolved.update(agent_sandbox)
+    return resolved
+
+
+def _sandbox_explain_agent_config_from_root(
+    agents_config: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    raw_agents = agents_config.get("list")
+    if not isinstance(raw_agents, list):
+        return None
+    normalized_agent_id = _normalize_agent_id_for_cli(agent_id)
+    for raw_agent in raw_agents:
+        if not isinstance(raw_agent, dict):
+            continue
+        candidate_id = _optional_cli_string(raw_agent.get("id"))
+        if (
+            candidate_id is not None
+            and _normalize_agent_id_for_cli(candidate_id) == normalized_agent_id
+        ):
+            return raw_agent
+    return None
+
+
+def _sandbox_explain_mode(value: object) -> Literal["off", "non-main", "all"]:
+    return _doctor_sandbox_mode(value)
+
+
+def _sandbox_explain_scope(value: object) -> str:
+    text = _optional_cli_string(value)
+    if text in {"session", "agent", "shared"}:
+        return text
+    return "agent"
+
+
+def _sandbox_explain_workspace_access(value: object) -> str:
+    text = _optional_cli_string(value)
+    if text in {"none", "ro", "rw"}:
+        return text
+    return "none"
+
+
+def _sandbox_tool_policy_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, object]:
+    agent_tools = _sandbox_agent_tools_config(snapshot, agent_id=agent_id)
+    global_tools = _sandbox_global_tools_config(snapshot)
+    allow_values, allow_source, allow_defined = _sandbox_pick_tool_list(
+        agent_tools,
+        global_tools,
+        key="allow",
+        agent_source_key="agents.list[].tools.sandbox.tools.allow",
+        global_source_key="tools.sandbox.tools.allow",
+        default_source_key="tools.sandbox.tools.allow",
+    )
+    also_allow_values, also_allow_source = _sandbox_pick_optional_tool_list(
+        agent_tools,
+        global_tools,
+        key="alsoAllow",
+        agent_source_key="agents.list[].tools.sandbox.tools.alsoAllow",
+        global_source_key="tools.sandbox.tools.alsoAllow",
+    )
+    deny_values, deny_source, deny_defined = _sandbox_pick_tool_list(
+        agent_tools,
+        global_tools,
+        key="deny",
+        agent_source_key="agents.list[].tools.sandbox.tools.deny",
+        global_source_key="tools.sandbox.tools.deny",
+        default_source_key="tools.sandbox.tools.deny",
+    )
+    allow = _sandbox_merge_allowlist(allow_values, also_allow_values)
+    explicit_allow = _dedupe_cli_strings(
+        [*(allow_values or []), *(also_allow_values or [])]
+    )
+    deny = (
+        list(deny_values or [])
+        if deny_defined
+        else _sandbox_filter_default_deny(explicit_allow)
+    )
+    allow = _sandbox_expand_allow(allow, deny)
+    return {
+        "allow": allow,
+        "deny": deny,
+        "sources": {
+            "allow": _sandbox_pick_allow_source(
+                allow_source=allow_source,
+                allow_defined=allow_defined,
+                also_allow_source=also_allow_source,
+            ),
+            "deny": deny_source,
+        },
+    }
+
+
+def _sandbox_global_tools_config(snapshot: dict[str, Any]) -> dict[str, object]:
+    tools = snapshot.get("tools")
+    if not isinstance(tools, dict):
+        return {}
+    sandbox = tools.get("sandbox")
+    if not isinstance(sandbox, dict):
+        return {}
+    sandbox_tools = sandbox.get("tools")
+    return dict(sandbox_tools) if isinstance(sandbox_tools, dict) else {}
+
+
+def _sandbox_agent_tools_config(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, object]:
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        agent_config = _sandbox_explain_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        if not isinstance(agent_config, dict):
+            continue
+        tools = agent_config.get("tools")
+        if not isinstance(tools, dict):
+            continue
+        sandbox = tools.get("sandbox")
+        if not isinstance(sandbox, dict):
+            continue
+        sandbox_tools = sandbox.get("tools")
+        if isinstance(sandbox_tools, dict):
+            return dict(sandbox_tools)
+    return {}
+
+
+def _sandbox_pick_tool_list(
+    agent_tools: dict[str, object],
+    global_tools: dict[str, object],
+    *,
+    key: str,
+    agent_source_key: str,
+    global_source_key: str,
+    default_source_key: str,
+) -> tuple[list[str] | None, dict[str, str], bool]:
+    agent_values = _string_list_or_none(agent_tools.get(key))
+    if agent_values is not None:
+        return agent_values, {"source": "agent", "key": agent_source_key}, True
+    global_values = _string_list_or_none(global_tools.get(key))
+    if global_values is not None:
+        return global_values, {"source": "global", "key": global_source_key}, True
+    return None, {"source": "default", "key": default_source_key}, False
+
+
+def _sandbox_pick_optional_tool_list(
+    agent_tools: dict[str, object],
+    global_tools: dict[str, object],
+    *,
+    key: str,
+    agent_source_key: str,
+    global_source_key: str,
+) -> tuple[list[str] | None, dict[str, str] | None]:
+    agent_values = _string_list_or_none(agent_tools.get(key))
+    if agent_values is not None:
+        return agent_values, {"source": "agent", "key": agent_source_key}
+    global_values = _string_list_or_none(global_tools.get(key))
+    if global_values is not None:
+        return global_values, {"source": "global", "key": global_source_key}
+    return None, None
+
+
+def _sandbox_merge_allowlist(
+    base: list[str] | None,
+    extra: list[str] | None,
+) -> list[str]:
+    if base is not None:
+        if not base:
+            return []
+        if not extra:
+            return list(base)
+        return _dedupe_cli_strings([*base, *extra])
+    if extra:
+        return _dedupe_cli_strings([*_DEFAULT_SANDBOX_TOOL_ALLOW, *extra])
+    return list(_DEFAULT_SANDBOX_TOOL_ALLOW)
+
+
+def _sandbox_filter_default_deny(explicit_allow: list[str]) -> list[str]:
+    if not explicit_allow:
+        return list(_DEFAULT_SANDBOX_TOOL_DENY)
+    allowed = {_normalize_tool_name_for_cli(value) for value in explicit_allow}
+    return [
+        tool
+        for tool in _DEFAULT_SANDBOX_TOOL_DENY
+        if _normalize_tool_name_for_cli(tool) not in allowed
+    ]
+
+
+def _sandbox_expand_allow(allow: list[str], deny: list[str]) -> list[str]:
+    expanded = list(allow)
+    deny_names = {_normalize_tool_name_for_cli(value) for value in deny}
+    allow_names = {_normalize_tool_name_for_cli(value) for value in expanded}
+    if expanded and "image" not in deny_names and "image" not in allow_names:
+        expanded.append("image")
+    return expanded
+
+
+def _sandbox_pick_allow_source(
+    *,
+    allow_source: dict[str, str],
+    allow_defined: bool,
+    also_allow_source: dict[str, str] | None,
+) -> dict[str, str]:
+    if allow_defined and allow_source.get("source") == "agent":
+        return allow_source
+    if also_allow_source is not None and also_allow_source.get("source") == "agent":
+        return also_allow_source
+    if allow_defined and allow_source.get("source") == "global":
+        return allow_source
+    if also_allow_source is not None and also_allow_source.get("source") == "global":
+        return also_allow_source
+    return allow_source
+
+
+def _sandbox_explain_fix_it(mode: str) -> list[str]:
+    fix_it: list[str] = []
+    if mode != "off":
+        fix_it.extend(
+            [
+                "agents.defaults.sandbox.mode=off",
+                "agents.list[].sandbox.mode=off",
+            ]
+        )
+    fix_it.extend(
+        [
+            "agents.defaults.sandbox.mode",
+            "agents.list[].sandbox.mode",
+            "tools.sandbox.tools.allow",
+            "tools.sandbox.tools.alsoAllow",
+            "tools.sandbox.tools.deny",
+            "agents.list[].tools.sandbox.tools.allow",
+            "agents.list[].tools.sandbox.tools.alsoAllow",
+            "agents.list[].tools.sandbox.tools.deny",
+            "tools.elevated.enabled",
+        ]
+    )
+    return fix_it
+
+
+def _string_list_or_none(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    return [
+        item
+        for item in (_optional_cli_string(raw_item) for raw_item in value)
+        if item is not None
+    ]
+
+
+def _dedupe_cli_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalize_agent_id_for_cli(value: str) -> str:
+    return value.strip().lower() or "main"
+
+
+def _normalize_tool_name_for_cli(value: str) -> str:
+    return value.strip().lower().replace("-", "_")
 
 
 def _agent_id_from_session_key(session_key: str | None) -> str | None:

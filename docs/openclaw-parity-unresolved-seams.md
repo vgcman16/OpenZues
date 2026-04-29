@@ -69,7 +69,13 @@ The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `agentId`, `sessionKey`, `mainSessionKey`, `sandbox`, `elevated`, and `fixIt`
 fields backed by saved sandbox runtime metadata, and `sandbox recreate` target
 validation plus `--force` cleanup for saved sandbox runtime metadata so stale
-runtime posture is forgotten and recreated on the next use.
+runtime posture is forgotten and recreated on the next use. `sandbox explain`
+now also resolves config-only sandbox posture from OpenClaw-shaped
+`agents.defaults.sandbox`, `agents.list[].sandbox`, `tools.sandbox.tools`,
+and `agents.list[].tools.sandbox.tools` config: mode/scope/workspace access,
+default allow/deny policy, explicit `allow`/`alsoAllow`/`deny`, source
+metadata, and the actionable `agents.defaults.sandbox.mode=off` fix-it entries
+are projected even before a sandbox runtime has been spawned.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
