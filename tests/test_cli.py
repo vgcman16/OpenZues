@@ -2072,6 +2072,102 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     assert r"C:\work\OpenZues" in result.stderr
 
 
+def test_acp_client_spawn_plan_strips_provider_auth_for_default_bridge() -> None:
+    from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
+
+    plan = build_acp_client_spawn_plan(
+        cwd=r"C:\work\OpenZues",
+        server=None,
+        server_args=None,
+        base_env={
+            "PATH": r"C:\Windows",
+            "openai_api_key": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "HF_TOKEN": "hf-secret",
+            "OPENCLAW_SHELL": "interactive",
+            "OPENZUES_ACTIVE_SKILL_SECRET": "skill-secret",
+        },
+        active_skill_env_keys=["OPENZUES_ACTIVE_SKILL_SECRET"],
+    )
+
+    assert plan.cwd == r"C:\work\OpenZues"
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp",)
+    assert plan.strip_provider_auth_env_vars is True
+    assert plan.env == {
+        "PATH": r"C:\Windows",
+        "OPENCLAW_SHELL": "acp-client",
+    }
+    assert plan.stripped_env_keys == (
+        "GITHUB_TOKEN",
+        "HF_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENZUES_ACTIVE_SKILL_SECRET",
+    )
+
+
+def test_acp_client_spawn_plan_preserves_provider_auth_for_custom_server() -> None:
+    from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
+
+    plan = build_acp_client_spawn_plan(
+        server="vendor-acp",
+        server_args=["--stdio"],
+        server_verbose=True,
+        base_env={
+            "OPENAI_API_KEY": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "OPENCLAW_SHELL": "interactive",
+        },
+    )
+
+    assert plan.server_command == "vendor-acp"
+    assert plan.server_args == ("acp", "--stdio", "--verbose")
+    assert plan.strip_provider_auth_env_vars is False
+    assert plan.env == {
+        "OPENAI_API_KEY": "openai-secret",
+        "GITHUB_TOKEN": "github-secret",
+        "OPENCLAW_SHELL": "acp-client",
+    }
+    assert plan.stripped_env_keys == ()
+
+
+def test_acp_client_command_passes_spawn_plan_to_registered_runner(monkeypatch) -> None:
+    from openzues.services.acp_client_runtime import AcpClientSpawnPlan
+
+    calls: list[AcpClientSpawnPlan] = []
+
+    def fake_runner(plan: AcpClientSpawnPlan) -> int:
+        calls.append(plan)
+        return 7
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setattr(cli_module, "_acp_client_runner", fake_runner)
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "client",
+            "--cwd",
+            r"C:\work\OpenZues",
+            "--server-args",
+            "--stdio",
+            "--server-verbose",
+            "--verbose",
+        ],
+    )
+
+    assert result.exit_code == 7
+    assert len(calls) == 1
+    plan = calls[0]
+    assert plan.cwd == r"C:\work\OpenZues"
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp", "--stdio", "--verbose")
+    assert plan.verbose is True
+    assert "OPENAI_API_KEY" not in plan.env
+    assert plan.env["OPENCLAW_SHELL"] == "acp-client"
+
+
 def test_acp_bridge_rejects_mixed_token_sources(tmp_path) -> None:
     token_file = tmp_path / "gateway-token.txt"
     token_file.write_text("file-token\n", encoding="utf-8")
@@ -2270,6 +2366,1377 @@ def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
     assert payload["sandbox"]["runtimeId"] == 7
     assert payload["sandbox"]["policy"] == {"type": "workspaceWrite"}
     assert "agents.defaults.sandbox.mode" in payload["fixIt"]
+
+
+def test_cron_status_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "enabled": True,
+                "storePath": r"C:\Users\skull\.openzues\cron.json",
+                "jobs": 2,
+                "nextWakeAtMs": 1_800_000_000_000,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["enabled"] is True
+    assert payload["storePath"] == r"C:\Users\skull\.openzues\cron.json"
+    assert calls == [("cron.status", {})]
+
+
+def test_cron_list_human_output_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "jobs": [
+                    {
+                        "id": "task-blueprint:7",
+                        "name": "Daily report",
+                        "enabled": True,
+                        "schedule": {"kind": "every", "everyMs": 3_600_000},
+                        "state": {
+                            "nextRunAtMs": 1_800_000_000_000,
+                            "lastStatus": "ok",
+                        },
+                        "sessionTarget": "isolated",
+                        "agentId": "worker",
+                        "payload": {"kind": "agentTurn", "model": "gpt-5.4"},
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "list", "--all"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "task-blueprint:7" in result.stdout
+    assert "Daily report" in result.stdout
+    assert "every 1h" in result.stdout
+    assert "isolated" in result.stdout
+    assert calls == [("cron.list", {"includeDisabled": True})]
+
+
+def test_cron_runs_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "entries": [
+                    {
+                        "jobId": "task-blueprint:7",
+                        "status": "ok",
+                        "runAtMs": 1_800_000_000_000,
+                    }
+                ],
+                "total": 1,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["cron", "runs", "--id", "task-blueprint:7", "--limit", "3", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["entries"][0]["jobId"] == "task-blueprint:7"
+    assert calls == [("cron.runs", {"id": "task-blueprint:7", "limit": 3})]
+
+
+def test_cron_run_exits_success_when_gateway_runs_job(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "ran": True, "runId": "run-7"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["cron", "run", "task-blueprint:7", "--due", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runId"] == "run-7"
+    assert calls == [("cron.run", {"id": "task-blueprint:7", "mode": "due"})]
+
+
+def test_cron_run_exits_failure_when_gateway_does_not_run_job(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "ran": False, "enqueued": False}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "run", "task-blueprint:7"])
+
+    assert result.exit_code == 1
+    assert calls == [("cron.run", {"id": "task-blueprint:7", "mode": "force"})]
+
+
+def test_cron_rm_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "removed": True, "id": "task-blueprint:7"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "rm", "task-blueprint:7", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["removed"] is True
+    assert calls == [("cron.remove", {"id": "task-blueprint:7"})]
+
+
+def test_cron_remove_alias_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "removed": True, "id": "task-blueprint:7"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["cron", "remove", "task-blueprint:7"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("cron.remove", {"id": "task-blueprint:7"})]
+
+
+def test_cron_enable_disable_call_gateway_update(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "job": {"id": params.get("id")}}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    enable = runner.invoke(app, ["cron", "enable", "task-blueprint:7"])
+    disable = runner.invoke(app, ["cron", "disable", "task-blueprint:7"])
+
+    assert enable.exit_code == 0, enable.stdout
+    assert disable.exit_code == 0, disable.stdout
+    assert calls == [
+        ("cron.update", {"id": "task-blueprint:7", "patch": {"enabled": True}}),
+        ("cron.update", {"id": "task-blueprint:7", "patch": {"enabled": False}}),
+    ]
+
+
+def test_cron_add_isolated_cron_message_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "id": "task-blueprint:7",
+                "name": params.get("name"),
+                "schedule": params.get("schedule"),
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Daily report",
+            "--cron",
+            "*/15 * * * *",
+            "--message",
+            "Write the daily report.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Daily report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Write the daily report.",
+                },
+                "delivery": {"mode": "announce", "channel": "last"},
+            },
+        )
+    ]
+
+
+def test_cron_add_main_system_event_every_options_call_gateway_method_owner(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:8", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Hourly heartbeat",
+            "--description",
+            "Keep the main session warm.",
+            "--every",
+            "1h",
+            "--system-event",
+            "Heartbeat from cron.",
+            "--session-key",
+            "agent:main:main",
+            "--wake",
+            "next-heartbeat",
+            "--disabled",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:8"
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Hourly heartbeat",
+                "description": "Keep the main session warm.",
+                "enabled": False,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionKey": "agent:main:main",
+                "sessionTarget": "main",
+                "wakeMode": "next-heartbeat",
+                "payload": {"kind": "systemEvent", "text": "Heartbeat from cron."},
+            },
+        )
+    ]
+
+
+def test_cron_create_alias_trims_model_for_agent_turn_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:9", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "create",
+            "--name",
+            "Model report",
+            "--cron",
+            "0 * * * *",
+            "--message",
+            "Write the model report.",
+            "--model",
+            "  gpt-5.4  ",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:9"
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Model report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "0 * * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Write the model report.",
+                    "model": "gpt-5.4",
+                },
+                "delivery": {"mode": "announce", "channel": "last"},
+            },
+        )
+    ]
+
+
+def test_cron_add_announce_delivery_options_call_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:10", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Announced report",
+            "--cron",
+            "0 9 * * *",
+            "--message",
+            "Send the report.",
+            "--announce",
+            "--channel",
+            "telegram",
+            "--to",
+            "chat-ops",
+            "--account",
+            "ops",
+            "--best-effort-deliver",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Announced report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "0 9 * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {"kind": "agentTurn", "message": "Send the report."},
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "chat-ops",
+                    "accountId": "ops",
+                    "bestEffort": True,
+                },
+            },
+        )
+    ]
+
+
+def test_cron_add_no_deliver_sets_delivery_none(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:11", "name": params.get("name")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Quiet report",
+            "--cron",
+            "30 9 * * *",
+            "--message",
+            "Keep it quiet.",
+            "--no-deliver",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Quiet report",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "30 9 * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {"kind": "agentTurn", "message": "Keep it quiet."},
+                "delivery": {"mode": "none", "channel": "last"},
+            },
+        )
+    ]
+
+
+def test_cron_add_cron_timezone_and_stagger_shape_schedule(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": "task-blueprint:12", "schedule": params.get("schedule")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Zoned report",
+            "--cron",
+            "0 12 * * *",
+            "--tz",
+            "America/Chicago",
+            "--stagger",
+            "5m",
+            "--message",
+            "Write the zoned report.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"] == {
+        "kind": "cron",
+        "expr": "0 12 * * *",
+        "tz": "America/Chicago",
+        "staggerMs": 300_000,
+    }
+
+
+def test_cron_add_at_timezone_normalizes_offsetless_datetime(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Oslo one shot",
+            "--at",
+            "2026-03-23T23:00:00",
+            "--tz",
+            "Europe/Oslo",
+            "--message",
+            "Ship at local time.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"] == {
+        "kind": "at",
+        "at": "2026-03-23T22:00:00.000Z",
+    }
+
+
+def test_cron_add_at_timezone_rejects_nonexistent_dst_gap(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "DST gap",
+            "--at",
+            "2026-03-29T02:30:00",
+            "--tz",
+            "Europe/Oslo",
+            "--message",
+            "This wall-clock time does not exist.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+
+
+def test_cron_add_at_timezone_allows_relative_duration(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Relative Oslo one shot",
+            "--at",
+            "20m",
+            "--tz",
+            "Europe/Oslo",
+            "--message",
+            "Relative scheduling ignores timezone.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"]["kind"] == "at"
+    assert str(calls[0][1]["schedule"]["at"]).endswith("Z")
+
+
+def test_cron_add_at_offsetless_datetime_without_timezone_defaults_to_utc(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "UTC one shot",
+            "--at",
+            "2026-03-23T23:00:00",
+            "--message",
+            "Default offsetless datetimes to UTC.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls[0][1]["schedule"] == {
+        "kind": "at",
+        "at": "2026-03-23T23:00:00.000Z",
+    }
+
+
+def test_cron_add_payload_extra_flags_shape_agent_turn_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "id": "task-blueprint:7", "request": params}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "add",
+            "--name",
+            "Payload extras",
+            "--cron",
+            "* * * * *",
+            "--message",
+            "Ship with extras.",
+            "--model",
+            " gpt-5.4-mini ",
+            "--thinking",
+            " high ",
+            "--timeout-seconds",
+            "300",
+            "--light-context",
+            "--tools",
+            "exec read write",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        (
+            "cron.add",
+            {
+                "name": "Payload extras",
+                "enabled": True,
+                "schedule": {"kind": "cron", "expr": "* * * * *"},
+                "sessionTarget": "isolated",
+                "wakeMode": "now",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Ship with extras.",
+                    "model": "gpt-5.4-mini",
+                    "thinking": "high",
+                    "timeoutSeconds": 300,
+                    "lightContext": True,
+                    "toolsAllow": ["exec", "read", "write"],
+                },
+                "delivery": {"mode": "announce", "channel": "last"},
+            },
+        )
+    ]
+
+
+def test_cron_edit_basic_patch_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--name",
+            "Renamed heartbeat",
+            "--description",
+            "Updated cadence.",
+            "--disable",
+            "--every",
+            "30m",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "name": "Renamed heartbeat",
+                    "description": "Updated cadence.",
+                    "enabled": False,
+                    "schedule": {"kind": "every", "everyMs": 1_800_000},
+                },
+            },
+        )
+    ]
+
+
+def test_cron_edit_agent_turn_delivery_patch_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--session",
+            "isolated",
+            "--session-key",
+            "agent:parity",
+            "--wake",
+            "next-heartbeat",
+            "--message",
+            "Update report.",
+            "--model",
+            " gpt-5.4 ",
+            "--announce",
+            "--channel",
+            "telegram",
+            "--to",
+            "chat-ops",
+            "--account",
+            "ops",
+            "--best-effort-deliver",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "sessionTarget": "isolated",
+                    "sessionKey": "agent:parity",
+                    "wakeMode": "next-heartbeat",
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Update report.",
+                        "model": "gpt-5.4",
+                    },
+                    "delivery": {
+                        "mode": "announce",
+                        "channel": "telegram",
+                        "to": "chat-ops",
+                        "accountId": "ops",
+                        "bestEffort": True,
+                    },
+                },
+            },
+        )
+    ]
+
+
+def test_cron_edit_payload_extra_flags_shape_agent_turn_patch(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    set_result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--message",
+            "Patch with extras.",
+            "--thinking",
+            " high ",
+            "--timeout-seconds",
+            "240",
+            "--light-context",
+            "--tools",
+            "exec,read write",
+            "--json",
+        ],
+    )
+    clear_result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--no-light-context",
+            "--clear-tools",
+            "--json",
+        ],
+    )
+
+    assert set_result.exit_code == 0, set_result.stdout
+    assert clear_result.exit_code == 0, clear_result.stdout
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "Patch with extras.",
+                        "thinking": "high",
+                        "timeoutSeconds": 240,
+                        "lightContext": True,
+                        "toolsAllow": ["exec", "read", "write"],
+                    }
+                },
+            },
+        ),
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "payload": {
+                        "kind": "agentTurn",
+                        "lightContext": False,
+                        "toolsAllow": None,
+                    }
+                },
+            },
+        ),
+    ]
+
+
+def test_cron_edit_failure_alert_patch_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--failure-alert",
+            "--failure-alert-after",
+            "3",
+            "--failure-alert-channel",
+            "Slack",
+            "--failure-alert-to",
+            "alerts",
+            "--failure-alert-cooldown",
+            "45m",
+            "--failure-alert-mode",
+            "WEBHOOK",
+            "--failure-alert-account-id",
+            "ops",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "failureAlert": {
+                        "after": 3,
+                        "channel": "slack",
+                        "to": "alerts",
+                        "cooldownMs": 2_700_000,
+                        "mode": "webhook",
+                        "accountId": "ops",
+                    }
+                },
+            },
+        )
+    ]
+
+
+def test_cron_edit_exact_patches_existing_cron_schedule(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "cron.list":
+                return {
+                    "jobs": [
+                        {
+                            "id": "task-blueprint:7",
+                            "schedule": {
+                                "kind": "cron",
+                                "expr": "0 */2 * * *",
+                                "tz": "UTC",
+                                "staggerMs": 300_000,
+                            },
+                        }
+                    ]
+                }
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--exact",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        ("cron.list", {"includeDisabled": True}),
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "schedule": {
+                        "kind": "cron",
+                        "expr": "0 */2 * * *",
+                        "tz": "UTC",
+                        "staggerMs": 0,
+                    }
+                },
+            },
+        ),
+    ]
+
+
+def test_sessions_inventory_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 1,
+                "activeMinutes": params.get("activeMinutes"),
+                "sessions": [
+                    {
+                        "key": "agent:worker:main",
+                        "sessionKey": "agent:worker:main",
+                        "agentId": "worker",
+                        "kind": "direct",
+                        "updatedAt": 1_800_000_000_000,
+                        "model": "gpt-5.4",
+                        "totalTokens": 2_000,
+                        "totalTokensFresh": True,
+                        "contextTokens": 32_000,
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "--json",
+            "--agent",
+            " worker ",
+            "--active",
+            "15",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["sessions"][0]["totalTokens"] == 2_000
+    assert calls == [("sessions.list", {"agentId": "worker", "activeMinutes": 15})]
+
+
+def test_sessions_inventory_rejects_invalid_active_minutes(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"count": 0, "sessions": []}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sessions", "--active", "0", "--json"])
+
+    assert result.exit_code != 0
+    assert calls == []
+
+
+def test_sessions_cleanup_dry_run_json_calls_sessions_list_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {"key": "agent:worker:main", "sessionKey": "agent:worker:main"},
+                    {"key": "agent:worker:child", "sessionKey": "agent:worker:child"},
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--dry-run",
+            "--json",
+            "--agent",
+            " worker ",
+            "--active-key",
+            "agent:worker:main",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "agentId": "worker",
+        "storePath": "native-gateway-session-store",
+        "mode": "warn",
+        "dryRun": True,
+        "beforeCount": 2,
+        "afterCount": 2,
+        "missing": 0,
+        "pruned": 0,
+        "capped": 0,
+        "diskBudget": None,
+        "wouldMutate": False,
+    }
+    assert calls == [("sessions.list", {"agentId": "worker"})]
+
+
+def test_sessions_cleanup_enforce_json_returns_applied_noop_summary(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {"key": "agent:worker:main", "sessionKey": "agent:worker:main"},
+                    {"key": "agent:worker:child", "sessionKey": "agent:worker:child"},
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--json",
+            "--agent",
+            "worker",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "enforce"
+    assert payload["dryRun"] is False
+    assert payload["applied"] is True
+    assert payload["appliedCount"] == 2
+    assert payload["wouldMutate"] is False
+    assert calls == [("sessions.list", {"agentId": "worker"})]
+
+
+def test_sessions_cleanup_fix_missing_enforce_deletes_metadata_rows(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    deleted: list[str] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {"key": "agent:worker:main", "sessionKey": "agent:worker:main"},
+                    {"key": "agent:worker:child", "sessionKey": "agent:worker:child"},
+                ],
+            }
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {"session_key": "agent:worker:main", "metadata": {}},
+                {"session_key": "agent:worker:child", "metadata": {}},
+                {"session_key": "agent:other:child", "metadata": {}},
+            ]
+
+        async def count_control_chat_messages(self, *, session_key: str) -> int:
+            return 3 if session_key == "agent:worker:main" else 0
+
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--fix-missing",
+            "--json",
+            "--agent",
+            "worker",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["missing"] == 1
+    assert payload["afterCount"] == 1
+    assert payload["appliedCount"] == 1
+    assert payload["wouldMutate"] is True
+    assert deleted == ["agent:worker:child"]
+    assert calls == [("sessions.list", {"agentId": "worker"})]
 
 
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:

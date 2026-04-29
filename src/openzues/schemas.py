@@ -1200,8 +1200,12 @@ class TaskBlueprintCreate(BaseModel):
     cron_session_target: str | None = None
     cron_session_key: str | None = None
     cron_wake_mode: Literal["now", "next-heartbeat"] | None = None
+    cron_delete_after_run: bool | None = None
     cron_payload_kind: Literal["agentTurn", "systemEvent"] | None = None
     cron_payload_text: str | None = None
+    cron_payload_timeout_seconds: int | None = Field(default=None, ge=0)
+    cron_payload_light_context: bool | None = None
+    cron_payload_tools_allow: list[str] | None = None
     cron_delivery_mode: Literal["none", "announce", "webhook"] | None = None
     cron_delivery_channel: str | None = None
     cron_delivery_to: str | None = None
@@ -1209,6 +1213,8 @@ class TaskBlueprintCreate(BaseModel):
     cron_delivery_thread_id: str | int | None = None
     cron_delivery_best_effort: bool | None = None
     cron_delivery_failure_destination: dict[str, Any] | None = None
+    cron_failure_alert: dict[str, Any] | Literal[False] | None = None
+    cron_state: dict[str, Any] | None = None
     cron_notify_enabled: bool | None = None
     run_until_complete: bool = False
     continuation_cooldown_minutes: int = Field(default=10, ge=1)

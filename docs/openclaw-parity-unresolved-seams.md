@@ -128,12 +128,22 @@ WhatsApp matches the upstream channel plugin's no-`probeAccount` posture: route
 status reports an unsupported/no-hook probe envelope without degrading the
 overall `channels.status --probe` result.
 
-Current queue-head adjustment: the CLI now exposes `sessions spawn` and
-`sessions wait` as thin JSON/human wrappers over the production
+Current queue-head adjustment: the CLI now exposes top-level `sessions --json`
+inventory plus `--agent` and positive `--active` filters as a thin wrapper over
+the production `sessions.list` gateway method owner, and still exposes
+`sessions spawn` / `sessions wait` as JSON/human wrappers over the production
 `GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
-control-chat submit seams used by the app-server path. Top-level
+control-chat submit seams used by the app-server path. `sessions cleanup`
+now accepts the upstream command shape and returns OpenClaw-shaped no-mutation
+maintenance summaries from the native `sessions.list` owner for both dry-run
+preview and enforce/apply no-op cases. `--fix-missing` now maps OpenClaw's
+missing transcript-file pruning onto OpenZues' SQLite-backed session metadata
+by deleting only agent-filtered metadata rows whose control-chat transcript has
+no messages. Remaining cleanup parity is stale/age/count/disk-budget cleanup
+and richer multi-store/all-agent mutation semantics over OpenZues' native
+session store. Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
@@ -144,7 +154,8 @@ diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model
 auth/probe inspection, production provider usage/security-audit adapter wiring,
 plugin/runtime inspection, doctor readiness checks, non-metadata external
-sandbox container cleanup, and broader TUI ergonomics. `status --json --usage
+sandbox container cleanup, and broader TUI ergonomics.
+`status --json --usage
 --all` now consumes fakeable native provider-usage and security-audit runtime
 adapters when registered while keeping the honest unavailable placeholders
 when they are absent. The existing
@@ -157,6 +168,12 @@ ACP CLI parity is the real bridge server/client runtime. The unavailable
 boundary now validates provenance modes, rejects mixed inline/file secret
 sources, validates secret-file readability, and warns when inline token or
 password flags are used.
+`acp client` now also builds an OpenClaw-shaped native spawn plan before that
+unavailable boundary: default OpenZues ACP server launches use `openzues acp`,
+set `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys
+case-insensitively, and preserve provider auth when callers choose an explicit
+custom ACP server. Remaining ACP CLI parity is still the real bridge
+client/server protocol runtime rather than the spawn preflight contract.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
@@ -860,6 +877,24 @@ runtime dispatch, run tracking, pending-message counts, and session-change
 events. The next bounded seam should continue through remaining session-keyed
 runtime surfaces such as abort/wait if a focused mismatch is proven.
 
+Current queue-head adjustment: `chat.abort` now records tracked run owner
+connection/device metadata from `chat.send`, `sessions.send`,
+`sessions.steer`, `sessions.spawn`, `sessions.create`, and `agent`, then
+rejects explicit and session-scoped aborts from non-owner requesters unless the
+caller has `operator.admin`, while preserving same-device reconnect aborts and
+legacy ownerless-run compatibility. The next bounded seam should continue into
+OpenClaw abort partial transcript persistence or the adjacent `agent.wait`
+read model if a focused mismatch is proven.
+
+Current queue-head adjustment: `chat.abort` now persists buffered assistant
+partials returned by the native abort runtime into the SQLite transcript as
+idempotent `runId:assistant` assistant messages with `stopReason="stop"` and
+`openclawAbort` metadata. RPC aborts record `origin="rpc"`, `/stop`-style
+abort commands record `origin="stop-command"`, blank partials are ignored, and
+`chat.history` projects the stored abort metadata. The next bounded seam should
+move to `agent.wait` read-model fidelity or another source-backed
+session/runtime mismatch.
+
 ## How To Read This Queue
 
 - This queue is repo-level and cross-cutting. It is for seams likely to fall between shard workers or cut across cron, session, gateway, delivery, and integration ownership.
@@ -973,6 +1008,98 @@ Current queue-head adjustment: `browser.chat` is now productized as a write-scop
 Current queue-head adjustment: `browser.ios.device.list`, `browser.ios.swipe`, and `browser.ios.tap` are now productized as provider-scoped bridges for installed `agent-browser -p ios` commands. Device list is read-scoped; swipe/tap are write-scoped and validate direction, distance, and target. Windows/non-Xcode hosts still surface iOS runtime unavailability honestly, and persistent proxy/profile mutation remains intentionally guarded. The browser command queue should now hand off to the next repo-level parity family instead of circling this seam.
 
 Current queue-head adjustment: repo-level rotation moved from browser command productization into cron parity. `cron.add` and `cron.update` now accept OpenClaw-style `schedule.kind="cron"` objects with `expr`, optional `tz`, and optional `staggerMs`; cron jobs round-trip through `cron.list`, compute next due time, and launch through `cron.run` with `mode="due"`. The next repo-level method seam should move to gateway session or agent-file surfaces rather than reopening the closed browser command queue.
+
+Current queue-head adjustment: `cron.add` and `cron.update` now also accept and
+round-trip OpenClaw-style per-job `failureAlert` objects. OpenZues persists the
+native alert config in the task-blueprint payload, projects `failureAlert` in
+cron job snapshots, and merges update patches with the same object/`false`
+contract used by OpenClaw. Remaining cron parity is the actual consecutive
+failure alert dispatch/runtime state fields (`lastErrorReason`,
+`lastDurationMs`, `consecutiveErrors`, delivery status, and alert cooldown
+metadata), not the gateway method schema/persistence boundary.
+
+Current queue-head adjustment: `cron.update` now accepts OpenClaw-style
+`patch.state` objects and merges them into persisted native `cron_state`
+metadata. Cron snapshots sanitize and project the persisted fields
+(`nextRunAtMs`, `runningAtMs`, `lastRunAtMs`, `lastRunStatus`, `lastStatus`,
+`lastError`, `lastErrorReason`, `lastDurationMs`, `consecutiveErrors`,
+`lastDelivered`, `lastDeliveryStatus`, `lastDeliveryError`, and
+`lastFailureAlertAtMs`) while preserving existing OpenZues-derived run status
+fields when local execution data exists. Remaining cron parity is now the
+runtime side of this state: `cron.run` should update consecutive failure
+metadata and consume `failureAlert.after` / `cooldownMs` to dispatch alerts.
+
+Current queue-head adjustment: Ops Mesh mission-result handling now consumes
+per-job `failureAlert` runtime policy for failed cron runs. Failed scheduled
+missions update persisted `cron_state` with last run/error/duration/delivery
+status, increment `consecutiveErrors`, emit the OpenClaw-shaped failure-alert
+message after the configured `after` threshold, stamp `lastFailureAlertAtMs`,
+and suppress repeat alerts inside `cooldownMs`. Remaining cron runtime parity
+is the broader OpenClaw config surface around retry/backoff policy and
+provider-specific alert delivery metadata.
+
+Current queue-head adjustment: main-session `systemEvent` cron dispatch now
+persists OpenClaw-style success state when the wake request is queued:
+`lastRunAtMs`, `lastRunStatus="ok"`, `lastStatus="ok"`, `lastDurationMs=0`,
+`lastDeliveryStatus="not-requested"`, and reset consecutive failure state.
+Remaining cron parity is no longer the local wake-result state boundary; it is
+global cron config retry/backoff policy and richer provider delivery result
+attribution.
+
+Current queue-head adjustment: Ops Mesh now accepts production-wired global
+`cron.failureAlert` settings through `Settings` / app construction and applies
+them to failed cron jobs that have no per-job `failureAlert`, matching
+OpenClaw's global `enabled` / `after` / `cooldownMs` behavior while preserving
+per-job override and `failureAlert=false` suppression. Remaining cron runtime
+parity is OpenClaw's retry/backoff policy for transient one-shot jobs and
+richer provider-specific alert delivery attribution.
+
+Current queue-head adjustment: transient failed one-shot cron jobs now consume
+production-wired global `cron.retry` settings through `Settings` / app
+construction. For `schedule.kind="at"` jobs, Ops Mesh records
+`state.nextRunAtMs = endedAt + backoff`, keeps the job enabled while retry
+attempts remain, and the scheduler plus `cron.run mode="due"` honor that retry
+timestamp even after the original `schedule.at` has been consumed. Permanent or
+exhausted one-shot failures are disabled while preserving error state for
+inspection. Provider-specific failure-alert result attribution was audited
+against upstream and skipped as a parity seam because OpenClaw's failure-alert
+runtime is fire-and-forget. The active cron queue has moved to CLI parity.
+
+Current queue-head adjustment: the CLI now exposes `cron status`,
+`cron list`, `cron runs`, `cron run`, `cron rm` / `remove` / `delete`,
+`cron enable`, and `cron disable` as thin JSON/human wrappers over the
+production `cron.status`, `cron.list`, `cron.runs`, `cron.run`,
+`cron.remove`, and `cron.update` gateway method owners. `cron list --all`
+forwards the upstream `includeDisabled=true` shape, human list output includes
+OpenClaw-style job id, name, schedule, status, target, agent, and model fields,
+`cron runs` preserves the upstream `--id` / positive `--limit` request shape,
+`cron run` preserves the upstream `--due` request shape plus ran/enqueued exit
+rule, and the mutation commands preserve the upstream id/patch method shapes.
+`cron add --name --cron --message` now also covers the first upstream create
+path with inferred isolated agent turns, `wakeMode="now"`, enabled state, and
+default announce delivery through channel `last`. Remaining cron CLI parity is
+the rest of the larger `cron add` option surface. Main-session system-event
+jobs now cover `--every`, `--description`, `--session-key`, `--wake
+next-heartbeat`, and `--disabled`; `cron create` now aliases `cron add`, and
+`--model` trims into the agent-turn payload, and delivery flags now cover
+`--announce`, `--no-deliver`, `--channel`, `--to`, `--account`, and
+`--best-effort-deliver`; cron schedule flags now cover `--tz`, `--stagger`,
+and `--exact`, including OpenClaw-style `--at` parsing for IANA timezone
+offset-less datetimes, DST-gap rejection, relative durations with `--tz`,
+offset-less UTC defaults, and native `tzdata`-backed Windows timezone data.
+`cron edit` now exists for basic name,
+description, enable/disable, direct schedule patching, native-supported
+session/agent fields, agentTurn/systemEvent payload patching, and delivery
+metadata, failure-alert flags, and existing-cron `--exact` schedule patching;
+`cron.add` and `cron.update` now persist agentTurn payload extras (`thinking`,
+`timeoutSeconds`, `lightContext`, and `toolsAllow`), and `cron add` exposes the
+matching CLI flags. `cron edit` now exposes the same flags plus
+`--no-light-context` and `--clear-tools`. Explicit `deleteAfterRun=true`
+storage, default one-shot delete-after-run on gateway-created `cron.add` jobs,
+successful system-event `cron.run` cleanup, and isolated agent
+mission-completion cleanup now work. No smaller source-backed cron queue head
+remains; rotate back to the repo-level session/runtime-control and broader
+CLI/runtime/doctor queue.
 
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 
@@ -1863,6 +1990,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   snapshots when no instances are present, and missing-provider synthesis for
   refreshable configured providers without env-backed API keys.
 - Verified the `models.authStatus` seam with `python -m pytest tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status"`, adjacent `python -m pytest tests\test_gateway_models.py -q`, `python -m pytest tests\test_cli.py -q -k "model_auth_status or models_status or infer_model_auth"`, `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status or models_list or secrets_resolve or secrets_reload"`, `ruff check src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py`.
+- `chat.abort` now enforces OpenClaw's tracked-run ownership guard. Runs store
+  owner connection/device metadata when started through `chat.send`,
+  `sessions.send`, `sessions.steer`, `sessions.spawn`, `sessions.create`, and
+  `agent`; explicit and session-scoped aborts from other requesters return
+  `INVALID_REQUEST` / `unauthorized`, same-device reconnects remain allowed,
+  admin callers bypass the owner check, and legacy ownerless tracked runs keep
+  the historical compatible behavior.
+- Verified the `chat.abort` ownership seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or sessions_steer or sessions_abort or compaction_restore"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `chat.abort` now persists OpenClaw-shaped aborted assistant partials from the
+  native abort adapter. OpenZues stores them once per `runId:assistant` in the
+  SQLite transcript, stamps `stopReason="stop"` plus `openclawAbort` metadata,
+  preserves `/stop` as `origin="stop-command"`, ignores blank partials, and
+  projects the metadata through `chat.history`.
+- Verified the abort partial transcript seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort_persists_partial_assistant_transcript_like_openclaw or chat_send_stop_persists_abort_partial_with_stop_command_origin or chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent transcript proof `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or chat_history or sessions_history"`, shared session read-model proof `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface or transcript_usage or control_chat"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

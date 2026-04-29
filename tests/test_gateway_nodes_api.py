@@ -165,6 +165,12 @@ class _FakeOpsMeshService:
     async def list_notification_route_views(self) -> list[object]:
         return []
 
+    async def probe_channel_account(self, **_: object) -> dict[str, object]:
+        return {"ok": False, "status": "unavailable", "reason": "fake_ops_mesh"}
+
+    async def resolve_channel_targets(self, **_: object) -> list[dict[str, object]]:
+        return []
+
     async def handle_mission_event(self, event_type: str, event: dict[str, object]) -> None:
         del event_type, event
 

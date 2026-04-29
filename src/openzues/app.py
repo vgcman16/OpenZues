@@ -1997,6 +1997,8 @@ def create_app(
         launch_routing=active_launch_routing_service,
         cron_webhook_url=active_settings.cron_webhook_url,
         cron_webhook_token=active_settings.cron_webhook_token,
+        cron_failure_alert=active_settings.cron_failure_alert,
+        cron_retry=active_settings.cron_retry,
         outbound_runtime_service=GatewayOutboundRuntimeService(),
         canvas_state_dir=active_settings.data_dir,
     )

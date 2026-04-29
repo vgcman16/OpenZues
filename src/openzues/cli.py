@@ -12,13 +12,15 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 import uvicorn
@@ -42,6 +44,7 @@ from openzues.schemas import (
     SetupWizardSessionUpdate,
 )
 from openzues.services.access import AccessService
+from openzues.services.acp_client_runtime import AcpClientSpawnPlan, build_acp_client_spawn_plan
 from openzues.services.browser_posture import build_browser_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.control_chat import (
@@ -99,6 +102,8 @@ _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
 _CHANNEL_LOG_DEFAULT_LIMIT = 200
 _CHANNEL_LOG_MAX_BYTES = 1_000_000
+_AcpClientRunner = Callable[[AcpClientSpawnPlan], int | None]
+_acp_client_runner: _AcpClientRunner | None = None
 _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
     "discord": {
         "chatTypes": ["direct", "channel"],
@@ -368,7 +373,8 @@ acp_app = typer.Typer(
     invoke_without_command=True,
 )
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
-sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
+sessions_app = typer.Typer(help="List, spawn, and wait on gateway sessions.")
+cron_app = typer.Typer(help="Inspect and run Gateway cron jobs.")
 capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
 )
@@ -405,6 +411,7 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(cron_app, name="cron")
 capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
 capability_app.add_typer(capability_tts_app, name="tts")
@@ -2258,6 +2265,599 @@ def _emit_session_method_result(payload: dict[str, object], *, json_output: bool
         typer.echo(f"error: {error}")
 
 
+def _sessions_cli_positive_int(value: str | None, *, option: str) -> int | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{option} must be a positive integer") from exc
+    if parsed <= 0:
+        raise typer.BadParameter(f"{option} must be a positive integer")
+    return parsed
+
+
+def _sessions_cli_session_key(row: dict[str, object]) -> str:
+    return str(row.get("key") or row.get("sessionKey") or row.get("session_key") or "").strip()
+
+
+def _sessions_cli_kind(row: dict[str, object]) -> str:
+    kind = str(row.get("kind") or "").strip()
+    if kind:
+        return kind
+    key = _sessions_cli_session_key(row)
+    if key == "global":
+        return "global"
+    if ":group:" in key or ":channel:" in key:
+        return "group"
+    return "direct" if key else "unknown"
+
+
+def _sessions_cli_k_tokens(value: object) -> str:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return "?"
+    if value >= 10_000:
+        return f"{(value / 1000):.0f}k"
+    return f"{(value / 1000):.1f}k"
+
+
+def _sessions_cli_tokens(row: dict[str, object]) -> str:
+    total = row.get("totalTokens")
+    context = row.get("contextTokens")
+    total_label = _sessions_cli_k_tokens(total)
+    context_label = _sessions_cli_k_tokens(context)
+    if (
+        isinstance(total, int)
+        and not isinstance(total, bool)
+        and isinstance(context, int)
+        and not isinstance(context, bool)
+        and context > 0
+    ):
+        percent: int | str = min(999, round((total / context) * 100))
+    else:
+        percent = "?"
+    return f"{total_label}/{context_label} ({percent}%)"
+
+
+def _emit_sessions_inventory(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_sessions = payload.get("sessions")
+    sessions = (
+        [row for row in raw_sessions if isinstance(row, dict)]
+        if isinstance(raw_sessions, list)
+        else []
+    )
+    count = payload.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        count = len(sessions)
+    typer.echo(f"Sessions listed: {count}")
+    active_minutes = payload.get("activeMinutes")
+    if isinstance(active_minutes, int) and not isinstance(active_minutes, bool):
+        typer.echo(f"Filtered to last {active_minutes} minute(s)")
+    if not sessions:
+        typer.echo("No sessions found.")
+        return
+    typer.echo(
+        "Kind   Key                              Model                Tokens (ctx %)      Flags"
+    )
+    for row in sessions:
+        key = _sessions_cli_session_key(row) or "-"
+        kind = _sessions_cli_kind(row)
+        model = str(row.get("model") or "-").strip() or "-"
+        flags: list[str] = []
+        if row.get("totalTokensFresh") is False:
+            flags.append("stale-tokens")
+        label = str(row.get("label") or "").strip()
+        if label:
+            flags.append(f"label:{label}")
+        typer.echo(
+            f"{kind[:6].ljust(6)} {key[:32].ljust(32)} {model[:20].ljust(20)} "
+            f"{_sessions_cli_tokens(row).ljust(20)} {' '.join(flags)}".rstrip()
+        )
+
+
+def _sessions_cleanup_summary(
+    payload: dict[str, object],
+    *,
+    agent_id: str | None,
+    mode: str,
+    dry_run: bool,
+    missing_keys: list[str] | None = None,
+) -> dict[str, object]:
+    raw_sessions = payload.get("sessions")
+    sessions = raw_sessions if isinstance(raw_sessions, list) else []
+    count = payload.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        count = len(sessions)
+    missing_count = len(missing_keys or [])
+    after_count = max(0, count - missing_count)
+    summary: dict[str, object] = {
+        "agentId": agent_id or "default",
+        "storePath": "native-gateway-session-store",
+        "mode": mode,
+        "dryRun": dry_run,
+        "beforeCount": count,
+        "afterCount": after_count,
+        "missing": missing_count,
+        "pruned": 0,
+        "capped": 0,
+        "diskBudget": None,
+        "wouldMutate": missing_count > 0,
+    }
+    if not dry_run:
+        summary["applied"] = True
+        summary["appliedCount"] = after_count
+    return summary
+
+
+async def _sessions_cleanup_missing_metadata_keys(
+    services: object,
+    *,
+    agent_id: str | None,
+) -> list[str]:
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    count_messages = getattr(database, "count_control_chat_messages", None)
+    if not callable(list_rows) or not callable(count_messages):
+        raise typer.BadParameter(
+            "Native session cleanup --fix-missing requires session metadata storage"
+        )
+    missing_keys: list[str] = []
+    rows = await list_rows()
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        session_key = _optional_cli_string(row.get("session_key"))
+        if session_key is None:
+            continue
+        if agent_id is not None and not _sandbox_session_matches_agent(session_key, agent_id):
+            continue
+        message_count = await count_messages(session_key=session_key)
+        if isinstance(message_count, bool) or not isinstance(message_count, int):
+            continue
+        if message_count <= 0:
+            missing_keys.append(session_key)
+    return missing_keys
+
+
+async def _sessions_cleanup_delete_metadata_keys(
+    services: object,
+    session_keys: list[str],
+) -> None:
+    if not session_keys:
+        return
+    database = getattr(services, "database", None)
+    delete_metadata = getattr(database, "delete_gateway_session_metadata", None)
+    if not callable(delete_metadata):
+        raise typer.BadParameter(
+            "Native session cleanup --fix-missing requires session metadata deletion"
+        )
+    for session_key in session_keys:
+        await delete_metadata(session_key)
+
+
+def _emit_sessions_cleanup(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    before_count = payload.get("beforeCount")
+    after_count = payload.get("afterCount")
+    if not isinstance(before_count, int) or isinstance(before_count, bool):
+        before_count = 0
+    if not isinstance(after_count, int) or isinstance(after_count, bool):
+        after_count = 0
+    typer.echo(f"Session store: {payload.get('storePath') or 'native-gateway-session-store'}")
+    typer.echo(f"Maintenance mode: {payload.get('mode') or 'warn'}")
+    typer.echo(f"Entries: {before_count} -> {after_count} (remove {before_count - after_count})")
+    typer.echo(f"Would prune missing transcripts: {payload.get('missing') or 0}")
+    typer.echo(f"Would prune stale: {payload.get('pruned') or 0}")
+    typer.echo(f"Would cap overflow: {payload.get('capped') or 0}")
+
+
+def _cron_duration_label(value: object) -> str:
+    try:
+        ms = int(cast("int | str", value))
+    except (TypeError, ValueError):
+        return "n/a"
+    if ms < 0:
+        return "n/a"
+    if ms < 1000:
+        return f"{ms}ms"
+    seconds = round(ms / 1000)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = round(minutes / 60)
+    if hours < 24:
+        return f"{hours}h"
+    days = round(hours / 24)
+    return f"{days}d"
+
+
+def _cron_iso_minute(value: object) -> str:
+    if not isinstance(value, str):
+        return "-"
+    raw = value.strip()
+    if not raw:
+        return "-"
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        moment = datetime.fromisoformat(normalized)
+    except ValueError:
+        return raw
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    iso = moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return f"{iso[:10]} {iso[11:16]}Z"
+
+
+def _cron_schedule_label(value: object) -> str:
+    if not isinstance(value, dict):
+        return "-"
+    kind = str(value.get("kind") or "").strip()
+    if kind == "at":
+        return f"at {_cron_iso_minute(value.get('at'))}"
+    if kind == "every":
+        return f"every {_cron_duration_label(value.get('everyMs'))}"
+    if kind == "cron":
+        expr = str(value.get("expr") or "").strip()
+        tz = str(value.get("tz") or "").strip()
+        if expr and tz:
+            return f"cron {expr} @ {tz}"
+        if expr:
+            return f"cron {expr}"
+    return kind or "-"
+
+
+def _cron_status_label(job: dict[str, object]) -> str:
+    if not bool(job.get("enabled")):
+        return "disabled"
+    state = job.get("state")
+    state_payload = state if isinstance(state, dict) else {}
+    if state_payload.get("runningAtMs"):
+        return "running"
+    status = str(
+        state_payload.get("lastStatus") or state_payload.get("lastRunStatus") or ""
+    ).strip()
+    return status or "idle"
+
+
+def _cron_payload_model(job: dict[str, object]) -> str:
+    payload = job.get("payload")
+    payload_data = payload if isinstance(payload, dict) else {}
+    if payload_data.get("kind") != "agentTurn":
+        return "-"
+    model = str(payload_data.get("model") or "").strip()
+    return model or "-"
+
+
+def _cron_runs_limit(value: object) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except ValueError:
+        return 50
+    return parsed if parsed > 0 else 50
+
+
+def _emit_cron_status(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"enabled: {bool(payload.get('enabled'))}")
+    jobs = payload.get("jobs")
+    if jobs is not None:
+        typer.echo(f"jobs: {jobs}")
+    next_wake_at_ms = payload.get("nextWakeAtMs")
+    if next_wake_at_ms is not None:
+        typer.echo(f"nextWakeAtMs: {next_wake_at_ms}")
+    store_path = str(payload.get("storePath") or "").strip()
+    if store_path:
+        typer.echo(f"store: {store_path}")
+
+
+def _emit_cron_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_jobs = payload.get("jobs")
+    jobs = [job for job in raw_jobs if isinstance(job, dict)] if isinstance(raw_jobs, list) else []
+    if not jobs:
+        typer.echo("No cron jobs.")
+        return
+    typer.echo("ID Name Schedule Status Target Agent ID Model")
+    for job in jobs:
+        job_id = str(job.get("id") or "").strip() or "-"
+        name = str(job.get("name") or "").strip() or "-"
+        schedule = _cron_schedule_label(job.get("schedule"))
+        status = _cron_status_label(cast("dict[str, object]", job))
+        target = str(job.get("sessionTarget") or "-").strip() or "-"
+        agent_id = str(job.get("agentId") or "-").strip() or "-"
+        model = _cron_payload_model(cast("dict[str, object]", job))
+        typer.echo(f"{job_id} {name} {schedule} {status} {target} {agent_id} {model}")
+
+
+def _emit_cron_runs(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_entries = payload.get("entries")
+    entries = (
+        [entry for entry in raw_entries if isinstance(entry, dict)]
+        if isinstance(raw_entries, list)
+        else []
+    )
+    if not entries:
+        typer.echo("No cron runs.")
+        return
+    typer.echo("Job ID Status Delivery Run At Summary")
+    for entry in entries:
+        job_id = str(entry.get("jobId") or "-").strip() or "-"
+        status = str(entry.get("status") or "-").strip() or "-"
+        delivery_status = str(entry.get("deliveryStatus") or "-").strip() or "-"
+        run_at = str(entry.get("runAtMs") or entry.get("ts") or "-").strip() or "-"
+        summary = str(entry.get("summary") or "").strip()
+        typer.echo(f"{job_id} {status} {delivery_status} {run_at} {summary}".rstrip())
+
+
+def _cron_run_succeeded(payload: dict[str, object]) -> bool:
+    return bool(payload.get("ok")) and (bool(payload.get("ran")) or bool(payload.get("enqueued")))
+
+
+def _emit_cron_run(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    run_id = str(payload.get("runId") or payload.get("run_id") or "").strip()
+    if run_id:
+        typer.echo(f"run: {run_id}")
+    if "ran" in payload:
+        typer.echo(f"ran: {bool(payload.get('ran'))}")
+    if "enqueued" in payload:
+        typer.echo(f"enqueued: {bool(payload.get('enqueued'))}")
+
+
+def _emit_cron_mutation(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"ok: {bool(payload.get('ok'))}")
+    job_id = str(payload.get("id") or "").strip()
+    if not job_id:
+        job = payload.get("job")
+        if isinstance(job, dict):
+            job_id = str(job.get("id") or "").strip()
+    if job_id:
+        typer.echo(f"id: {job_id}")
+
+
+def _cron_cli_schedule(
+    *,
+    cron_expr: str | None,
+    every: str | None,
+    at: str | None,
+    tz: str | None = None,
+    stagger: str | None = None,
+    exact: bool = False,
+) -> dict[str, object]:
+    normalized_cron = _optional_cli_string(cron_expr)
+    normalized_every = _optional_cli_string(every)
+    normalized_at = _optional_cli_string(at)
+    normalized_tz = _optional_cli_string(tz)
+    normalized_stagger = _optional_cli_string(stagger)
+    if normalized_stagger is not None and exact:
+        raise typer.BadParameter("Choose either --stagger or --exact, not both")
+    chosen = [
+        bool(normalized_cron),
+        bool(normalized_every),
+        bool(normalized_at),
+    ].count(True)
+    if chosen != 1:
+        raise typer.BadParameter("Choose exactly one schedule: --at, --every, or --cron")
+    if normalized_cron is not None:
+        schedule: dict[str, object] = {"kind": "cron", "expr": normalized_cron}
+        if normalized_tz is not None:
+            schedule["tz"] = normalized_tz
+        if exact:
+            schedule["staggerMs"] = 0
+        elif normalized_stagger is not None:
+            stagger_ms = _cron_duration_ms(normalized_stagger)
+            if stagger_ms is None:
+                raise typer.BadParameter("Invalid --stagger; use e.g. 30s, 1m, 5m")
+            schedule["staggerMs"] = stagger_ms
+        return schedule
+    if normalized_tz is not None and normalized_every is not None:
+        raise typer.BadParameter("--tz is only valid with --cron or offset-less --at")
+    if normalized_stagger is not None or exact:
+        raise typer.BadParameter("--stagger/--exact are only valid for cron schedules")
+    if normalized_every is not None:
+        every_ms = _cron_duration_ms(normalized_every)
+        if every_ms is None:
+            raise typer.BadParameter("Invalid --every; use e.g. 10m, 1h, 1d")
+        return {"kind": "every", "everyMs": every_ms}
+    assert normalized_at is not None
+    return {"kind": "at", "at": _cron_cli_at(normalized_at, tz=normalized_tz)}
+
+
+def _cron_duration_ms(value: str) -> int | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(ms|s|m|h|d)", value.strip(), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    if amount <= 0:
+        return None
+    unit = match.group(2).lower()
+    factor = {
+        "ms": 1,
+        "s": 1000,
+        "m": 60_000,
+        "h": 3_600_000,
+        "d": 86_400_000,
+    }[unit]
+    return int(amount * factor)
+
+
+def _cron_format_utc_milliseconds(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+_CRON_ISO_TZ_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$", flags=re.IGNORECASE)
+_CRON_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CRON_ISO_DATE_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T")
+_CRON_OFFSETLESS_ISO_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?$"
+)
+
+
+def _cron_at_has_offset(value: str) -> bool:
+    return bool(_CRON_ISO_TZ_RE.search(value.strip()))
+
+
+def _cron_at_is_offsetless_iso_datetime(value: str) -> bool:
+    return bool(_CRON_OFFSETLESS_ISO_DATETIME_RE.fullmatch(value.strip()))
+
+
+def _cron_datetime_for_parse(value: str) -> str:
+    return re.sub(r"z$", "+00:00", value.strip(), flags=re.IGNORECASE)
+
+
+def _cron_timezone_offset(instant: datetime, zone: ZoneInfo) -> timedelta:
+    zoned = instant.astimezone(zone)
+    local_as_utc = datetime(
+        zoned.year,
+        zoned.month,
+        zoned.day,
+        zoned.hour,
+        zoned.minute,
+        zoned.second,
+        zoned.microsecond,
+        tzinfo=UTC,
+    )
+    return local_as_utc - instant
+
+
+def _cron_parse_offsetless_zoned_at(value: str, tz: str) -> str | None:
+    try:
+        zone = ZoneInfo(tz)
+    except ZoneInfoNotFoundError as exc:
+        raise typer.BadParameter(f"Unknown timezone: {tz}") from exc
+    try:
+        local = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if local.tzinfo is not None:
+        return None
+    naive_utc = local.replace(tzinfo=UTC)
+    first_offset = _cron_timezone_offset(naive_utc, zone)
+    candidate_utc = naive_utc - first_offset
+    final_offset = _cron_timezone_offset(candidate_utc, zone)
+    resolved_utc = naive_utc - final_offset
+    round_tripped = resolved_utc.astimezone(zone).replace(tzinfo=None)
+    if round_tripped != local:
+        return None
+    return _cron_format_utc_milliseconds(resolved_utc)
+
+
+def _cron_parse_absolute_at(value: str) -> str | None:
+    raw = value.strip()
+    if re.fullmatch(r"\d+", raw):
+        timestamp_ms = int(raw)
+        if timestamp_ms > 0:
+            return _cron_format_utc_milliseconds(
+                datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC)
+            )
+    normalized = raw
+    if _CRON_ISO_DATE_RE.fullmatch(raw):
+        normalized = f"{raw}T00:00:00+00:00"
+    elif _CRON_ISO_DATE_TIME_RE.match(raw) and not _cron_at_has_offset(raw):
+        normalized = f"{raw}+00:00"
+    else:
+        normalized = _cron_datetime_for_parse(raw)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return _cron_format_utc_milliseconds(parsed)
+
+
+def _cron_cli_at(value: str, *, tz: str | None) -> str:
+    normalized_tz = _optional_cli_string(tz)
+    raw = value.strip()
+    if normalized_tz is not None and _cron_at_is_offsetless_iso_datetime(raw):
+        resolved = _cron_parse_offsetless_zoned_at(raw, normalized_tz)
+        if resolved is None:
+            raise typer.BadParameter("Invalid --at; use ISO time or duration like 20m")
+        return resolved
+    absolute = _cron_parse_absolute_at(raw)
+    if absolute is not None:
+        return absolute
+    duration_ms = _cron_duration_ms(raw)
+    if duration_ms is None:
+        raise typer.BadParameter("Invalid --at; use ISO time or duration like 20m")
+    return _cron_format_utc_milliseconds(datetime.now(UTC) + timedelta(milliseconds=duration_ms))
+
+
+def _cron_positive_int(value: str | None) -> int | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _cron_cli_tools_allow(value: str | None) -> list[str] | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    tools = [part.strip() for part in re.split(r"[,\s]+", normalized) if part.strip()]
+    return tools or None
+
+
+def _cron_cli_payload(
+    *,
+    message: str | None,
+    system_event: str | None,
+    model: str | None = None,
+    thinking: str | None = None,
+    timeout_seconds: str | None = None,
+    light_context: bool = False,
+    tools: str | None = None,
+) -> dict[str, object]:
+    normalized_message = _optional_cli_string(message)
+    normalized_system_event = _optional_cli_string(system_event)
+    if [bool(normalized_message), bool(normalized_system_event)].count(True) != 1:
+        raise typer.BadParameter("Choose exactly one payload: --system-event or --message")
+    if normalized_system_event is not None:
+        return {"kind": "systemEvent", "text": normalized_system_event}
+    assert normalized_message is not None
+    payload: dict[str, object] = {"kind": "agentTurn", "message": normalized_message}
+    normalized_model = _optional_cli_string(model)
+    if normalized_model is not None:
+        payload["model"] = normalized_model
+    normalized_thinking = _optional_cli_string(thinking)
+    if normalized_thinking is not None:
+        payload["thinking"] = normalized_thinking
+    parsed_timeout_seconds = _cron_positive_int(timeout_seconds)
+    if parsed_timeout_seconds is not None:
+        payload["timeoutSeconds"] = parsed_timeout_seconds
+    if light_context:
+        payload["lightContext"] = True
+    tools_allow = _cron_cli_tools_allow(tools)
+    if tools_allow is not None:
+        payload["toolsAllow"] = tools_allow
+    return payload
+
+
 def _emit_plugins_inventory(
     payload: dict[str, object],
     *,
@@ -2467,6 +3067,11 @@ def _emit_plugins_marketplace_list(
         suffix = f" v{version}" if version is not None else ""
         detail = f" - {description}" if description is not None else ""
         typer.echo(f"{name}{suffix}{detail}")
+
+
+def configure_acp_client_runner(runner: _AcpClientRunner | None) -> None:
+    global _acp_client_runner
+    _acp_client_runner = runner
 
 
 def _emit_acp_bridge_unavailable(
@@ -8552,14 +9157,27 @@ def acp_client_command(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose client logging."),
 ) -> None:
+    plan = build_acp_client_spawn_plan(
+        cwd=cwd,
+        server=server,
+        server_args=server_args,
+        server_verbose=server_verbose,
+        verbose=verbose,
+    )
+    if _acp_client_runner is not None:
+        code = _acp_client_runner(plan)
+        raise typer.Exit(code=0 if code is None else code)
     _emit_acp_bridge_unavailable(
         kind="client",
         context={
-            "cwd": cwd,
-            "server": server,
-            "serverArgs": " ".join(server_args or []),
-            "serverVerbose": server_verbose,
-            "verbose": verbose,
+            "cwd": plan.cwd,
+            "server": plan.server_command,
+            "serverArgs": " ".join(plan.server_args),
+            "serverVerbose": plan.server_verbose,
+            "verbose": plan.verbose,
+            "openclawShell": plan.env.get("OPENCLAW_SHELL"),
+            "stripProviderAuthEnvVars": plan.strip_provider_auth_env_vars,
+            "strippedEnvKeys": ",".join(plan.stripped_env_keys),
         },
     )
     raise typer.Exit(code=1)
@@ -9287,6 +9905,772 @@ def sandbox_explain_command(
 
     payload = _run(_run_with_services(_action))
     _emit_sandbox_explain(payload, json_output=json_output)
+
+
+@cron_app.command("status")
+def cron_status_command(
+    json_output: bool = typer.Option(False, "--json", help="Emit cron scheduler status as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.status", {})
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_status(payload, json_output=json_output)
+
+
+@cron_app.command("list")
+def cron_list_command(
+    include_disabled: bool = typer.Option(
+        False,
+        "--all",
+        help="Include disabled cron jobs.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron jobs as JSON."),
+) -> None:
+    params: dict[str, object] = {"includeDisabled": True} if include_disabled else {}
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.list", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_list(payload, json_output=json_output)
+
+
+@cron_app.command("runs")
+def cron_runs_command(
+    job_id: str = typer.Option(..., "--id", help="Cron job id."),
+    limit: str = typer.Option("50", "--limit", help="Maximum run entries to return."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron run history as JSON."),
+) -> None:
+    params: dict[str, object] = {
+        "id": job_id,
+        "limit": _cron_runs_limit(limit),
+    }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.runs", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_runs(payload, json_output=json_output)
+
+
+@cron_app.command("run")
+def cron_run_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    due: bool = typer.Option(False, "--due", help="Run only when the job is due."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron run result as JSON."),
+) -> None:
+    params: dict[str, object] = {
+        "id": job_id,
+        "mode": "due" if due else "force",
+    }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.run", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_run(payload, json_output=json_output)
+    if not _cron_run_succeeded(payload):
+        raise typer.Exit(code=1)
+
+
+def _cron_remove_command(job_id: str, *, json_output: bool) -> None:
+    params: dict[str, object] = {"id": job_id}
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.remove", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_mutation(payload, json_output=json_output)
+
+
+@cron_app.command("rm")
+def cron_rm_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron removal result as JSON."),
+) -> None:
+    _cron_remove_command(job_id, json_output=json_output)
+
+
+@cron_app.command("remove")
+def cron_remove_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron removal result as JSON."),
+) -> None:
+    _cron_remove_command(job_id, json_output=json_output)
+
+
+@cron_app.command("delete")
+def cron_delete_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron removal result as JSON."),
+) -> None:
+    _cron_remove_command(job_id, json_output=json_output)
+
+
+def _cron_toggle_command(job_id: str, *, enabled: bool, json_output: bool) -> None:
+    params: dict[str, object] = {
+        "id": job_id,
+        "patch": {"enabled": enabled},
+    }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.update", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_mutation(payload, json_output=json_output)
+
+
+@cron_app.command("enable")
+def cron_enable_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron update result as JSON."),
+) -> None:
+    _cron_toggle_command(job_id, enabled=True, json_output=json_output)
+
+
+@cron_app.command("disable")
+def cron_disable_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron update result as JSON."),
+) -> None:
+    _cron_toggle_command(job_id, enabled=False, json_output=json_output)
+
+
+@cron_app.command("create")
+@cron_app.command("add")
+def cron_add_command(
+    name: str = typer.Option(..., "--name", help="Cron job name."),
+    description: str | None = typer.Option(None, "--description", help="Optional description."),
+    cron_expr: str | None = typer.Option(None, "--cron", help="Cron expression."),
+    every: str | None = typer.Option(None, "--every", help="Run every duration, such as 10m."),
+    at: str | None = typer.Option(None, "--at", help="Run once at an ISO time."),
+    tz: str | None = typer.Option(None, "--tz", help="Timezone for cron expressions."),
+    stagger: str | None = typer.Option(None, "--stagger", help="Cron stagger window."),
+    exact: bool = typer.Option(False, "--exact", help="Disable cron staggering."),
+    message: str | None = typer.Option(None, "--message", help="Agent message payload."),
+    system_event: str | None = typer.Option(
+        None,
+        "--system-event",
+        help="Main-session system event payload.",
+    ),
+    model: str | None = typer.Option(None, "--model", help="Model override for agent jobs."),
+    thinking: str | None = typer.Option(None, "--thinking", help="Thinking level for agent jobs."),
+    timeout_seconds: str | None = typer.Option(
+        None,
+        "--timeout-seconds",
+        help="Timeout seconds for agent jobs.",
+    ),
+    light_context: bool = typer.Option(
+        False,
+        "--light-context",
+        help="Use lightweight bootstrap context.",
+    ),
+    tools: str | None = typer.Option(None, "--tools", help="Tool allow-list."),
+    session: str | None = typer.Option(None, "--session", help="Session target."),
+    session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
+    wake: str = typer.Option("now", "--wake", help="Wake mode: now or next-heartbeat."),
+    announce: bool = typer.Option(False, "--announce", help="Announce summary delivery."),
+    no_deliver: bool = typer.Option(False, "--no-deliver", help="Disable announce delivery."),
+    channel: str = typer.Option("last", "--channel", help="Announce delivery channel."),
+    to: str | None = typer.Option(None, "--to", help="Delivery destination."),
+    account: str | None = typer.Option(None, "--account", help="Delivery account id."),
+    best_effort_deliver: bool = typer.Option(
+        False,
+        "--best-effort-deliver",
+        help="Do not fail the job if delivery fails.",
+    ),
+    disabled: bool = typer.Option(False, "--disabled", help="Create the job disabled."),
+    json_output: bool = typer.Option(False, "--json", help="Emit created cron job as JSON."),
+) -> None:
+    if announce and no_deliver:
+        raise typer.BadParameter("Choose at most one of --announce or --no-deliver")
+    schedule = _cron_cli_schedule(
+        cron_expr=cron_expr,
+        every=every,
+        at=at,
+        tz=tz,
+        stagger=stagger,
+        exact=exact,
+    )
+    payload = _cron_cli_payload(
+        message=message,
+        system_event=system_event,
+        model=model,
+        thinking=thinking,
+        timeout_seconds=timeout_seconds,
+        light_context=light_context,
+        tools=tools,
+    )
+    wake_mode = _optional_cli_string(wake) or "now"
+    if wake_mode not in {"now", "next-heartbeat"}:
+        raise typer.BadParameter("--wake must be now or next-heartbeat")
+    session_target = _optional_cli_string(session)
+    if session_target is None:
+        session_target = "isolated" if payload.get("kind") == "agentTurn" else "main"
+    params: dict[str, object] = {
+        "name": name,
+        "enabled": not disabled,
+        "schedule": schedule,
+        "sessionTarget": session_target,
+        "wakeMode": wake_mode,
+        "payload": payload,
+    }
+    normalized_description = _optional_cli_string(description)
+    if normalized_description is not None:
+        params["description"] = normalized_description
+    normalized_session_key = _optional_cli_string(session_key)
+    if normalized_session_key is not None:
+        params["sessionKey"] = normalized_session_key
+    if payload.get("kind") == "agentTurn" and session_target != "main":
+        delivery: dict[str, object] = {
+            "mode": "none" if no_deliver else "announce",
+            "channel": channel,
+        }
+        normalized_to = _optional_cli_string(to)
+        if normalized_to is not None:
+            delivery["to"] = normalized_to
+        normalized_account = _optional_cli_string(account)
+        if normalized_account is not None:
+            delivery["accountId"] = normalized_account
+        if best_effort_deliver:
+            delivery["bestEffort"] = True
+        params["delivery"] = delivery
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.add", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_cron_mutation(result, json_output=json_output)
+
+
+def _cron_has_schedule_options(
+    *,
+    cron_expr: str | None,
+    every: str | None,
+    at: str | None,
+    tz: str | None,
+    stagger: str | None,
+    exact: bool,
+) -> bool:
+    return any(
+        (
+            _optional_cli_string(cron_expr),
+            _optional_cli_string(every),
+            _optional_cli_string(at),
+            _optional_cli_string(tz),
+            _optional_cli_string(stagger),
+            exact,
+        )
+    )
+
+
+def _cron_direct_schedule_option_count(
+    *,
+    cron_expr: str | None,
+    every: str | None,
+    at: str | None,
+) -> int:
+    return sum(
+        value is not None
+        for value in (
+            _optional_cli_string(cron_expr),
+            _optional_cli_string(every),
+            _optional_cli_string(at),
+        )
+    )
+
+
+def _cron_existing_schedule_patch(
+    list_payload: dict[str, object],
+    *,
+    job_id: str,
+    tz: str | None,
+    stagger: str | None,
+    exact: bool,
+) -> dict[str, object]:
+    if _optional_cli_string(stagger) is not None and exact:
+        raise typer.BadParameter("Choose either --stagger or --exact, not both")
+    jobs = list_payload.get("jobs")
+    job_rows = jobs if isinstance(jobs, list) else []
+    existing_job = next(
+        (
+            row
+            for row in job_rows
+            if isinstance(row, dict) and str(row.get("id") or "").strip() == job_id
+        ),
+        None,
+    )
+    if existing_job is None:
+        raise typer.BadParameter(f"unknown cron job id: {job_id}")
+    existing_schedule = existing_job.get("schedule")
+    if not isinstance(existing_schedule, dict) or existing_schedule.get("kind") != "cron":
+        raise typer.BadParameter("Current job is not a cron schedule; use --cron to convert first")
+    expr = _optional_cli_string(existing_schedule.get("expr"))
+    if expr is None:
+        raise typer.BadParameter("Current cron schedule is missing an expression")
+    schedule: dict[str, object] = {"kind": "cron", "expr": expr}
+    normalized_tz = _optional_cli_string(tz)
+    if normalized_tz is not None:
+        schedule["tz"] = normalized_tz
+    else:
+        existing_tz = _optional_cli_string(existing_schedule.get("tz"))
+        if existing_tz is not None:
+            schedule["tz"] = existing_tz
+    normalized_stagger = _optional_cli_string(stagger)
+    if exact:
+        schedule["staggerMs"] = 0
+    elif normalized_stagger is not None:
+        stagger_ms = _cron_duration_ms(normalized_stagger)
+        if stagger_ms is None:
+            raise typer.BadParameter("Invalid --stagger; use e.g. 30s, 1m, 5m")
+        schedule["staggerMs"] = stagger_ms
+    else:
+        existing_stagger_ms = existing_schedule.get("staggerMs")
+        if isinstance(existing_stagger_ms, int) and not isinstance(existing_stagger_ms, bool):
+            schedule["staggerMs"] = existing_stagger_ms
+    return schedule
+
+
+def _cron_cli_failure_alert_patch(
+    *,
+    failure_alert: bool,
+    no_failure_alert: bool,
+    after: str | None,
+    channel: str | None,
+    to: str | None,
+    cooldown: str | None,
+    mode: str | None,
+    account_id: str | None,
+) -> dict[str, object] | bool | None:
+    has_fields = any(
+        _optional_cli_string(value) is not None
+        for value in (after, channel, to, cooldown, mode, account_id)
+    )
+    if failure_alert and no_failure_alert:
+        raise typer.BadParameter("Choose --failure-alert or --no-failure-alert, not both")
+    if no_failure_alert and has_fields:
+        raise typer.BadParameter("Use --no-failure-alert alone")
+    if no_failure_alert:
+        return False
+    if not failure_alert and not has_fields:
+        return None
+    payload: dict[str, object] = {}
+    normalized_after = _optional_cli_string(after)
+    if normalized_after is not None:
+        try:
+            parsed_after = int(normalized_after)
+        except ValueError as exc:
+            raise typer.BadParameter("--failure-alert-after must be a positive integer") from exc
+        if parsed_after <= 0:
+            raise typer.BadParameter("--failure-alert-after must be a positive integer")
+        payload["after"] = parsed_after
+    normalized_channel = _optional_cli_string(channel)
+    if normalized_channel is not None:
+        payload["channel"] = normalized_channel.lower()
+    normalized_to = _optional_cli_string(to)
+    if normalized_to is not None:
+        payload["to"] = normalized_to
+    normalized_cooldown = _optional_cli_string(cooldown)
+    if normalized_cooldown is not None:
+        cooldown_ms = _cron_duration_ms(normalized_cooldown)
+        if cooldown_ms is None:
+            raise typer.BadParameter("Invalid --failure-alert-cooldown")
+        payload["cooldownMs"] = cooldown_ms
+    normalized_mode = _optional_cli_string(mode)
+    if normalized_mode is not None:
+        mode_value = normalized_mode.lower()
+        if mode_value not in {"announce", "webhook"}:
+            raise typer.BadParameter("--failure-alert-mode must be announce or webhook")
+        payload["mode"] = mode_value
+    normalized_account_id = _optional_cli_string(account_id)
+    if normalized_account_id is not None:
+        payload["accountId"] = normalized_account_id
+    return payload
+
+
+@cron_app.command("edit")
+def cron_edit_command(
+    job_id: str = typer.Argument(..., help="Cron job id."),
+    name: str | None = typer.Option(None, "--name", help="Set cron job name."),
+    description: str | None = typer.Option(None, "--description", help="Set description."),
+    enable: bool = typer.Option(False, "--enable", help="Enable job."),
+    disable: bool = typer.Option(False, "--disable", help="Disable job."),
+    session: str | None = typer.Option(None, "--session", help="Session target."),
+    agent: str | None = typer.Option(None, "--agent", help="Set agent id."),
+    clear_agent: bool = typer.Option(False, "--clear-agent", help="Clear agent id."),
+    session_key: str | None = typer.Option(None, "--session-key", help="Session routing key."),
+    clear_session_key: bool = typer.Option(
+        False,
+        "--clear-session-key",
+        help="Clear session routing key.",
+    ),
+    wake: str | None = typer.Option(None, "--wake", help="Wake mode: now or next-heartbeat."),
+    cron_expr: str | None = typer.Option(None, "--cron", help="Set cron expression."),
+    every: str | None = typer.Option(None, "--every", help="Set interval duration."),
+    at: str | None = typer.Option(None, "--at", help="Set one-shot time."),
+    tz: str | None = typer.Option(None, "--tz", help="Timezone for cron expressions."),
+    stagger: str | None = typer.Option(None, "--stagger", help="Cron stagger window."),
+    exact: bool = typer.Option(False, "--exact", help="Disable cron staggering."),
+    system_event: str | None = typer.Option(None, "--system-event", help="Set system event."),
+    message: str | None = typer.Option(None, "--message", help="Set agent message."),
+    model: str | None = typer.Option(None, "--model", help="Set model override."),
+    thinking: str | None = typer.Option(None, "--thinking", help="Set thinking level."),
+    timeout_seconds: str | None = typer.Option(
+        None,
+        "--timeout-seconds",
+        help="Set timeout seconds.",
+    ),
+    light_context: bool = typer.Option(
+        False,
+        "--light-context",
+        help="Enable lightweight context.",
+    ),
+    no_light_context: bool = typer.Option(
+        False,
+        "--no-light-context",
+        help="Disable lightweight context.",
+    ),
+    tools: str | None = typer.Option(None, "--tools", help="Set tool allow-list."),
+    clear_tools: bool = typer.Option(False, "--clear-tools", help="Clear tool allow-list."),
+    announce: bool = typer.Option(False, "--announce", help="Announce summary delivery."),
+    deliver: bool = typer.Option(False, "--deliver", help="Deprecated alias for --announce."),
+    no_deliver: bool = typer.Option(False, "--no-deliver", help="Disable announce delivery."),
+    channel: str | None = typer.Option(None, "--channel", help="Delivery channel."),
+    to: str | None = typer.Option(None, "--to", help="Delivery destination."),
+    account: str | None = typer.Option(None, "--account", help="Delivery account id."),
+    best_effort_deliver: bool = typer.Option(
+        False,
+        "--best-effort-deliver",
+        help="Do not fail the job if delivery fails.",
+    ),
+    no_best_effort_deliver: bool = typer.Option(
+        False,
+        "--no-best-effort-deliver",
+        help="Fail the job if delivery fails.",
+    ),
+    failure_alert: bool = typer.Option(False, "--failure-alert", help="Enable failure alerts."),
+    no_failure_alert: bool = typer.Option(
+        False,
+        "--no-failure-alert",
+        help="Disable failure alerts.",
+    ),
+    failure_alert_after: str | None = typer.Option(
+        None,
+        "--failure-alert-after",
+        help="Alert after N consecutive errors.",
+    ),
+    failure_alert_channel: str | None = typer.Option(
+        None,
+        "--failure-alert-channel",
+        help="Failure alert channel.",
+    ),
+    failure_alert_to: str | None = typer.Option(
+        None,
+        "--failure-alert-to",
+        help="Failure alert destination.",
+    ),
+    failure_alert_cooldown: str | None = typer.Option(
+        None,
+        "--failure-alert-cooldown",
+        help="Minimum time between alerts.",
+    ),
+    failure_alert_mode: str | None = typer.Option(
+        None,
+        "--failure-alert-mode",
+        help="Failure alert delivery mode.",
+    ),
+    failure_alert_account_id: str | None = typer.Option(
+        None,
+        "--failure-alert-account-id",
+        help="Failure alert account id.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit updated cron job as JSON."),
+) -> None:
+    if enable and disable:
+        raise typer.BadParameter("Choose --enable or --disable, not both")
+    if announce and (deliver or no_deliver) or deliver and no_deliver:
+        raise typer.BadParameter("Choose --announce or --no-deliver (not multiple)")
+    if best_effort_deliver and no_best_effort_deliver:
+        raise typer.BadParameter("Choose --best-effort-deliver or --no-best-effort-deliver")
+    if light_context and no_light_context:
+        raise typer.BadParameter("Choose --light-context or --no-light-context")
+    if _cron_cli_tools_allow(tools) is not None and clear_tools:
+        raise typer.BadParameter("Use --tools or --clear-tools, not both")
+    patch: dict[str, object] = {}
+    normalized_name = _optional_cli_string(name)
+    if normalized_name is not None:
+        patch["name"] = normalized_name
+    normalized_description = _optional_cli_string(description)
+    if normalized_description is not None:
+        patch["description"] = normalized_description
+    if enable:
+        patch["enabled"] = True
+    if disable:
+        patch["enabled"] = False
+    normalized_session = _optional_cli_string(session)
+    normalized_message = _optional_cli_string(message)
+    normalized_system_event = _optional_cli_string(system_event)
+    if normalized_session == "main" and normalized_message is not None:
+        raise typer.BadParameter(
+            "Main jobs cannot use --message; use --system-event or --session isolated"
+        )
+    if normalized_session == "isolated" and normalized_system_event is not None:
+        raise typer.BadParameter(
+            "Isolated jobs cannot use --system-event; use --message or --session main"
+        )
+    if normalized_session is not None:
+        patch["sessionTarget"] = normalized_session
+    normalized_wake = _optional_cli_string(wake)
+    if normalized_wake is not None:
+        patch["wakeMode"] = normalized_wake
+    normalized_agent = _optional_cli_string(agent)
+    if normalized_agent is not None and clear_agent:
+        raise typer.BadParameter("Use --agent or --clear-agent, not both")
+    if normalized_agent is not None:
+        patch["agentId"] = normalized_agent
+    if clear_agent:
+        patch["agentId"] = None
+    normalized_session_key = _optional_cli_string(session_key)
+    if normalized_session_key is not None and clear_session_key:
+        raise typer.BadParameter("Use --session-key or --clear-session-key, not both")
+    if normalized_session_key is not None:
+        patch["sessionKey"] = normalized_session_key
+    if clear_session_key:
+        patch["sessionKey"] = None
+    direct_schedule_count = _cron_direct_schedule_option_count(
+        cron_expr=cron_expr,
+        every=every,
+        at=at,
+    )
+    needs_existing_schedule_patch = (
+        direct_schedule_count == 0
+        and _cron_has_schedule_options(
+            cron_expr=cron_expr,
+            every=every,
+            at=at,
+            tz=tz,
+            stagger=stagger,
+            exact=exact,
+        )
+    )
+    if direct_schedule_count > 0:
+        patch["schedule"] = _cron_cli_schedule(
+            cron_expr=cron_expr,
+            every=every,
+            at=at,
+            tz=tz,
+            stagger=stagger,
+            exact=exact,
+        )
+    normalized_model = _optional_cli_string(model)
+    normalized_thinking = _optional_cli_string(thinking)
+    parsed_timeout_seconds = _cron_positive_int(timeout_seconds)
+    tools_allow = _cron_cli_tools_allow(tools)
+    has_delivery_mode_flag = announce or deliver or no_deliver
+    has_delivery_target = any(
+        _optional_cli_string(value) is not None for value in (channel, to, account)
+    )
+    has_best_effort = best_effort_deliver or no_best_effort_deliver
+    has_agent_turn_patch = any(
+        (
+            normalized_message is not None,
+            normalized_model is not None,
+            normalized_thinking is not None,
+            parsed_timeout_seconds is not None,
+            light_context,
+            no_light_context,
+            tools_allow is not None,
+            clear_tools,
+            has_delivery_mode_flag,
+            has_delivery_target,
+            has_best_effort,
+        )
+    )
+    if normalized_system_event is not None and has_agent_turn_patch:
+        raise typer.BadParameter("Choose at most one payload change")
+    if normalized_system_event is not None:
+        patch["payload"] = {"kind": "systemEvent", "text": normalized_system_event}
+    elif has_agent_turn_patch:
+        payload: dict[str, object] = {"kind": "agentTurn"}
+        if normalized_message is not None:
+            payload["message"] = normalized_message
+        if normalized_model is not None:
+            payload["model"] = normalized_model
+        if normalized_thinking is not None:
+            payload["thinking"] = normalized_thinking
+        if parsed_timeout_seconds is not None:
+            payload["timeoutSeconds"] = parsed_timeout_seconds
+        if light_context:
+            payload["lightContext"] = True
+        if no_light_context:
+            payload["lightContext"] = False
+        if clear_tools:
+            payload["toolsAllow"] = None
+        elif tools_allow is not None:
+            payload["toolsAllow"] = tools_allow
+        patch["payload"] = payload
+    if has_delivery_mode_flag or has_delivery_target or has_best_effort:
+        delivery: dict[str, object] = {}
+        if has_delivery_mode_flag:
+            delivery["mode"] = "none" if no_deliver else "announce"
+        elif has_best_effort:
+            delivery["mode"] = "announce"
+        normalized_channel = _optional_cli_string(channel)
+        if normalized_channel is not None:
+            delivery["channel"] = normalized_channel
+        normalized_to = _optional_cli_string(to)
+        if normalized_to is not None:
+            delivery["to"] = normalized_to
+        normalized_account = _optional_cli_string(account)
+        if normalized_account is not None:
+            delivery["accountId"] = normalized_account
+        if has_best_effort:
+            delivery["bestEffort"] = best_effort_deliver
+        patch["delivery"] = delivery
+    failure_alert_patch = _cron_cli_failure_alert_patch(
+        failure_alert=failure_alert,
+        no_failure_alert=no_failure_alert,
+        after=failure_alert_after,
+        channel=failure_alert_channel,
+        to=failure_alert_to,
+        cooldown=failure_alert_cooldown,
+        mode=failure_alert_mode,
+        account_id=failure_alert_account_id,
+    )
+    if failure_alert_patch is not None:
+        patch["failureAlert"] = failure_alert_patch
+    params: dict[str, object] = {"id": job_id, "patch": patch}
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        if needs_existing_schedule_patch:
+            list_payload = await _call_gateway_node_method(
+                services,
+                "cron.list",
+                {"includeDisabled": True},
+            )
+            patch["schedule"] = _cron_existing_schedule_patch(
+                list_payload,
+                job_id=job_id,
+                tz=tz,
+                stagger=stagger,
+                exact=exact,
+            )
+        return await _call_gateway_node_method(services, "cron.update", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_cron_mutation(result, json_output=json_output)
+
+
+@sessions_app.callback(invoke_without_command=True)
+def sessions_inventory_command(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    agent: str | None = typer.Option(None, "--agent", help="Agent id to inspect."),
+    all_agents: bool = typer.Option(
+        False,
+        "--all-agents",
+        help="Aggregate sessions across configured agents.",
+    ),
+    active: str | None = typer.Option(
+        None,
+        "--active",
+        help="Only show sessions updated within the past N minutes.",
+    ),
+    store: str | None = typer.Option(
+        None,
+        "--store",
+        help="OpenClaw-compatible option; native OpenZues uses the gateway session store.",
+    ),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    if _optional_cli_string(store) is not None:
+        raise typer.BadParameter("--store is not supported by the native OpenZues session store")
+    params: dict[str, object] = {}
+    normalized_agent = _optional_cli_string(agent)
+    if normalized_agent is not None:
+        params["agentId"] = normalized_agent
+    active_minutes = _sessions_cli_positive_int(active, option="--active")
+    if active_minutes is not None:
+        params["activeMinutes"] = active_minutes
+    if all_agents:
+        params["includeGlobal"] = True
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "sessions.list", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_sessions_inventory(result, json_output=json_output)
+
+
+@sessions_app.command("cleanup")
+def sessions_cleanup_command(
+    ctx: typer.Context,
+    store: str | None = typer.Option(
+        None,
+        "--store",
+        help="OpenClaw-compatible option; native OpenZues uses the gateway session store.",
+    ),
+    agent: str | None = typer.Option(None, "--agent", help="Agent id to maintain."),
+    all_agents: bool = typer.Option(
+        False,
+        "--all-agents",
+        help="Preview maintenance across all native gateway sessions.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview maintenance actions."),
+    enforce: bool = typer.Option(False, "--enforce", help="Preview enforce-mode maintenance."),
+    fix_missing: bool = typer.Option(
+        False,
+        "--fix-missing",
+        help="OpenClaw-compatible flag; dry-run reports native transcript posture.",
+    ),
+    active_key: str | None = typer.Option(
+        None,
+        "--active-key",
+        help="Protect this session key from budget eviction.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit cleanup summary as JSON."),
+) -> None:
+    parent_params = ctx.parent.params if ctx.parent is not None else {}
+    parent_store = _optional_cli_string(parent_params.get("store"))
+    normalized_store = _optional_cli_string(store) or parent_store
+    if normalized_store is not None:
+        raise typer.BadParameter("--store is not supported by the native OpenZues session store")
+    normalized_agent = _optional_cli_string(agent) or _optional_cli_string(
+        parent_params.get("agent")
+    )
+    include_all_agents = all_agents or bool(parent_params.get("all_agents"))
+    json_output = json_output or bool(parent_params.get("json_output"))
+    mode = "enforce" if enforce else "warn"
+    params: dict[str, object] = {}
+    if normalized_agent is not None:
+        params["agentId"] = normalized_agent
+    if include_all_agents:
+        params["includeGlobal"] = True
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        inventory = await _call_gateway_node_method(services, "sessions.list", params)
+        missing_keys = (
+            await _sessions_cleanup_missing_metadata_keys(
+                services,
+                agent_id=None if include_all_agents else normalized_agent,
+            )
+            if fix_missing
+            else []
+        )
+        if fix_missing and not dry_run:
+            await _sessions_cleanup_delete_metadata_keys(services, missing_keys)
+        return _sessions_cleanup_summary(
+            inventory,
+            agent_id=normalized_agent,
+            mode=mode,
+            dry_run=dry_run,
+            missing_keys=missing_keys,
+        )
+
+    result = _run(_run_with_services(_action))
+    _emit_sessions_cleanup(result, json_output=json_output)
 
 
 @sessions_app.command("spawn")

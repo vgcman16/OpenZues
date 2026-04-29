@@ -1578,6 +1578,242 @@ async def test_ops_mesh_service_posts_cron_failure_destination_webhook_for_faile
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_applies_cron_failure_alert_threshold_and_cooldown(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    alert_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        alert_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Failure Alert Threshold",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Send a thresholded cron failure alert.",
+                },
+                "failureAlert": {
+                    "after": 2,
+                    "cooldownMs": 60_000,
+                    "channel": "last",
+                },
+            }
+        )
+    )
+    session_key = "agent:main:telegram:direct:19098680"
+    started_at = datetime(2026, 4, 29, 12, 0, tzinfo=UTC)
+
+    async def record_failed_run(offset_seconds: int) -> dict[str, object]:
+        launched_at = started_at + timedelta(seconds=offset_seconds)
+        ended_at = launched_at + timedelta(seconds=5)
+        await database.update_task_blueprint(
+            task.id,
+            last_launched_at=launched_at.isoformat(),
+            last_status="active",
+        )
+        mission_id = await database.create_mission(
+            name="Failure Alert Threshold",
+            objective="Send a thresholded cron failure alert.",
+            status="failed",
+            instance_id=task.instance_id or 1,
+            project_id=task.project_id,
+            task_blueprint_id=task.id,
+            thread_id="thread_cron_failure_alert",
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=4,
+            use_builtin_agents=True,
+            run_verification=True,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+            toolsets=[],
+        )
+        await database.update_mission(
+            mission_id,
+            last_checkpoint=None,
+            last_error="request timed out",
+            last_activity_at=ended_at.isoformat(),
+            session_key=session_key,
+        )
+
+        await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+        stored = await database.get_task_blueprint(task.id)
+        assert stored is not None
+        return stored["cron_state"]
+
+    first_state = await record_failed_run(0)
+
+    assert first_state["consecutiveErrors"] == 1
+    assert first_state["lastRunStatus"] == "error"
+    assert first_state["lastStatus"] == "error"
+    assert first_state["lastError"] == "request timed out"
+    assert first_state["lastErrorReason"] == "timeout"
+    assert first_state["lastDurationMs"] == 5_000
+    assert first_state["lastDeliveryStatus"] == "not-requested"
+    assert "lastFailureAlertAtMs" not in first_state
+    assert alert_deliveries == []
+
+    second_state = await record_failed_run(30)
+
+    assert second_state["consecutiveErrors"] == 2
+    assert isinstance(second_state["lastFailureAlertAtMs"], int)
+    assert alert_deliveries == [
+        (
+            session_key,
+            'Cron job "Failure Alert Threshold" failed 2 times\n'
+            "Last error: request timed out",
+        )
+    ]
+
+    third_state = await record_failed_run(45)
+
+    assert third_state["consecutiveErrors"] == 3
+    assert third_state["lastFailureAlertAtMs"] == second_state["lastFailureAlertAtMs"]
+    assert len(alert_deliveries) == 1
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_applies_global_cron_failure_alert_threshold_and_cooldown(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    alert_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        alert_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+        cron_failure_alert={
+            "enabled": True,
+            "after": 2,
+            "cooldownMs": 60_000,
+        },
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Global Failure Alert",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Use the global cron failure alert config.",
+                },
+            }
+        )
+    )
+    session_key = "agent:main:telegram:direct:19098680"
+    started_at = datetime(2026, 4, 29, 13, 0, tzinfo=UTC)
+
+    async def record_failed_run(offset_seconds: int) -> dict[str, object]:
+        launched_at = started_at + timedelta(seconds=offset_seconds)
+        ended_at = launched_at + timedelta(seconds=5)
+        await database.update_task_blueprint(
+            task.id,
+            last_launched_at=launched_at.isoformat(),
+            last_status="active",
+        )
+        mission_id = await database.create_mission(
+            name="Global Failure Alert",
+            objective="Use the global cron failure alert config.",
+            status="failed",
+            instance_id=task.instance_id or 1,
+            project_id=task.project_id,
+            task_blueprint_id=task.id,
+            thread_id="thread_global_cron_failure_alert",
+            cwd=str(tmp_path),
+            model="gpt-5.4",
+            reasoning_effort=None,
+            collaboration_mode=None,
+            max_turns=4,
+            use_builtin_agents=True,
+            run_verification=True,
+            auto_commit=False,
+            pause_on_approval=True,
+            allow_auto_reflexes=True,
+            auto_recover=True,
+            auto_recover_limit=2,
+            reflex_cooldown_seconds=900,
+            allow_failover=True,
+            toolsets=[],
+        )
+        await database.update_mission(
+            mission_id,
+            last_checkpoint=None,
+            last_error="server overloaded",
+            last_activity_at=ended_at.isoformat(),
+            session_key=session_key,
+        )
+
+        await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+        stored = await database.get_task_blueprint(task.id)
+        assert stored is not None
+        return stored["cron_state"]
+
+    first_state = await record_failed_run(0)
+
+    assert first_state["consecutiveErrors"] == 1
+    assert "lastFailureAlertAtMs" not in first_state
+    assert alert_deliveries == []
+
+    second_state = await record_failed_run(30)
+
+    assert second_state["consecutiveErrors"] == 2
+    assert isinstance(second_state["lastFailureAlertAtMs"], int)
+    assert alert_deliveries == [
+        (
+            session_key,
+            'Cron job "Global Failure Alert" failed 2 times\n'
+            "Last error: server overloaded",
+        )
+    ]
+
+    third_state = await record_failed_run(45)
+
+    assert third_state["consecutiveErrors"] == 3
+    assert third_state["lastFailureAlertAtMs"] == second_state["lastFailureAlertAtMs"]
+    assert len(alert_deliveries) == 1
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_delivers_last_channel_cron_failure_destination_to_session_key(
     tmp_path: Path,
 ) -> None:
@@ -6620,6 +6856,12 @@ async def test_ops_mesh_service_routes_due_main_system_event_task_through_wake_q
     assert stored is not None
     assert stored["last_status"] == "completed"
     assert stored["last_result_summary"] == "Resume the main lane from cron."
+    assert stored["cron_state"]["lastRunStatus"] == "ok"
+    assert stored["cron_state"]["lastStatus"] == "ok"
+    assert stored["cron_state"]["lastDurationMs"] == 0
+    assert stored["cron_state"]["consecutiveErrors"] == 0
+    assert stored["cron_state"]["lastDeliveryStatus"] == "not-requested"
+    assert "lastFailureAlertAtMs" not in stored["cron_state"]
 
 
 @pytest.mark.asyncio
@@ -6927,6 +7169,190 @@ async def test_ops_mesh_service_disables_consumed_one_shot_task_on_completion(
     assert stored["enabled"] == 0
     assert stored["last_status"] == "completed"
     assert stored["last_result_summary"] == "Completed the one-shot reminder."
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_deletes_consumed_one_shot_task_when_delete_after_run_true(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="One Shot Delete",
+        summary="Run exactly once.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            "objective_template": "Run exactly once.",
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+            "cron_delete_after_run": True,
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    await database.update_task_blueprint(
+        1,
+        last_launched_at="2026-04-18T12:05:00+00:00",
+        last_status="active",
+    )
+    mission_id = await database.create_mission(
+        name="One Shot Delete",
+        objective="Run exactly once.",
+        status="completed",
+        instance_id=1,
+        project_id=1,
+        task_blueprint_id=1,
+        thread_id="thread_one_shot_delete",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="Completed the one-shot reminder.",
+        last_activity_at=datetime.now(UTC).isoformat(),
+    )
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.handle_mission_event("mission/completed", {"missionId": mission_id})
+
+    assert await database.get_task_blueprint(1) is None
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_schedules_transient_one_shot_retry_with_backoff(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_project(path="C:/workspace", label="OpenZues Workspace")
+    await database.create_task_blueprint(
+        name="Retry Once",
+        summary="Retry a transient one-shot failure.",
+        project_id=1,
+        instance_id=1,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            "objective_template": "Retry a transient one-shot failure.",
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+            "cwd": "C:/workspace",
+            "model": "gpt-5.4",
+            "reasoning_effort": None,
+            "collaboration_mode": None,
+            "max_turns": 2,
+            "use_builtin_agents": True,
+            "run_verification": True,
+            "auto_commit": False,
+            "pause_on_approval": True,
+            "allow_auto_reflexes": True,
+            "auto_recover": True,
+            "auto_recover_limit": 2,
+            "reflex_cooldown_seconds": 900,
+            "allow_failover": True,
+        },
+    )
+    launched_at = datetime(2026, 4, 18, 12, 5, tzinfo=UTC)
+    ended_at = launched_at + timedelta(seconds=10)
+    await database.update_task_blueprint(
+        1,
+        last_launched_at=launched_at.isoformat(),
+        last_status="active",
+    )
+    mission_id = await database.create_mission(
+        name="Retry Once",
+        objective="Retry a transient one-shot failure.",
+        status="failed",
+        instance_id=1,
+        project_id=1,
+        task_blueprint_id=1,
+        thread_id="thread_one_shot_retry",
+        cwd="C:/workspace",
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=2,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        last_error="request timed out",
+        last_activity_at=ended_at.isoformat(),
+    )
+    fake_missions = FakeMissionService()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        fake_missions,  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        cron_retry={
+            "maxAttempts": 2,
+            "backoffMs": [60_000],
+            "retryOn": ["timeout"],
+        },
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    stored = await database.get_task_blueprint(1)
+    assert stored is not None
+    expected_retry_at_ms = int((ended_at + timedelta(milliseconds=60_000)).timestamp() * 1000)
+    assert stored["enabled"] == 1
+    assert stored["cron_state"]["consecutiveErrors"] == 1
+    assert stored["cron_state"]["nextRunAtMs"] == expected_retry_at_ms
+
+    await service.tick_once()
+
+    assert len(fake_missions.created_payloads) == 1
+    assert fake_missions.created_payloads[0].task_blueprint_id == 1
 
 
 @pytest.mark.asyncio

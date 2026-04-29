@@ -20,9 +20,9 @@
 These are complete within the bounded OpenZues-local parity contract verified in this repo. They are not a claim that every OpenClaw product behavior is finished.
 
 - Gateway method registry, method policy wiring, strict parameter guards, config lookup/mutation, node invoke guard rails, device pairing, device-token rotation/revoke, plugin approval lifecycle, exec approval lifecycle, and node/global exec approval policy are landed and verified.
-- Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, and system-event session-key wake routing.
+- Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, system-event session-key wake routing, retry/backoff, one-shot cleanup, and OpenClaw-style CLI add/edit schedule parsing.
 - Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
-- Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id validation.
+- Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, abort partial metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id plus requester ownership validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
@@ -34,10 +34,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
 | Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
-| Chat + transcript contracts | Strong partial | ~96% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort`, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
-| Cron wake/delivery | Strong partial | ~96% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, and session-key wake routing are verified. |
+| Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
+| Cron wake/delivery | Strong partial | ~98% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~85% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, direct route send/poll, sandbox inventory/explain/recreate plus human summaries, sessions spawn/wait, models list/status with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records/doctor with compatibility notices/inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Partial | ~87% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, delivery replay, route creation, direct route send/poll, sandbox inventory/explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply and `--fix-missing` metadata pruning, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records/doctor with compatibility notices/inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~96% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing and parent-route matching, WhatsApp native reply/document/gif-video payloads, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; broader per-provider option coverage remains open. |
@@ -72,6 +72,40 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Latest Verification
 
+- `python -m pytest tests\test_cli.py -q -k "sessions_cleanup_fix_missing_enforce_deletes_metadata_rows"`: 1 passed after mapping `sessions cleanup --enforce --fix-missing` to native metadata pruning.
+- `python -m pytest tests\test_cli.py -q -k "sessions_cleanup"`: 3 passed after rechecking cleanup dry-run, no-op apply, and fix-missing paths.
+- `python -m pytest tests\test_cli.py -q -k "sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 11 passed after rechecking adjacent session/runtime CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sessions cleanup fix-missing slice.
+- `mypy src\openzues\cli.py`: clean after the sessions cleanup fix-missing slice.
+- `python -m pytest tests\test_cli.py -q -k "sessions_cleanup_enforce_json_returns_applied_noop_summary or sessions_cleanup_dry_run_json_calls_sessions_list_owner"`: 2 passed after adding cleanup enforce/apply no-op summaries.
+- `python -m pytest tests\test_cli.py -q -k "sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 10 passed after rechecking adjacent session/runtime CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sessions cleanup no-op apply slice.
+- `mypy src\openzues\cli.py`: clean after the sessions cleanup no-op apply slice.
+- `python -m pytest tests\test_cli.py -q -k "sessions_cleanup_dry_run_json_calls_sessions_list_owner"`: 1 passed after adding `sessions cleanup --dry-run --json` preview over `sessions.list`.
+- `python -m pytest tests\test_cli.py -q -k "sessions_inventory_json_calls_gateway_method_owner or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 3 passed after rechecking adjacent session subcommands.
+- `python -m pytest tests\test_cli.py -q -k "sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 9 passed after rechecking adjacent session/runtime CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sessions cleanup dry-run slice.
+- `mypy src\openzues\cli.py`: clean after the sessions cleanup dry-run slice.
+- `python -m pytest tests\test_cli.py -q -k "sessions_inventory_json_calls_gateway_method_owner"`: 1 passed after adding top-level `sessions --json` over `sessions.list`.
+- `python -m pytest tests\test_cli.py -q -k "sessions_inventory_rejects_invalid_active_minutes"`: 1 passed after matching OpenClaw's positive `--active` validation.
+- `python -m pytest tests\test_cli.py -q -k "sessions_ or sandbox_list_json or routes_send_json_calls_native_direct_send_runtime or routes_poll_human_output_calls_native_direct_poll_runtime"`: 8 passed after rechecking adjacent session/runtime CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the sessions inventory CLI slice.
+- `mypy src\openzues\cli.py`: clean after the sessions inventory CLI slice.
+- `python -m pytest tests\test_cli.py -q -k "cron_add_at_timezone_normalizes_offsetless_datetime or cron_add_at_timezone_rejects_nonexistent_dst_gap or cron_add_at_timezone_allows_relative_duration or cron_add_at_offsetless_datetime_without_timezone_defaults_to_utc"`: 4 passed after matching OpenClaw `cron add --at` timezone/date parsing.
+- `python -m pytest tests\test_cli.py -q -k "cron_"`: 24 passed after rechecking adjacent cron CLI surfaces.
+- `ruff check pyproject.toml src\openzues\cli.py tests\test_cli.py`: clean after adding native `tzdata` timezone support for Windows cron CLI parsing.
+- `mypy src\openzues\cli.py`: clean after the cron `--at` parser slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort_persists_partial_assistant_transcript_like_openclaw or chat_send_stop_persists_abort_partial_with_stop_command_origin or chat_abort"`: 11 passed after persisting OpenClaw-shaped abort partials.
+- `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`: 2 passed after rechecking HTTP abort paths with the metadata-backed transcript store.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or chat_history or sessions_history"`: 31 passed after rechecking adjacent transcript projections.
+- `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface or transcript_usage or control_chat"`: 5 passed after rechecking shared transcript/session read-model paths.
+- `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean after the abort partial persistence slice.
+- `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`: clean after the abort partial persistence slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort"`: 9 passed after adding OpenClaw-shaped `chat.abort` requester ownership checks.
+- `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`: 2 passed after rechecking HTTP gateway abort paths.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or sessions_steer or sessions_abort or compaction_restore"`: 27 passed after rechecking adjacent internal abort callers.
+- `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`: clean after the abort ownership slice.
+- `mypy src\openzues\services\gateway_node_methods.py`: clean after the abort ownership slice.
 - `python -m pytest tests\test_codex_rpc.py -q`: 9 passed after adding the explicit workspace-write sandbox override for Windows child turns.
 - `python -m pytest tests\test_gateway_sandbox_spawn.py -q`: 2 passed after adding the production RuntimeManager-backed sandbox child-turn adapter.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_required_sandbox or sessions_spawn_required_sandbox"`: 3 passed after persisting sandbox runtime policy metadata through `sessions.spawn`.
@@ -263,6 +297,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "acp_ or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 7 passed after rechecking adjacent ACP/session CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the ACP CLI option validation slice.
 - `mypy src\openzues\cli.py`: clean after the ACP CLI option validation slice.
+- `python -m pytest tests\test_cli.py -q -k "acp_client"`: 4 passed after adding the native ACP client spawn-plan helper and fakeable runner seam.
+- `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"`: 8 passed after rechecking adjacent ACP bridge/client CLI boundaries.
+- `ruff check src\openzues\cli.py src\openzues\services\acp_client_runtime.py tests\test_cli.py`: clean after the ACP client spawn-plan slice.
+- `mypy src\openzues\cli.py src\openzues\services\acp_client_runtime.py`: clean after the ACP client spawn-plan slice.
 - `python -m pytest tests\test_cli.py -q -k "capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias"`: 2 passed after adding OpenClaw's metadata-only `infer` / `capability` list and inspect surfaces.
 - `python -m pytest tests\test_cli.py -q -k "capability_list_json_surfaces_openclaw_capability_metadata or infer_inspect_json_uses_capability_alias or models_list or models_status"`: 4 passed after rechecking adjacent CLI model/runtime metadata commands.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer` / `capability` metadata slice.
@@ -1161,7 +1199,311 @@ These are complete within the bounded OpenZues-local parity contract verified in
   accepted ACP child sessions/metadata are stamped with the resolved target
   agent id instead of always `main`.
 - Verified the ACP target-agent policy slice with `python -m pytest tests\test_gateway_acp_spawn.py -q`, `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp_requires_target_agent_without_default or sessions_spawn_acp_uses_configured_default_agent or sessions_spawn_acp_rejects_agent_outside_acp_allowlist"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp or sessions_spawn_rejects_acp or sessions_spawn_session_mode_requires_thread_binding"`, `python -m pytest tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py -q -k "acp_spawn or sessions_spawn_acp"`, `python -m pytest tests\test_gateway_node_methods.py -q -k "config_patch_noop_skips_restart_sentinel or config_write_methods_persist_control_ui_config_with_base_hash"`, `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py src\openzues\schemas.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_config.py src\openzues\schemas.py`.
-- Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
+- `cron.add` and `cron.update` now accept OpenClaw-style per-job
+  `failureAlert` objects instead of rejecting every object shape. The native
+  cron owner persists `cron_failure_alert`, projects `failureAlert` through
+  `cron.list`/job responses, and merges update patches while preserving the
+  `failureAlert=false` override path.
+- Verified the cron failure-alert persistence slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "failure_alert_object_like_openclaw"` (`2 passed`), adjacent service cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_add or cron_update or cron_list or cron_status or cron_runs or cron_run or cron_remove"` (`50 passed`), adjacent API cron pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_add or cron_update or cron_list or cron_status or cron_runs or cron_run or cron_remove"` (`24 passed`), `ruff check src\openzues\schemas.py src\openzues\services\gateway_cron.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\schemas.py src\openzues\services\gateway_cron.py`.
+- `cron.update` now accepts OpenClaw-style `patch.state` objects, merges them
+  into persisted native `cron_state`, and projects the sanitized runtime state
+  fields through cron job snapshots while preserving OpenZues-derived local run
+  status when execution data exists.
+- Verified the cron state-patch slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_update_persists_state_patch_like_openclaw or cron_update_merges_state_patch_like_openclaw"` (`2 passed`), adjacent service cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_update or cron_list or cron_status"` (`20 passed`), adjacent API cron pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_update or cron_list or cron_status"` (`11 passed`), `ruff check src\openzues\schemas.py src\openzues\services\gateway_cron.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\schemas.py src\openzues\services\gateway_cron.py`.
+- Ops Mesh mission-result handling now consumes per-job cron `failureAlert`
+  policy for failed scheduled runs: it persists last run/error/duration/delivery
+  state, increments `consecutiveErrors`, emits the OpenClaw-shaped thresholded
+  failure-alert message through the native session delivery path, stamps
+  `lastFailureAlertAtMs`, and suppresses repeats inside `cooldownMs`.
+- Verified the cron failure-alert runtime slice with `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure_alert_threshold"` (`1 passed`), adjacent Ops Mesh cron/failure pack `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure or failure_destination or cron_run or scheduled"` (`13 passed`), adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_run or cron_runs or cron_update"` (`23 passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Main-session `systemEvent` cron dispatch now persists OpenClaw-style success
+  state when the wake is queued, including `lastRunStatus="ok"`, duration,
+  delivery status, and reset consecutive failure metadata.
+- Verified the system-event wake state slice with `python -m pytest tests\test_ops_mesh.py -q -k "routes_due_main_system_event_task_through_wake_queue"` (`1 passed`), adjacent wake/cron pack `python -m pytest tests\test_ops_mesh.py -q -k "main_system_event or cron_failure_alert_threshold or cron_failure or scheduled"` (`16 passed`), adjacent API cron-run pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "main_system_event_cron_run_routes_session_key_through_wake_queue or cron_run"` (`5 passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- `acp client` now builds an OpenClaw-shaped native spawn plan before handing
+  off to a registered runner or returning the existing unavailable boundary:
+  default OpenZues ACP launches use `openzues acp`, set
+  `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys,
+  and preserve provider auth for explicit custom ACP servers.
+- Verified the ACP client spawn-plan slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_client"` (`4 passed`), adjacent ACP CLI pack
+  `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"` (`8
+  passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\acp_client_runtime.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\acp_client_runtime.py`.
+- Ops Mesh now applies production-wired global `cron.failureAlert` settings
+  for jobs without a per-job alert policy, preserving the same
+  threshold/cooldown state update path and leaving per-job overrides plus
+  `failureAlert=false` suppression intact.
+- Verified the global cron failure-alert slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "global_cron_failure_alert or
+  cron_failure_alert_threshold"` (`2 passed`), adjacent Ops Mesh cron/failure
+  pack `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure or
+  failure_destination or cron_run or scheduled"` (`14 passed`), adjacent
+  gateway cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "cron_run or cron_runs or cron_update"` (`23 passed`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  src\openzues\settings.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\app.py
+  src\openzues\settings.py`.
+- Transient failed one-shot cron jobs now consume production-wired
+  `cron.retry` settings: Ops Mesh writes `state.nextRunAtMs` from
+  `endedAt + backoff`, keeps retryable one-shot jobs enabled, disables
+  permanent/exhausted failures, and both the scheduler and gateway due-run path
+  honor the persisted retry timestamp.
+- Verified the cron retry/backoff slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "one_shot_retry"` (`1 passed`), adjacent Ops
+  Mesh cron pack `python -m pytest tests\test_ops_mesh.py -q -k "one_shot or
+  cron_failure or scheduled"` (`18 passed`), adjacent gateway cron pack
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_run or
+  cron_runs or cron_update or cron_add"` (`46 passed`), adjacent API cron pack
+  `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_run or
+  cron_runs or cron_update or cron_add"` (`19 passed`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_cron.py
+  src\openzues\app.py src\openzues\settings.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_cron.py src\openzues\app.py
+  src\openzues\settings.py`.
+- The CLI now exposes `cron status` and `cron list` as thin JSON/human wrappers
+  over the production `cron.status` and `cron.list` gateway method owners,
+  including upstream `list --all` request shaping and OpenClaw-style schedule,
+  status, target, agent, and model row output for human lists.
+- Verified the cron CLI status/list slice with `python -m pytest
+  tests\test_cli.py -q -k "cron_status_json_calls_gateway_method_owner or
+  cron_list_human_output_calls_gateway_method_owner"` (`2 passed`), adjacent
+  CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`6 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Provider-specific cron failure-alert result attribution was audited against
+  upstream and skipped as a parity seam because OpenClaw's failure-alert owner
+  is fire-and-forget.
+- `cron runs` now wraps the production `cron.runs` gateway method owner,
+  matching the upstream required `--id` plus positive parsed `--limit` request
+  shape and emitting JSON/human run-history output.
+- Verified the cron runs CLI slice with `python -m pytest tests\test_cli.py -q
+  -k "cron_runs_json_calls_gateway_method_owner"` (`1 passed`), adjacent CLI
+  pack `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron run` now wraps the production `cron.run` gateway method owner,
+  preserving upstream `--due` request shaping and the CLI exit rule: success
+  only when the result is `ok` and either `ran` or `enqueued`.
+- Verified the cron run CLI slice with `python -m pytest tests\test_cli.py -q
+  -k "cron_run_exits_success_when_gateway_runs_job or
+  cron_run_exits_failure_when_gateway_does_not_run_job"` (`2 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`9 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron rm`, `cron remove`, `cron delete`, `cron enable`, and `cron disable`
+  now wrap the production `cron.remove` and `cron.update` gateway method
+  owners with the upstream id/patch request shapes.
+- Verified the cron mutation CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "cron_rm_json_calls_gateway_method_owner or
+  cron_remove_alias_calls_gateway_method_owner or
+  cron_enable_disable_call_gateway_update"` (`3 passed`), adjacent CLI pack
+  `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`12 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron add --name --cron --message` now shapes the same core upstream create
+  request for isolated agent-turn cron jobs: cron schedule object, inferred
+  `sessionTarget="isolated"`, `wakeMode="now"`, agent payload, enabled state,
+  and default announce delivery through channel `last`.
+- Verified the first cron add CLI slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_isolated_cron_message_json_calls_gateway_method_owner"` (`1
+  passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`13 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron add` now also covers upstream-supported main-session system-event
+  creation with `--every`, `--description`, `--session-key`, `--wake
+  next-heartbeat`, and `--disabled`, forwarding only the supported native
+  `cron.add` fields.
+- Verified the cron add system-event/options slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_main_system_event_every_options_call_gateway_method_owner"` (`1
+  passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`14 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron create` now aliases `cron add`, and `cron add/create --model` trims
+  and forwards the model override into the agent-turn payload using the
+  existing native cron method contract.
+- Verified the cron create/model CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "cron_create_alias_trims_model_for_agent_turn_payload"`
+  (`1 passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`15 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron add` now preserves upstream delivery flag shaping for native-supported
+  fields: `--announce`, `--no-deliver`, `--channel`, `--to`, `--account`, and
+  `--best-effort-deliver` map into `delivery.mode`, `channel`, `to`,
+  `accountId`, and `bestEffort`.
+- Verified the cron add delivery flag slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_announce_delivery_options_call_gateway_method_owner or
+  cron_add_no_deliver_sets_delivery_none"` (`2 passed`), adjacent CLI pack
+  `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`17 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron add` now preserves upstream cron-schedule timezone and staggering
+  flags for native-supported schedules: `--tz`, `--stagger`, and `--exact`
+  populate `schedule.tz` and `schedule.staggerMs` with the same cron-only
+  validation rules.
+- Verified the cron add schedule breadth slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_cron_timezone_and_stagger_shape_schedule"` (`1 passed`), adjacent
+  CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`18 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron edit` now exists for the first supported upstream patch slice:
+  `--name`, `--description`, `--enable` / `--disable`, and direct schedule
+  changes dispatch to `cron.update` with a patch object.
+- Verified the first cron edit CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "cron_edit_basic_patch_calls_gateway_method_owner"`
+  (`1 passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`19 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron edit` now also patches the native-supported upstream session, agent,
+  payload, and delivery fields: `--session`, `--session-key`,
+  `--clear-session-key`, `--wake`, `--agent`, `--clear-agent`,
+  `--message`, `--system-event`, `--model`, `--announce`, `--deliver`,
+  `--no-deliver`, `--channel`, `--to`, `--account`,
+  `--best-effort-deliver`, and `--no-best-effort-deliver`.
+- Verified the cron edit payload/session/delivery slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_agent_turn_delivery_patch_calls_gateway_method_owner"` (`1
+  passed`), adjacent CLI pack `python -m pytest tests\test_cli.py -q -k
+  "cron_ or sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`20 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron edit` now patches upstream failure-alert settings through native
+  `cron.update`: `--failure-alert`, `--no-failure-alert`,
+  `--failure-alert-after`, `--failure-alert-channel`, `--failure-alert-to`,
+  `--failure-alert-cooldown`, `--failure-alert-mode`, and
+  `--failure-alert-account-id`.
+- Verified the cron edit failure-alert slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_failure_alert_patch_calls_gateway_method_owner"` (`1 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`21 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron edit --exact` now follows upstream's existing-cron schedule patch path:
+  the CLI reads `cron.list` with disabled jobs included, finds the target job,
+  preserves its cron expression/timezone, and sends a merged `cron.update`
+  schedule with `staggerMs=0` instead of requiring `--cron`.
+- Verified the existing-cron schedule patch slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_exact_patches_existing_cron_schedule"` (`1 passed`), adjacent CLI
+  pack `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`22 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron.update` now accepts and persists upstream agentTurn payload extras:
+  `thinking`, `timeoutSeconds`, `lightContext`, and `toolsAllow`. The native
+  task blueprint snapshot projects them back through `job.payload`, with
+  `thinking` mapped to the task reasoning field and the remaining extras stored
+  as cron payload metadata.
+- Verified the backend cron update payload-extras slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_update_patches_agent_turn_payload_extras_like_openclaw"` (`1 passed`),
+  adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "cron_update or cron_add or cron_list or cron_run"` (`48 passed`),
+  `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- `cron.add` now accepts the same upstream agentTurn payload extras
+  (`thinking`, `timeoutSeconds`, `lightContext`, and `toolsAllow`) and persists
+  them into the native task blueprint payload.
+- Verified the backend cron add payload-extras slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_add_accepts_agent_turn_payload_extras_like_openclaw"` (`1 passed`),
+  adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "cron_update or cron_add or cron_list or cron_run"` (`49 passed`),
+  `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- `cron add` now exposes upstream agent payload extra flags: `--thinking`,
+  `--timeout-seconds`, `--light-context`, and `--tools`, shaping them into
+  `payload.thinking`, `payload.timeoutSeconds`, `payload.lightContext`, and
+  `payload.toolsAllow`.
+- Verified the cron add payload-extra CLI slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_add_payload_extra_flags_shape_agent_turn_payload"` (`1 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`23 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron edit` now exposes the matching payload extra flags and clear forms:
+  `--thinking`, `--timeout-seconds`, `--light-context`,
+  `--no-light-context`, `--tools`, and `--clear-tools`.
+- Verified the cron edit payload-extra CLI slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_payload_extra_flags_shape_agent_turn_patch"` (`1 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`24 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `cron.add` / `cron.update` now accept and project `deleteAfterRun=true`, and
+  successful one-shot system-event `cron.run` dispatch deletes the task
+  blueprint when that flag is set.
+- Verified the first delete-after-run runtime slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_add_accepts_delete_after_run_true_like_openclaw or
+  cron_run_deletes_successful_one_shot_when_delete_after_run_true"` (`2
+  passed`), adjacent gateway cron pack `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "cron_update or cron_add or
+  cron_list or cron_run"` (`51 passed`), `ruff check
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- OpsMesh mission completion now deletes consumed one-shot task blueprints when
+  `cron_delete_after_run` is true, covering isolated agent cron jobs that only
+  finish after `cron.run` has enqueued a mission.
+- Verified the mission-completion delete-after-run slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k
+  "deletes_consumed_one_shot_task_when_delete_after_run_true"` (`1 passed`),
+  adjacent OpsMesh cron/one-shot pack `python -m pytest tests\test_ops_mesh.py
+  -q -k "one_shot or cron_ or failure_alert"` (`22 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Gateway-created one-shot `cron.add` jobs now default `deleteAfterRun` to true
+  when the caller does not explicitly set `--keep-after-run` /
+  `deleteAfterRun=false`, matching upstream normalized one-shot behavior while
+  preserving legacy manually-created local tasks that lack the metadata.
+- Verified default one-shot delete-after-run with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_add_defaults_one_shot_delete_after_run_like_openclaw"` (`1 passed`),
+  adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "cron_update or cron_add or cron_list or cron_run"` (`52 passed`),
+  `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- Next cron parity should cover the remaining direct `--at` timezone
+  normalization breadth.
 
 ## References
 

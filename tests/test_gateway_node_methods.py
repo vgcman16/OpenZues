@@ -9491,6 +9491,410 @@ async def test_chat_abort_interrupts_tracked_gateway_run_with_injected_runtime()
 
 
 @pytest.mark.asyncio
+async def test_chat_abort_rejects_non_owner_requester_like_openclaw() -> None:
+    observed_interrupt: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.append({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-owner-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-owner",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.abort",
+            {"sessionKey": "openzues:thread:demo", "runId": "run-chat-owner-1"},
+            requester=GatewayNodeMethodRequester(
+                client_id="conn-other",
+                node_id="device-other",
+                caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.message == "unauthorized"
+    assert observed_interrupt == []
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_session_scope_rejects_non_owner_requester_like_openclaw() -> None:
+    observed_interrupt: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.append({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-session-owner-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-owner",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            "chat.abort",
+            {"sessionKey": "openzues:thread:demo"},
+            requester=GatewayNodeMethodRequester(
+                client_id="conn-other",
+                node_id="device-other",
+                caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.message == "unauthorized"
+    assert observed_interrupt == []
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_allows_same_device_after_reconnect_like_openclaw() -> None:
+    observed_interrupt: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-device-owner-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-old",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+    payload = await service.call(
+        "chat.abort",
+        {"sessionKey": "openzues:thread:demo", "runId": "run-chat-device-owner-1"},
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-new",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": "run-chat-device-owner-1",
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-device-owner-1"]}
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_allows_admin_bypass_like_openclaw() -> None:
+    observed_interrupt: dict[str, object | None] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        observed_interrupt.update({"session_key": session_key, "run_id": run_id})
+        return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-admin-bypass-1",
+        },
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-owner",
+            node_id="device-owner",
+            caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+    payload = await service.call(
+        "chat.abort",
+        {"sessionKey": "openzues:thread:demo", "runId": "run-chat-admin-bypass-1"},
+        requester=GatewayNodeMethodRequester(
+            client_id="conn-admin",
+            node_id="device-admin",
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert observed_interrupt == {
+        "session_key": "openzues:thread:demo",
+        "run_id": "run-chat-admin-bypass-1",
+    }
+    assert payload == {"ok": True, "aborted": True, "runIds": ["run-chat-admin-bypass-1"]}
+
+
+@pytest.mark.asyncio
+async def test_chat_abort_persists_partial_assistant_transcript_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-partial"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-abort-partial.db")
+    await database.initialize()
+    session_key = "openzues:thread:abort-partial"
+    run_id = "run-chat-abort-partial-1"
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True, "partialText": "Streamed assistant text so far."}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "status",
+            "idempotencyKey": run_id,
+        },
+    )
+    first_abort = await service.call(
+        "chat.abort",
+        {"sessionKey": session_key, "runId": run_id},
+    )
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "status again",
+            "idempotencyKey": run_id,
+        },
+    )
+    second_abort = await service.call(
+        "chat.abort",
+        {"sessionKey": session_key, "runId": run_id},
+    )
+
+    assert first_abort == {"ok": True, "aborted": True, "runIds": [run_id]}
+    assert second_abort == {"ok": True, "aborted": True, "runIds": [run_id]}
+
+    rows = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    assert len(rows) == 1
+    assert rows[0]["role"] == "assistant"
+    assert rows[0]["content"] == "Streamed assistant text so far."
+    metadata = json.loads(str(rows[0]["metadata_json"]))
+    assert metadata == {
+        "idempotencyKey": f"{run_id}:assistant",
+        "stopReason": "stop",
+        "openclawAbort": {
+            "aborted": True,
+            "origin": "rpc",
+            "runId": run_id,
+        },
+    }
+
+    history = await service.call(
+        "chat.history",
+        {"sessionKey": session_key},
+    )
+    assert history["messages"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Streamed assistant text so far."}],
+            "idempotencyKey": f"{run_id}:assistant",
+            "stopReason": "stop",
+            "openclawAbort": {
+                "aborted": True,
+                "origin": "rpc",
+                "runId": run_id,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_send_stop_persists_abort_partial_with_stop_command_origin() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-stop-partial"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-stop-partial.db")
+    await database.initialize()
+    session_key = "openzues:thread:stop-partial"
+    run_id = "run-chat-stop-partial-1"
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms
+        return {"runId": idempotency_key, "status": "ok"}
+
+    async def fake_chat_abort_service(
+        *,
+        session_key: str,
+        run_id: str | None,
+    ) -> dict[str, object]:
+        del session_key, run_id
+        return {"ok": True, "partialText": "Partial before /stop."}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        chat_send_service=fake_chat_send_service,
+        chat_abort_service=fake_chat_abort_service,
+    )
+
+    await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "status",
+            "idempotencyKey": run_id,
+        },
+    )
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "/stop",
+            "idempotencyKey": "stop-command-call-1",
+        },
+    )
+
+    assert payload == {"ok": True, "aborted": True, "runIds": [run_id]}
+    rows = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    assert len(rows) == 1
+    metadata = json.loads(str(rows[0]["metadata_json"]))
+    assert metadata["openclawAbort"] == {
+        "aborted": True,
+        "origin": "stop-command",
+        "runId": run_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_abort_uses_resolved_subagent_store_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-abort-subagent-alias"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -21485,6 +21889,54 @@ async def test_cron_run_due_launches_due_one_shot_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_run_deletes_successful_one_shot_when_delete_after_run_true() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-delete-after-run"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-run-delete-after-run.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="One Shot Wake",
+        summary="Run exactly once through wake.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=None,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Run exactly once through wake."),
+            "schedule_kind": "at",
+            "schedule_at": "2026-04-18T12:00:00.000Z",
+            "cron_session_target": "main",
+            "cron_wake_mode": "now",
+            "cron_payload_kind": "systemEvent",
+            "cron_payload_text": "Run exactly once through wake.",
+            "cron_delete_after_run": True,
+        },
+    )
+    dispatch_calls: list[tuple[int, str]] = []
+
+    async def dispatch_task(task_blueprint_id: int, *, trigger: str) -> str:
+        dispatch_calls.append((task_blueprint_id, trigger))
+        return f"wake:{task_blueprint_id}"
+
+    async def delete_task(task_blueprint_id: int) -> None:
+        await database.delete_task_blueprint(task_blueprint_id)
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        dispatch_cron_system_event_task=dispatch_task,
+        delete_task_blueprint=delete_task,
+    )
+
+    payload = await service.call("cron.run", {"id": f"task-blueprint:{task_id}", "mode": "force"})
+
+    assert payload == {"ok": True, "enqueued": True, "runId": f"wake:{task_id}"}
+    assert dispatch_calls == [(task_id, "gateway-cron:force")]
+    assert await database.get_task_blueprint(task_id) is None
+
+
+@pytest.mark.asyncio
 async def test_cron_run_due_launches_due_cron_expression_task() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-run-due-cron-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -21721,6 +22173,268 @@ async def test_cron_add_creates_every_schedule_agent_turn_job() -> None:
     assert payload["delivery"] == {"mode": "announce"}
     assert payload["enabled"] is True
     assert str(payload["id"]).startswith("task-blueprint:")
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_agent_turn_payload_extras_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-payload-extras"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-payload-extras.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Nightly Extras",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "Ship with payload extras.",
+                "model": "gpt-5.4-mini",
+                "thinking": "high",
+                "timeoutSeconds": 300,
+                "lightContext": True,
+                "toolsAllow": ["read", "write"],
+            },
+        },
+    )
+
+    assert len(created_payloads) == 1
+    created = created_payloads[0]
+    assert created.reasoning_effort == "high"
+    assert created.cron_payload_timeout_seconds == 300
+    assert created.cron_payload_light_context is True
+    assert created.cron_payload_tools_allow == ["read", "write"]
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Ship with payload extras.",
+        "model": "gpt-5.4-mini",
+        "thinking": "high",
+        "timeoutSeconds": 300,
+        "lightContext": True,
+        "toolsAllow": ["read", "write"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_delete_after_run_true_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-delete-after-run"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-delete-after-run.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "One Shot Delete",
+            "enabled": True,
+            "deleteAfterRun": True,
+            "schedule": {"kind": "at", "at": "2026-03-23T22:00:00Z"},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Run once."},
+        },
+    )
+    task_id = int(str(payload["id"]).split(":", 1)[1])
+    stored = await database.get_task_blueprint(task_id)
+
+    assert payload["deleteAfterRun"] is True
+    assert stored is not None
+    assert stored["cron_delete_after_run"] is True
+
+
+@pytest.mark.asyncio
+async def test_cron_add_defaults_one_shot_delete_after_run_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-delete-after-run-default"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-delete-after-run-default.db")
+    await database.initialize()
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Default One Shot Delete",
+            "enabled": True,
+            "schedule": {"kind": "at", "at": "2026-03-23T22:00:00Z"},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Run once."},
+        },
+    )
+    task_id = int(str(payload["id"]).split(":", 1)[1])
+    stored = await database.get_task_blueprint(task_id)
+
+    assert payload["deleteAfterRun"] is True
+    assert stored is not None
+    assert stored["cron_delete_after_run"] is True
+
+
+@pytest.mark.asyncio
+async def test_cron_add_accepts_failure_alert_object_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-add-failure-alert"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-add-failure-alert.db")
+    await database.initialize()
+    created_payloads: list[TaskBlueprintCreate] = []
+
+    async def create_task(payload: TaskBlueprintCreate) -> object:
+        created_payloads.append(payload)
+        task_id = await database.create_task_blueprint(
+            name=payload.name,
+            summary=payload.summary,
+            project_id=payload.project_id,
+            instance_id=payload.instance_id,
+            cadence_minutes=payload.cadence_minutes,
+            enabled=payload.enabled,
+            payload=payload.model_dump(
+                mode="json",
+                exclude={
+                    "name",
+                    "summary",
+                    "project_id",
+                    "instance_id",
+                    "cadence_minutes",
+                    "enabled",
+                },
+            ),
+        )
+        return type("CreatedTask", (), {"id": task_id})()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        create_task_blueprint=create_task,
+    )
+
+    payload = await service.call(
+        "cron.add",
+        {
+            "name": "Alerted Repair",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "Repair the lane."},
+            "failureAlert": {
+                "after": 2,
+                "channel": "telegram",
+                "to": "19098680",
+                "cooldownMs": 60_000,
+                "mode": "announce",
+                "accountId": "ops",
+            },
+        },
+    )
+
+    assert created_payloads[0].cron_failure_alert == {
+        "after": 2,
+        "channel": "telegram",
+        "to": "19098680",
+        "cooldownMs": 60_000,
+        "mode": "announce",
+        "accountId": "ops",
+    }
+    assert payload["failureAlert"] == {
+        "after": 2,
+        "channel": "telegram",
+        "to": "19098680",
+        "cooldownMs": 60_000,
+        "mode": "announce",
+        "accountId": "ops",
+    }
 
 
 @pytest.mark.asyncio
@@ -23455,6 +24169,218 @@ async def test_cron_update_patches_supported_every_agent_turn_fields() -> None:
     assert not bool(updated_record["enabled"])
     assert updated_task["objective_template"] == "Repair the next verified slice."
     assert updated_task["model"] == "gpt-5.4-mini"
+
+
+@pytest.mark.asyncio
+async def test_cron_update_patches_agent_turn_payload_extras_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-payload-extras"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-payload-extras.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Extras",
+        summary="Ship with payload extras.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship with payload extras."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Repair with payload extras.",
+                    "model": "gpt-5.4-mini",
+                    "thinking": "high",
+                    "timeoutSeconds": 300,
+                    "lightContext": True,
+                    "toolsAllow": ["read", "write"],
+                }
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Repair with payload extras.",
+        "model": "gpt-5.4-mini",
+        "thinking": "high",
+        "timeoutSeconds": 300,
+        "lightContext": True,
+        "toolsAllow": ["read", "write"],
+    }
+    assert updated_task is not None
+    assert updated_task["objective_template"] == "Repair with payload extras."
+    assert updated_task["model"] == "gpt-5.4-mini"
+    assert updated_task["reasoning_effort"] == "high"
+    assert updated_task["cron_payload_timeout_seconds"] == 300
+    assert updated_task["cron_payload_light_context"] is True
+    assert updated_task["cron_payload_tools_allow"] == ["read", "write"]
+
+
+@pytest.mark.asyncio
+async def test_cron_update_merges_failure_alert_object_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-failure-alert"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-failure-alert.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Alerted Repair",
+        summary="Repair the lane with alerts.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Repair the lane with alerts."),
+            "cron_failure_alert": {
+                "after": 2,
+                "channel": "telegram",
+                "to": "19098680",
+                "cooldownMs": 60_000,
+            },
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "failureAlert": {
+                    "cooldownMs": 120_000,
+                    "mode": "webhook",
+                    "accountId": "ops",
+                }
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    expected = {
+        "after": 2,
+        "channel": "telegram",
+        "to": "19098680",
+        "cooldownMs": 120_000,
+        "mode": "webhook",
+        "accountId": "ops",
+    }
+    assert payload["failureAlert"] == expected
+    assert updated_task is not None
+    assert updated_task["cron_failure_alert"] == expected
+
+
+@pytest.mark.asyncio
+async def test_cron_update_persists_state_patch_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-state"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-state.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Stateful Repair",
+        summary="Repair the lane with visible state.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Repair the lane with visible state."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    state_patch = {
+        "nextRunAtMs": 1_770_003_600_000,
+        "runningAtMs": 1_770_000_000_500,
+        "lastRunAtMs": 1_770_000_000_000,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastError": "quota exhausted",
+        "lastErrorReason": "billing",
+        "lastDurationMs": 4_200,
+        "consecutiveErrors": 3,
+        "lastDelivered": False,
+        "lastDeliveryStatus": "not-delivered",
+        "lastDeliveryError": "channel route missing",
+        "lastFailureAlertAtMs": 1_770_000_001_000,
+    }
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {"state": state_patch},
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["state"] == state_patch
+    assert updated_task is not None
+    assert updated_task["cron_state"] == state_patch
+
+
+@pytest.mark.asyncio
+async def test_cron_update_merges_state_patch_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-state-merge"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-state-merge.db")
+    await database.initialize()
+    existing_state = {
+        "lastRunAtMs": 1_770_000_000_000,
+        "lastRunStatus": "ok",
+        "lastStatus": "ok",
+        "lastDurationMs": 125,
+    }
+    task_id = await database.create_task_blueprint(
+        name="Merge Stateful Repair",
+        summary="Repair the lane with merged state.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload={
+            **_task_blueprint_payload("Repair the lane with merged state."),
+            "cron_state": existing_state,
+        },
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "state": {
+                    "lastRunStatus": "error",
+                    "lastStatus": "error",
+                    "lastError": "quota exhausted",
+                    "consecutiveErrors": 1,
+                },
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+    expected = {
+        **existing_state,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastError": "quota exhausted",
+        "consecutiveErrors": 1,
+    }
+
+    assert payload["state"] == expected
+    assert updated_task is not None
+    assert updated_task["cron_state"] == expected
 
 
 @pytest.mark.asyncio
