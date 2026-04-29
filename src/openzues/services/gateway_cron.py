@@ -952,6 +952,18 @@ def _cron_payload_object(
     }
     if model:
         payload["model"] = model
+    thinking = str(payload_state.get("reasoning_effort") or "").strip()
+    if thinking:
+        payload["thinking"] = thinking
+    timeout_seconds = payload_state.get("cron_payload_timeout_seconds")
+    if isinstance(timeout_seconds, int) and not isinstance(timeout_seconds, bool):
+        payload["timeoutSeconds"] = timeout_seconds
+    light_context = payload_state.get("cron_payload_light_context")
+    if isinstance(light_context, bool):
+        payload["lightContext"] = light_context
+    tools_allow = payload_state.get("cron_payload_tools_allow")
+    if isinstance(tools_allow, list) and all(isinstance(tool, str) for tool in tools_allow):
+        payload["toolsAllow"] = list(tools_allow)
     return payload
 
 
@@ -1944,7 +1956,15 @@ def build_gateway_cron_job_patch(
                 payload,
                 method="cron.update",
                 label="patch.payload",
-                allowed_keys={"kind", "message", "model"},
+                allowed_keys={
+                    "kind",
+                    "lightContext",
+                    "message",
+                    "model",
+                    "thinking",
+                    "timeoutSeconds",
+                    "toolsAllow",
+                },
             )
             if "message" in payload:
                 payload_updates["objective_template"] = _require_cron_update_string(
@@ -1955,6 +1975,28 @@ def build_gateway_cron_job_patch(
                 payload_updates["model"] = _require_cron_update_string(
                     payload.get("model"),
                     label="patch.payload.model",
+                )
+            if "thinking" in payload:
+                payload_updates["reasoning_effort"] = _optional_cron_update_string(
+                    payload.get("thinking"),
+                    label="patch.payload.thinking",
+                )
+            if "timeoutSeconds" in payload:
+                payload_updates["cron_payload_timeout_seconds"] = (
+                    _optional_cron_update_non_negative_int(
+                        payload.get("timeoutSeconds"),
+                        label="patch.payload.timeoutSeconds",
+                    )
+                )
+            if "lightContext" in payload:
+                payload_updates["cron_payload_light_context"] = _optional_cron_update_bool(
+                    payload.get("lightContext"),
+                    label="patch.payload.lightContext",
+                )
+            if "toolsAllow" in payload:
+                payload_updates["cron_payload_tools_allow"] = _optional_cron_update_string_list(
+                    payload.get("toolsAllow"),
+                    label="patch.payload.toolsAllow",
                 )
             payload_updates["cron_payload_kind"] = "agentTurn"
             payload_updates["cron_payload_text"] = None
@@ -2163,6 +2205,37 @@ def _optional_cron_update_thread_value(value: object, *, label: str) -> str | in
         raise ValueError(f"invalid cron.update params: {label} must be a string or integer")
     trimmed = value.strip()
     return trimmed or None
+
+
+def _optional_cron_update_bool(value: object, *, label: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"invalid cron.update params: {label} must be a boolean")
+    return value
+
+
+def _optional_cron_update_non_negative_int(value: object, *, label: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"invalid cron.update params: {label} must be a non-negative integer")
+    return value
+
+
+def _optional_cron_update_string_list(value: object, *, label: str) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"invalid cron.update params: {label} must be an array")
+    output: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"invalid cron.update params: {label}[{index}] must be a string")
+        trimmed = item.strip()
+        if trimmed:
+            output.append(trimmed)
+    return output
 
 
 def _validated_cron_delivery_channel(

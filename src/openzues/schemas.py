@@ -1202,6 +1202,9 @@ class TaskBlueprintCreate(BaseModel):
     cron_wake_mode: Literal["now", "next-heartbeat"] | None = None
     cron_payload_kind: Literal["agentTurn", "systemEvent"] | None = None
     cron_payload_text: str | None = None
+    cron_payload_timeout_seconds: int | None = Field(default=None, ge=0)
+    cron_payload_light_context: bool | None = None
+    cron_payload_tools_allow: list[str] | None = None
     cron_delivery_mode: Literal["none", "announce", "webhook"] | None = None
     cron_delivery_channel: str | None = None
     cron_delivery_to: str | None = None

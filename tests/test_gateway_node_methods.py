@@ -23938,6 +23938,61 @@ async def test_cron_update_patches_supported_every_agent_turn_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cron_update_patches_agent_turn_payload_extras_like_openclaw() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-payload-extras"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-cron-update-payload-extras.db")
+    await database.initialize()
+    task_id = await database.create_task_blueprint(
+        name="Nightly Extras",
+        summary="Ship with payload extras.",
+        project_id=None,
+        instance_id=None,
+        cadence_minutes=60,
+        enabled=True,
+        payload=_task_blueprint_payload("Ship with payload extras."),
+    )
+    service = GatewayNodeMethodService(GatewayNodeRegistry(), database=database)
+
+    payload = await service.call(
+        "cron.update",
+        {
+            "id": f"task-blueprint:{task_id}",
+            "patch": {
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Repair with payload extras.",
+                    "model": "gpt-5.4-mini",
+                    "thinking": "high",
+                    "timeoutSeconds": 300,
+                    "lightContext": True,
+                    "toolsAllow": ["read", "write"],
+                }
+            },
+        },
+    )
+    updated_task = await database.get_task_blueprint(task_id)
+
+    assert payload["payload"] == {
+        "kind": "agentTurn",
+        "message": "Repair with payload extras.",
+        "model": "gpt-5.4-mini",
+        "thinking": "high",
+        "timeoutSeconds": 300,
+        "lightContext": True,
+        "toolsAllow": ["read", "write"],
+    }
+    assert updated_task is not None
+    assert updated_task["objective_template"] == "Repair with payload extras."
+    assert updated_task["model"] == "gpt-5.4-mini"
+    assert updated_task["reasoning_effort"] == "high"
+    assert updated_task["cron_payload_timeout_seconds"] == 300
+    assert updated_task["cron_payload_light_context"] is True
+    assert updated_task["cron_payload_tools_allow"] == ["read", "write"]
+
+
+@pytest.mark.asyncio
 async def test_cron_update_merges_failure_alert_object_like_openclaw() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-cron-update-failure-alert"
     shutil.rmtree(tmp_path, ignore_errors=True)

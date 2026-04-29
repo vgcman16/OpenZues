@@ -1397,9 +1397,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`22 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron parity should return to backend-backed gaps: add/edit
-  delete-after-run behavior and agent payload extras such as thinking,
-  timeout, light-context, and tools.
+- `cron.update` now accepts and persists upstream agentTurn payload extras:
+  `thinking`, `timeoutSeconds`, `lightContext`, and `toolsAllow`. The native
+  task blueprint snapshot projects them back through `job.payload`, with
+  `thinking` mapped to the task reasoning field and the remaining extras stored
+  as cron payload metadata.
+- Verified the backend cron update payload-extras slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "cron_update_patches_agent_turn_payload_extras_like_openclaw"` (`1 passed`),
+  adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "cron_update or cron_add or cron_list or cron_run"` (`48 passed`),
+  `ruff check src\openzues\services\gateway_cron.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
+- Next cron parity should add the same payload extras to `cron.add`, then expose
+  the matching CLI flags before returning to delete-after-run behavior.
 
 ## References
 
