@@ -224,10 +224,11 @@ fallbacks clear` now empties the configured text fallback list while preserving
 the existing primary model config. No smaller text fallback CLI command remains;
 `models image-fallbacks list` now projects
 `agents.defaults.imageModel.fallbacks` from the native config snapshot and
-supports the upstream JSON/plain/human output shapes. The next model CLI queue
-head is image fallback add/remove/clear, followed by auth-order mutation
-clusters. Live auth probes remain unavailable until the native model auth health
-runtime exists.
+supports the upstream JSON/plain/human output shapes. `models image-fallbacks
+add` now appends canonical image fallback model ids, defaults unqualified ids to
+OpenAI, and upserts the configured model entry. The next model CLI queue head is
+image fallback remove/clear, followed by auth-order mutation clusters. Live auth
+probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

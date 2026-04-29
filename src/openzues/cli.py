@@ -5655,6 +5655,18 @@ async def _add_model_fallback_payload(
     return dict(result)
 
 
+async def _add_image_model_fallback_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.add_image_model_fallback(model)
+    return dict(result)
+
+
 async def _remove_model_fallback_payload(
     services: CliServices,
     *,
@@ -9037,6 +9049,27 @@ def models_image_fallbacks_list_command(
         plain=plain,
         label="Image fallbacks",
     )
+
+
+@models_image_fallbacks_app.command("add")
+def models_image_fallbacks_add_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _add_image_model_fallback_payload(
+                    services,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    typer.echo("Image fallbacks: " + ", ".join(str(item) for item in fallbacks))
 
 
 @models_fallbacks_app.command("add")
