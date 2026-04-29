@@ -5680,11 +5680,13 @@ class GatewayNodeMethodService:
             raw_options = payload.get("options")
             if not isinstance(raw_options, list):
                 raise ValueError("options must be an array")
-            if len(raw_options) < 2 or len(raw_options) > 12:
-                raise ValueError("options must contain between 2 and 12 items")
             options = [
-                _require_non_empty_string(entry, label="options[]") for entry in raw_options
+                _require_string(entry, label="options[]").strip()
+                for entry in raw_options
             ]
+            options = [option for option in options if option]
+            if len(options) < 2 or len(options) > 12:
+                raise ValueError("options must contain between 2 and 12 items")
             max_selections = _optional_bounded_int(
                 payload.get("maxSelections"),
                 label="maxSelections",

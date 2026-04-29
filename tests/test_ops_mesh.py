@@ -4958,7 +4958,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         channel="telegram",
         to="channel:-100123",
         question="Ship native Telegram poll?",
-        options=["Yes", "No"],
+        options=[" Yes ", "   ", "No"],
         duration_seconds=60,
         silent=True,
         is_anonymous=False,
@@ -5014,6 +5014,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         )
     ]
     assert delivery is not None
+    assert delivery["event_payload"]["options"] == ["Yes", "No"]
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
         "runtime": "native-provider-backed",

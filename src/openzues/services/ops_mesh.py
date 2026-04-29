@@ -1408,6 +1408,10 @@ def _validate_telegram_poll_duration_options(
         raise ValueError("Telegram poll durationSeconds must be between 5 and 600")
 
 
+def _normalize_direct_channel_poll_options(options: list[str]) -> list[str]:
+    return [normalized for option in options if (normalized := str(option).strip())]
+
+
 def _direct_channel_poll_max_options(channel: str) -> int:
     normalized = channel.strip().lower()
     if normalized in {"discord", "telegram"}:
@@ -7295,7 +7299,7 @@ class OpsMeshService:
         if conversation_target is None:
             raise ValueError("poll requires an explicit channel target")
         normalized_question = str(question).strip()
-        normalized_options = [str(option).strip() for option in options]
+        normalized_options = _normalize_direct_channel_poll_options(options)
         _validate_direct_channel_poll_option_count(
             conversation_target.channel,
             normalized_options,
