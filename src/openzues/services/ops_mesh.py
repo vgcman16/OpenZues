@@ -4984,6 +4984,24 @@ class OpsMeshService:
                 "summary": "Native provider route is missing a credential secret.",
                 "timeoutMs": timeout_ms,
             }
+        if route_kind == "telegram":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_telegram_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind != "slack":
             return {
                 "ok": False,
@@ -5045,6 +5063,43 @@ class OpsMeshService:
             "teamId": str(result.get("team_id") or ""),
             "user": str(result.get("user") or ""),
             "userId": str(result.get("user_id") or ""),
+            "timeoutMs": timeout_ms,
+        }
+
+    def _probe_telegram_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(str(route.get("target") or ""), token, "getMe"),
+            {},
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "telegram",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        bot = result.get("result")
+        if not isinstance(bot, dict):
+            bot = {}
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "telegram",
+            "runtime": "native-provider-backed",
+            "botId": str(bot.get("id") or ""),
+            "username": str(bot.get("username") or ""),
+            "firstName": str(bot.get("first_name") or ""),
             "timeoutMs": timeout_ms,
         }
 

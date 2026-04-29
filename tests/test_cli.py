@@ -481,6 +481,93 @@ def test_channels_status_json_uses_route_backed_slack_probe(tmp_path, monkeypatc
     ]
 
 
+def test_channels_status_json_uses_route_backed_telegram_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Telegram Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Telegram Native Probe Route",
+            kind="telegram",
+            target="https://api.telegram.org",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "telegram",
+                "account_id": "alerts",
+                "peer_kind": "channel",
+                "peer_id": "chat:ops",
+                "summary": "telegram alerts channel ops",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="bot123456:ABC",
+            vault_secret_id=None,
+        )
+    )
+    telegram_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        telegram_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "id": 123456,
+                "is_bot": True,
+                "first_name": "Deploy",
+                "username": "deploy_bot",
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["telegram"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "telegram",
+        "runtime": "native-provider-backed",
+        "botId": "123456",
+        "username": "deploy_bot",
+        "firstName": "Deploy",
+        "timeoutMs": 2500,
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:ABC/getMe",
+            {},
+            None,
+            None,
+        )
+    ]
+
+
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

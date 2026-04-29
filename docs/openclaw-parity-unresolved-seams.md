@@ -81,6 +81,9 @@ saved delivery metadata path.
 probe: enabled native Slack routes call Slack `auth.test` through the stored
 route secret, while configured/no-account cases return an honest
 `native_provider_route_unavailable` posture instead of a vacuous success.
+Telegram native routes now probe Bot API `getMe` through the saved bot token
+and return provider bot metadata through the same channel status account probe
+envelope.
 
 Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `sessions wait` as thin JSON/human wrappers over the production
@@ -1505,6 +1508,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   account returns `native_provider_route_unavailable` instead of reporting an
   empty `ok` probe.
 - Verified the route-backed Slack probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "channels_status_json or channels_capabilities_json or channels_resolve_json"`, gateway projection `python -m pytest tests\test_gateway_node_methods.py -q -k "channels_status"`, `ruff check src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\app.py src\openzues\cli.py src\openzues\services\gateway_channels.py src\openzues\services\ops_mesh.py`.
+- Telegram native notification routes now probe Bot API `getMe` with the saved
+  bot token and return `botId`, `username`, and `firstName` in the account probe
+  result.
+- Verified the route-backed Telegram probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_telegram_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.
