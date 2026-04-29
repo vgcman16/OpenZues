@@ -84,6 +84,9 @@ route secret, while configured/no-account cases return an honest
 Telegram native routes now probe Bot API `getMe` through the saved bot token
 and return provider bot metadata through the same channel status account probe
 envelope.
+Discord native routes now probe Discord API `/users/@me` and
+`/oauth2/applications/@me` with the saved bot token, returning bot identity and
+privileged intent metadata through the same account probe envelope.
 
 Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `sessions wait` as thin JSON/human wrappers over the production
@@ -1512,6 +1515,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   bot token and return `botId`, `username`, and `firstName` in the account probe
   result.
 - Verified the route-backed Telegram probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_telegram_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord native notification routes now probe Discord API `users/@me` plus
+  `oauth2/applications/@me` with the saved bot token and return bot identity
+  plus privileged intent metadata.
+- Verified the route-backed Discord probe seam with `python -m pytest tests\test_cli.py -q -k "route_backed_discord_probe"`, adjacent `python -m pytest tests\test_cli.py -q -k "route_backed_slack_probe or route_backed_telegram_probe or route_backed_discord_probe or channels_status_json or channels_capabilities_json"`, `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

@@ -664,6 +664,55 @@ def _telegram_media_ids(result: object) -> list[str]:
     return media_ids
 
 
+DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_APP_FLAG_GATEWAY_PRESENCE = 1 << 12
+DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED = 1 << 13
+DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS = 1 << 14
+DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS_LIMITED = 1 << 15
+DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT = 1 << 18
+DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED = 1 << 19
+
+
+def _discord_api_endpoint(path: str) -> str:
+    normalized = str(path or "").strip().lstrip("/")
+    if not normalized:
+        raise RuntimeError("Discord API path is missing.")
+    return f"{DISCORD_API_BASE}/{normalized}"
+
+
+def _discord_bot_authorization(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if token.lower().startswith("bot "):
+        token = token[4:].strip()
+    if not token:
+        raise RuntimeError("Discord route is missing a bot token secret.")
+    return f"Bot {token}"
+
+
+def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
+    def resolve(enabled_bit: int, limited_bit: int) -> str:
+        if flags & enabled_bit:
+            return "enabled"
+        if flags & limited_bit:
+            return "limited"
+        return "disabled"
+
+    return {
+        "presence": resolve(
+            DISCORD_APP_FLAG_GATEWAY_PRESENCE,
+            DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED,
+        ),
+        "guildMembers": resolve(
+            DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS,
+            DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS_LIMITED,
+        ),
+        "messageContent": resolve(
+            DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT,
+            DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED,
+        ),
+    }
+
+
 def _discord_webhook_url(target: str | None) -> str:
     normalized = str(target or "").strip()
     if _normalized_http_webhook_url(normalized) is None:
@@ -5002,6 +5051,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "discord":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_discord_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind != "slack":
             return {
                 "ok": False,
@@ -5102,6 +5169,55 @@ class OpsMeshService:
             "firstName": str(bot.get("first_name") or ""),
             "timeoutMs": timeout_ms,
         }
+
+    def _probe_discord_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        del route
+        authorization = _discord_bot_authorization(secret_token)
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        bot_result = self._get_json_provider_url(
+            _discord_api_endpoint("users/@me"),
+            secret_header_name="Authorization",
+            secret_token=authorization,
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(bot_result, dict):
+            raise RuntimeError("Discord API returned a non-JSON bot response.")
+        bot = {
+            "id": str(bot_result.get("id") or ""),
+            "username": str(bot_result.get("username") or ""),
+        }
+        payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "provider": "discord",
+            "runtime": "native-provider-backed",
+            "bot": bot,
+            "timeoutMs": timeout_ms,
+        }
+        try:
+            application_result = self._get_json_provider_url(
+                _discord_api_endpoint("oauth2/applications/@me"),
+                secret_header_name="Authorization",
+                secret_token=authorization,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception:
+            application_result = None
+        if isinstance(application_result, dict):
+            application: dict[str, Any] = {
+                "id": str(application_result.get("id") or ""),
+            }
+            flags = application_result.get("flags")
+            if isinstance(flags, int) and not isinstance(flags, bool):
+                application["flags"] = flags
+                application["intents"] = _discord_privileged_intents_from_flags(flags)
+            payload["application"] = application
+        return payload
 
     async def _resolve_explicit_delivery_conversation_target(
         self,
@@ -6540,6 +6656,38 @@ class OpsMeshService:
         stale_ids = set(self._notified_inbox_items) - set(active_signatures)
         for item_id in stale_ids:
             self._notified_inbox_items.pop(item_id, None)
+
+    def _get_json_provider_url(
+        self,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        headers: dict[str, str] = {}
+        if secret_header_name and secret_token:
+            headers[str(secret_header_name)] = str(secret_token)
+        request = Request(
+            target,
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
     def _post_json_webhook(
         self,

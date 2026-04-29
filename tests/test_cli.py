@@ -568,6 +568,106 @@ def test_channels_status_json_uses_route_backed_telegram_probe(tmp_path, monkeyp
     ]
 
 
+def test_channels_status_json_uses_route_backed_discord_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Discord Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Discord Native Probe Route",
+            kind="discord",
+            target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "discord",
+                "account_id": "guild-bot",
+                "peer_kind": "channel",
+                "peer_id": "channel-123",
+                "summary": "discord guild-bot channel channel-123",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="Bot discord-token",
+            vault_secret_id=None,
+        )
+    )
+    discord_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        discord_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        if target.endswith("/users/@me"):
+            return {"id": "bot-123", "username": "DeployBot"}
+        if target.endswith("/oauth2/applications/@me"):
+            return {
+                "id": "app-123",
+                "flags": (1 << 13) | (1 << 14) | (1 << 18),
+            }
+        raise AssertionError(f"unexpected Discord probe URL: {target}")
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["discord"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "discord",
+        "runtime": "native-provider-backed",
+        "bot": {"id": "bot-123", "username": "DeployBot"},
+        "application": {
+            "id": "app-123",
+            "flags": (1 << 13) | (1 << 14) | (1 << 18),
+            "intents": {
+                "presence": "limited",
+                "guildMembers": "enabled",
+                "messageContent": "enabled",
+            },
+        },
+        "timeoutMs": 2500,
+    }
+    assert discord_gets == [
+        (
+            "https://discord.com/api/v10/users/@me",
+            "Authorization",
+            "Bot discord-token",
+            2.5,
+        ),
+        (
+            "https://discord.com/api/v10/oauth2/applications/@me",
+            "Authorization",
+            "Bot discord-token",
+            2.5,
+        ),
+    ]
+
+
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
