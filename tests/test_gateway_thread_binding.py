@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 import pytest
 
 from openzues.schemas import ConversationTargetView, NotificationRouteView
-from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+from openzues.services.gateway_thread_binding import (
+    GatewaySubagentThreadBinderRegistry,
+    resolve_thread_binding_result,
+)
 
 
 def _route(
@@ -93,3 +96,24 @@ async def test_thread_binder_registry_preserves_no_hook_error_without_route() ->
             "subagent_spawning hooks."
         ),
     }
+
+
+def test_thread_binding_result_requires_ready_true_even_with_delivery_origin() -> None:
+    binding, error = resolve_thread_binding_result(
+        {
+            "status": "ok",
+            "threadBindingReady": False,
+            "deliveryOrigin": {
+                "channel": "slack",
+                "accountId": "default",
+                "to": "channel:C123",
+                "threadId": "1710000000.000100",
+            },
+        }
+    )
+
+    assert binding is None
+    assert error == (
+        "Unable to create or bind a thread for this subagent session. "
+        "Session mode is unavailable for this target."
+    )

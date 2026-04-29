@@ -74,8 +74,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_codex_rpc.py -q`: 9 passed after adding the explicit workspace-write sandbox override for Windows child turns.
 - `python -m pytest tests\test_gateway_sandbox_spawn.py -q`: 2 passed after adding the production RuntimeManager-backed sandbox child-turn adapter.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_required_sandbox or sessions_spawn_required_sandbox"`: 3 passed after persisting sandbox runtime policy metadata through `sessions.spawn`.
-- `python -m pytest tests\test_gateway_thread_binding.py -q`: 2 passed after adding the route-backed subagent thread binder registry.
+- `python -m pytest tests\test_gateway_thread_binding.py -q`: 3 passed after requiring `threadBindingReady=true` for successful route-backed subagent thread binding results.
 - `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or sessions_spawn_session_mode"`: 5 passed after wiring the production binder while preserving the no-hook error.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "thread_mode"`: 4 passed after rechecking thread-mode gateway rejection and binding paths.
 - `ruff check src\openzues\services\gateway_thread_binding.py src\openzues\services\gateway_node_methods.py src\openzues\app.py tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`: clean after the route-backed thread binder slice.
 - `mypy src\openzues\services\gateway_thread_binding.py src\openzues\services\gateway_node_methods.py src\openzues\app.py`: clean after the route-backed thread binder slice.
 - `python -m pytest tests\test_gateway_acp_spawn.py -q`: 2 passed after adding the native ACP spawn service.

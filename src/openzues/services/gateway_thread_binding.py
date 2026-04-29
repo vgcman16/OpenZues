@@ -155,6 +155,11 @@ def resolve_thread_binding_result(
             "Unable to create or bind a thread for this subagent session. "
             "Session mode is unavailable for this target."
         )
+    if status == "ok" and result.get("threadBindingReady") is not True:
+        return None, (
+            "Unable to create or bind a thread for this subagent session. "
+            "Session mode is unavailable for this target."
+        )
 
     source = result.get("deliveryOrigin")
     if not isinstance(source, Mapping):
@@ -164,9 +169,4 @@ def resolve_thread_binding_result(
         value = _optional_string(source.get(key))
         if value is not None:
             binding[key] = value
-    if not binding and result.get("threadBindingReady") is not True and status == "ok":
-        return None, (
-            "Unable to create or bind a thread for this subagent session. "
-            "Session mode is unavailable for this target."
-        )
     return binding, None

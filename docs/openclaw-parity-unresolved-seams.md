@@ -39,10 +39,11 @@ production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
 construction. Supported Slack, Telegram, Discord, and WhatsApp route contexts
 create persistent child sessions, force cleanup to `keep`, store
 thread/account/channel binding metadata, and route completion delivery through
-the bound thread. Unsupported or unconfigured channels still return the
-upstream-shaped no-hook error before child dispatch. Remaining lifecycle parity
-is deeper provider-native unbind/end-hook behavior and ACP/session binding
-policy breadth.
+the bound thread. Binder results must now report both `status="ok"` and
+`threadBindingReady=true`; unsupported, unconfigured, or not-ready channels
+still return the upstream-shaped error before child dispatch. Remaining
+lifecycle parity is deeper provider-native unbind/end-hook behavior and
+ACP/session binding policy breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
