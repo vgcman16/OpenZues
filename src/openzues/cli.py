@@ -2058,6 +2058,22 @@ def _emit_plugins_toggle(payload: dict[str, object], *, json_output: bool) -> No
     typer.echo(f'{verb} plugin "{plugin_id}". Restart the gateway to apply.')
 
 
+def _emit_plugins_install(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    plugin_id = str(payload.get("pluginId") or "").strip()
+    install = payload.get("install")
+    install_payload = install if isinstance(install, dict) else {}
+    source = str(payload.get("source") or install_payload.get("source") or "").strip()
+    install_path = str(install_payload.get("installPath") or "").strip()
+    suffix = f" from {source}" if source else ""
+    typer.echo(f'Installed plugin "{plugin_id}"{suffix}.')
+    if install_path:
+        typer.echo(f"path: {install_path}")
+    typer.echo("Restart the gateway to apply changes.")
+
+
 def _emit_plugins_marketplace_list(
     payload: dict[str, object],
     *,
@@ -2905,6 +2921,67 @@ def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
     return payload
 
 
+async def _build_plugins_marketplace_install_payload(
+    services: CliServices,
+    *,
+    plugin_id: str,
+    marketplace: str,
+    force: bool,
+) -> dict[str, object]:
+    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace)
+    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
+    plugins = marketplace_payload.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        raise ValueError("plugin id is required")
+    match = next(
+        (
+            plugin
+            for plugin in plugin_rows
+            if isinstance(plugin, dict)
+            and str(plugin.get("name") or "").strip() == requested_id
+        ),
+        None,
+    )
+    if match is None:
+        raise ValueError(
+            f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
+        )
+    install_path = _resolve_marketplace_plugin_install_path(
+        manifest_path=manifest_path,
+        source=match.get("source"),
+        plugin_name=requested_id,
+    )
+    result = services.gateway_config.record_marketplace_plugin_install(
+        plugin_id=requested_id,
+        install_path=str(install_path),
+        marketplace_source=str(manifest_path),
+        marketplace_plugin=requested_id,
+        marketplace_name=_optional_cli_string(marketplace_payload.get("name")),
+        version=_optional_cli_string(match.get("version")),
+        force=force,
+    )
+    install = result.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result.get("pluginId") or requested_id,
+        "source": "marketplace",
+        "marketplace": {
+            "source": str(manifest_path),
+            "name": marketplace_payload.get("name"),
+            "version": marketplace_payload.get("version"),
+        },
+        "install": install_payload,
+        "loadPath": result.get("loadPath"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+    }
+
+
 def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
     normalized_source = _optional_cli_string(source)
     if normalized_source is None:
@@ -2923,6 +3000,49 @@ def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
             if candidate.is_file():
                 return candidate.resolve()
     raise ValueError(f"marketplace manifest not found under {normalized_source}")
+
+
+def _resolve_marketplace_plugin_install_path(
+    *,
+    manifest_path: Path,
+    source: object,
+    plugin_name: str,
+) -> Path:
+    if isinstance(source, dict):
+        source_type = _optional_cli_string(source.get("type"))
+        if source_type not in (None, "path"):
+            raise ValueError(
+                f'unsupported marketplace source for plugin "{plugin_name}": {source_type}'
+            )
+        source_path_value = _optional_cli_string(source.get("path"))
+    else:
+        source_path_value = _optional_cli_string(source)
+    if source_path_value is None:
+        raise ValueError(f'plugin "{plugin_name}" is missing a local source path')
+    if re.match(r"^(https?|ssh|git)://", source_path_value, flags=re.IGNORECASE):
+        raise ValueError(
+            f'unsupported marketplace source for plugin "{plugin_name}": remote sources'
+        )
+    marketplace_root = (
+        manifest_path.parent.parent
+        if manifest_path.parent.name == ".claude-plugin"
+        else manifest_path.parent
+    ).resolve()
+    candidate = Path(source_path_value)
+    if not candidate.is_absolute():
+        candidate = marketplace_root / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(marketplace_root)
+    except ValueError as exc:
+        raise ValueError(
+            f'plugin "{plugin_name}" source escapes marketplace root: {source_path_value}'
+        ) from exc
+    if not resolved.exists():
+        raise ValueError(
+            f'plugin "{plugin_name}" source not found in marketplace root: {source_path_value}'
+        )
+    return resolved
 
 
 async def _build_models_list_payload(
@@ -6108,6 +6228,71 @@ def _plugins_toggle_command_impl(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_plugins_toggle(payload, json_output=json_output)
+
+
+@plugins_app.command("install")
+def plugins_install_command(
+    plugin_id: str = typer.Argument(..., help="Plugin id or marketplace plugin name."),
+    marketplace: str | None = typer.Option(
+        None,
+        "--marketplace",
+        help="Install from a local Claude-compatible marketplace path or manifest.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Update an existing native marketplace install record.",
+    ),
+    link: bool = typer.Option(
+        False,
+        "--link",
+        "-l",
+        help="Accepted for OpenClaw CLI compatibility; not supported for marketplace installs.",
+    ),
+    pin: bool = typer.Option(
+        False,
+        "--pin",
+        help="Accepted for OpenClaw CLI compatibility; not supported for marketplace installs.",
+    ),
+    dangerously_force_unsafe_install: bool = typer.Option(
+        False,
+        "--dangerously-force-unsafe-install",
+        help="Accepted for OpenClaw CLI compatibility; local marketplace install is metadata-only.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit install result as JSON."),
+) -> None:
+    del dangerously_force_unsafe_install
+    if marketplace is None:
+        typer.echo(
+            "Native plugin install currently supports local marketplace installs via "
+            "--marketplace.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if link:
+        typer.echo("`--link` is not supported with `--marketplace`.", err=True)
+        raise typer.Exit(code=1)
+    if pin:
+        typer.echo("`--pin` is not supported with `--marketplace`.", err=True)
+        raise typer.Exit(code=1)
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_marketplace_install_payload(
+            services,
+            plugin_id=plugin_id,
+            marketplace=marketplace,
+            force=force,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_install(payload, json_output=json_output)
 
 
 @plugins_app.command("enable")

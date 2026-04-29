@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +147,42 @@ class GatewayConfigService:
                 "requestedEnabled": enabled,
                 "reason": toggle["reason"],
                 "channelSynced": toggle["channelSynced"],
+            }
+        )
+        return write_result
+
+    def record_marketplace_plugin_install(
+        self,
+        *,
+        plugin_id: str,
+        install_path: str,
+        marketplace_source: str,
+        marketplace_plugin: str,
+        marketplace_name: str | None = None,
+        version: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        record = _record_marketplace_plugin_install_in_snapshot(
+            current,
+            plugin_id=plugin_id,
+            install_path=install_path,
+            marketplace_source=marketplace_source,
+            marketplace_plugin=marketplace_plugin,
+            marketplace_name=marketplace_name,
+            version=version,
+            force=force,
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(record["config"], base_hash=base_hash)
+        write_result.update(
+            {
+                "pluginId": record["pluginId"],
+                "install": record["install"],
+                "loadPath": record["loadPath"],
+                "enabled": True,
+                "restart": "gateway",
             }
         )
         return write_result
@@ -316,6 +353,90 @@ def _set_plugin_enabled_in_snapshot(
         "enabled": enabled,
         "reason": None,
         "channelSynced": channel_synced,
+    }
+
+
+def _record_marketplace_plugin_install_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    plugin_id: str,
+    install_path: str,
+    marketplace_source: str,
+    marketplace_plugin: str,
+    marketplace_name: str | None,
+    version: str | None,
+    force: bool,
+) -> dict[str, Any]:
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        raise ValueError("plugin id is required")
+    normalized_install_path = install_path.strip()
+    if not normalized_install_path:
+        raise ValueError("plugin install path is required")
+    normalized_marketplace_source = marketplace_source.strip()
+    if not normalized_marketplace_source:
+        raise ValueError("marketplace source is required")
+    normalized_marketplace_plugin = marketplace_plugin.strip()
+    if not normalized_marketplace_plugin:
+        raise ValueError("marketplace plugin is required")
+
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    installs = plugins_config.get("installs")
+    next_installs = dict(installs) if isinstance(installs, dict) else {}
+    if requested_id in next_installs and not force:
+        raise ValueError(f'plugin "{requested_id}" is already installed; pass --force to update')
+
+    install_record: dict[str, Any] = {
+        "source": "marketplace",
+        "installPath": normalized_install_path,
+        "marketplaceSource": normalized_marketplace_source,
+        "marketplacePlugin": normalized_marketplace_plugin,
+        "installedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    normalized_marketplace_name = (
+        marketplace_name.strip() if isinstance(marketplace_name, str) else None
+    )
+    if normalized_marketplace_name:
+        install_record["marketplaceName"] = normalized_marketplace_name
+    normalized_version = version.strip() if isinstance(version, str) else None
+    if normalized_version:
+        install_record["version"] = normalized_version
+    next_installs[requested_id] = install_record
+
+    entries = plugins_config.get("entries")
+    next_entries = dict(entries) if isinstance(entries, dict) else {}
+    existing_entry = next_entries.get(requested_id)
+    next_entry = dict(existing_entry) if isinstance(existing_entry, dict) else {}
+    next_entry["enabled"] = True
+    next_entries[requested_id] = next_entry
+
+    allow = plugins_config.get("allow")
+    next_allow = list(allow) if isinstance(allow, list) else []
+    if requested_id not in {str(value) for value in next_allow}:
+        next_allow.append(requested_id)
+
+    load = plugins_config.get("load")
+    next_load = dict(load) if isinstance(load, dict) else {}
+    paths = next_load.get("paths")
+    next_paths = [str(value) for value in paths] if isinstance(paths, list) else []
+    if normalized_install_path not in next_paths:
+        next_paths.append(normalized_install_path)
+    next_load["paths"] = next_paths
+
+    next_plugins = dict(plugins_config)
+    next_plugins["allow"] = next_allow
+    next_plugins["entries"] = next_entries
+    next_plugins["installs"] = next_installs
+    next_plugins["load"] = next_load
+
+    next_snapshot = dict(snapshot)
+    next_snapshot["plugins"] = next_plugins
+    return {
+        "config": next_snapshot,
+        "pluginId": requested_id,
+        "install": install_record,
+        "loadPath": normalized_install_path,
     }
 
 

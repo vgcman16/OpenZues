@@ -154,13 +154,17 @@ existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
 append configured allowlists on enable, and mirror built-in channel plugin
 toggles into `channels.<id>.enabled` for channel-backed providers. Remaining
-plugin CLI parity is compatibility notices, remote marketplace
-install/update/uninstall flows, and deeper production plugin metadata
-discovery. `plugins marketplace list` now
+plugin CLI parity is compatibility notices, remote marketplace update/uninstall
+flows, and deeper production plugin metadata discovery. `plugins marketplace list` now
 supports local Claude-compatible marketplace manifests from
 `.claude-plugin/marketplace.json` or `marketplace.json`, returning the
 OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while
-leaving remote clone/install semantics to the heavier packaging/install queue.
+leaving remote clone semantics to the heavier packaging/install queue.
+`plugins install <name> --marketplace <local>` now resolves local manifest
+entries, rejects escaping/missing plugin sources, persists an OpenClaw-shaped
+`plugins.installs.<id>` marketplace record, enables the plugin, appends the
+native load path, and returns JSON/human restart posture without importing the
+TypeScript runtime.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
