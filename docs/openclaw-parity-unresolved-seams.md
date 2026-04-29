@@ -240,7 +240,11 @@ dedupes the requested order, and writes the per-agent `auth-state.json` order
 override. `models auth order clear` now removes the selected provider order
 override while preserving neighboring auth-state metadata. No smaller auth-order
 CLI command remains; the next model CLI queue head is the provider auth command
-cluster (`models auth add/login/setup-token/paste-token/login-github-copilot`).
+cluster. `models auth login` now forwards `--provider`, `--method`, and
+`--set-default` through the native fakeable model-auth runtime, preserving the
+existing precise unavailable boundary when that runtime is not wired. The
+remaining provider-auth CLI heads are `models auth add`, `models auth
+setup-token`, `models auth paste-token`, and `models auth login-github-copilot`.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`

@@ -6045,6 +6045,54 @@ def test_models_auth_order_clear_removes_provider_order(tmp_path, monkeypatch) -
     }
 
 
+def test_models_auth_login_calls_model_auth_runtime_with_options(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def login(
+            self,
+            *,
+            provider: str | None,
+            method: str | None,
+            set_default: bool,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "provider": provider,
+                    "method": method,
+                    "set_default": set_default,
+                }
+            )
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Login started for {provider} via {method}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "auth",
+            "login",
+            "--provider",
+            "anthropic",
+            "--method",
+            "cli",
+            "--set-default",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Login started for anthropic via cli." in result.stdout
+    assert calls == [{"provider": "anthropic", "method": "cli", "set_default": True}]
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -3404,6 +3404,33 @@ async def _build_capability_model_auth_login_payload(
     return dict(result) if isinstance(result, dict) else {"provider": provider}
 
 
+async def _build_models_auth_login_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+    method: str | None,
+    set_default: bool,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    login = getattr(runtime, "login", None)
+    if not callable(login):
+        raise ValueError("model auth login is unavailable until model auth runtime is wired.")
+    try:
+        result = await login(provider=provider, method=method, set_default=set_default)
+    except TypeError as exc:
+        if method is not None or set_default:
+            raise ValueError(
+                "model auth login runtime does not support --method or --set-default."
+            ) from exc
+        if provider is None:
+            raise ValueError("Missing --provider.") from exc
+        result = await login(provider)
+    payload = dict(result) if isinstance(result, dict) else {}
+    if provider is not None:
+        payload.setdefault("provider", provider)
+    return payload
+
+
 async def _build_capability_model_auth_logout_payload(
     services: CliServices,
     *,
@@ -9023,6 +9050,41 @@ def models_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_list(payload, json_output=json_output, plain=plain)
+
+
+@models_auth_app.command("login")
+def models_auth_login_command(
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Provider id registered by a plugin.",
+    ),
+    method: str | None = typer.Option(
+        None,
+        "--method",
+        help="Provider auth method id.",
+    ),
+    set_default: bool = typer.Option(
+        False,
+        "--set-default",
+        help="Apply the provider's default model recommendation.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_login_payload(
+                    services,
+                    provider=provider,
+                    method=method,
+                    set_default=set_default,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
 
 
 @models_auth_order_app.command("get")
