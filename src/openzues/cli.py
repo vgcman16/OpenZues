@@ -2920,6 +2920,49 @@ async def _build_capability_video_providers_payload(
     return {"generation": generation, "description": description}
 
 
+async def _build_capability_video_describe_payload(
+    services: CliServices,
+    *,
+    file_path: str,
+    model_ref: str | None,
+) -> dict[str, object]:
+    active_model = _require_capability_provider_model_ref(model_ref)
+    runtime = _optional_media_understanding_runtime(services)
+    describe_video_file = (
+        getattr(runtime, "describe_video_file", None) if runtime is not None else None
+    )
+    if not callable(describe_video_file):
+        raise ValueError(
+            "video.describe local transport is unavailable until media understanding is wired."
+        )
+    resolved_path = str(Path(file_path).resolve())
+    result = await describe_video_file(file_path=resolved_path, active_model=active_model)
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    text = _optional_cli_string(result_payload.get("text"))
+    if text is None:
+        raise ValueError(f"No description returned for video: {resolved_path}")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "video.describe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": resolved_path,
+                "text": text,
+                "kind": "video.description",
+            }
+        ],
+    }
+    provider = _optional_cli_string(result_payload.get("provider"))
+    if provider is not None:
+        envelope["provider"] = provider
+    model = _optional_cli_string(result_payload.get("model"))
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
 async def _build_capability_audio_transcribe_payload(
     services: CliServices,
     *,
@@ -8409,6 +8452,27 @@ def capability_video_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_video_app.command("describe")
+def capability_video_describe_command(
+    file_path: str = typer.Option(..., "--file", help="Video file."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_video_describe_payload(
+            services,
+            file_path=file_path,
+            model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_audio_app.command("transcribe")

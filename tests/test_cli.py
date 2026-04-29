@@ -4089,6 +4089,66 @@ def test_infer_video_providers_json_projects_generation_and_description(
     ]
 
 
+def test_infer_video_describe_json_wraps_native_media_understanding(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeMediaUnderstanding:
+        async def describe_video_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+        ) -> dict[str, object]:
+            calls.append({"file_path": file_path, "active_model": active_model})
+            return {
+                "text": "A product demo clip with captions.",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(media_understanding=FakeMediaUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "video",
+            "describe",
+            "--file",
+            "demo.mp4",
+            "--model",
+            "openai/gpt-5.4-vision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "video.describe",
+        "transport": "local",
+        "provider": "openai",
+        "model": "gpt-5.4-vision",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "demo.mp4").resolve()),
+                "text": "A product demo clip with captions.",
+                "kind": "video.description",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "demo.mp4").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
