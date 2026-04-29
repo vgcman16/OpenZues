@@ -2086,6 +2086,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_human_output_reports_session_lock_files or
   doctor_json_includes_cli_runtime_surfaces"` (`3 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Sandboxed requester sessions now clamp `tools.invoke` session access to
+  tree/spawned visibility when sandbox config leaves
+  `sessionToolsVisibility` at the OpenClaw default `spawned`, even if
+  `tools.sessions.visibility=all` would otherwise allow cross-agent access.
+  Setting `agents.defaults.sandbox.sessionToolsVisibility="all"` preserves the
+  broader visibility.
+- Verified the sandboxed session-tools clamp with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_history_clamps_sandboxed_requester_to_tree_visibility or
+  sessions_history_allows_sandboxed_requester_when_visibility_all"` (`2
+  passed`), adjacent sessions visibility pack `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_history or session_status or sessions_list_filters_default_tree or
+  sessions_send_default_tree or sessions_send_enforces_self_visibility"` (`21
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

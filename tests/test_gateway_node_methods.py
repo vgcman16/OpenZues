@@ -4877,6 +4877,156 @@ async def test_tools_invoke_sessions_history_defaults_to_tree_visibility_for_cro
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_sessions_history_clamps_sandboxed_requester_to_tree_visibility(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-history-sandbox-tree.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Sandboxed Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Sandboxed requester should not see this.",
+        session_key=target_session_key,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "tools": {
+                    "sessions": {"visibility": "all"},
+                    "agentToAgent": {"enabled": True, "allow": ["*"]},
+                },
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "sessionToolsVisibility": "spawned",
+                        }
+                    }
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_history",
+            "sessionKey": requester_session_key,
+            "args": {"sessionKey": target_session_key},
+        },
+    )
+
+    assert payload == {
+        "ok": True,
+        "result": {
+            "status": "forbidden",
+            "error": (
+                "Session history visibility is restricted. Set "
+                "tools.sessions.visibility=all to allow cross-agent access."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_sessions_history_allows_sandboxed_requester_when_visibility_all(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-sessions-history-sandbox-all.db")
+    await database.initialize()
+    requester_session_key = "agent:main:main"
+    target_session_key = "agent:ops:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=requester_session_key,
+        metadata={"label": "Sandboxed Main"},
+    )
+    await database.upsert_gateway_session_metadata(
+        session_key=target_session_key,
+        metadata={"label": "Ops"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="Sandboxed requester may see this.",
+        session_key=target_session_key,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "tools": {
+                    "sessions": {"visibility": "all"},
+                    "agentToAgent": {"enabled": True, "allow": ["*"]},
+                },
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "sessionToolsVisibility": "all",
+                        }
+                    }
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "sessions_history",
+            "sessionKey": requester_session_key,
+            "args": {"sessionKey": target_session_key},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["messages"][0]["content"][0]["text"] == (
+        "Sandboxed requester may see this."
+    )
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_sessions_history_ignores_unsupported_openclaw_args(
     tmp_path,
 ) -> None:

@@ -15899,7 +15899,10 @@ async def _session_access_visibility_policy_error(
 ) -> str | None:
     if requester_session_key is None or target_session_key is None:
         return None
-    visibility = _sessions_send_tools_visibility(config_service)
+    visibility = _sessions_send_effective_tools_visibility(
+        config_service,
+        requester_session_key=requester_session_key,
+    )
     if visibility is None:
         return None
     requester_agent_id = resolve_agent_id_from_session_key(requester_session_key)
@@ -15994,6 +15997,40 @@ def _sessions_send_tools_visibility(
     if visibility in {"self", "tree", "agent", "all"}:
         return visibility
     return "tree"
+
+
+def _sessions_send_effective_tools_visibility(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_session_key: str | None,
+) -> str | None:
+    visibility = _sessions_send_tools_visibility(config_service)
+    if (
+        config_service is None
+        or requester_session_key is None
+        or visibility in {None, "tree"}
+    ):
+        return visibility
+    requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
+        config_service,
+        session_key=requester_session_key,
+    )
+    if not requester_sandbox_status.sandboxed:
+        return visibility
+    sandbox_config = _sessions_spawn_sandbox_config_for_agent(
+        config_service,
+        agent_id=requester_sandbox_status.agent_id,
+    )
+    if _sessions_spawn_sandbox_session_tools_visibility(sandbox_config) == "all":
+        return visibility
+    return "tree"
+
+
+def _sessions_spawn_sandbox_session_tools_visibility(
+    sandbox_config: dict[str, Any],
+) -> Literal["spawned", "all"]:
+    value = _string_or_none(sandbox_config.get("sessionToolsVisibility"))
+    return "all" if value == "all" else "spawned"
 
 
 def _sessions_send_a2a_policy_error(

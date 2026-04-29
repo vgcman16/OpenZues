@@ -2309,6 +2309,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   -k "doctor_json_warns_about_shared_sandbox_agent_overrides"`, adjacent doctor
   sandbox/lock pack, `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`.
+- Closed the sandboxed session-tools visibility clamp seam: `tools.invoke`
+  session history/status/send/list access now treats sandboxed requesters as
+  tree/spawned-scoped when sandbox `sessionToolsVisibility` is omitted or
+  `spawned`, while explicit `sessionToolsVisibility="all"` keeps the broader
+  configured visibility. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_history_clamps_sandboxed_requester_to_tree_visibility or
+  sessions_history_allows_sandboxed_requester_when_visibility_all"`, adjacent
+  sessions visibility pack, `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, CLI/runtime doctor parity, and session runtime methods
