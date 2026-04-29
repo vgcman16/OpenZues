@@ -70,6 +70,7 @@ from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
+from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
 from openzues.services.github import GitHubService
@@ -7202,20 +7203,24 @@ async def _build_plugin_inspect_payload(
     inspect_all: bool,
 ) -> dict[str, object] | list[dict[str, object]]:
     inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    runtime_specs = _plugin_runtime_specs_from_services(services)
     plugins = inventory.get("plugins")
     plugin_rows = [plugin for plugin in plugins if isinstance(plugin, dict)] if isinstance(
         plugins,
         list,
     ) else []
     if inspect_all:
-        return [_plugin_inspect_report(plugin) for plugin in plugin_rows]
+        return [
+            _plugin_inspect_report(plugin, runtime_specs=runtime_specs)
+            for plugin in plugin_rows
+        ]
     normalized_id = _optional_cli_string(plugin_id)
     if normalized_id is None:
         raise ValueError("Provide a plugin id or use --all.")
     plugin = _find_plugin_record(plugin_rows, normalized_id)
     if plugin is None:
         raise KeyError(normalized_id)
-    return _plugin_inspect_report(plugin)
+    return _plugin_inspect_report(plugin, runtime_specs=runtime_specs)
 
 
 def _find_plugin_record(
@@ -7231,7 +7236,11 @@ def _find_plugin_record(
     return None
 
 
-def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
+def _plugin_inspect_report(
+    plugin: dict[str, object],
+    *,
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
+) -> dict[str, object]:
     capabilities = plugin.get("capabilities")
     capability_ids = [
         str(capability)
@@ -7239,18 +7248,27 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         if str(capability).strip()
     ]
     install = plugin.get("install")
+    runtime_tools = _plugin_runtime_tool_names(plugin, runtime_specs)
+    inspected_plugin = dict(plugin)
+    if runtime_tools:
+        inspected_plugin["imported"] = True
     return {
-        "plugin": dict(plugin),
+        "plugin": inspected_plugin,
         "shape": _plugin_inspect_shape(plugin),
-        "capabilityMode": "inventory",
-        "capabilities": [{"kind": "inventory", "ids": capability_ids}]
-        if capability_ids
-        else [],
+        "capabilityMode": "runtime" if runtime_tools else "inventory",
+        "capabilities": _plugin_inspect_capabilities(
+            capability_ids,
+            runtime_tools=runtime_tools,
+        ),
         "compatibility": _plugin_compatibility_notices(plugin),
         "bundleCapabilities": [],
         "typedHooks": [],
         "customHooks": [],
-        "tools": [],
+        "tools": (
+            [{"names": runtime_tools, "optional": False}]
+            if runtime_tools
+            else []
+        ),
         "commands": [],
         "cliCommands": [],
         "services": [],
@@ -7262,6 +7280,83 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         "diagnostics": [],
         "install": dict(install) if isinstance(install, dict) else None,
     }
+
+
+def _plugin_runtime_specs_from_services(
+    services: object,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    for candidate in (
+        getattr(services, "plugin_runtime_service", None),
+        getattr(services, "gateway_plugin_runtime", None),
+        getattr(services, "plugin_runtime", None),
+        getattr(getattr(services, "gateway_node_methods", None), "_plugin_runtime_service", None),
+    ):
+        catalog_specs = getattr(candidate, "catalog_specs", None)
+        if not callable(catalog_specs):
+            continue
+        specs = catalog_specs(include_owner_only=True)
+        if isinstance(specs, tuple):
+            return tuple(
+                spec
+                for spec in specs
+                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
+            )
+        if isinstance(specs, list):
+            return tuple(
+                spec
+                for spec in specs
+                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
+            )
+    return ()
+
+
+def _plugin_runtime_tool_names(
+    plugin: dict[str, object],
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...],
+) -> list[str]:
+    plugin_id = _optional_cli_string(plugin.get("id"))
+    plugin_name = _optional_cli_string(plugin.get("name"))
+    tool_names = [
+        spec.tool
+        for spec in runtime_specs
+        if _plugin_runtime_spec_matches_plugin(
+            spec,
+            plugin_id=plugin_id,
+            plugin_name=plugin_name,
+        )
+    ]
+    return sorted(_dedupe_cli_strings(tool_names))
+
+
+def _plugin_runtime_spec_matches_plugin(
+    spec: GatewayPluginRuntimeExecutorSpec,
+    *,
+    plugin_id: str | None,
+    plugin_name: str | None,
+) -> bool:
+    candidate_ids = {
+        value.strip().lower()
+        for value in (plugin_id, plugin_name)
+        if value is not None and value.strip()
+    }
+    if not candidate_ids:
+        return False
+    return any(
+        candidate is not None and candidate.strip().lower() in candidate_ids
+        for candidate in (spec.plugin_id, spec.plugin_name)
+    )
+
+
+def _plugin_inspect_capabilities(
+    capability_ids: list[str],
+    *,
+    runtime_tools: list[str],
+) -> list[dict[str, object]]:
+    if runtime_tools:
+        return [{"kind": "runtime-tools", "ids": runtime_tools}]
+    if capability_ids:
+        return [{"kind": "inventory", "ids": capability_ids}]
+    return []
 
 
 def _plugin_inspect_shape(plugin: dict[str, object]) -> str:

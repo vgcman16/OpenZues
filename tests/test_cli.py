@@ -37,6 +37,10 @@ from openzues.services.control_chat import ControlChatPlan
 from openzues.services.device_bootstrap_profile import BOOTSTRAP_HANDOFF_OPERATOR_SCOPES
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_method_policy import list_known_gateway_methods
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginRuntimeExecutorSpec,
+    GatewayPluginRuntimeService,
+)
 from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
 
@@ -5186,6 +5190,102 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             },
             "toolNames": ["native_runtime.search"],
         }
+    ]
+
+
+def test_plugins_inspect_json_projects_runtime_executor_tools(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "native-runtime",
+                "name": "Native Runtime",
+                "description": "Runtime-backed native plugin.",
+                "version": "0.3.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {"tools": ["native_runtime.search"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                description="Search through the native runtime.",
+            )
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "native-runtime", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "native-runtime"
+    assert payload["plugin"]["imported"] is True
+    assert payload["capabilityMode"] == "runtime"
+    assert payload["capabilities"] == [
+        {"kind": "runtime-tools", "ids": ["native_runtime.search"]}
+    ]
+    assert payload["tools"] == [
+        {"names": ["native_runtime.search"], "optional": False}
     ]
 
 

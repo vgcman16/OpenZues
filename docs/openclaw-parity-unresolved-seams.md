@@ -470,8 +470,14 @@ now preserves those saved install records in the report-level `install` field.
 for configured `plugins.load.paths` entries that contain `openclaw.plugin.json`,
 preserving manifest `id`, `name`, `description`, `version`, contracts, tool
 names, manifest/root paths, and enabled/default status without importing plugin
-code. Remaining plugin CLI parity is remote marketplace clone/update breadth and
-deeper runtime activation/import metadata beyond the native metadata snapshot.
+code. `plugins inspect --json` now also consults the native
+`GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
+runtime executor specs mark discovered plugins as imported, switch the inspect
+report from inventory-only to `capabilityMode="runtime"`, and project
+OpenClaw-shaped runtime tool entries with `names` / `optional` metadata.
+Remaining plugin CLI parity is remote marketplace clone/update breadth and
+deeper runtime activation/import metadata beyond the native metadata/runtime
+projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
