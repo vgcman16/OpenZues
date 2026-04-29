@@ -2860,6 +2860,18 @@ async def _build_capability_tts_status_payload(
     return {"transport": "gateway", **payload}
 
 
+async def _build_capability_tts_state_payload(
+    services: CliServices,
+    *,
+    method: str,
+    provider: str | None = None,
+) -> dict[str, object]:
+    params: dict[str, object] = {}
+    if provider is not None:
+        params["provider"] = provider
+    return await _call_gateway_node_method(services, method, params)
+
+
 def _capability_list_payload() -> list[dict[str, object]]:
     return [
         {
@@ -7750,6 +7762,68 @@ def capability_tts_status_command(
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_capability_tts_status_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("enable")
+def capability_tts_enable_command(
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(services, method="tts.enable")
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("disable")
+def capability_tts_disable_command(
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(services, method="tts.disable")
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("set-provider")
+def capability_tts_set_provider_command(
+    provider: str = typer.Option(..., "--provider", help="Speech provider id."),
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(
+            services,
+            method="tts.setProvider",
+            provider=provider,
+        )
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)

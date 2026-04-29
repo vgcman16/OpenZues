@@ -3690,6 +3690,60 @@ def test_infer_tts_status_json_tags_gateway_transport(monkeypatch) -> None:
     assert calls == [("tts.status", {})]
 
 
+def test_infer_tts_enable_disable_json_calls_native_state_methods(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"enabled": method == "tts.enable", "provider": "microsoft"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    enable_result = runner.invoke(app, ["infer", "tts", "enable", "--json"])
+    disable_result = runner.invoke(app, ["infer", "tts", "disable", "--json"])
+
+    assert enable_result.exit_code == 0, enable_result.stdout
+    assert json.loads(enable_result.stdout) == {"enabled": True, "provider": "microsoft"}
+    assert disable_result.exit_code == 0, disable_result.stdout
+    assert json.loads(disable_result.stdout) == {"enabled": False, "provider": "microsoft"}
+    assert calls == [("tts.enable", {}), ("tts.disable", {})]
+
+
+def test_capability_tts_set_provider_json_calls_native_state_method(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"enabled": True, "provider": "microsoft"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "tts", "set-provider", "--provider", "edge", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"enabled": True, "provider": "microsoft"}
+    assert calls == [("tts.setProvider", {"provider": "edge"})]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
