@@ -3068,6 +3068,69 @@ def test_cron_edit_agent_turn_delivery_patch_calls_gateway_method_owner(monkeypa
     ]
 
 
+def test_cron_edit_failure_alert_patch_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--failure-alert",
+            "--failure-alert-after",
+            "3",
+            "--failure-alert-channel",
+            "Slack",
+            "--failure-alert-to",
+            "alerts",
+            "--failure-alert-cooldown",
+            "45m",
+            "--failure-alert-mode",
+            "WEBHOOK",
+            "--failure-alert-account-id",
+            "ops",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "task-blueprint:7"
+    assert calls == [
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "failureAlert": {
+                        "after": 3,
+                        "channel": "slack",
+                        "to": "alerts",
+                        "cooldownMs": 2_700_000,
+                        "mode": "webhook",
+                        "accountId": "ops",
+                    }
+                },
+            },
+        )
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

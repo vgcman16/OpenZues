@@ -1372,9 +1372,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`20 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron CLI parity should continue with `cron edit` failure-alert and
-  existing-cron schedule patch breadth before returning to backend-only cron add
-  gaps.
+- `cron edit` now patches upstream failure-alert settings through native
+  `cron.update`: `--failure-alert`, `--no-failure-alert`,
+  `--failure-alert-after`, `--failure-alert-channel`, `--failure-alert-to`,
+  `--failure-alert-cooldown`, `--failure-alert-mode`, and
+  `--failure-alert-account-id`.
+- Verified the cron edit failure-alert slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_failure_alert_patch_calls_gateway_method_owner"` (`1 passed`),
+  adjacent CLI pack `python -m pytest tests\test_cli.py -q -k "cron_ or
+  sessions_ or routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`21 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Next cron CLI parity should continue with existing-cron schedule patch
+  breadth before returning to backend-only cron add/edit gaps.
 
 ## References
 

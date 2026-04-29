@@ -9816,6 +9816,63 @@ def _cron_has_schedule_options(
     )
 
 
+def _cron_cli_failure_alert_patch(
+    *,
+    failure_alert: bool,
+    no_failure_alert: bool,
+    after: str | None,
+    channel: str | None,
+    to: str | None,
+    cooldown: str | None,
+    mode: str | None,
+    account_id: str | None,
+) -> dict[str, object] | bool | None:
+    has_fields = any(
+        _optional_cli_string(value) is not None
+        for value in (after, channel, to, cooldown, mode, account_id)
+    )
+    if failure_alert and no_failure_alert:
+        raise typer.BadParameter("Choose --failure-alert or --no-failure-alert, not both")
+    if no_failure_alert and has_fields:
+        raise typer.BadParameter("Use --no-failure-alert alone")
+    if no_failure_alert:
+        return False
+    if not failure_alert and not has_fields:
+        return None
+    payload: dict[str, object] = {}
+    normalized_after = _optional_cli_string(after)
+    if normalized_after is not None:
+        try:
+            parsed_after = int(normalized_after)
+        except ValueError as exc:
+            raise typer.BadParameter("--failure-alert-after must be a positive integer") from exc
+        if parsed_after <= 0:
+            raise typer.BadParameter("--failure-alert-after must be a positive integer")
+        payload["after"] = parsed_after
+    normalized_channel = _optional_cli_string(channel)
+    if normalized_channel is not None:
+        payload["channel"] = normalized_channel.lower()
+    normalized_to = _optional_cli_string(to)
+    if normalized_to is not None:
+        payload["to"] = normalized_to
+    normalized_cooldown = _optional_cli_string(cooldown)
+    if normalized_cooldown is not None:
+        cooldown_ms = _cron_duration_ms(normalized_cooldown)
+        if cooldown_ms is None:
+            raise typer.BadParameter("Invalid --failure-alert-cooldown")
+        payload["cooldownMs"] = cooldown_ms
+    normalized_mode = _optional_cli_string(mode)
+    if normalized_mode is not None:
+        mode_value = normalized_mode.lower()
+        if mode_value not in {"announce", "webhook"}:
+            raise typer.BadParameter("--failure-alert-mode must be announce or webhook")
+        payload["mode"] = mode_value
+    normalized_account_id = _optional_cli_string(account_id)
+    if normalized_account_id is not None:
+        payload["accountId"] = normalized_account_id
+    return payload
+
+
 @cron_app.command("edit")
 def cron_edit_command(
     job_id: str = typer.Argument(..., help="Cron job id."),
@@ -9857,6 +9914,42 @@ def cron_edit_command(
         False,
         "--no-best-effort-deliver",
         help="Fail the job if delivery fails.",
+    ),
+    failure_alert: bool = typer.Option(False, "--failure-alert", help="Enable failure alerts."),
+    no_failure_alert: bool = typer.Option(
+        False,
+        "--no-failure-alert",
+        help="Disable failure alerts.",
+    ),
+    failure_alert_after: str | None = typer.Option(
+        None,
+        "--failure-alert-after",
+        help="Alert after N consecutive errors.",
+    ),
+    failure_alert_channel: str | None = typer.Option(
+        None,
+        "--failure-alert-channel",
+        help="Failure alert channel.",
+    ),
+    failure_alert_to: str | None = typer.Option(
+        None,
+        "--failure-alert-to",
+        help="Failure alert destination.",
+    ),
+    failure_alert_cooldown: str | None = typer.Option(
+        None,
+        "--failure-alert-cooldown",
+        help="Minimum time between alerts.",
+    ),
+    failure_alert_mode: str | None = typer.Option(
+        None,
+        "--failure-alert-mode",
+        help="Failure alert delivery mode.",
+    ),
+    failure_alert_account_id: str | None = typer.Option(
+        None,
+        "--failure-alert-account-id",
+        help="Failure alert account id.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit updated cron job as JSON."),
 ) -> None:
@@ -9967,6 +10060,18 @@ def cron_edit_command(
         if has_best_effort:
             delivery["bestEffort"] = best_effort_deliver
         patch["delivery"] = delivery
+    failure_alert_patch = _cron_cli_failure_alert_patch(
+        failure_alert=failure_alert,
+        no_failure_alert=no_failure_alert,
+        after=failure_alert_after,
+        channel=failure_alert_channel,
+        to=failure_alert_to,
+        cooldown=failure_alert_cooldown,
+        mode=failure_alert_mode,
+        account_id=failure_alert_account_id,
+    )
+    if failure_alert_patch is not None:
+        patch["failureAlert"] = failure_alert_patch
     params: dict[str, object] = {"id": job_id, "patch": patch}
 
     async def _action(services: CliServices) -> dict[str, object]:
