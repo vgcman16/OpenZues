@@ -9816,6 +9816,73 @@ def _cron_has_schedule_options(
     )
 
 
+def _cron_direct_schedule_option_count(
+    *,
+    cron_expr: str | None,
+    every: str | None,
+    at: str | None,
+) -> int:
+    return sum(
+        value is not None
+        for value in (
+            _optional_cli_string(cron_expr),
+            _optional_cli_string(every),
+            _optional_cli_string(at),
+        )
+    )
+
+
+def _cron_existing_schedule_patch(
+    list_payload: dict[str, object],
+    *,
+    job_id: str,
+    tz: str | None,
+    stagger: str | None,
+    exact: bool,
+) -> dict[str, object]:
+    if _optional_cli_string(stagger) is not None and exact:
+        raise typer.BadParameter("Choose either --stagger or --exact, not both")
+    jobs = list_payload.get("jobs")
+    job_rows = jobs if isinstance(jobs, list) else []
+    existing_job = next(
+        (
+            row
+            for row in job_rows
+            if isinstance(row, dict) and str(row.get("id") or "").strip() == job_id
+        ),
+        None,
+    )
+    if existing_job is None:
+        raise typer.BadParameter(f"unknown cron job id: {job_id}")
+    existing_schedule = existing_job.get("schedule")
+    if not isinstance(existing_schedule, dict) or existing_schedule.get("kind") != "cron":
+        raise typer.BadParameter("Current job is not a cron schedule; use --cron to convert first")
+    expr = _optional_cli_string(existing_schedule.get("expr"))
+    if expr is None:
+        raise typer.BadParameter("Current cron schedule is missing an expression")
+    schedule: dict[str, object] = {"kind": "cron", "expr": expr}
+    normalized_tz = _optional_cli_string(tz)
+    if normalized_tz is not None:
+        schedule["tz"] = normalized_tz
+    else:
+        existing_tz = _optional_cli_string(existing_schedule.get("tz"))
+        if existing_tz is not None:
+            schedule["tz"] = existing_tz
+    normalized_stagger = _optional_cli_string(stagger)
+    if exact:
+        schedule["staggerMs"] = 0
+    elif normalized_stagger is not None:
+        stagger_ms = _cron_duration_ms(normalized_stagger)
+        if stagger_ms is None:
+            raise typer.BadParameter("Invalid --stagger; use e.g. 30s, 1m, 5m")
+        schedule["staggerMs"] = stagger_ms
+    else:
+        existing_stagger_ms = existing_schedule.get("staggerMs")
+        if isinstance(existing_stagger_ms, int) and not isinstance(existing_stagger_ms, bool):
+            schedule["staggerMs"] = existing_stagger_ms
+    return schedule
+
+
 def _cron_cli_failure_alert_patch(
     *,
     failure_alert: bool,
@@ -10000,14 +10067,23 @@ def cron_edit_command(
         patch["sessionKey"] = normalized_session_key
     if clear_session_key:
         patch["sessionKey"] = None
-    if _cron_has_schedule_options(
+    direct_schedule_count = _cron_direct_schedule_option_count(
         cron_expr=cron_expr,
         every=every,
         at=at,
-        tz=tz,
-        stagger=stagger,
-        exact=exact,
-    ):
+    )
+    needs_existing_schedule_patch = (
+        direct_schedule_count == 0
+        and _cron_has_schedule_options(
+            cron_expr=cron_expr,
+            every=every,
+            at=at,
+            tz=tz,
+            stagger=stagger,
+            exact=exact,
+        )
+    )
+    if direct_schedule_count > 0:
         patch["schedule"] = _cron_cli_schedule(
             cron_expr=cron_expr,
             every=every,
@@ -10075,6 +10151,19 @@ def cron_edit_command(
     params: dict[str, object] = {"id": job_id, "patch": patch}
 
     async def _action(services: CliServices) -> dict[str, object]:
+        if needs_existing_schedule_patch:
+            list_payload = await _call_gateway_node_method(
+                services,
+                "cron.list",
+                {"includeDisabled": True},
+            )
+            patch["schedule"] = _cron_existing_schedule_patch(
+                list_payload,
+                job_id=job_id,
+                tz=tz,
+                stagger=stagger,
+                exact=exact,
+            )
         return await _call_gateway_node_method(services, "cron.update", params)
 
     result = _run(_run_with_services(_action))

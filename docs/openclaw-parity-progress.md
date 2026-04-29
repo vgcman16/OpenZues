@@ -1385,8 +1385,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime"` (`21 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
-- Next cron CLI parity should continue with existing-cron schedule patch
-  breadth before returning to backend-only cron add/edit gaps.
+- `cron edit --exact` now follows upstream's existing-cron schedule patch path:
+  the CLI reads `cron.list` with disabled jobs included, finds the target job,
+  preserves its cron expression/timezone, and sends a merged `cron.update`
+  schedule with `staggerMs=0` instead of requiring `--cron`.
+- Verified the existing-cron schedule patch slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "cron_edit_exact_patches_existing_cron_schedule"` (`1 passed`), adjacent CLI
+  pack `python -m pytest tests\test_cli.py -q -k "cron_ or sessions_ or
+  routes_send_json_calls_native_direct_send_runtime or
+  routes_poll_human_output_calls_native_direct_poll_runtime"` (`22 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Next cron parity should return to backend-backed gaps: add/edit
+  delete-after-run behavior and agent payload extras such as thinking,
+  timeout, light-context, and tools.
 
 ## References
 

@@ -3131,6 +3131,68 @@ def test_cron_edit_failure_alert_patch_calls_gateway_method_owner(monkeypatch) -
     ]
 
 
+def test_cron_edit_exact_patches_existing_cron_schedule(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "cron.list":
+                return {
+                    "jobs": [
+                        {
+                            "id": "task-blueprint:7",
+                            "schedule": {
+                                "kind": "cron",
+                                "expr": "0 */2 * * *",
+                                "tz": "UTC",
+                                "staggerMs": 300_000,
+                            },
+                        }
+                    ]
+                }
+            return {"id": params.get("id"), "patch": params.get("patch")}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "cron",
+            "edit",
+            "task-blueprint:7",
+            "--exact",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        ("cron.list", {"includeDisabled": True}),
+        (
+            "cron.update",
+            {
+                "id": "task-blueprint:7",
+                "patch": {
+                    "schedule": {
+                        "kind": "cron",
+                        "expr": "0 */2 * * *",
+                        "tz": "UTC",
+                        "staggerMs": 0,
+                    }
+                },
+            },
+        ),
+    ]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
