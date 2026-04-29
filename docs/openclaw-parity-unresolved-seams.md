@@ -175,6 +175,8 @@ projection.
 Telegram native sends now parse topic-qualified targets like
 `telegram:group:<chatId>:topic:<threadId>` into a base `chat_id` plus
 `message_thread_id` instead of treating the full target as the chat id.
+Telegram parent supergroup routes now also match topic-qualified sends for the
+same chat id, while topic-specific routes remain specific to their thread id.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
@@ -1603,6 +1605,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   plus `message_thread_id`, matching OpenClaw's `parseTelegramTarget` behavior
   for `telegram:group:<chatId>:topic:<threadId>`.
 - Verified the Telegram topic-target seam with `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or send_direct_channel_poll_uses_telegram"`, `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram parent supergroup routes now match topic-qualified send targets for
+  the same base chat id, while topic-specific route peer ids still require the
+  same topic id.
+- Verified the Telegram topic parent-route seam with `python -m pytest tests\test_ops_mesh.py -q -k "topic_to_parent"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_message_uses_telegram_native or telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram"`, `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

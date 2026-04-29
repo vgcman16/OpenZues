@@ -1869,6 +1869,27 @@ def _conversation_target_key(
     )
 
 
+def _conversation_target_peer_id_matches(
+    *,
+    channel: str,
+    route_peer_id: str,
+    event_peer_id: str,
+) -> bool:
+    if route_peer_id == event_peer_id:
+        return True
+    if channel != "telegram":
+        return False
+    route_target = _parse_telegram_delivery_target(route_peer_id)
+    event_target = _parse_telegram_delivery_target(event_peer_id)
+    route_chat_id = str(route_target.get("chatId") or "").strip().lower()
+    event_chat_id = str(event_target.get("chatId") or "").strip().lower()
+    if not route_chat_id or route_chat_id != event_chat_id:
+        return False
+    route_thread_id = str(route_target.get("threadId") or "").strip()
+    event_thread_id = str(event_target.get("threadId") or "").strip()
+    return not route_thread_id or route_thread_id == event_thread_id
+
+
 def _conversation_target_route_match(
     route_target: dict[str, Any] | ConversationTargetView | None,
     event_target: dict[str, Any] | ConversationTargetView | None,
@@ -1888,7 +1909,11 @@ def _conversation_target_route_match(
 
     if route_peer_kind not in {"", "*"} and route_peer_kind != event_peer_kind:
         return None
-    if route_peer_id not in {"", "*"} and route_peer_id != event_peer_id:
+    if route_peer_id not in {"", "*"} and not _conversation_target_peer_id_matches(
+        channel=route_channel,
+        route_peer_id=route_peer_id,
+        event_peer_id=event_peer_id,
+    ):
         return None
 
     if route_peer_kind not in {"", "*"} or route_peer_id not in {"", "*"}:
