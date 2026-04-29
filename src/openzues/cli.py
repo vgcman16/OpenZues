@@ -2343,6 +2343,14 @@ def _cron_payload_model(job: dict[str, object]) -> str:
     return model or "-"
 
 
+def _cron_runs_limit(value: object) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except ValueError:
+        return 50
+    return parsed if parsed > 0 else 50
+
+
 def _emit_cron_status(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -2378,6 +2386,29 @@ def _emit_cron_list(payload: dict[str, object], *, json_output: bool) -> None:
         agent_id = str(job.get("agentId") or "-").strip() or "-"
         model = _cron_payload_model(cast("dict[str, object]", job))
         typer.echo(f"{job_id} {name} {schedule} {status} {target} {agent_id} {model}")
+
+
+def _emit_cron_runs(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_entries = payload.get("entries")
+    entries = (
+        [entry for entry in raw_entries if isinstance(entry, dict)]
+        if isinstance(raw_entries, list)
+        else []
+    )
+    if not entries:
+        typer.echo("No cron runs.")
+        return
+    typer.echo("Job ID Status Delivery Run At Summary")
+    for entry in entries:
+        job_id = str(entry.get("jobId") or "-").strip() or "-"
+        status = str(entry.get("status") or "-").strip() or "-"
+        delivery_status = str(entry.get("deliveryStatus") or "-").strip() or "-"
+        run_at = str(entry.get("runAtMs") or entry.get("ts") or "-").strip() or "-"
+        summary = str(entry.get("summary") or "").strip()
+        typer.echo(f"{job_id} {status} {delivery_status} {run_at} {summary}".rstrip())
 
 
 def _emit_plugins_inventory(
@@ -9456,6 +9487,24 @@ def cron_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_cron_list(payload, json_output=json_output)
+
+
+@cron_app.command("runs")
+def cron_runs_command(
+    job_id: str = typer.Option(..., "--id", help="Cron job id."),
+    limit: str = typer.Option("50", "--limit", help="Maximum run entries to return."),
+    json_output: bool = typer.Option(False, "--json", help="Emit cron run history as JSON."),
+) -> None:
+    params: dict[str, object] = {
+        "id": job_id,
+        "limit": _cron_runs_limit(limit),
+    }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.runs", params)
+
+    payload = _run(_run_with_services(_action))
+    _emit_cron_runs(payload, json_output=json_output)
 
 
 @sessions_app.command("spawn")

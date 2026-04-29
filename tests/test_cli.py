@@ -2442,6 +2442,43 @@ def test_cron_list_human_output_calls_gateway_method_owner(monkeypatch) -> None:
     assert calls == [("cron.list", {"includeDisabled": True})]
 
 
+def test_cron_runs_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "entries": [
+                    {
+                        "jobId": "task-blueprint:7",
+                        "status": "ok",
+                        "runAtMs": 1_800_000_000_000,
+                    }
+                ],
+                "total": 1,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["cron", "runs", "--id", "task-blueprint:7", "--limit", "3", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["entries"][0]["jobId"] == "task-blueprint:7"
+    assert calls == [("cron.runs", {"id": "task-blueprint:7", "limit": 3})]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

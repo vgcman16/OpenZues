@@ -1054,14 +1054,15 @@ inspection. Provider-specific failure-alert result attribution was audited
 against upstream and skipped as a parity seam because OpenClaw's failure-alert
 runtime is fire-and-forget. The active cron queue has moved to CLI parity.
 
-Current queue-head adjustment: the CLI now exposes `cron status` and
-`cron list` as thin JSON/human wrappers over the production `cron.status` and
-`cron.list` gateway method owners. `cron list --all` forwards the upstream
-`includeDisabled=true` shape, and human output includes OpenClaw-style job id,
-name, schedule, status, target, agent, and model fields. Remaining cron CLI
-parity is the upstream simple command group (`cron runs`, `cron run`,
-`cron rm`, `cron enable`, and `cron disable`) before the larger add/edit option
-surface.
+Current queue-head adjustment: the CLI now exposes `cron status`,
+`cron list`, and `cron runs` as thin JSON/human wrappers over the production
+`cron.status`, `cron.list`, and `cron.runs` gateway method owners. `cron list
+--all` forwards the upstream `includeDisabled=true` shape, human list output
+includes OpenClaw-style job id, name, schedule, status, target, agent, and
+model fields, and `cron runs` preserves the upstream `--id` / positive
+`--limit` request shape. Remaining cron CLI parity is the rest of the upstream
+simple command group (`cron run`, `cron rm`, `cron enable`, and
+`cron disable`) before the larger add/edit option surface.
 
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 
