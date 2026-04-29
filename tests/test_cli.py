@@ -3814,6 +3814,47 @@ def test_infer_tts_convert_gateway_json_wraps_native_audio_result(monkeypatch) -
     ]
 
 
+def test_infer_tts_voices_json_filters_projected_provider_voices(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "tts.providers":
+                return {
+                    "providers": [
+                        {
+                            "id": "microsoft",
+                            "name": "Microsoft",
+                            "voices": ["Zira", "Guy"],
+                        },
+                        {"id": "openai", "name": "OpenAI", "voices": ["alloy"]},
+                    ],
+                    "active": "microsoft",
+                }
+            if method == "tts.status":
+                return {"providerStates": []}
+            raise AssertionError(method)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["infer", "tts", "voices", "--provider", "microsoft", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == ["Zira", "Guy"]
+    assert calls == [("tts.providers", {}), ("tts.status", {})]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

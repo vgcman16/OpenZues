@@ -2927,6 +2927,28 @@ async def _build_capability_tts_convert_payload(
     return envelope
 
 
+async def _build_capability_tts_voices_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+) -> list[object]:
+    provider_payload = await _build_capability_tts_providers_payload(services)
+    selected_provider = _optional_cli_string(provider) or _optional_cli_string(
+        provider_payload.get("active")
+    )
+    raw_providers = provider_payload.get("providers")
+    if not isinstance(raw_providers, list):
+        return []
+    for entry in raw_providers:
+        if not isinstance(entry, dict):
+            continue
+        provider_id = _optional_cli_string(entry.get("id"))
+        if selected_provider is None or provider_id == selected_provider:
+            voices = entry.get("voices")
+            return list(voices) if isinstance(voices, list) else []
+    return []
+
+
 def _capability_list_payload() -> list[dict[str, object]]:
     return [
         {
@@ -7803,6 +7825,21 @@ def capability_tts_providers_command(
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_capability_tts_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("voices")
+def capability_tts_voices_command(
+    provider: str | None = typer.Option(None, "--provider", help="Speech provider id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[object]:
+        return await _build_capability_tts_voices_payload(
+            services,
+            provider=provider,
+        )
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
