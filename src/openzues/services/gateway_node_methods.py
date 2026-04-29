@@ -706,6 +706,22 @@ def _session_patch_supports_spawn_lineage(session_key: str) -> bool:
     return is_subagent_session_key(session_key) or is_acp_session_key(session_key)
 
 
+def _acp_runtime_id_from_session_key(session_key: str) -> str | None:
+    raw = str(session_key or "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered.startswith("acp:"):
+        runtime_id = raw.split(":", 1)[1].strip()
+        return runtime_id or None
+    marker = ":acp:"
+    index = lowered.find(marker)
+    if index < 0:
+        return None
+    runtime_id = raw[index + len(marker) :].strip()
+    return runtime_id or None
+
+
 def _normalize_session_patch_response_usage(value: object) -> Literal["tokens", "full"] | None:
     if value is None:
         return None
@@ -6330,6 +6346,12 @@ class GatewayNodeMethodService:
                 metadata_value = existing_metadata_row.get("metadata")
                 if isinstance(metadata_value, dict):
                     restored_metadata = dict(metadata_value)
+            if restored_metadata:
+                await self._cleanup_acp_runtime_session_before_mutation(
+                    session_key=canonical_key,
+                    metadata=restored_metadata,
+                    reason="session-reset",
+                )
             restored_metadata = _reset_session_metadata(restored_metadata)
             await self._database.delete_control_chat_messages(session_key=canonical_key)
             await self._database.upsert_gateway_session_metadata(
@@ -6399,6 +6421,15 @@ class GatewayNodeMethodService:
             deleted = metadata_row is not None or message_count > 0
             if not deleted:
                 return {"ok": True, "key": canonical_key, "deleted": False, "archived": []}
+            metadata_value = (
+                metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+            )
+            if isinstance(metadata_value, dict):
+                await self._cleanup_acp_runtime_session_before_mutation(
+                    session_key=canonical_key,
+                    metadata=metadata_value,
+                    reason="session-delete",
+                )
             archived: list[str] = []
             if message_count and resolved_delete_transcript:
                 archived = await _archive_control_chat_transcript(
@@ -11651,6 +11682,74 @@ class GatewayNodeMethodService:
             reason="delete",
             now_ms=now_ms,
         )
+
+    async def _cleanup_acp_runtime_session_before_mutation(
+        self,
+        *,
+        session_key: str,
+        metadata: dict[str, Any],
+        reason: Literal["session-delete", "session-reset"],
+    ) -> None:
+        if self._acp_spawn_service is None:
+            return
+        runtime = _string_or_none(metadata.get("runtime"))
+        if runtime != "acp" and not is_acp_session_key(session_key):
+            return
+        runtime_thread_id = (
+            _string_or_none(metadata.get("runtimeThreadId"))
+            or _string_or_none(metadata.get("runtimeSessionId"))
+            or _acp_runtime_id_from_session_key(session_key)
+        )
+        runtime_session_id = _string_or_none(metadata.get("runtimeSessionId")) or runtime_thread_id
+        service: Any = self._acp_spawn_service
+        cancel_session = getattr(service, "cancel_session", None)
+        if callable(cancel_session):
+            await self._run_acp_runtime_cleanup_step(
+                session_key=session_key,
+                op=lambda: cancel_session(
+                    session_key=session_key,
+                    runtime_thread_id=runtime_thread_id,
+                    runtime_session_id=runtime_session_id,
+                    reason=reason,
+                ),
+            )
+        close_session = getattr(service, "close_session", None)
+        if callable(close_session):
+            await self._run_acp_runtime_cleanup_step(
+                session_key=session_key,
+                op=lambda: close_session(
+                    session_key=session_key,
+                    runtime_thread_id=runtime_thread_id,
+                    runtime_session_id=runtime_session_id,
+                    reason=reason,
+                    discard_persistent_state=True,
+                    require_acp_session=False,
+                    allow_backend_unavailable=True,
+                ),
+            )
+
+    async def _run_acp_runtime_cleanup_step(
+        self,
+        *,
+        session_key: str,
+        op: Callable[[], Awaitable[object]],
+    ) -> None:
+        try:
+            result = await asyncio.wait_for(op(), timeout=15.0)
+        except TimeoutError as exc:
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message=f"Session {session_key} is still active; try again in a moment.",
+                status_code=503,
+            ) from exc
+        except Exception:
+            return
+        if isinstance(result, dict) and result.get("status") == "timeout":
+            raise GatewayNodeMethodError(
+                code="UNAVAILABLE",
+                message=f"Session {session_key} is still active; try again in a moment.",
+                status_code=503,
+            )
 
     def _forget_gateway_chat_run(self, session_key: str) -> None:
         canonical_session_key = _canonical_session_key(session_key)

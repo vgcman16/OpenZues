@@ -10943,6 +10943,81 @@ async def test_sessions_reset_uses_resolved_custom_subagent_store_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_reset_closes_acp_runtime_before_resetting_metadata(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-reset-acp-cleanup.db")
+    await database.initialize()
+    session_key = "agent:main:acp:thread-reset-1"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "runtime": "acp",
+            "runtimeThreadId": "thread-reset-1",
+            "runtimeSessionId": "thread-reset-1",
+            "label": "ACP reset runtime",
+            "modelProvider": "openai",
+            "model": "stale-runtime-model",
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="ACP transcript should be reset.",
+        session_key=session_key,
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpCleanupService:
+        async def cancel_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "cancel", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+        async def close_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "close", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpCleanupService(),
+    )
+
+    payload = await service.call("sessions.reset", {"key": session_key}, now_ms=888)
+
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert calls == [
+        {
+            "method": "cancel",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-reset-1",
+            "runtime_session_id": "thread-reset-1",
+            "reason": "session-reset",
+        },
+        {
+            "method": "close",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-reset-1",
+            "runtime_session_id": "thread-reset-1",
+            "reason": "session-reset",
+            "discard_persistent_state": True,
+            "require_acp_session": False,
+            "allow_backend_unavailable": True,
+        },
+    ]
+    assert await database.count_control_chat_messages(session_key=session_key) == 0
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"] == {
+        "runtime": "acp",
+        "runtimeThreadId": "thread-reset-1",
+        "runtimeSessionId": "thread-reset-1",
+        "label": "ACP reset runtime",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_removes_metadata_backed_session_and_transcript() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -11075,6 +11150,66 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
     ]
     assert [event["payload"]["reason"] for event in sessions_changed] == ["delete"]
     assert sessions_changed[0]["payload"]["sessionKey"] == session_key
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_closes_acp_runtime_before_metadata_delete(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-delete-acp-cleanup.db")
+    await database.initialize()
+    session_key = "agent:main:acp:thread-delete-1"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "runtime": "acp",
+            "runtimeThreadId": "thread-delete-1",
+            "runtimeSessionId": "thread-delete-1",
+            "label": "ACP runtime",
+        },
+    )
+
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpCleanupService:
+        async def cancel_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "cancel", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+        async def close_session(self, **kwargs: object) -> dict[str, object]:
+            calls.append({"method": "close", **kwargs})
+            assert await database.get_gateway_session_metadata(session_key) is not None
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpCleanupService(),
+    )
+
+    payload = await service.call("sessions.delete", {"key": session_key}, now_ms=777)
+
+    assert payload == {"ok": True, "key": session_key, "deleted": True, "archived": []}
+    assert calls == [
+        {
+            "method": "cancel",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-delete-1",
+            "runtime_session_id": "thread-delete-1",
+            "reason": "session-delete",
+        },
+        {
+            "method": "close",
+            "session_key": session_key,
+            "runtime_thread_id": "thread-delete-1",
+            "runtime_session_id": "thread-delete-1",
+            "reason": "session-delete",
+            "discard_persistent_state": True,
+            "require_acp_session": False,
+            "allow_backend_unavailable": True,
+        },
+    ]
+    assert await database.get_gateway_session_metadata(session_key) is None
 
 
 @pytest.mark.asyncio

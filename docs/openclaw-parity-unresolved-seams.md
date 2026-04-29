@@ -27,6 +27,14 @@ errors for attachments, `lightContext`, and `sandbox="require"` are preserved.
 ACP `mode="session"` now also matches OpenClaw's guard by returning
 `errorCode="thread_required"` unless `thread=true`, before dispatching any
 RuntimeManager thread or turn.
+ACP-backed `sessions.delete` and `sessions.reset` now run OpenClaw-shaped
+runtime cleanup before mutating local session state: cancel first, then close
+with `discardPersistentState=true`, `requireAcpSession=false`, and
+`allowBackendUnavailable=true`. The production RuntimeManager ACP adapter
+best-effort interrupts active Codex app-server turns during cancel, while the
+local metadata/transcript mutation remains native to OpenZues. Remaining ACP
+parity is the standalone ACP bridge server/client harness and deeper protocol
+session presentation, permission, and replay breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

@@ -11,6 +11,7 @@ class FakeManager:
     def __init__(self) -> None:
         self.start_thread_calls: list[dict[str, object]] = []
         self.start_turn_calls: list[dict[str, object]] = []
+        self.interrupt_turn_calls: list[dict[str, object]] = []
 
     async def list_views(self) -> list[SimpleNamespace]:
         return [
@@ -60,6 +61,15 @@ class FakeManager:
             }
         )
         return {"turn": {"id": "turn-acp-new"}}
+
+    async def interrupt_turn(self, instance_id: int, thread_id: str) -> dict[str, object]:
+        self.interrupt_turn_calls.append(
+            {
+                "instance_id": instance_id,
+                "thread_id": thread_id,
+            }
+        )
+        return {"ok": True}
 
 
 @pytest.mark.asyncio
@@ -154,3 +164,34 @@ async def test_runtime_manager_acp_spawn_rejects_session_mode_without_thread() -
     }
     assert manager.start_thread_calls == []
     assert manager.start_turn_calls == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_cleanup_interrupts_active_thread() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    cancel_payload = await service.cancel_session(
+        session_key="agent:main:acp:thread-cleanup",
+        runtime_thread_id="thread-cleanup",
+        runtime_session_id="thread-cleanup",
+        reason="session-delete",
+    )
+    close_payload = await service.close_session(
+        session_key="agent:main:acp:thread-cleanup",
+        runtime_thread_id="thread-cleanup",
+        runtime_session_id="thread-cleanup",
+        reason="session-delete",
+        discard_persistent_state=True,
+        require_acp_session=False,
+        allow_backend_unavailable=True,
+    )
+
+    assert cancel_payload == {"status": "ok", "cancelled": True}
+    assert close_payload == {"status": "ok", "closed": True}
+    assert manager.interrupt_turn_calls == [
+        {
+            "instance_id": 7,
+            "thread_id": "thread-cleanup",
+        }
+    ]
