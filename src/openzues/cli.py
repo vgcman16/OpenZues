@@ -5806,17 +5806,15 @@ def channels_status(
     ),
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
-        payload = await services.gateway_channels.build_snapshot()
-        payload["probe"] = probe
-        payload["timeoutMs"] = timeout_ms
-        if probe:
-            payload["probeStatus"] = {
-                "status": "unavailable",
-                "reason": "native_probe_runtime_unavailable",
-                "summary": "Native provider credential probes are not available yet.",
+        gateway = _gateway_node_method_service(services)
+        result = await gateway.call(
+            "channels.status",
+            {
+                "probe": probe,
                 "timeoutMs": timeout_ms,
-            }
-        return payload
+            },
+        )
+        return cast(dict[str, object], result)
 
     payload = _run(_run_with_services(_action))
     _emit_channel_inventory(payload, json_output=json_output)

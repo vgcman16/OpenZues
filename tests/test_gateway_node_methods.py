@@ -29112,6 +29112,65 @@ async def test_channels_status_returns_notification_route_inventory() -> None:
 
 
 @pytest.mark.asyncio
+async def test_channels_status_probe_uses_registered_account_probe() -> None:
+    async def fake_list_notification_route_views() -> list[NotificationRouteView]:
+        return [
+            NotificationRouteView(
+                id=7,
+                name="Deploy Room",
+                kind="webhook",
+                target="https://example.invalid/deploy-room",
+                events=["mission/completed"],
+                conversation_target=ConversationTargetView(
+                    channel="slack",
+                    account_id="workspace-bot",
+                    peer_kind="channel",
+                    peer_id="deploy-room",
+                    summary="slack workspace-bot channel deploy-room",
+                ),
+                enabled=True,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        ]
+
+    probe_calls: list[tuple[str, str, int]] = []
+
+    async def fake_probe_account(
+        *,
+        channel: str,
+        account_id: str,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        probe_calls.append((channel, account_id, timeout_ms))
+        return {
+            "ok": True,
+            "bot": {"username": "deploybot"},
+            "timeoutMs": timeout_ms,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        channels_service=GatewayChannelsService(
+            list_notification_route_views=fake_list_notification_route_views,
+            probe_account=fake_probe_account,
+        ),
+    )
+
+    channels = await service.call("channels.status", {"probe": True, "timeoutMs": 2500})
+
+    assert probe_calls == [("slack", "workspace-bot", 2500)]
+    assert channels["probe"] is True
+    assert channels["timeoutMs"] == 2500
+    assert channels["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert channels["channelAccounts"]["slack"][0]["probe"] == {
+        "ok": True,
+        "bot": {"username": "deploybot"},
+        "timeoutMs": 2500,
+    }
+
+
+@pytest.mark.asyncio
 async def test_system_presence_surfaces_gateway_self_and_connected_entries(tmp_path) -> None:
     registry = GatewayNodeRegistry()
     registry.register(

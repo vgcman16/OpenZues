@@ -402,6 +402,53 @@ def test_channels_status_json_accepts_probe_timeout_options(tmp_path, monkeypatc
     assert payload["probeStatus"]["reason"] == "native_probe_runtime_unavailable"
 
 
+def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "channelOrder": ["slack"],
+                "channelLabels": {"slack": "Slack"},
+                "channelDetailLabels": {"slack": "Slack"},
+                "channelMeta": [{"id": "slack", "label": "Slack", "detailLabel": "Slack"}],
+                "channels": {},
+                "channelAccounts": {},
+                "channelDefaultAccountId": {},
+                "routes": [],
+                "routeCount": 0,
+                "enabledCount": 0,
+                "conversationTargetCount": 0,
+                "probe": True,
+                "timeoutMs": 2500,
+                "probeStatus": {
+                    "status": "unavailable",
+                    "reason": "native_probe_runtime_unavailable",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["channels", "status", "--probe", "--timeout", "2500", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("channels.status", {"probe": True, "timeoutMs": 2500})]
+    payload = json.loads(result.stdout)
+    assert payload["probe"] is True
+    assert payload["timeoutMs"] == 2500
+
+
 def test_channels_capabilities_json_filters_channel_and_account(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Capabilities")

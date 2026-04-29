@@ -104,9 +104,12 @@ now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
 connection timeout. `channels status --probe --timeout <ms> --json` now
 accepts the upstream options and preserves probe/timeout metadata with an
-honest unavailable provider-probe posture; remaining channel CLI parity is the
-real provider credential probe runtime and provider-backed live resolve
-adapters. `channels capabilities --channel/--account/--target --timeout
+honest unavailable provider-probe posture. The CLI now routes status probes
+through the `channels.status` gateway method owner, and the channel inventory
+service has a fakeable account-probe adapter that records per-account probe
+results when one is registered; remaining channel CLI parity is provider-specific
+credential probe implementations and provider-backed live resolve adapters.
+`channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and an honest
 unavailable probe envelope. `channels resolve` now accepts upstream-shaped

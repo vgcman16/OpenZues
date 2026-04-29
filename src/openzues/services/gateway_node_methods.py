@@ -5087,14 +5087,32 @@ class GatewayNodeMethodService:
             )
 
         if resolved_method == "channels.status":
-            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("probe", "timeoutMs"),
+            )
             if self._channels_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="channels.status is unavailable until channel inventory is wired",
                     status_code=503,
                 )
-            return await self._channels_service.build_snapshot()
+            probe = (
+                _optional_bool(payload.get("probe"), label="probe")
+                if "probe" in payload
+                else None
+            )
+            timeout_ms = _optional_bounded_int(
+                payload.get("timeoutMs"),
+                label="timeoutMs",
+                minimum=1,
+                maximum=300_000,
+            )
+            return await self._channels_service.build_snapshot(
+                probe=probe,
+                timeout_ms=timeout_ms,
+            )
 
         if resolved_method == "channels.start":
             _validate_exact_keys(
