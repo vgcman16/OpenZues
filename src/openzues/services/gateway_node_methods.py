@@ -5710,6 +5710,7 @@ class GatewayNodeMethodService:
                 rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
+            _validate_gateway_poll_option_count(resolved_channel, options)
             _validate_gateway_poll_duration_options(
                 resolved_channel,
                 duration_seconds=duration_seconds,
@@ -16330,6 +16331,22 @@ def _gateway_poll_supports_anonymous(channel: str) -> bool:
 
 def _gateway_poll_supports_duration_seconds(channel: str) -> bool:
     return channel == "telegram"
+
+
+def _gateway_poll_max_options(channel: str) -> int:
+    if channel in {"discord", "telegram"}:
+        return 10
+    return 12
+
+
+def _validate_gateway_poll_option_count(channel: str, options: list[str]) -> None:
+    max_options = _gateway_poll_max_options(channel)
+    if len(options) > max_options:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message=f"Poll supports at most {max_options} options",
+            status_code=400,
+        )
 
 
 def _validate_gateway_poll_duration_options(

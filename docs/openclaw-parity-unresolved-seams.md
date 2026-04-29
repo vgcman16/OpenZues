@@ -451,6 +451,9 @@ rejecting `durationHours` with the OpenClaw-shaped guidance message.
 The same Telegram duration contract is now enforced in the OpsMesh
 route-backed provider path so direct CLI/runtime sends and replays cannot
 bypass the gateway-method validation before posting `sendPoll`.
+Gateway poll option validation now follows OpenClaw's provider caps for
+Telegram and Discord by rejecting more than 10 options while keeping WhatsApp's
+12-option path available.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

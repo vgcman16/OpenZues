@@ -37033,6 +37033,39 @@ async def test_poll_rejects_telegram_duration_hours_like_openclaw() -> None:
     assert exc_info.value.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("channel", "target"),
+    [
+        ("telegram", "123"),
+        ("discord", "channel:123"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_poll_rejects_channel_specific_option_limit_like_openclaw(
+    channel: str,
+    target: str,
+) -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Poll supports at most 10 options",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": target,
+                "question": "Pick one",
+                "options": [f"Option {index}" for index in range(11)],
+                "channel": channel,
+                "idempotencyKey": f"idem-poll-{channel}-options",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
 @pytest.mark.asyncio
 async def test_poll_allows_large_duration_hours_before_delivery_placeholder() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
