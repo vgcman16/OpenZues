@@ -178,6 +178,13 @@ Telegram native routes now support the upstream username resolver slice:
 `channels resolve --channel telegram --kind user` calls Bot API `getChat` with
 the stored route token and returns the numeric chat id plus normalized
 `@username` display.
+The CLI now exposes OpenClaw's metadata-only `infer` / `capability` command
+alias for `list` and `inspect --name`, returning canonical capability ids,
+descriptions, transports, flags, and result shapes from
+`src/cli/capability-cli.ts`. Remaining `infer` parity is the heavier provider
+execution breadth (`model run`, image/audio/video/web/embedding/TTS runtime
+commands) and any gateway-backed capability transports not already covered by
+native OpenZues command families.
 Discord native routes now have the first production live resolver slice:
 channel-id inputs and channel mentions call `/users/@me/guilds` plus
 `/channels/{id}` with the stored route token and return OpenClaw-shaped

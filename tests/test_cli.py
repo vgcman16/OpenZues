@@ -2125,6 +2125,31 @@ def test_acp_bridge_warns_for_inline_secrets() -> None:
     assert "ACP Gateway bridge is not available" in result.stderr
 
 
+def test_capability_list_json_surfaces_openclaw_capability_metadata() -> None:
+    result = runner.invoke(app, ["capability", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert any(entry["id"] == "model.run" for entry in payload)
+    image_describe = next(entry for entry in payload if entry["id"] == "image.describe")
+    assert image_describe["transports"] == ["local"]
+    assert "media-understanding" in image_describe["description"]
+
+
+def test_infer_inspect_json_uses_capability_alias() -> None:
+    result = runner.invoke(app, ["infer", "inspect", "--name", "web.fetch", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "id": "web.fetch",
+        "description": "Fetch URL content through configured web fetch providers.",
+        "transports": ["local"],
+        "flags": ["--url", "--provider", "--format", "--json"],
+        "resultShape": "fetch provider result",
+    }
+
+
 def test_sandbox_recreate_session_force_json_forgets_saved_sandbox_metadata(monkeypatch) -> None:
     deleted: list[str] = []
 

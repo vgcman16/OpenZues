@@ -126,6 +126,229 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "media": True,
     },
 }
+_CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
+    {
+        "id": "model.run",
+        "description": "Run a one-shot text inference turn through the agent runtime.",
+        "transports": ["local", "gateway"],
+        "flags": ["--prompt", "--model", "--local", "--gateway", "--json"],
+        "resultShape": "normalized payloads plus provider/model attribution",
+    },
+    {
+        "id": "model.list",
+        "description": "List known models from the model catalog.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "catalog entries",
+    },
+    {
+        "id": "model.inspect",
+        "description": "Inspect one model catalog entry.",
+        "transports": ["local"],
+        "flags": ["--model", "--json"],
+        "resultShape": "single catalog entry",
+    },
+    {
+        "id": "model.providers",
+        "description": "List model providers discovered from the catalog.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids with counts and defaults",
+    },
+    {
+        "id": "model.auth.login",
+        "description": "Run the existing provider auth login flow.",
+        "transports": ["local"],
+        "flags": ["--provider"],
+        "resultShape": "interactive auth result",
+    },
+    {
+        "id": "model.auth.logout",
+        "description": "Remove saved auth profiles for one provider.",
+        "transports": ["local"],
+        "flags": ["--provider", "--json"],
+        "resultShape": "removed profile ids",
+    },
+    {
+        "id": "model.auth.status",
+        "description": "Show configured model auth state.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "model status summary",
+    },
+    {
+        "id": "image.generate",
+        "description": "Generate raster images with configured image providers.",
+        "transports": ["local"],
+        "flags": [
+            "--prompt",
+            "--model",
+            "--count",
+            "--size",
+            "--aspect-ratio",
+            "--resolution",
+            "--output",
+            "--json",
+        ],
+        "resultShape": "saved image files plus attempts",
+    },
+    {
+        "id": "image.edit",
+        "description": "Generate edited images from one or more input files.",
+        "transports": ["local"],
+        "flags": ["--file", "--prompt", "--model", "--output", "--json"],
+        "resultShape": "saved image files plus attempts",
+    },
+    {
+        "id": "image.describe",
+        "description": "Describe one image file through media-understanding providers.",
+        "transports": ["local"],
+        "flags": ["--file", "--prompt", "--model", "--json"],
+        "resultShape": "normalized text output",
+    },
+    {
+        "id": "image.describe-many",
+        "description": "Describe multiple image files independently.",
+        "transports": ["local"],
+        "flags": ["--file", "--prompt", "--model", "--json"],
+        "resultShape": "one text output per file",
+    },
+    {
+        "id": "image.providers",
+        "description": "List image generation providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and defaults",
+    },
+    {
+        "id": "audio.transcribe",
+        "description": "Transcribe one audio file.",
+        "transports": ["local"],
+        "flags": ["--file", "--model", "--json"],
+        "resultShape": "normalized text output",
+    },
+    {
+        "id": "audio.providers",
+        "description": "List audio transcription providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and capabilities",
+    },
+    {
+        "id": "tts.convert",
+        "description": "Convert text to speech.",
+        "transports": ["local", "gateway"],
+        "flags": [
+            "--text",
+            "--channel",
+            "--voice",
+            "--model",
+            "--output",
+            "--local",
+            "--gateway",
+            "--json",
+        ],
+        "resultShape": "saved audio file plus attempts",
+    },
+    {
+        "id": "tts.voices",
+        "description": "List voices for a speech provider.",
+        "transports": ["local"],
+        "flags": ["--provider", "--json"],
+        "resultShape": "voice entries",
+    },
+    {
+        "id": "tts.providers",
+        "description": "List speech providers.",
+        "transports": ["local", "gateway"],
+        "flags": ["--local", "--gateway", "--json"],
+        "resultShape": "provider ids, configured state, models, voices",
+    },
+    {
+        "id": "tts.status",
+        "description": "Show gateway-managed TTS state.",
+        "transports": ["gateway"],
+        "flags": ["--gateway", "--json"],
+        "resultShape": "enabled/provider state",
+    },
+    {
+        "id": "tts.enable",
+        "description": "Enable TTS in prefs.",
+        "transports": ["local", "gateway"],
+        "flags": ["--local", "--gateway", "--json"],
+        "resultShape": "enabled state",
+    },
+    {
+        "id": "tts.disable",
+        "description": "Disable TTS in prefs.",
+        "transports": ["local", "gateway"],
+        "flags": ["--local", "--gateway", "--json"],
+        "resultShape": "enabled state",
+    },
+    {
+        "id": "tts.set-provider",
+        "description": "Set the active TTS provider.",
+        "transports": ["local", "gateway"],
+        "flags": ["--provider", "--local", "--gateway", "--json"],
+        "resultShape": "selected provider",
+    },
+    {
+        "id": "video.generate",
+        "description": "Generate video files with configured video providers.",
+        "transports": ["local"],
+        "flags": ["--prompt", "--model", "--output", "--json"],
+        "resultShape": "saved video files plus attempts",
+    },
+    {
+        "id": "video.describe",
+        "description": "Describe one video file through media-understanding providers.",
+        "transports": ["local"],
+        "flags": ["--file", "--model", "--json"],
+        "resultShape": "normalized text output",
+    },
+    {
+        "id": "video.providers",
+        "description": "List video generation and description providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and defaults",
+    },
+    {
+        "id": "web.search",
+        "description": "Run provider-backed web search.",
+        "transports": ["local"],
+        "flags": ["--query", "--provider", "--limit", "--json"],
+        "resultShape": "search provider result",
+    },
+    {
+        "id": "web.fetch",
+        "description": "Fetch URL content through configured web fetch providers.",
+        "transports": ["local"],
+        "flags": ["--url", "--provider", "--format", "--json"],
+        "resultShape": "fetch provider result",
+    },
+    {
+        "id": "web.providers",
+        "description": "List web search and fetch providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids grouped by family",
+    },
+    {
+        "id": "embedding.create",
+        "description": "Create embeddings through embedding providers.",
+        "transports": ["local"],
+        "flags": ["--text", "--provider", "--model", "--json"],
+        "resultShape": "vectors with provider/model attribution",
+    },
+    {
+        "id": "embedding.providers",
+        "description": "List embedding providers.",
+        "transports": ["local"],
+        "flags": ["--json"],
+        "resultShape": "provider ids and default models",
+    },
+)
 _WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
 
 
@@ -145,6 +368,9 @@ acp_app = typer.Typer(
 )
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
+capability_app = typer.Typer(
+    help="Run provider-backed inference commands through a stable CLI surface."
+)
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -170,6 +396,8 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(capability_app, name="capability")
+app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
 plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
@@ -2318,6 +2546,43 @@ def _emit_models_status(
     auth = payload.get("auth")
     if isinstance(auth, dict):
         typer.echo(f"auth: {auth.get('status') or 'unknown'}")
+
+
+def _capability_list_payload() -> list[dict[str, object]]:
+    return [
+        {
+            "id": entry["id"],
+            "transports": list(cast("list[str]", entry["transports"])),
+            "description": entry["description"],
+        }
+        for entry in _CAPABILITY_METADATA
+    ]
+
+
+def _capability_inspect_payload(name: str) -> dict[str, object]:
+    normalized = name.strip()
+    for entry in _CAPABILITY_METADATA:
+        if entry["id"] == normalized:
+            payload = dict(entry)
+            payload["transports"] = list(cast("list[str]", entry["transports"]))
+            payload["flags"] = list(cast("list[str]", entry["flags"]))
+            return payload
+    raise ValueError(f"Unknown capability: {name}")
+
+
+def _emit_capability_list(payload: list[dict[str, object]], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    for entry in payload:
+        typer.echo(json.dumps(entry, separators=(",", ":")))
+
+
+def _emit_capability_inspect(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(json.dumps(payload, indent=2))
 
 
 def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
@@ -7019,6 +7284,26 @@ def acp_client_command(
         },
     )
     raise typer.Exit(code=1)
+
+
+@capability_app.command("list")
+def capability_list_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    _emit_capability_list(_capability_list_payload(), json_output=json_output)
+
+
+@capability_app.command("inspect")
+def capability_inspect_command(
+    name: str = typer.Option(..., "--name", help="Capability id."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        payload = _capability_inspect_payload(name)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_inspect(payload, json_output=json_output)
 
 
 @sandbox_app.command("list")
