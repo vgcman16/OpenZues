@@ -374,6 +374,7 @@ capability_app = typer.Typer(
 )
 capability_model_app = typer.Typer(help="Inspect text inference model catalog metadata.")
 capability_model_auth_app = typer.Typer(help="Inspect model provider auth metadata.")
+capability_tts_app = typer.Typer(help="Inspect text-to-speech runtime metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -401,6 +402,7 @@ app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
+capability_app.add_typer(capability_tts_app, name="tts")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -2774,6 +2776,81 @@ def _emit_capability_model_run(payload: dict[str, object], *, json_output: bool)
             typer.echo(text_value)
         else:
             typer.echo(json.dumps(output))
+
+
+def _capability_tts_provider_state_map(
+    status_payload: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    raw_states = status_payload.get("providerStates")
+    if not isinstance(raw_states, list):
+        return {}
+    states: dict[str, dict[str, object]] = {}
+    for state in raw_states:
+        if not isinstance(state, dict):
+            continue
+        provider_id = _optional_cli_string(state.get("id"))
+        if provider_id is not None:
+            states[provider_id] = dict(state)
+    return states
+
+
+def _capability_tts_provider_entry(
+    raw_provider: object,
+    *,
+    active: str | None,
+    states: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    if isinstance(raw_provider, str):
+        provider_id = _optional_cli_string(raw_provider)
+        raw_entry: dict[str, object] = {}
+    elif isinstance(raw_provider, dict):
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        raw_entry = dict(raw_provider)
+    else:
+        return None
+    if provider_id is None:
+        return None
+    state = states.get(provider_id, {})
+    selected = bool(state.get("selected")) or active == provider_id
+    entry: dict[str, object] = {
+        "available": bool(state.get("available")) if "available" in state else True,
+        "configured": bool(raw_entry.get("configured")) if "configured" in raw_entry else selected,
+        "selected": selected,
+        "id": provider_id,
+    }
+    label = (
+        _optional_cli_string(raw_entry.get("name"))
+        or _optional_cli_string(raw_entry.get("label"))
+        or _optional_cli_string(state.get("label"))
+    )
+    if label is not None:
+        entry["name"] = label
+    for key in ("models", "voices"):
+        value = raw_entry.get(key)
+        if isinstance(value, list):
+            entry[key] = list(value)
+    return entry
+
+
+async def _build_capability_tts_providers_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    provider_payload = await _call_gateway_node_method(services, "tts.providers", {})
+    status_payload = await _call_gateway_node_method(services, "tts.status", {})
+    raw_providers = provider_payload.get("providers")
+    active = _optional_cli_string(provider_payload.get("active"))
+    states = _capability_tts_provider_state_map(status_payload)
+    providers: list[dict[str, object]] = []
+    if isinstance(raw_providers, list):
+        for raw_provider in raw_providers:
+            entry = _capability_tts_provider_entry(
+                raw_provider,
+                active=active,
+                states=states,
+            )
+            if entry is not None:
+                providers.append(entry)
+    return {"providers": providers, "active": active}
 
 
 def _capability_list_payload() -> list[dict[str, object]]:
@@ -7633,6 +7710,25 @@ def capability_model_auth_status_command(
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_models_status_payload(services, probe=False)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("providers")
+def capability_tts_providers_command(
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        _resolve_capability_model_run_transport(local=local, gateway=gateway)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_providers_payload(services)
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)

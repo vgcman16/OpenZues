@@ -196,9 +196,12 @@ model-status gateway method owners while preserving OpenClaw's model-run
 capability envelope, raw catalog-array, provider-summary, and model-auth status
 JSON shapes. Remaining `infer` parity is deeper `model run` final-wait/provider
 override behavior in the gateway `agent` method, model auth login/logout
-mutation, image/audio/video/web/embedding/TTS runtime commands, and any
-gateway-backed capability transports not already covered by native OpenZues
-command families.
+mutation, image/audio/video/web/embedding runtime commands, TTS
+status/state/voices/convert CLI surfaces beyond the now-landed provider
+catalog, and any gateway-backed capability transports not already covered by
+native OpenZues command families. The first TTS `providers` slice now projects
+the native `tts.providers` and `tts.status` method owners into OpenClaw-shaped
+provider objects for the `infer` / `capability` alias family.
 Discord native routes now have the first production live resolver slice:
 channel-id inputs and channel mentions call `/users/@me/guilds` plus
 `/channels/{id}` with the stored route token and return OpenClaw-shaped

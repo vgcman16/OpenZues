@@ -3582,6 +3582,77 @@ def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> 
     ]
 
 
+def test_infer_tts_providers_json_projects_native_provider_catalog(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "tts.providers":
+                return {"providers": ["microsoft", "openai"], "active": "microsoft"}
+            if method == "tts.status":
+                return {
+                    "providerStates": [
+                        {
+                            "id": "microsoft",
+                            "label": "Microsoft",
+                            "available": True,
+                            "selected": True,
+                        },
+                        {
+                            "id": "openai",
+                            "label": "OpenAI",
+                            "available": False,
+                            "selected": False,
+                        },
+                    ]
+                }
+            raise AssertionError(method)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "tts", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "providers": [
+            {
+                "available": True,
+                "configured": True,
+                "selected": True,
+                "id": "microsoft",
+                "name": "Microsoft",
+            },
+            {
+                "available": False,
+                "configured": False,
+                "selected": False,
+                "id": "openai",
+                "name": "OpenAI",
+            },
+        ],
+        "active": "microsoft",
+    }
+    assert calls == [("tts.providers", {}), ("tts.status", {})]
+
+
+def test_capability_tts_providers_rejects_local_and_gateway_together() -> None:
+    result = runner.invoke(
+        app,
+        ["capability", "tts", "providers", "--local", "--gateway", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "Pass only one of --local or --gateway." in result.stderr
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
