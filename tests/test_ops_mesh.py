@@ -5112,6 +5112,45 @@ async def test_ops_mesh_service_send_direct_channel_poll_rejects_invalid_telegra
     assert telegram_posts == []
 
 
+@pytest.mark.parametrize(
+    ("channel", "target", "account_id"),
+    [
+        ("telegram", "channel:-100123", "telegram-bot"),
+        ("discord", "channel:987654321", "discord-webhook"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_provider_option_caps(
+    channel: str,
+    target: str,
+    account_id: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / f"ops-mesh-direct-poll-{channel}-options"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="Poll supports at most 10 options"):
+        await service.send_direct_channel_poll(
+            channel=channel,
+            to=target,
+            question="Pick one",
+            options=[f"Option {index}" for index in range(11)],
+            account_id=account_id,
+            idempotency_key=f"idem-native-{channel}-poll-options",
+        )
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_parses_telegram_topic_target(
     monkeypatch: pytest.MonkeyPatch,

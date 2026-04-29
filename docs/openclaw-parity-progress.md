@@ -1884,6 +1884,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
 - Next cron parity should cover the remaining direct `--at` timezone
   normalization breadth.
+- OpsMesh direct/provider poll dispatch now enforces the OpenClaw
+  channel-specific option caps before route lookup or native provider posts:
+  Telegram and Discord reject more than 10 cleaned options, while the shared
+  native-provider guard preserves the 12-option default used by the WhatsApp
+  path.
+- Verified the runtime poll option-cap slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_provider_option_caps"` (`2 passed`),
+  adjacent native poll pack `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_telegram_native_route or
+  send_direct_channel_poll_uses_discord_native_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  rejects_provider_option_caps or rejects_invalid_telegram_durations"` (`7
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

@@ -2196,6 +2196,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   preserves `/stop` as `origin="stop-command"`, ignores blank partials, and
   projects the metadata through `chat.history`.
 - Verified the abort partial transcript seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort_persists_partial_assistant_transcript_like_openclaw or chat_send_stop_persists_abort_partial_with_stop_command_origin or chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent transcript proof `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or chat_history or sessions_history"`, shared session read-model proof `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface or transcript_usage or control_chat"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
+- Closed the OpsMesh provider-runtime poll option-cap seam: direct poll calls
+  now validate channel-specific OpenClaw caps before provider route lookup, and
+  Telegram/Discord/WhatsApp native provider post helpers apply the same guard
+  before replay/provider payload dispatch. Verified with `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_provider_option_caps"`, adjacent
+  native poll pack `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_telegram_native_route or
+  send_direct_channel_poll_uses_discord_native_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  rejects_provider_option_caps or rejects_invalid_telegram_durations"`,
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

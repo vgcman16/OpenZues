@@ -1406,6 +1406,23 @@ def _validate_telegram_poll_duration_options(
         raise ValueError("Telegram poll durationSeconds must be between 5 and 600")
 
 
+def _direct_channel_poll_max_options(channel: str) -> int:
+    normalized = channel.strip().lower()
+    if normalized in {"discord", "telegram"}:
+        return 10
+    return 12
+
+
+def _validate_direct_channel_poll_option_count(
+    channel: str,
+    options: list[str],
+) -> None:
+    max_options = _direct_channel_poll_max_options(channel)
+    cleaned = [option.strip() for option in options if option.strip()]
+    if len(cleaned) > max_options:
+        raise ValueError(f"Poll supports at most {max_options} options")
+
+
 def _whatsapp_messages_endpoint(target: str | None) -> str:
     normalized = str(target or "").strip()
     if _normalized_http_webhook_url(normalized) is None:
@@ -7257,6 +7274,10 @@ class OpsMeshService:
             raise ValueError("poll requires an explicit channel target")
         normalized_question = str(question).strip()
         normalized_options = [str(option).strip() for option in options]
+        _validate_direct_channel_poll_option_count(
+            conversation_target.channel,
+            normalized_options,
+        )
         if conversation_target.channel == "telegram":
             _validate_telegram_poll_duration_options(
                 duration_seconds=duration_seconds,
@@ -8507,6 +8528,7 @@ class OpsMeshService:
         if event_type == "gateway/poll":
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_option_count("telegram", options)
             duration_seconds = _optional_int_payload_value(event, "durationSeconds")
             duration_hours = _optional_int_payload_value(event, "durationHours")
             _validate_telegram_poll_duration_options(
@@ -8650,6 +8672,7 @@ class OpsMeshService:
         if event_type == "gateway/poll":
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_option_count("discord", options)
             payload: dict[str, Any] = {
                 "poll": {
                     "question": {
@@ -8745,7 +8768,9 @@ class OpsMeshService:
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
-            options = [option for option in options if option][:3]
+            options = [option for option in options if option]
+            _validate_direct_channel_poll_option_count("whatsapp", options)
+            options = options[:3]
             payload: dict[str, Any] = {
                 "messaging_product": "whatsapp",
                 "to": recipient_id,
