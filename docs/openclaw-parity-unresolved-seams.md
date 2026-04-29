@@ -1083,10 +1083,10 @@ metadata, failure-alert flags, and existing-cron `--exact` schedule patching;
 `timeoutSeconds`, `lightContext`, and `toolsAllow`), and `cron add` exposes the
 matching CLI flags. `cron edit` now exposes the same flags plus
 `--no-light-context` and `--clear-tools`. Remaining cron gaps are
-agent mission-completion delete-after-run cleanup/default one-shot semantics and
-the remaining direct `--at` timezone normalization breadth; explicit
-`deleteAfterRun=true` storage plus successful system-event `cron.run` cleanup
-now work.
+default one-shot delete-after-run semantics and the remaining direct `--at`
+timezone normalization breadth; explicit `deleteAfterRun=true` storage,
+successful system-event `cron.run` cleanup, and isolated agent mission-completion
+cleanup now work.
 
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 

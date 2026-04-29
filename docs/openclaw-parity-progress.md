@@ -1457,9 +1457,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_cron.py src\openzues\schemas.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_cron.py src\openzues\schemas.py`.
-- Next cron parity should cover agent mission-completion delete-after-run
-  cleanup/default one-shot semantics and the remaining direct `--at` timezone
-  normalization breadth.
+- OpsMesh mission completion now deletes consumed one-shot task blueprints when
+  `cron_delete_after_run` is true, covering isolated agent cron jobs that only
+  finish after `cron.run` has enqueued a mission.
+- Verified the mission-completion delete-after-run slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k
+  "deletes_consumed_one_shot_task_when_delete_after_run_true"` (`1 passed`),
+  adjacent OpsMesh cron/one-shot pack `python -m pytest tests\test_ops_mesh.py
+  -q -k "one_shot or cron_ or failure_alert"` (`22 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Next cron parity should cover default one-shot delete-after-run semantics and
+  the remaining direct `--at` timezone normalization breadth.
 
 ## References
 

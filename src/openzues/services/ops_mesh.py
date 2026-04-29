@@ -399,6 +399,10 @@ def _task_cron_failure_alert(task: TaskBlueprintView) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
 
 
+def _task_cron_delete_after_run(task: TaskBlueprintView) -> bool:
+    return task.cron_delete_after_run is True
+
+
 def _task_is_gateway_cron_task(task: TaskBlueprintView) -> bool:
     return (
         task.cadence_minutes is not None
@@ -5394,13 +5398,17 @@ class OpsMeshService:
                 )
                 if task_row is not None:
                     task = _serialize_task(task_row)
+                    delete_consumed_one_shot = False
                     if status == "completed" and _task_has_terminal_completion(task, summary):
-                        await self.database.update_task_blueprint(
-                            task_id,
-                            enabled=0,
-                            last_status="completed",
-                            last_result_summary=summary[:240],
-                        )
+                        if task.schedule_kind == "at" and _task_cron_delete_after_run(task):
+                            delete_consumed_one_shot = True
+                        else:
+                            await self.database.update_task_blueprint(
+                                task_id,
+                                enabled=0,
+                                last_status="completed",
+                                last_result_summary=summary[:240],
+                            )
                         await self._publish_ops_event(
                             "task/completed-terminal",
                             {
@@ -5422,12 +5430,15 @@ class OpsMeshService:
                             and last_run_at is not None
                             and scheduled_at <= last_run_at
                         ):
-                            await self.database.update_task_blueprint(
-                                task_id,
-                                enabled=0,
-                                last_status="completed",
-                                last_result_summary=summary[:240],
-                            )
+                            if _task_cron_delete_after_run(task):
+                                delete_consumed_one_shot = True
+                            else:
+                                await self.database.update_task_blueprint(
+                                    task_id,
+                                    enabled=0,
+                                    last_status="completed",
+                                    last_result_summary=summary[:240],
+                                )
                     await self._record_cron_mission_result_state(
                         event_type,
                         mission,
@@ -5438,6 +5449,8 @@ class OpsMeshService:
                         mission,
                         task,
                     )
+                    if delete_consumed_one_shot:
+                        await self.database.delete_task_blueprint(task_id)
                 await self._maybe_append_parity_checkpoint_ledger(mission, task=task_row)
             elif mission is not None:
                 await self._maybe_append_parity_checkpoint_ledger(mission, task=None)
