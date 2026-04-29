@@ -3744,6 +3744,76 @@ def test_capability_tts_set_provider_json_calls_native_state_method(monkeypatch)
     assert calls == [("tts.setProvider", {"provider": "edge"})]
 
 
+def test_infer_tts_convert_gateway_json_wraps_native_audio_result(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "audioPath": "C:\\temp\\speech.wav",
+                "provider": "microsoft",
+                "outputFormat": "wav",
+                "voiceCompatible": True,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "tts",
+            "convert",
+            "--text",
+            "Hello",
+            "--channel",
+            "assistant",
+            "--model",
+            "microsoft/tts-1",
+            "--voice",
+            "Zira",
+            "--gateway",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "tts.convert",
+        "transport": "gateway",
+        "provider": "microsoft",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": "C:\\temp\\speech.wav",
+                "format": "wav",
+                "voiceCompatible": True,
+            }
+        ],
+    }
+    assert calls == [
+        (
+            "tts.convert",
+            {
+                "text": "Hello",
+                "channel": "assistant",
+                "provider": "microsoft",
+                "modelId": "tts-1",
+                "voiceId": "Zira",
+            },
+        )
+    ]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

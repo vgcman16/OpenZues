@@ -2872,6 +2872,61 @@ async def _build_capability_tts_state_payload(
     return await _call_gateway_node_method(services, method, params)
 
 
+async def _build_capability_tts_convert_payload(
+    services: CliServices,
+    *,
+    text: str,
+    channel: str | None,
+    voice: str | None,
+    model_ref: str | None,
+    output: str | None,
+    transport: str,
+) -> dict[str, object]:
+    provider, model_id = _split_capability_model_ref(model_ref)
+    if _optional_cli_string(model_ref) is not None and provider is None:
+        raise ValueError("TTS model overrides must use the form <provider/model>.")
+    params: dict[str, object] = {"text": text}
+    normalized_channel = _optional_cli_string(channel)
+    normalized_voice = _optional_cli_string(voice)
+    if normalized_channel is not None:
+        params["channel"] = normalized_channel
+    if provider is not None:
+        params["provider"] = provider
+    if model_id is not None:
+        params["modelId"] = model_id
+    if normalized_voice is not None:
+        params["voiceId"] = normalized_voice
+    result = await _call_gateway_node_method(services, "tts.convert", params)
+    audio_path = _optional_cli_string(result.get("audioPath"))
+    output_path = audio_path
+    normalized_output = _optional_cli_string(output)
+    if normalized_output is not None and audio_path is not None:
+        target = Path(normalized_output).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(audio_path, target)
+        output_path = str(target)
+    output_payload: dict[str, object] = {}
+    if output_path is not None:
+        output_payload["path"] = output_path
+    output_format = _optional_cli_string(result.get("outputFormat"))
+    if output_format is not None:
+        output_payload["format"] = output_format
+    voice_compatible = result.get("voiceCompatible")
+    if isinstance(voice_compatible, bool):
+        output_payload["voiceCompatible"] = voice_compatible
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "tts.convert",
+        "transport": transport,
+        "attempts": [],
+        "outputs": [output_payload],
+    }
+    result_provider = _optional_cli_string(result.get("provider")) or provider
+    if result_provider is not None:
+        envelope["provider"] = result_provider
+    return envelope
+
+
 def _capability_list_payload() -> list[dict[str, object]]:
     return [
         {
@@ -7751,6 +7806,45 @@ def capability_tts_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("convert")
+def capability_tts_convert_command(
+    text: str = typer.Option(..., "--text", help="Input text."),
+    channel: str | None = typer.Option(None, "--channel", help="Channel hint."),
+    voice: str | None = typer.Option(None, "--voice", help="Voice hint."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        transport = _resolve_capability_model_run_transport(
+            local=local,
+            gateway=gateway,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_convert_payload(
+            services,
+            text=text,
+            channel=channel,
+            voice=voice,
+            model_ref=model,
+            output=output,
+            transport=transport,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_tts_app.command("status")
