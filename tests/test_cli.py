@@ -3499,6 +3499,64 @@ def test_capability_model_auth_logout_json_calls_model_auth_runtime(monkeypatch)
     assert calls == [("logout", "openai-codex")]
 
 
+def test_infer_image_providers_json_projects_native_image_registry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeImageGeneration:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("list_providers")
+            return [
+                {
+                    "id": "vision-one",
+                    "label": "Vision One",
+                    "defaultModel": "paint-v1",
+                    "models": ["paint-v1", "paint-v2"],
+                    "capabilities": {"generate": {"sizes": ["1024x1024"]}},
+                    "configured": True,
+                    "selected": True,
+                },
+                {
+                    "id": "vision-two",
+                    "label": "Vision Two",
+                    "defaultModel": "draw-v1",
+                    "models": ["draw-v1"],
+                    "capabilities": {"generate": {}, "edit": {}},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_generation=FakeImageGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "image", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "available": True,
+            "configured": True,
+            "selected": True,
+            "id": "vision-one",
+            "label": "Vision One",
+            "defaultModel": "paint-v1",
+            "models": ["paint-v1", "paint-v2"],
+            "capabilities": {"generate": {"sizes": ["1024x1024"]}},
+        },
+        {
+            "available": True,
+            "configured": False,
+            "selected": False,
+            "id": "vision-two",
+            "label": "Vision Two",
+            "defaultModel": "draw-v1",
+            "models": ["draw-v1"],
+            "capabilities": {"generate": {}, "edit": {}},
+        },
+    ]
+    assert calls == ["list_providers"]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,

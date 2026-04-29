@@ -201,15 +201,18 @@ final `agent.wait` result before projecting OpenClaw-style provider/model
 output envelopes. Model auth login/logout CLI commands now dispatch through a
 fakeable native model-auth runtime hook and keep a precise unavailable boundary
 when that runtime is absent. Remaining `infer` parity is production model-auth
-backend wiring, image/audio/video/web/embedding runtime commands, deeper TTS
-provider/runtime breadth beyond the now-landed CLI family, and any
+backend wiring, image generate/edit/describe runtime commands,
+audio/video/web/embedding runtime commands, deeper TTS provider/runtime breadth
+beyond the now-landed CLI family, and any
 gateway-backed capability transports not already covered by native OpenZues
 command families. The first TTS slices now project the native
 `tts.providers`, `tts.status`, `tts.enable`, `tts.disable`, and
 `tts.setProvider` method owners plus the native `tts.convert` runtime into
 OpenClaw-shaped provider objects, gateway-tagged status JSON, raw
 state-mutation payloads, provider voice lists, and `tts.convert` capability
-envelopes for the `infer` / `capability` alias family.
+envelopes for the `infer` / `capability` alias family. `image providers` now
+projects a fakeable native image-generation registry into OpenClaw's provider
+summary shape and returns an empty list when no provider registry is wired.
 Discord native routes now have the first production live resolver slice:
 channel-id inputs and channel mentions call `/users/@me/guilds` plus
 `/channels/{id}` with the stored route token and return OpenClaw-shaped
