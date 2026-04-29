@@ -45,7 +45,9 @@ sandboxed `mode="all"` / `mode="non-main"` child targets now dispatch through
 the native sandbox runtime even when the caller uses inherited sandbox policy.
 The native sandbox adapter now preserves read-only Codex sandbox policy metadata
 when dispatched with `sandbox_mode="read-only"`; remaining staging work is
-mapping OpenClaw `workspaceAccess` settings into that native mode at spawn time.
+limited to deeper OpenClaw media/workspace filesystem staging. Explicit
+`workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
+while omitted/`"rw"` access keeps the writable workspace sandbox path.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,

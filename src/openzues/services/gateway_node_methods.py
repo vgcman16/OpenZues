@@ -7271,6 +7271,9 @@ class GatewayNodeMethodService:
                 self._config_service,
                 session_key=canonical_key,
             )
+            child_native_sandbox_mode = _sessions_spawn_native_sandbox_mode(
+                child_sandbox_status
+            )
             requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
                 self._config_service,
                 session_key=spawn_parent_session_key,
@@ -7390,7 +7393,7 @@ class GatewayNodeMethodService:
             }
             if child_sandbox_status.sandboxed:
                 metadata["sandboxed"] = True
-                metadata["sandboxMode"] = "workspace-write"
+                metadata["sandboxMode"] = child_native_sandbox_mode
                 metadata["sandboxConfigMode"] = child_sandbox_status.mode
                 if child_sandbox_status.workspace_access is not None:
                     metadata["sandboxWorkspaceAccess"] = child_sandbox_status.workspace_access
@@ -7517,7 +7520,7 @@ class GatewayNodeMethodService:
                 sandbox_kwargs = (
                     {
                         "sandbox": "require",
-                        "sandbox_mode": "workspace-write",
+                        "sandbox_mode": child_native_sandbox_mode,
                         "agent_id": target_agent_id,
                         "cwd": cwd,
                         "model": model,
@@ -12202,6 +12205,14 @@ def _sessions_spawn_sandbox_config_for_agent(
             if isinstance(agent_sandbox, dict):
                 resolved.update(agent_sandbox)
     return resolved
+
+
+def _sessions_spawn_native_sandbox_mode(
+    status: GatewaySpawnSandboxRuntimeStatus,
+) -> Literal["read-only", "workspace-write"]:
+    if status.workspace_access in {"none", "ro"}:
+        return "read-only"
+    return "workspace-write"
 
 
 def _sessions_spawn_agents_config_roots(

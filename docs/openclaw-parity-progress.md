@@ -988,6 +988,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   when dispatched with `sandbox_mode="read-only"` instead of stamping every
   sandboxed turn as workspace-write.
 - Verified the adapter policy seam with `python -m pytest tests\test_gateway_sandbox_spawn.py -q -k "read_only_policy"`, adjacent `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_sandbox_spawn.py tests\test_gateway_sandbox_spawn.py`, and `mypy src\openzues\services\gateway_sandbox_spawn.py`.
+- `sessions.spawn` now maps explicit OpenClaw `workspaceAccess="ro"` / `"none"`
+  sandbox config to native `read-only` Codex sandbox turns, preserving
+  `sandboxWorkspaceAccess` and read-only runtime policy metadata on the child
+  session; omitted or `"rw"` access stays on the writable workspace sandbox
+  path.
+- Verified the workspace-access mapping seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

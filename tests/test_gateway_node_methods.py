@@ -14893,6 +14893,84 @@ async def test_sessions_spawn_inherit_dispatches_sandboxed_config_target(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-ro.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "workspaceAccess": "ro",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    sandbox_calls: list[dict[str, object]] = []
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        sandbox_calls.append(dict(kwargs))
+        sandbox_mode = str(kwargs.get("sandbox_mode") or "")
+        return {
+            "runId": "run-read-only-child",
+            "status": "ok",
+            "runtime": "codex-app-server",
+            "runtimeId": 9,
+            "runtimeThreadId": "thread-read-only-child",
+            "runtimeSessionId": "thread-read-only-child",
+            "sandboxed": True,
+            "sandboxMode": sandbox_mode,
+            "sandboxPolicy": {"type": "readOnly"},
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Inspect through a read-only workspace sandbox.",
+            "sandbox": "inherit",
+        },
+    )
+
+    metadata_row = await database.get_gateway_session_metadata(str(payload["childSessionKey"]))
+    assert payload["status"] == "accepted"
+    assert sandbox_calls[0]["sandbox_mode"] == "read-only"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["sandboxMode"] == "read-only"
+    assert metadata["sandboxPolicy"] == {"type": "readOnly"}
+    assert metadata["sandboxWorkspaceAccess"] == "ro"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_rejects_acp_required_sandbox_policy() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
