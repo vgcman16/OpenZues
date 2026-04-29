@@ -3431,6 +3431,26 @@ async def _build_models_auth_login_payload(
     return payload
 
 
+async def _build_models_auth_login_github_copilot_payload(
+    services: CliServices,
+    *,
+    yes: bool,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    login = getattr(runtime, "login", None)
+    if not callable(login):
+        raise ValueError("model auth login is unavailable until model auth runtime is wired.")
+    try:
+        result = await login(provider="github-copilot", method="device", yes=yes)
+    except TypeError as exc:
+        raise ValueError(
+            "model auth login runtime does not support GitHub Copilot device auth."
+        ) from exc
+    payload = dict(result) if isinstance(result, dict) else {}
+    payload.setdefault("provider", "github-copilot")
+    return payload
+
+
 async def _build_capability_model_auth_logout_payload(
     services: CliServices,
     *,
@@ -9078,6 +9098,29 @@ def models_auth_login_command(
                     provider=provider,
                     method=method,
                     set_default=set_default,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("login-github-copilot")
+def models_auth_login_github_copilot_command(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Overwrite existing profile without prompting.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_login_github_copilot_payload(
+                    services,
+                    yes=yes,
                 )
             )
         )

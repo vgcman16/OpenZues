@@ -6093,6 +6093,36 @@ def test_models_auth_login_calls_model_auth_runtime_with_options(monkeypatch) ->
     assert calls == [{"provider": "anthropic", "method": "cli", "set_default": True}]
 
 
+def test_models_auth_login_github_copilot_calls_device_login(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def login(
+            self,
+            *,
+            provider: str,
+            method: str,
+            yes: bool,
+        ) -> dict[str, object]:
+            calls.append({"provider": provider, "method": method, "yes": yes})
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": "GitHub Copilot device login started.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "auth", "login-github-copilot", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "GitHub Copilot device login started." in result.stdout
+    assert calls == [{"provider": "github-copilot", "method": "device", "yes": True}]
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

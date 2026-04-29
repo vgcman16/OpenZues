@@ -242,9 +242,11 @@ override while preserving neighboring auth-state metadata. No smaller auth-order
 CLI command remains; the next model CLI queue head is the provider auth command
 cluster. `models auth login` now forwards `--provider`, `--method`, and
 `--set-default` through the native fakeable model-auth runtime, preserving the
-existing precise unavailable boundary when that runtime is not wired. The
-remaining provider-auth CLI heads are `models auth add`, `models auth
-setup-token`, `models auth paste-token`, and `models auth login-github-copilot`.
+existing precise unavailable boundary when that runtime is not wired. `models
+auth login-github-copilot` now maps to the native model-auth runtime with
+`provider="github-copilot"`, `method="device"`, and `--yes`. The remaining
+provider-auth CLI heads are `models auth add`, `models auth setup-token`, and
+`models auth paste-token`.
 Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
