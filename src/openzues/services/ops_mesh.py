@@ -137,6 +137,8 @@ SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
+DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
+DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -160,6 +162,17 @@ def _minutes_since(value: str | None) -> int | None:
     if parsed is None:
         return None
     return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 60))
+
+
+def _timestamp_ms(value: datetime | str | None) -> int | None:
+    parsed: datetime | None
+    if isinstance(value, datetime):
+        parsed = value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    else:
+        parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return int(parsed.timestamp() * 1000)
 
 
 def _requires_secret(auth_scheme: str) -> bool:
@@ -367,6 +380,147 @@ def _task_cron_notify_enabled(task: TaskBlueprintView) -> bool:
 def _task_cron_failure_destination(task: TaskBlueprintView) -> dict[str, Any] | None:
     value = task.cron_delivery_failure_destination
     return dict(value) if isinstance(value, dict) else None
+
+
+def _task_cron_failure_alert(task: TaskBlueprintView) -> dict[str, Any] | None:
+    value = task.cron_failure_alert
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _task_is_gateway_cron_task(task: TaskBlueprintView) -> bool:
+    return (
+        task.cadence_minutes is not None
+        or task.schedule_kind in {"at", "cron", "every"}
+        or task.cron_failure_alert is not None
+    )
+
+
+def _task_cron_state(task: TaskBlueprintView) -> dict[str, Any]:
+    value = task.cron_state
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _cron_failure_alert_int(value: object, fallback: int, *, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return fallback
+    return value if value >= minimum else fallback
+
+
+def _cron_failure_alert_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _cron_result_status(status: object) -> Literal["ok", "error", "skipped"] | None:
+    normalized = str(status or "").strip().lower()
+    if normalized == "completed":
+        return "ok"
+    if normalized == "failed":
+        return "error"
+    if normalized == "skipped":
+        return "skipped"
+    return None
+
+
+def _cron_result_error_text(mission: dict[str, Any]) -> str | None:
+    error = str(mission.get("last_error") or mission.get("last_checkpoint") or "").strip()
+    return error or None
+
+
+def _cron_error_reason(error: str | None) -> str | None:
+    lowered = str(error or "").strip().lower()
+    if not lowered:
+        return None
+    if any(token in lowered for token in ("timeout", "timed out", "etimedout")):
+        return "timeout"
+    if any(token in lowered for token in ("401", "403", "auth", "unauthorized", "api key")):
+        return "auth"
+    if any(token in lowered for token in ("429", "rate limit", "too many requests")):
+        return "rate_limit"
+    if any(token in lowered for token in ("billing", "quota", "credit", "payment")):
+        return "billing"
+    if any(token in lowered for token in ("json", "schema", "parse", "format")):
+        return "format"
+    if any(token in lowered for token in ("model not found", "unknown model", "no such model")):
+        return "model_not_found"
+    return None
+
+
+def _cron_runtime_window_ms(
+    task: TaskBlueprintView,
+    mission: dict[str, Any],
+) -> tuple[int, int]:
+    started_at_ms = (
+        _timestamp_ms(task.last_launched_at)
+        or _timestamp_ms(str(mission.get("created_at") or "") or None)
+        or _timestamp_ms(datetime.now(UTC))
+        or 0
+    )
+    ended_at_ms = (
+        _timestamp_ms(str(mission.get("last_activity_at") or "") or None)
+        or _timestamp_ms(str(mission.get("updated_at") or "") or None)
+        or started_at_ms
+    )
+    return started_at_ms, max(started_at_ms, ended_at_ms)
+
+
+def _cron_delivery_state(
+    task: TaskBlueprintView,
+    *,
+    error: str | None,
+) -> dict[str, Any]:
+    if _task_cron_delivery_mode(task) == "none" and not _task_cron_notify_enabled(task):
+        return {"lastDeliveryStatus": "not-requested"}
+    return {
+        "lastDeliveryStatus": "unknown",
+        "lastDeliveryError": error,
+    }
+
+
+def _resolve_cron_failure_alert(
+    task: TaskBlueprintView,
+) -> dict[str, Any] | None:
+    if task.cron_failure_alert is False:
+        return None
+    config = _task_cron_failure_alert(task)
+    if config is None:
+        return None
+    mode = _cron_failure_alert_text(config.get("mode"))
+    explicit_to = _cron_failure_alert_text(config.get("to"))
+    channel = (
+        _cron_failure_alert_text(config.get("channel"))
+        or _task_cron_delivery_channel(task)
+        or "last"
+    )
+    return {
+        "after": _cron_failure_alert_int(
+            config.get("after"),
+            DEFAULT_CRON_FAILURE_ALERT_AFTER,
+            minimum=1,
+        ),
+        "cooldownMs": _cron_failure_alert_int(
+            config.get("cooldownMs"),
+            DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS,
+            minimum=0,
+        ),
+        "channel": channel,
+        "to": explicit_to if mode == "webhook" else explicit_to or _task_cron_delivery_to(task),
+        "mode": mode,
+        "accountId": _cron_failure_alert_text(config.get("accountId")),
+    }
+
+
+def _cron_failure_alert_message(
+    task: TaskBlueprintView,
+    *,
+    consecutive_errors: int,
+    error: str | None,
+) -> str:
+    truncated_error = (str(error or "").strip() or "unknown error")[:200]
+    return (
+        f'Cron job "{task.name or task.id}" failed {consecutive_errors} times\n'
+        f"Last error: {truncated_error}"
+    )
 
 
 def _build_explicit_announce_conversation_target(
@@ -5156,6 +5310,11 @@ class OpsMeshService:
                                 last_status="completed",
                                 last_result_summary=summary[:240],
                             )
+                    await self._record_cron_mission_result_state(
+                        event_type,
+                        mission,
+                        task,
+                    )
                     await self._deliver_cron_finished_delivery(
                         event_type,
                         mission,
@@ -5328,6 +5487,73 @@ class OpsMeshService:
             payload=payload,
             message=message,
         )
+
+    async def _send_cron_failure_alert(
+        self,
+        *,
+        task: TaskBlueprintView,
+        mission: dict[str, Any],
+        alert_config: dict[str, Any],
+        message: str,
+        session_key: str | None,
+    ) -> None:
+        payload = {
+            "missionId": int(mission["id"]),
+            "taskId": int(task.id),
+            "jobId": _cron_job_id(int(task.id)),
+            "jobName": task.name,
+            "message": message,
+            "status": "error",
+            "error": str(mission.get("last_error") or "").strip() or None,
+        }
+        mode = str(alert_config.get("mode") or "").strip().lower()
+        to = str(alert_config.get("to") or "").strip() or None
+        channel = str(alert_config.get("channel") or "").strip().lower() or "last"
+        account_id = str(alert_config.get("accountId") or "").strip() or None
+
+        if mode == "webhook":
+            webhook_target = _normalized_http_webhook_url(to)
+            if webhook_target is not None:
+                await self._send_ad_hoc_webhook_delivery(
+                    route_name=f"Cron failure alert for {task.name}",
+                    route_target=webhook_target,
+                    event_type="cron/failure-alert",
+                    payload=payload,
+                    session_key=session_key,
+                    conversation_target=None,
+                )
+                return
+
+        conversation_target = _build_explicit_announce_conversation_target(
+            channel=channel,
+            to=to,
+            account_id=account_id,
+        )
+        if conversation_target is not None and self._session_outbound_runtime_available():
+            await self._send_ad_hoc_announce_delivery(
+                route_name=f"Cron failure alert for {task.name}",
+                conversation_target=conversation_target,
+                event_type="cron/failure-alert",
+                payload=payload,
+                message=message,
+            )
+            return
+        if session_key is not None and self._session_outbound_runtime_available():
+            session_payload = dict(payload)
+            session_payload["sessionKey"] = session_key
+            await self._send_ad_hoc_session_delivery(
+                route_name=f"Cron failure alert for {task.name}",
+                session_key=session_key,
+                event_type="cron/failure-alert",
+                payload=session_payload,
+                conversation_target=None,
+                message=message,
+            )
+            return
+        notify_event = dict(payload)
+        if session_key is not None:
+            notify_event["sessionKey"] = session_key
+        await self._deliver_notifications("cron/failure-alert", notify_event)
 
     async def _resolve_default_channel_account_id(
         self,
@@ -6939,6 +7165,88 @@ class OpsMeshService:
         if message_id:
             response["messageId"] = message_id
         return response
+
+    async def _record_cron_mission_result_state(
+        self,
+        event_type: str,
+        mission: dict[str, Any],
+        task: TaskBlueprintView,
+    ) -> None:
+        if not _task_is_gateway_cron_task(task):
+            return
+        result_status = _cron_result_status(mission.get("status"))
+        if result_status is None or event_type not in {"mission/completed", "mission/failed"}:
+            return
+
+        started_at_ms, ended_at_ms = _cron_runtime_window_ms(task, mission)
+        error = _cron_result_error_text(mission) if result_status == "error" else None
+        state = _task_cron_state(task)
+        state.pop("runningAtMs", None)
+        state["lastRunAtMs"] = started_at_ms
+        state["lastRunStatus"] = result_status
+        state["lastStatus"] = result_status
+        state["lastDurationMs"] = max(0, ended_at_ms - started_at_ms)
+        if error:
+            state["lastError"] = error
+        else:
+            state.pop("lastError", None)
+        error_reason = _cron_error_reason(error) if result_status == "error" else None
+        if error_reason is not None:
+            state["lastErrorReason"] = error_reason
+        else:
+            state.pop("lastErrorReason", None)
+
+        delivery_state = _cron_delivery_state(task, error=error)
+        state.pop("lastDelivered", None)
+        state.pop("lastDeliveryError", None)
+        state.update(
+            {
+                key: value
+                for key, value in delivery_state.items()
+                if value is not None
+            }
+        )
+
+        if result_status == "error":
+            previous_errors = state.get("consecutiveErrors")
+            consecutive_errors = (
+                previous_errors + 1
+                if isinstance(previous_errors, int) and not isinstance(previous_errors, bool)
+                else 1
+            )
+            state["consecutiveErrors"] = consecutive_errors
+            alert_config = _resolve_cron_failure_alert(task)
+            if (
+                alert_config is not None
+                and not bool(task.cron_delivery_best_effort)
+                and consecutive_errors >= int(alert_config["after"])
+            ):
+                last_alert = state.get("lastFailureAlertAtMs")
+                cooldown_ms = int(alert_config["cooldownMs"])
+                in_cooldown = (
+                    isinstance(last_alert, int)
+                    and not isinstance(last_alert, bool)
+                    and ended_at_ms - last_alert < max(0, cooldown_ms)
+                )
+                if not in_cooldown:
+                    session_key = str(mission.get("session_key") or "").strip() or None
+                    await self._send_cron_failure_alert(
+                        task=task,
+                        mission=mission,
+                        alert_config=alert_config,
+                        message=_cron_failure_alert_message(
+                            task,
+                            consecutive_errors=consecutive_errors,
+                            error=error,
+                        ),
+                        session_key=session_key,
+                    )
+                    state["lastFailureAlertAtMs"] = ended_at_ms
+        else:
+            state["consecutiveErrors"] = 0
+            state.pop("lastFailureAlertAtMs", None)
+
+        await self.database.update_task_blueprint_payload(task.id, cron_state=state)
 
     async def _deliver_cron_finished_delivery(
         self,

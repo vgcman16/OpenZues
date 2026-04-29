@@ -1183,10 +1183,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   fields through cron job snapshots while preserving OpenZues-derived local run
   status when execution data exists.
 - Verified the cron state-patch slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_update_persists_state_patch_like_openclaw or cron_update_merges_state_patch_like_openclaw"` (`2 passed`), adjacent service cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_update or cron_list or cron_status"` (`20 passed`), adjacent API cron pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "cron_update or cron_list or cron_status"` (`11 passed`), `ruff check src\openzues\schemas.py src\openzues\services\gateway_cron.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\schemas.py src\openzues\services\gateway_cron.py`.
-- Next repo-level parity work should continue with cron runtime failure-alert
-  consumption: `cron.run` should update consecutive failure state, honor
-  `failureAlert.after` / `cooldownMs`, stamp delivery metadata, and dispatch the
-  configured alert through the native delivery owner.
+- Ops Mesh mission-result handling now consumes per-job cron `failureAlert`
+  policy for failed scheduled runs: it persists last run/error/duration/delivery
+  state, increments `consecutiveErrors`, emits the OpenClaw-shaped thresholded
+  failure-alert message through the native session delivery path, stamps
+  `lastFailureAlertAtMs`, and suppresses repeats inside `cooldownMs`.
+- Verified the cron failure-alert runtime slice with `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure_alert_threshold"` (`1 passed`), adjacent Ops Mesh cron/failure pack `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure or failure_destination or cron_run or scheduled"` (`13 passed`), adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_run or cron_runs or cron_update"` (`23 passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Next repo-level parity work should continue with broader cron runtime
+  hardening: global `cron.failureAlert` config, provider-specific alert result
+  metadata, and system-event wake-result state tracking.
 
 ## References
 

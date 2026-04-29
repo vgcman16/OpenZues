@@ -1012,6 +1012,16 @@ fields when local execution data exists. Remaining cron parity is now the
 runtime side of this state: `cron.run` should update consecutive failure
 metadata and consume `failureAlert.after` / `cooldownMs` to dispatch alerts.
 
+Current queue-head adjustment: Ops Mesh mission-result handling now consumes
+per-job `failureAlert` runtime policy for failed cron runs. Failed scheduled
+missions update persisted `cron_state` with last run/error/duration/delivery
+status, increment `consecutiveErrors`, emit the OpenClaw-shaped failure-alert
+message after the configured `after` threshold, stamp `lastFailureAlertAtMs`,
+and suppress repeat alerts inside `cooldownMs`. Remaining cron runtime parity
+is the broader OpenClaw config surface around global `cron.failureAlert`,
+provider-specific alert delivery metadata, and system-event wake-result state
+tracking.
+
 Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `agents.files.set` now cover OpenClaw's bootstrap/memory workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, and `memory.md`) while preserving the existing OpenZues `.codex/AGENTS.md` file. The next repo-level method seam should move to session/runtime-control surfaces instead of reopening agent-file filename breadth.
 
 ## Verified This Run
