@@ -111,8 +111,9 @@ results when one is registered; remaining channel CLI parity is provider-specifi
 credential probe implementations and provider-backed live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
-route-backed channel metadata, including support/actions and an honest
-unavailable probe envelope. `channels resolve` now accepts upstream-shaped
+route-backed channel metadata, including support/actions and the same account
+probe result used by `channels.status` when one is available, otherwise an
+honest unavailable probe envelope. `channels resolve` now accepts upstream-shaped
 entries/channel/account/kind/JSON options and resolves saved route-backed
 conversation targets into OpenClaw-shaped result rows before provider-native
 lookup exists. `channels logs` now reads the native workspace log tail, parses

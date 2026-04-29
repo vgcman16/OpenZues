@@ -4555,6 +4555,14 @@ def _build_channel_capabilities_report(
     actions = ["send", "broadcast"]
     if support.get("polls") is True:
         actions.append("poll")
+    probe = account_summary.get("probe") if account_summary is not None else None
+    if not isinstance(probe, dict):
+        probe = {
+            "status": "unavailable",
+            "reason": "native_probe_runtime_unavailable",
+            "summary": "Native channel capability probes are not available yet.",
+            "timeoutMs": timeout_ms,
+        }
     return {
         "channel": channel_id,
         "accountId": account_id,
@@ -4562,12 +4570,7 @@ def _build_channel_capabilities_report(
         "enabled": enabled,
         "support": support,
         "actions": actions,
-        "probe": {
-            "status": "unavailable",
-            "reason": "native_probe_runtime_unavailable",
-            "summary": "Native channel capability probes are not available yet.",
-            "timeoutMs": timeout_ms,
-        },
+        "probe": probe,
     }
 
 
@@ -4601,7 +4604,10 @@ async def _build_channel_capabilities_payload(
     if normalized_target is not None and normalized_channel == "all":
         raise ValueError("--target requires a specific --channel.")
 
-    snapshot = await services.gateway_channels.build_snapshot()
+    snapshot = await services.gateway_channels.build_snapshot(
+        probe=True,
+        timeout_ms=timeout_ms,
+    )
     channel_order = [
         str(item).strip().lower()
         for item in snapshot.get("channelOrder", [])

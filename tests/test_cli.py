@@ -507,6 +507,68 @@ def test_channels_capabilities_json_filters_channel_and_account(tmp_path, monkey
     assert report["probe"]["status"] == "unavailable"
 
 
+def test_channels_capabilities_json_uses_account_probe_result(monkeypatch) -> None:
+    calls: list[tuple[bool | None, int | None]] = []
+
+    class FakeGatewayChannels:
+        async def build_snapshot(
+            self,
+            *,
+            probe: bool | None = None,
+            timeout_ms: int | None = None,
+        ) -> dict[str, object]:
+            calls.append((probe, timeout_ms))
+            return {
+                "channelOrder": ["slack"],
+                "channelAccounts": {
+                    "slack": [
+                        {
+                            "accountId": "workspace-bot",
+                            "routeCount": 1,
+                            "enabledRouteCount": 1,
+                            "conversationTargetCount": 1,
+                            "probe": {
+                                "ok": True,
+                                "bot": {"username": "deploybot"},
+                                "timeoutMs": timeout_ms,
+                            },
+                        }
+                    ]
+                },
+                "channelDefaultAccountId": {"slack": "workspace-bot"},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_channels=FakeGatewayChannels()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [(True, 2500)]
+    payload = json.loads(result.stdout)
+    report = payload["channels"][0]
+    assert report["probe"] == {
+        "ok": True,
+        "bot": {"username": "deploybot"},
+        "timeoutMs": 2500,
+    }
+
+
 def test_channels_resolve_json_uses_saved_conversation_targets(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Resolve")
