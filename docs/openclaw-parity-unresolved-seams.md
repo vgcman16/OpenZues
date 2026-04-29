@@ -128,8 +128,10 @@ WhatsApp matches the upstream channel plugin's no-`probeAccount` posture: route
 status reports an unsupported/no-hook probe envelope without degrading the
 overall `channels.status --probe` result.
 
-Current queue-head adjustment: the CLI now exposes `sessions spawn` and
-`sessions wait` as thin JSON/human wrappers over the production
+Current queue-head adjustment: the CLI now exposes top-level `sessions --json`
+inventory plus `--agent` and positive `--active` filters as a thin wrapper over
+the production `sessions.list` gateway method owner, and still exposes
+`sessions spawn` / `sessions wait` as JSON/human wrappers over the production
 `GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
@@ -143,8 +145,9 @@ pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model
 auth/probe inspection, production provider usage/security-audit adapter wiring,
-plugin/runtime inspection, doctor readiness checks, non-metadata external
-sandbox container cleanup, and broader TUI ergonomics. `status --json --usage
+`sessions cleanup`, plugin/runtime inspection, doctor readiness checks,
+non-metadata external sandbox container cleanup, and broader TUI ergonomics.
+`status --json --usage
 --all` now consumes fakeable native provider-usage and security-audit runtime
 adapters when registered while keeping the honest unavailable placeholders
 when they are absent. The existing

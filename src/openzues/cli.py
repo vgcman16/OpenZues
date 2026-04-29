@@ -373,7 +373,7 @@ acp_app = typer.Typer(
     invoke_without_command=True,
 )
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
-sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
+sessions_app = typer.Typer(help="List, spawn, and wait on gateway sessions.")
 cron_app = typer.Typer(help="Inspect and run Gateway cron jobs.")
 capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
@@ -2263,6 +2263,100 @@ def _emit_session_method_result(payload: dict[str, object], *, json_output: bool
     error = str(payload.get("error") or "").strip()
     if error:
         typer.echo(f"error: {error}")
+
+
+def _sessions_cli_positive_int(value: str | None, *, option: str) -> int | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{option} must be a positive integer") from exc
+    if parsed <= 0:
+        raise typer.BadParameter(f"{option} must be a positive integer")
+    return parsed
+
+
+def _sessions_cli_session_key(row: dict[str, object]) -> str:
+    return str(row.get("key") or row.get("sessionKey") or row.get("session_key") or "").strip()
+
+
+def _sessions_cli_kind(row: dict[str, object]) -> str:
+    kind = str(row.get("kind") or "").strip()
+    if kind:
+        return kind
+    key = _sessions_cli_session_key(row)
+    if key == "global":
+        return "global"
+    if ":group:" in key or ":channel:" in key:
+        return "group"
+    return "direct" if key else "unknown"
+
+
+def _sessions_cli_k_tokens(value: object) -> str:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return "?"
+    if value >= 10_000:
+        return f"{(value / 1000):.0f}k"
+    return f"{(value / 1000):.1f}k"
+
+
+def _sessions_cli_tokens(row: dict[str, object]) -> str:
+    total = row.get("totalTokens")
+    context = row.get("contextTokens")
+    total_label = _sessions_cli_k_tokens(total)
+    context_label = _sessions_cli_k_tokens(context)
+    if (
+        isinstance(total, int)
+        and not isinstance(total, bool)
+        and isinstance(context, int)
+        and not isinstance(context, bool)
+        and context > 0
+    ):
+        percent: int | str = min(999, round((total / context) * 100))
+    else:
+        percent = "?"
+    return f"{total_label}/{context_label} ({percent}%)"
+
+
+def _emit_sessions_inventory(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    raw_sessions = payload.get("sessions")
+    sessions = (
+        [row for row in raw_sessions if isinstance(row, dict)]
+        if isinstance(raw_sessions, list)
+        else []
+    )
+    count = payload.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        count = len(sessions)
+    typer.echo(f"Sessions listed: {count}")
+    active_minutes = payload.get("activeMinutes")
+    if isinstance(active_minutes, int) and not isinstance(active_minutes, bool):
+        typer.echo(f"Filtered to last {active_minutes} minute(s)")
+    if not sessions:
+        typer.echo("No sessions found.")
+        return
+    typer.echo(
+        "Kind   Key                              Model                Tokens (ctx %)      Flags"
+    )
+    for row in sessions:
+        key = _sessions_cli_session_key(row) or "-"
+        kind = _sessions_cli_kind(row)
+        model = str(row.get("model") or "-").strip() or "-"
+        flags: list[str] = []
+        if row.get("totalTokensFresh") is False:
+            flags.append("stale-tokens")
+        label = str(row.get("label") or "").strip()
+        if label:
+            flags.append(f"label:{label}")
+        typer.echo(
+            f"{kind[:6].ljust(6)} {key[:32].ljust(32)} {model[:20].ljust(20)} "
+            f"{_sessions_cli_tokens(row).ljust(20)} {' '.join(flags)}".rstrip()
+        )
 
 
 def _cron_duration_label(value: object) -> str:
@@ -10368,6 +10462,48 @@ def cron_edit_command(
 
     result = _run(_run_with_services(_action))
     _emit_cron_mutation(result, json_output=json_output)
+
+
+@sessions_app.callback(invoke_without_command=True)
+def sessions_inventory_command(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    agent: str | None = typer.Option(None, "--agent", help="Agent id to inspect."),
+    all_agents: bool = typer.Option(
+        False,
+        "--all-agents",
+        help="Aggregate sessions across configured agents.",
+    ),
+    active: str | None = typer.Option(
+        None,
+        "--active",
+        help="Only show sessions updated within the past N minutes.",
+    ),
+    store: str | None = typer.Option(
+        None,
+        "--store",
+        help="OpenClaw-compatible option; native OpenZues uses the gateway session store.",
+    ),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    if _optional_cli_string(store) is not None:
+        raise typer.BadParameter("--store is not supported by the native OpenZues session store")
+    params: dict[str, object] = {}
+    normalized_agent = _optional_cli_string(agent)
+    if normalized_agent is not None:
+        params["agentId"] = normalized_agent
+    active_minutes = _sessions_cli_positive_int(active, option="--active")
+    if active_minutes is not None:
+        params["activeMinutes"] = active_minutes
+    if all_agents:
+        params["includeGlobal"] = True
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "sessions.list", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_sessions_inventory(result, json_output=json_output)
 
 
 @sessions_app.command("spawn")

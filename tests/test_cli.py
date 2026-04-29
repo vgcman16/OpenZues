@@ -3498,6 +3498,81 @@ def test_cron_edit_exact_patches_existing_cron_schedule(monkeypatch) -> None:
     ]
 
 
+def test_sessions_inventory_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 1,
+                "activeMinutes": params.get("activeMinutes"),
+                "sessions": [
+                    {
+                        "key": "agent:worker:main",
+                        "sessionKey": "agent:worker:main",
+                        "agentId": "worker",
+                        "kind": "direct",
+                        "updatedAt": 1_800_000_000_000,
+                        "model": "gpt-5.4",
+                        "totalTokens": 2_000,
+                        "totalTokensFresh": True,
+                        "contextTokens": 32_000,
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "--json",
+            "--agent",
+            " worker ",
+            "--active",
+            "15",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["sessions"][0]["totalTokens"] == 2_000
+    assert calls == [("sessions.list", {"agentId": "worker", "activeMinutes": 15})]
+
+
+def test_sessions_inventory_rejects_invalid_active_minutes(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"count": 0, "sessions": []}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sessions", "--active", "0", "--json"])
+
+    assert result.exit_code != 0
+    assert calls == []
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
