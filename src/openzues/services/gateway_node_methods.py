@@ -8365,8 +8365,6 @@ class GatewayNodeMethodService:
                 any(
                     value is not None
                     for value in (
-                        requested_provider,
-                        requested_model,
                         requested_to,
                         requested_reply_to,
                         requested_channel,
@@ -8454,6 +8452,37 @@ class GatewayNodeMethodService:
                         resolved_session.get("key"),
                         label="key",
                     )
+                )
+            if requested_model is not None:
+                existing_metadata_row = await self._database.get_gateway_session_metadata(
+                    target_session_key
+                )
+                model_session_metadata: dict[str, Any] = {}
+                if isinstance(existing_metadata_row, dict):
+                    existing_metadata_value = existing_metadata_row.get("metadata")
+                    if isinstance(existing_metadata_value, dict):
+                        model_session_metadata.update(existing_metadata_value)
+                if requested_provider is None:
+                    model_session_metadata["model"] = requested_model
+                    model_session_metadata.pop("providerOverride", None)
+                    model_session_metadata.pop("modelOverride", None)
+                    model_session_metadata.pop("modelOverrideSource", None)
+                else:
+                    model_session_metadata["providerOverride"] = requested_provider
+                    model_session_metadata["modelOverride"] = requested_model
+                    model_session_metadata["modelOverrideSource"] = "user"
+                    model_session_metadata.pop("model", None)
+                    model_session_metadata.pop("modelProvider", None)
+                for stale_field in (
+                    "contextTokens",
+                    "fallbackNoticeSelectedModel",
+                    "fallbackNoticeActiveModel",
+                    "fallbackNoticeReason",
+                ):
+                    model_session_metadata.pop(stale_field, None)
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=target_session_key,
+                    metadata=model_session_metadata,
                 )
             if agent_id is not None and agent_id != DEFAULT_AGENT_ID:
                 existing_metadata_row = await self._database.get_gateway_session_metadata(

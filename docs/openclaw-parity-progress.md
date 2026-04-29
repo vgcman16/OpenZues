@@ -295,6 +295,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "infer_tts or capability_tts or infer_model or capability_model or models_status or models_list"`: 16 passed after rechecking adjacent provider/model CLI commands.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the `infer tts voices` slice.
 - `mypy src\openzues\cli.py`: clean after the `infer tts voices` slice.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_launch_applies_provider_model_override_before_dispatch or agent_launch_applies_model_only_override_before_dispatch"`: 2 passed after making gateway `agent` persist OpenClaw-style model-only and provider/model overrides before dispatch.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_launch_applies_provider_model_override_before_dispatch or agent_launch_applies_model_only_override_before_dispatch or agent_launch_ignores_blank_optional_unsupported_string_fields or agent_launch_treats_last_channel_hints_as_omitted or agent_launch_accepts_matching_session_key_and_session_id_selectors"`: 6 passed after rechecking adjacent gateway `agent` launch behavior.
+- `python -m pytest tests\test_cli.py -q -k "capability_model_run_gateway_json_wraps_agent_payloads or infer_model_run_json_wraps_local_control_chat_reply or capability_model_run_rejects_local_and_gateway_together"`: 3 passed after rechecking the `infer` / `capability model run` CLI envelope against gateway agent dispatch.
+- `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_cli.py src\openzues\cli.py`: clean after the gateway `agent` provider/model override dispatch slice.
+- `mypy src\openzues\services\gateway_node_methods.py src\openzues\cli.py`: clean after the gateway `agent` provider/model override dispatch slice.
 - `python -m pytest tests\test_cli.py -q -k "channels_status_json_accepts_probe_timeout_options"`: 1 passed after adding `channels status --probe --timeout` option metadata.
 - `python -m pytest tests\test_cli.py -q -k "channels_status"`: 2 passed after rechecking adjacent channel status CLI output.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the channels status probe-option slice.

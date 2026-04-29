@@ -19745,6 +19745,192 @@ async def test_agent_launch_ignores_blank_optional_unsupported_string_fields() -
 
 
 @pytest.mark.asyncio
+async def test_agent_launch_applies_provider_model_override_before_dispatch(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-provider-model.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.create_mission(
+        name="Gateway Agent Provider Model Loop",
+        objective="Launch parity with provider/model override metadata.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-provider-model",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the provider/model turn.",
+            "agentId": "main",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+            "idempotencyKey": "agent-run-provider-model-1",
+        },
+        now_ms=4112,
+    )
+
+    assert launch_payload["runId"] == "agent-run-provider-model-1"
+    assert launch_payload["status"] == "accepted"
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the provider/model turn.",
+        "idempotency_key": "agent-run-provider-model-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    metadata_row = await database.get_gateway_session_metadata(main_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["providerOverride"] == "openai"
+    assert metadata_row["metadata"]["modelOverride"] == "gpt-5.4-mini"
+    assert metadata_row["metadata"]["modelOverrideSource"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_applies_model_only_override_before_dispatch(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-model-only.db")
+    await database.initialize()
+    main_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    await database.create_mission(
+        name="Gateway Agent Model Only Loop",
+        objective="Launch parity with a model-only override.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-agent-model-only",
+        session_key=main_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    observed_send: dict[str, object] = {}
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        observed_send.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    launch_payload = await service.call(
+        "agent",
+        {
+            "message": "Ship the model-only turn.",
+            "agentId": "main",
+            "model": "gpt-5.4-mini",
+            "idempotencyKey": "agent-run-model-only-1",
+        },
+        now_ms=4113,
+    )
+
+    assert launch_payload["runId"] == "agent-run-model-only-1"
+    assert launch_payload["status"] == "accepted"
+    assert observed_send == {
+        "session_key": main_session_key,
+        "message": "Ship the model-only turn.",
+        "idempotency_key": "agent-run-model-only-1",
+        "thinking": None,
+        "deliver": None,
+        "timeout_ms": None,
+    }
+    metadata_row = await database.get_gateway_session_metadata(main_session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["model"] == "gpt-5.4-mini"
+    assert "providerOverride" not in metadata_row["metadata"]
+    assert "modelOverride" not in metadata_row["metadata"]
+    assert "modelOverrideSource" not in metadata_row["metadata"]
+
+
+@pytest.mark.asyncio
 async def test_agent_launch_ignores_blank_session_selectors() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-blank-session-selectors"
     shutil.rmtree(tmp_path, ignore_errors=True)
