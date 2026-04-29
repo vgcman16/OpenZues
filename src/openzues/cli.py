@@ -22,6 +22,7 @@ from urllib.request import Request, urlopen
 import typer
 import uvicorn
 
+from openzues import __version__
 from openzues.app import build_brief, build_launchpad, build_radar
 from openzues.database import Database
 from openzues.schemas import (
@@ -52,11 +53,18 @@ from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
+from openzues.services.gateway_acp_spawn import RuntimeManagerAcpSpawnService
 from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
+from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_models import GatewayModelsService
+from openzues.services.gateway_node_methods import GatewayNodeMethodService
+from openzues.services.gateway_node_registry import GatewayNodeRegistry
+from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
+from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
 from openzues.services.github import GitHubService
 from openzues.services.hermes_platform import HermesPlatformService
 from openzues.services.hermes_runtime_profile import load_saved_runtime_preferences
@@ -101,6 +109,7 @@ routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
+sessions_app = typer.Typer(help="Spawn and wait on gateway sessions.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -121,6 +130,7 @@ app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(sessions_app, name="sessions")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -307,6 +317,7 @@ class CliServices:
     gateway_agents: GatewayAgentsService
     gateway_channels: GatewayChannelsService
     gateway_commands: GatewayCommandsService
+    gateway_node_methods: GatewayNodeMethodService
     ops_mesh: OpsMeshService
     recall: RecallService
     hermes_platform: HermesPlatformService
@@ -341,6 +352,16 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     gateway_agents = GatewayAgentsService(database=database)
     gateway_commands = GatewayCommandsService()
+    gateway_config = GatewayConfigService(
+        assistant_name=app_settings.app_name,
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version=__version__,
+        local_media_preview_roots=[],
+        embed_sandbox="scripts",
+        allow_external_embed_urls=False,
+        data_dir=app_settings.data_dir,
+    )
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
     onboarding = OnboardingService(
         database,
@@ -375,6 +396,76 @@ async def _build_services(app_settings: Settings) -> CliServices:
         mission_service,
         manager,
         hub,
+    )
+
+    async def submit_gateway_chat_message(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+        bootstrap_context_mode: str | None = None,
+        bootstrap_context_run_kind: str | None = None,
+    ) -> dict[str, object]:
+        del (
+            thinking,
+            deliver,
+            timeout_ms,
+            channel,
+            to,
+            bootstrap_context_mode,
+            bootstrap_context_run_kind,
+        )
+        dashboard_services = cast(
+            CliServices,
+            SimpleNamespace(
+                settings=app_settings,
+                database=database,
+                manager=manager,
+                control_chat=control_chat,
+                project_service=project_service,
+                mission_service=mission_service,
+                access=access,
+                onboarding=onboarding,
+                gateway_capability=gateway_capability,
+                gateway_agents=gateway_agents,
+                gateway_channels=gateway_channels,
+                gateway_commands=gateway_commands,
+                gateway_node_methods=None,
+                ops_mesh=ops_mesh,
+                recall=None,
+                hermes_platform=None,
+                gateway_bootstrap=gateway_bootstrap,
+                runtime_updates=runtime_updates,
+                setup=setup,
+            ),
+        )
+        dashboard = await _build_operator_dashboard(dashboard_services)
+        await control_chat.submit(message, cast(DashboardView, dashboard), session_key=session_key)
+        return {"runId": idempotency_key, "status": "ok"}
+
+    gateway_node_methods = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        agents_service=gateway_agents,
+        channels_service=gateway_channels,
+        commands_service=gateway_commands,
+        config_service=gateway_config,
+        list_notification_route_views=ops_mesh.list_notification_route_views,
+        models_service=GatewayModelsService(list_instance_views=manager.list_views),
+        send_channel_message_service=ops_mesh.send_direct_channel_message,
+        send_channel_poll_service=ops_mesh.send_direct_channel_poll,
+        acp_spawn_service=RuntimeManagerAcpSpawnService(manager),
+        sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=ops_mesh.list_notification_route_views
+        ),
+        chat_send_service=submit_gateway_chat_message,
     )
     ops_mesh.session_delivery_service = control_chat.append_session_assistant_message
     recall = RecallService(mission_service, database)
@@ -413,6 +504,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_agents=gateway_agents,
         gateway_channels=gateway_channels,
         gateway_commands=gateway_commands,
+        gateway_node_methods=gateway_node_methods,
         ops_mesh=ops_mesh,
         recall=recall,
         hermes_platform=hermes_platform,
@@ -1486,6 +1578,35 @@ def _emit_direct_channel_delivery(payload: dict[str, object], *, json_output: bo
         typer.echo(f"poll: {poll_id}")
 
 
+def _emit_session_method_result(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    status = str(payload.get("status") or "").strip()
+    if status:
+        typer.echo(f"status: {status}")
+    run_id = str(payload.get("runId") or payload.get("run_id") or "").strip()
+    if run_id:
+        typer.echo(f"run: {run_id}")
+    child_session_key = str(
+        payload.get("childSessionKey") or payload.get("sessionKey") or ""
+    ).strip()
+    if child_session_key:
+        typer.echo(f"session: {child_session_key}")
+    mode = str(payload.get("mode") or "").strip()
+    if mode:
+        typer.echo(f"mode: {mode}")
+    cleanup = str(payload.get("cleanup") or "").strip()
+    if cleanup:
+        typer.echo(f"cleanup: {cleanup}")
+    note = str(payload.get("note") or "").strip()
+    if note:
+        typer.echo(f"note: {note}")
+    error = str(payload.get("error") or "").strip()
+    if error:
+        typer.echo(f"error: {error}")
+
+
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1589,6 +1710,26 @@ def _optional_cli_string(value: object) -> str | None:
     if not text:
         return None
     return text
+
+
+def _gateway_node_method_service(services: CliServices) -> Any:
+    gateway = getattr(services, "gateway_node_methods", None)
+    if gateway is None:
+        gateway = getattr(services, "gateway_node_method_service", None)
+    if gateway is None or not callable(getattr(gateway, "call", None)):
+        raise RuntimeError("Gateway method service is unavailable.")
+    return gateway
+
+
+async def _call_gateway_node_method(
+    services: CliServices,
+    method: str,
+    params: dict[str, object],
+) -> dict[str, object]:
+    result = await _gateway_node_method_service(services).call(method, params)
+    if isinstance(result, dict):
+        return result
+    return {"status": "ok", "result": result}
 
 
 def _first_text_line(value: object, *, limit: int = 220) -> str:
@@ -3794,6 +3935,113 @@ def sandbox_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_sandbox_inventory(payload, json_output=json_output)
+
+
+@sessions_app.command("spawn")
+def sessions_spawn_command(
+    task: str = typer.Option(..., "--task", "-t", help="Task to hand to the spawned session."),
+    label: str | None = typer.Option(None, "--label", help="Optional child session label."),
+    runtime: str | None = typer.Option(
+        None,
+        "--runtime",
+        help="Spawn runtime: subagent or acp.",
+    ),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Target agent id."),
+    cwd: str | None = typer.Option(None, "--cwd", help="Workspace directory for the child turn."),
+    resume_session_id: str | None = typer.Option(
+        None,
+        "--resume-session-id",
+        help="ACP runtime session/thread id to resume.",
+    ),
+    stream_to: str | None = typer.Option(
+        None,
+        "--stream-to",
+        help='ACP stream target, currently "parent".',
+    ),
+    mode: str | None = typer.Option(None, "--mode", help="Spawn mode: run or session."),
+    thread: bool = typer.Option(
+        False,
+        "--thread",
+        help="Create a persistent child thread when a provider binder is available.",
+    ),
+    sandbox: str | None = typer.Option(
+        None,
+        "--sandbox",
+        help="Sandbox posture: inherit or require.",
+    ),
+    run_timeout_seconds: int | None = typer.Option(
+        None,
+        "--run-timeout-seconds",
+        min=0,
+        help="Run timeout in seconds.",
+    ),
+    cleanup: str | None = typer.Option(
+        None,
+        "--cleanup",
+        help="Cleanup mode: delete or keep.",
+    ),
+    expects_completion_message: bool | None = typer.Option(
+        None,
+        "--expects-completion-message/--no-expects-completion-message",
+        help="Whether terminal waits announce completion to the parent session.",
+    ),
+    requester_session_key: str | None = typer.Option(
+        None,
+        "--requester-session-key",
+        help="Parent/requester session key for spawn tracking.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the spawn result as JSON."),
+) -> None:
+    params: dict[str, object] = {"task": task}
+    for key, value in (
+        ("label", label),
+        ("runtime", runtime),
+        ("agentId", agent_id),
+        ("cwd", cwd),
+        ("resumeSessionId", resume_session_id),
+        ("streamTo", stream_to),
+        ("mode", mode),
+        ("sandbox", sandbox),
+        ("cleanup", cleanup),
+        ("requesterSessionKey", requester_session_key),
+    ):
+        normalized = _optional_cli_string(value)
+        if normalized is not None:
+            params[key] = normalized
+    if thread:
+        params["thread"] = True
+    if run_timeout_seconds is not None:
+        params["runTimeoutSeconds"] = run_timeout_seconds
+    if expects_completion_message is not None:
+        params["expectsCompletionMessage"] = expects_completion_message
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "sessions.spawn", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_session_method_result(result, json_output=json_output)
+
+
+@sessions_app.command("wait")
+def sessions_wait_command(
+    run_id: str = typer.Argument(..., help="Run id returned by sessions spawn/send."),
+    timeout_ms: int | None = typer.Option(
+        None,
+        "--timeout-ms",
+        min=0,
+        help="Maximum wait time in milliseconds.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the wait result as JSON."),
+) -> None:
+    params: dict[str, object] = {"runId": run_id}
+    if timeout_ms is not None:
+        params["timeoutMs"] = timeout_ms
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "agent.wait", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_session_method_result(result, json_output=json_output)
 
 
 @app.command("launch")

@@ -64,6 +64,16 @@ including reply/thread/media/silent/document/idempotency options. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
 
+Current queue-head adjustment: the CLI now exposes `sessions spawn` and
+`sessions wait` as thin JSON/human wrappers over the production
+`GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
+service builder wires the same native ACP spawn, sandbox-required child-turn,
+route-backed thread binder, direct send/poll, config, model inventory, and
+control-chat submit seams used by the app-server path. Remaining CLI/runtime
+parity includes ACP/sandbox status commands, plugin/runtime inspection, doctor
+readiness checks, destructive sandbox lifecycle commands, and broader TUI
+ergonomics.
+
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
 first, config allow/deny gating, owner-only hiding, before-call hooks, and

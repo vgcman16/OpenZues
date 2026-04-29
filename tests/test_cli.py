@@ -450,6 +450,130 @@ def test_sandbox_list_json_surfaces_saved_sandbox_runtime_metadata(monkeypatch) 
     ]
 
 
+def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "status": "accepted",
+                "runId": "run-42",
+                "childSessionKey": "agent:main:acp:thread-42",
+                "mode": "run",
+                "cleanup": "keep",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "spawn",
+            "--task",
+            "Audit parity.",
+            "--label",
+            "Parity Scout",
+            "--runtime",
+            "acp",
+            "--agent-id",
+            "worker",
+            "--cwd",
+            r"C:\work\OpenZues",
+            "--resume-session-id",
+            "thread-existing",
+            "--stream-to",
+            "parent",
+            "--mode",
+            "run",
+            "--thread",
+            "--sandbox",
+            "inherit",
+            "--run-timeout-seconds",
+            "45",
+            "--cleanup",
+            "keep",
+            "--expects-completion-message",
+            "--requester-session-key",
+            "agent:main:main",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "accepted"
+    assert payload["runId"] == "run-42"
+    assert calls == [
+        (
+            "sessions.spawn",
+            {
+                "task": "Audit parity.",
+                "label": "Parity Scout",
+                "runtime": "acp",
+                "agentId": "worker",
+                "cwd": r"C:\work\OpenZues",
+                "resumeSessionId": "thread-existing",
+                "streamTo": "parent",
+                "mode": "run",
+                "thread": True,
+                "sandbox": "inherit",
+                "runTimeoutSeconds": 45,
+                "cleanup": "keep",
+                "expectsCompletionMessage": True,
+                "requesterSessionKey": "agent:main:main",
+            },
+        )
+    ]
+
+
+def test_sessions_wait_human_output_calls_agent_wait(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "runId": "run-42",
+                "status": "ok",
+                "startedAt": 1_800_000_000_000,
+                "endedAt": 1_800_000_004_000,
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "wait",
+            "run-42",
+            "--timeout-ms",
+            "250",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "status: ok" in result.stdout
+    assert "run: run-42" in result.stdout
+    assert calls == [("agent.wait", {"runId": "run-42", "timeoutMs": 250})]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
