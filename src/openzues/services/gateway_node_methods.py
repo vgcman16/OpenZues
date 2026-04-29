@@ -1264,6 +1264,10 @@ class GatewayNodeMethodService:
             executors=self._tools_invoke_executors,
             owner_only=self._tools_invoke_owner_only,
         )
+        if tools_catalog_service is None:
+            self._tools_catalog_service = GatewayToolsCatalogService(
+                plugin_runtime_service=self._plugin_runtime_service
+            )
 
     def _normalize_declared_commands_for_metadata(
         self,

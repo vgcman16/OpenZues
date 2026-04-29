@@ -138,6 +138,17 @@ class GatewayPluginRuntimeService:
             seen_tools.add(registry_spec.tool)
             yield registry_spec
 
+    def catalog_specs(
+        self,
+        *,
+        include_owner_only: bool = False,
+    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+        return tuple(
+            spec
+            for spec in self._iter_ordered_specs()
+            if include_owner_only or not spec.owner_only
+        )
+
 
 def _normalize_executor_spec(
     entry: GatewayPluginRuntimeExecutorEntry,

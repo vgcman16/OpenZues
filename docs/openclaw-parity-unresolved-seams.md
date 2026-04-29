@@ -129,7 +129,10 @@ OpenClaw-shaped plugin executor error projection. The service now also accepts
 ordered registry/config executor specs, preserves first registered plugin-name
 winner semantics among enabled entries, skips later duplicates, keeps core mappings ahead of
 registry-backed plugins, and applies owner-only visibility to registry tools.
-Remaining tool parity is plugin catalog/effective visibility plus any future
+`tools.catalog` now also appends OpenClaw-shaped `plugin:<pluginId>` groups
+from the same enabled plugin runtime specs by default, suppresses core-name
+collisions, and honors `includePlugins=false` for core-only catalog reads.
+Remaining tool parity is effective-session plugin visibility plus any future
 production plugin metadata discovery beyond the fakeable registry adapter.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with

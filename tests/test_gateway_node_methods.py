@@ -1996,6 +1996,69 @@ async def test_tools_catalog_returns_bounded_openzues_toolset_inventory() -> Non
 
 
 @pytest.mark.asyncio
+async def test_tools_catalog_projects_plugin_groups_and_honors_include_plugins_false() -> None:
+    async def fake_executor(tool: str, args: dict[str, object]) -> dict[str, object]:
+        return {"tool": tool, "args": args}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="matrix_room",
+                executor=fake_executor,
+                plugin_id="matrix",
+                plugin_name="Matrix",
+                description="Summarized Matrix room helper.",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="safe",
+                executor=fake_executor,
+                plugin_id="collision",
+                plugin_name="Collision",
+                description="This should not shadow a core tool.",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="disabled_tool",
+                executor=fake_executor,
+                enabled=False,
+                plugin_id="disabled",
+                plugin_name="Disabled",
+                description="This should not be visible.",
+            ),
+        ]
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    payload = await service.call("tools.catalog", {})
+    plugin_groups = [group for group in payload["groups"] if group["source"] == "plugin"]
+
+    assert plugin_groups == [
+        {
+            "id": "plugin:matrix",
+            "label": "matrix",
+            "source": "plugin",
+            "pluginId": "matrix",
+            "tools": [
+                {
+                    "id": "matrix_room",
+                    "label": "matrix_room",
+                    "description": "Summarized Matrix room helper.",
+                    "source": "plugin",
+                    "pluginId": "matrix",
+                    "defaultProfiles": [],
+                }
+            ],
+        }
+    ]
+
+    core_only = await service.call("tools.catalog", {"includePlugins": False})
+
+    assert [group["source"] for group in core_only["groups"]] == ["core"]
+
+
+@pytest.mark.asyncio
 async def test_tools_effective_returns_bounded_effective_inventory_from_session_toolsets() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-tools-effective-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
