@@ -3694,6 +3694,110 @@ def test_capability_image_describe_many_json_wraps_each_image(monkeypatch) -> No
     ]
 
 
+def test_infer_image_generate_json_wraps_native_image_generation(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageGeneration:
+        async def generate_image(
+            self,
+            *,
+            prompt: str,
+            active_model: dict[str, str] | None,
+            count: int | None,
+            size: str | None,
+            aspect_ratio: str | None,
+            resolution: str | None,
+            output_path: str | None,
+            input_files: list[str] | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "active_model": active_model,
+                    "count": count,
+                    "size": size,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": resolution,
+                    "output_path": output_path,
+                    "input_files": input_files,
+                }
+            )
+            return {
+                "provider": "vision-one",
+                "model": "paint-v1",
+                "attempts": [{"provider": "vision-one", "model": "paint-v1", "ok": True}],
+                "outputs": [
+                    {
+                        "path": str((Path.cwd() / "generated" / "moon.png").resolve()),
+                        "mimeType": "image/png",
+                        "width": 1024,
+                        "height": 1024,
+                        "revisedPrompt": "painted moon",
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_generation=FakeImageGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "image",
+            "generate",
+            "--prompt",
+            "moon",
+            "--model",
+            "vision-one/paint-v1",
+            "--count",
+            "1",
+            "--size",
+            "1024x1024",
+            "--aspect-ratio",
+            "1:1",
+            "--resolution",
+            "1K",
+            "--output",
+            "generated/moon.png",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "image.generate",
+        "transport": "local",
+        "provider": "vision-one",
+        "model": "paint-v1",
+        "attempts": [{"provider": "vision-one", "model": "paint-v1", "ok": True}],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "generated" / "moon.png").resolve()),
+                "mimeType": "image/png",
+                "width": 1024,
+                "height": 1024,
+                "revisedPrompt": "painted moon",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "prompt": "moon",
+            "active_model": {"provider": "vision-one", "model": "paint-v1"},
+            "count": 1,
+            "size": "1024x1024",
+            "aspect_ratio": "1:1",
+            "resolution": "1K",
+            "output_path": "generated/moon.png",
+            "input_files": None,
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,

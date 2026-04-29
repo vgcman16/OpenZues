@@ -2699,6 +2699,59 @@ async def _build_capability_image_providers_payload(
     return providers
 
 
+async def _build_capability_image_generate_payload(
+    services: CliServices,
+    *,
+    capability: str,
+    prompt: str,
+    model_ref: str | None,
+    count: int | None,
+    size: str | None,
+    aspect_ratio: str | None,
+    resolution: str | None,
+    output_path: str | None,
+    input_files: list[str] | None,
+) -> dict[str, object]:
+    runtime = _image_generation_runtime(services)
+    generate_image = getattr(runtime, "generate_image", None) if runtime is not None else None
+    if not callable(generate_image):
+        raise ValueError(
+            f"{capability} local transport is unavailable until image generation is wired."
+        )
+    active_model = _require_capability_provider_model_ref(model_ref)
+    result = await generate_image(
+        prompt=prompt,
+        active_model=active_model,
+        count=count,
+        size=size,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        output_path=output_path,
+        input_files=input_files,
+    )
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    provider = _optional_cli_string(result_payload.get("provider"))
+    model = _optional_cli_string(result_payload.get("model"))
+    attempts = result_payload.get("attempts")
+    outputs = result_payload.get("outputs")
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": capability,
+        "transport": "local",
+        "attempts": [dict(item) for item in attempts if isinstance(item, dict)]
+        if isinstance(attempts, list)
+        else [],
+        "outputs": [dict(item) for item in outputs if isinstance(item, dict)]
+        if isinstance(outputs, list)
+        else [],
+    }
+    if provider is not None:
+        envelope["provider"] = provider
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
 def _media_understanding_runtime(services: CliServices) -> Any:
     runtime = getattr(services, "image_understanding", None)
     if runtime is None:
@@ -8073,6 +8126,39 @@ def capability_image_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_image_app.command("generate")
+def capability_image_generate_command(
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    count: int | None = typer.Option(None, "--count", help="Number of images."),
+    size: str | None = typer.Option(None, "--size", help="Size hint."),
+    aspect_ratio: str | None = typer.Option(None, "--aspect-ratio", help="Aspect ratio hint."),
+    resolution: str | None = typer.Option(None, "--resolution", help="Resolution hint."),
+    output: str | None = typer.Option(None, "--output", help="Output path."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_generate_payload(
+            services,
+            capability="image.generate",
+            prompt=prompt,
+            model_ref=model,
+            count=count,
+            size=size,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            output_path=output,
+            input_files=None,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_image_app.command("describe")
