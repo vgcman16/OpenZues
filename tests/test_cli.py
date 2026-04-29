@@ -402,6 +402,64 @@ def test_channels_status_json_accepts_probe_timeout_options(tmp_path, monkeypatc
     assert payload["probeStatus"]["reason"] == "native_probe_runtime_unavailable"
 
 
+def test_channels_capabilities_json_filters_channel_and_account(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Channel Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Slack Route",
+            kind="webhook",
+            target="https://example.invalid/slack",
+            events=["mission/completed"],
+            conversation_target={
+                "channel": "slack",
+                "account_id": "workspace-bot",
+                "peer_kind": "channel",
+                "peer_id": "deploy-room",
+                "summary": "slack workspace-bot channel deploy-room",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token=None,
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "slack",
+            "--account",
+            "workspace-bot",
+            "--target",
+            "channel:deploy-room",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["timeoutMs"] == 2500
+    assert payload["target"] == "channel:deploy-room"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "slack"
+    assert report["accountId"] == "workspace-bot"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert "send" in report["actions"]
+    assert report["support"]["reply"] is True
+    assert report["probe"]["status"] == "unavailable"
+
+
 def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:

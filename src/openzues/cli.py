@@ -95,6 +95,34 @@ _BROWSER_RENDERED_SCREENSHOT_MIN_BYTES = 32_768
 _BROWSER_BLANK_SCREENSHOT_MAX_BYTES = 8_192
 _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
+_CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
+    "discord": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": True,
+        "reactions": True,
+        "polls": True,
+    },
+    "slack": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": True,
+        "reactions": True,
+    },
+    "telegram": {
+        "chatTypes": ["direct", "group", "channel"],
+        "reply": True,
+        "media": True,
+        "polls": True,
+    },
+    "whatsapp": {
+        "chatTypes": ["direct", "group"],
+        "reply": True,
+        "media": True,
+    },
+}
 _WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
 
 
@@ -845,6 +873,50 @@ def _emit_channel_inventory(payload: dict[str, object], *, json_output: bool) ->
                 if bits:
                     line += ": " + ", ".join(bits)
                 typer.echo(line)
+
+
+def _emit_channel_capabilities(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    reports = payload.get("channels")
+    if not isinstance(reports, list) or not reports:
+        typer.echo("No channel capabilities found.")
+        return
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        channel = str(report.get("channel") or "channel").strip()
+        account_id = str(report.get("accountId") or "default").strip()
+        typer.echo(f"{channel}:{account_id}")
+        support = report.get("support")
+        if isinstance(support, dict):
+            bits: list[str] = []
+            chat_types = support.get("chatTypes")
+            if isinstance(chat_types, list) and chat_types:
+                bits.append("chatTypes=" + ",".join(str(item) for item in chat_types))
+            for key in (
+                "polls",
+                "reactions",
+                "edit",
+                "unsend",
+                "reply",
+                "effects",
+                "groupManagement",
+                "threads",
+                "media",
+                "nativeCommands",
+                "blockStreaming",
+            ):
+                if support.get(key) is True:
+                    bits.append(key)
+            typer.echo("  Support: " + (" ".join(bits) if bits else "none"))
+        actions = report.get("actions")
+        if isinstance(actions, list) and actions:
+            typer.echo("  Actions: " + ", ".join(str(action) for action in actions))
+        probe = report.get("probe")
+        if isinstance(probe, dict):
+            typer.echo("  Probe: " + str(probe.get("status") or "unknown"))
 
 
 def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
@@ -4401,6 +4473,125 @@ def _build_status_payload(
     }
 
 
+def _build_channel_capabilities_report(
+    *,
+    channel_id: str,
+    account_id: str,
+    account_summary: dict[str, object] | None,
+    timeout_ms: int,
+) -> dict[str, object]:
+    route_count = account_summary.get("routeCount") if account_summary is not None else None
+    enabled_route_count = (
+        account_summary.get("enabledRouteCount") if account_summary is not None else None
+    )
+    configured = (
+        isinstance(route_count, int)
+        and not isinstance(route_count, bool)
+        and route_count > 0
+    )
+    enabled = (
+        isinstance(enabled_route_count, int)
+        and not isinstance(enabled_route_count, bool)
+        and enabled_route_count > 0
+    )
+    support = dict(_CHANNEL_CAPABILITY_SUPPORT.get(channel_id, {"chatTypes": ["direct"]}))
+    actions = ["send", "broadcast"]
+    if support.get("polls") is True:
+        actions.append("poll")
+    return {
+        "channel": channel_id,
+        "accountId": account_id,
+        "configured": configured,
+        "enabled": enabled,
+        "support": support,
+        "actions": actions,
+        "probe": {
+            "status": "unavailable",
+            "reason": "native_probe_runtime_unavailable",
+            "summary": "Native channel capability probes are not available yet.",
+            "timeoutMs": timeout_ms,
+        },
+    }
+
+
+def _account_summaries_by_id(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list):
+        return {}
+    result: dict[str, dict[str, object]] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        account_id = _optional_cli_string(item.get("accountId"))
+        if account_id is None:
+            continue
+        result[account_id] = dict(item)
+    return result
+
+
+async def _build_channel_capabilities_payload(
+    services: CliServices,
+    *,
+    channel: str | None,
+    account: str | None,
+    target: str | None,
+    timeout_ms: int,
+) -> dict[str, object]:
+    normalized_channel = (_optional_cli_string(channel) or "all").lower()
+    normalized_account = _optional_cli_string(account)
+    normalized_target = _optional_cli_string(target)
+    if normalized_account is not None and normalized_channel == "all":
+        raise ValueError("--account requires a specific --channel.")
+    if normalized_target is not None and normalized_channel == "all":
+        raise ValueError("--target requires a specific --channel.")
+
+    snapshot = await services.gateway_channels.build_snapshot()
+    channel_order = [
+        str(item).strip().lower()
+        for item in snapshot.get("channelOrder", [])
+        if str(item).strip()
+    ]
+    selected_channels = (
+        channel_order if normalized_channel == "all" else [normalized_channel]
+    )
+    if normalized_channel != "all" and normalized_channel not in channel_order:
+        raise ValueError(f'Unknown channel "{normalized_channel}".')
+
+    channel_accounts = snapshot.get("channelAccounts")
+    default_accounts = snapshot.get("channelDefaultAccountId")
+    if not isinstance(channel_accounts, dict):
+        channel_accounts = {}
+    if not isinstance(default_accounts, dict):
+        default_accounts = {}
+
+    reports: list[dict[str, object]] = []
+    for channel_id in selected_channels:
+        accounts_by_id = _account_summaries_by_id(channel_accounts.get(channel_id))
+        account_ids = (
+            [normalized_account]
+            if normalized_account is not None
+            else sorted(accounts_by_id)
+            or [
+                _optional_cli_string(default_accounts.get(channel_id))
+                or "default"
+            ]
+        )
+        for account_id in account_ids:
+            reports.append(
+                _build_channel_capabilities_report(
+                    channel_id=channel_id,
+                    account_id=account_id,
+                    account_summary=accounts_by_id.get(account_id),
+                    timeout_ms=timeout_ms,
+                )
+            )
+
+    return {
+        "channels": reports,
+        "timeoutMs": timeout_ms,
+        "target": normalized_target,
+    }
+
+
 async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
     live_dashboard = await _try_live_dashboard_view(services.settings)
     if live_dashboard is not None:
@@ -5311,6 +5502,52 @@ def channels_status(
 
     payload = _run(_run_with_services(_action))
     _emit_channel_inventory(payload, json_output=json_output)
+
+
+@channels_app.command("capabilities")
+def channels_capabilities(
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Channel id to inspect, or all when omitted.",
+    ),
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="Account id to inspect; requires --channel.",
+    ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        help="Channel target for permission audit.",
+    ),
+    timeout_ms: int = typer.Option(
+        10000,
+        "--timeout",
+        min=1,
+        help="Probe timeout in milliseconds.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit provider capabilities as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_channel_capabilities_payload(
+            services,
+            channel=channel,
+            account=account,
+            target=target,
+            timeout_ms=timeout_ms,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_channel_capabilities(payload, json_output=json_output)
 
 
 @models_app.command("list")
