@@ -6741,6 +6741,12 @@ async def test_ops_mesh_service_routes_due_main_system_event_task_through_wake_q
     assert stored is not None
     assert stored["last_status"] == "completed"
     assert stored["last_result_summary"] == "Resume the main lane from cron."
+    assert stored["cron_state"]["lastRunStatus"] == "ok"
+    assert stored["cron_state"]["lastStatus"] == "ok"
+    assert stored["cron_state"]["lastDurationMs"] == 0
+    assert stored["cron_state"]["consecutiveErrors"] == 0
+    assert stored["cron_state"]["lastDeliveryStatus"] == "not-requested"
+    assert "lastFailureAlertAtMs" not in stored["cron_state"]
 
 
 @pytest.mark.asyncio

@@ -5238,14 +5238,16 @@ class OpsMeshService:
             reason=f"cron:{task.id}",
             session_key=session_key,
         )
+        launched_at = utcnow()
         update_fields: dict[str, Any] = {
-            "last_launched_at": utcnow(),
+            "last_launched_at": launched_at,
             "last_status": "completed",
             "last_result_summary": message[:240],
         }
         if task.enabled and task.schedule_kind == "at":
             update_fields["enabled"] = 0
         await self.database.update_task_blueprint(task_id, **update_fields)
+        await self._record_cron_system_event_result_state(task, launched_at=launched_at)
         await self._publish_ops_event(
             "task/launched",
             {
@@ -7246,6 +7248,32 @@ class OpsMeshService:
             state["consecutiveErrors"] = 0
             state.pop("lastFailureAlertAtMs", None)
 
+        await self.database.update_task_blueprint_payload(task.id, cron_state=state)
+
+    async def _record_cron_system_event_result_state(
+        self,
+        task: TaskBlueprintView,
+        *,
+        launched_at: str,
+    ) -> None:
+        if not _task_is_gateway_cron_task(task):
+            return
+        launched_at_ms = _timestamp_ms(launched_at)
+        if launched_at_ms is None:
+            return
+        state = _task_cron_state(task)
+        state.pop("runningAtMs", None)
+        state["lastRunAtMs"] = launched_at_ms
+        state["lastRunStatus"] = "ok"
+        state["lastStatus"] = "ok"
+        state["lastDurationMs"] = 0
+        state.pop("lastError", None)
+        state.pop("lastErrorReason", None)
+        state.pop("lastDelivered", None)
+        state.pop("lastDeliveryError", None)
+        state["lastDeliveryStatus"] = "not-requested"
+        state["consecutiveErrors"] = 0
+        state.pop("lastFailureAlertAtMs", None)
         await self.database.update_task_blueprint_payload(task.id, cron_state=state)
 
     async def _deliver_cron_finished_delivery(

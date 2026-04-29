@@ -1189,9 +1189,13 @@ These are complete within the bounded OpenZues-local parity contract verified in
   failure-alert message through the native session delivery path, stamps
   `lastFailureAlertAtMs`, and suppresses repeats inside `cooldownMs`.
 - Verified the cron failure-alert runtime slice with `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure_alert_threshold"` (`1 passed`), adjacent Ops Mesh cron/failure pack `python -m pytest tests\test_ops_mesh.py -q -k "cron_failure or failure_destination or cron_run or scheduled"` (`13 passed`), adjacent gateway cron pack `python -m pytest tests\test_gateway_node_methods.py -q -k "cron_run or cron_runs or cron_update"` (`23 passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Main-session `systemEvent` cron dispatch now persists OpenClaw-style success
+  state when the wake is queued, including `lastRunStatus="ok"`, duration,
+  delivery status, and reset consecutive failure metadata.
+- Verified the system-event wake state slice with `python -m pytest tests\test_ops_mesh.py -q -k "routes_due_main_system_event_task_through_wake_queue"` (`1 passed`), adjacent wake/cron pack `python -m pytest tests\test_ops_mesh.py -q -k "main_system_event or cron_failure_alert_threshold or cron_failure or scheduled"` (`16 passed`), adjacent API cron-run pack `python -m pytest tests\test_gateway_nodes_api.py -q -k "main_system_event_cron_run_routes_session_key_through_wake_queue or cron_run"` (`5 passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - Next repo-level parity work should continue with broader cron runtime
-  hardening: global `cron.failureAlert` config, provider-specific alert result
-  metadata, and system-event wake-result state tracking.
+  hardening: global `cron.failureAlert` config, retry/backoff policy, and
+  provider-specific alert result metadata.
 
 ## References
 
