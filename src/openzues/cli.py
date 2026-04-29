@@ -6902,9 +6902,200 @@ def _plugin_record_from_deck_item(
     return record
 
 
+_OPENCLAW_PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
+_OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
+    "tools": "tool",
+    "speechProviders": "speech",
+    "realtimeTranscriptionProviders": "realtime-transcription",
+    "realtimeVoiceProviders": "realtime-voice",
+    "mediaUnderstandingProviders": "media-understanding",
+    "imageGenerationProviders": "image-generation",
+    "videoGenerationProviders": "video-generation",
+    "musicGenerationProviders": "music-generation",
+    "webFetchProviders": "web-fetch",
+    "webSearchProviders": "web-search",
+    "memoryEmbeddingProviders": "memory-embedding",
+}
+
+
+def _plugin_manifest_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _plugin_manifest_contracts(manifest: dict[str, object]) -> dict[str, object]:
+    raw_contracts = manifest.get("contracts")
+    contracts = raw_contracts if isinstance(raw_contracts, dict) else {}
+    result: dict[str, object] = {}
+    for key in _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS:
+        values = _plugin_manifest_string_list(contracts.get(key))
+        if values:
+            result[key] = values
+    return result
+
+
+def _plugin_manifest_capabilities(
+    manifest: dict[str, object],
+    contracts: dict[str, object],
+) -> list[str]:
+    capabilities: list[str] = []
+    for key, label in _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS.items():
+        values = contracts.get(key)
+        if isinstance(values, list):
+            capabilities.extend(f"{label}:{value}" for value in values)
+    for key, label in (
+        ("channels", "channel"),
+        ("providers", "text-inference"),
+        ("cliBackends", "cli-backend"),
+        ("skills", "skill"),
+    ):
+        capabilities.extend(
+            f"{label}:{value}" for value in _plugin_manifest_string_list(manifest.get(key))
+        )
+    seen: set[str] = set()
+    unique: list[str] = []
+    for capability in capabilities:
+        if capability in seen:
+            continue
+        seen.add(capability)
+        unique.append(capability)
+    return unique
+
+
+def _plugin_manifest_load_paths(plugins_config: dict[str, object]) -> list[Path]:
+    load = plugins_config.get("load")
+    load_payload = load if isinstance(load, dict) else {}
+    raw_paths = load_payload.get("paths")
+    paths = raw_paths if isinstance(raw_paths, list) else []
+    result: list[Path] = []
+    for raw_path in paths:
+        path_text = _optional_cli_string(raw_path)
+        if path_text is None:
+            continue
+        expanded = os.path.expandvars(os.path.expanduser(path_text))
+        try:
+            result.append(Path(expanded).resolve(strict=False))
+        except OSError:
+            result.append(Path(expanded))
+    return result
+
+
+def _plugin_manifest_path_for_load_path(load_path: Path) -> Path | None:
+    manifest_path = (
+        load_path
+        if load_path.name == _OPENCLAW_PLUGIN_MANIFEST_FILENAME
+        else load_path / _OPENCLAW_PLUGIN_MANIFEST_FILENAME
+    )
+    return manifest_path if manifest_path.is_file() else None
+
+
+def _plugin_manifest_status(
+    manifest: dict[str, object],
+    *,
+    plugin_id: str,
+    plugins_config: dict[str, object],
+) -> str:
+    if plugins_config.get("enabled") is False:
+        return "disabled"
+    deny = plugins_config.get("deny")
+    deny_values = {str(value) for value in deny} if isinstance(deny, list) else set()
+    if plugin_id in deny_values:
+        return "disabled"
+    entries = plugins_config.get("entries")
+    entry_records = entries if isinstance(entries, dict) else {}
+    entry = entry_records.get(plugin_id)
+    entry_payload = entry if isinstance(entry, dict) else {}
+    if entry_payload.get("enabled") is False:
+        return "disabled"
+    if entry_payload.get("enabled") is True:
+        return "loaded"
+    allow = plugins_config.get("allow")
+    allow_values = {str(value) for value in allow} if isinstance(allow, list) else set()
+    if plugin_id in allow_values:
+        return "loaded"
+    return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
+
+
+def _plugin_record_from_openclaw_manifest(
+    manifest_path: Path,
+    *,
+    plugins_config: dict[str, object],
+) -> dict[str, object] | None:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    plugin_id = _optional_cli_string(manifest.get("id"))
+    config_schema = manifest.get("configSchema")
+    if plugin_id is None or not isinstance(config_schema, dict):
+        return None
+    contracts = _plugin_manifest_contracts(manifest)
+    capabilities = _plugin_manifest_capabilities(manifest, contracts)
+    description = _optional_cli_string(manifest.get("description")) or ""
+    record: dict[str, object] = {
+        "id": plugin_id,
+        "name": _optional_cli_string(manifest.get("name")) or plugin_id,
+        "status": _plugin_manifest_status(
+            manifest,
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+        ),
+        "format": "openclaw",
+        "source": str(manifest_path),
+        "origin": "config",
+        "description": description,
+        "capabilities": capabilities,
+        "parityStatus": "metadata",
+        "rootDir": str(manifest_path.parent),
+        "manifestPath": str(manifest_path),
+        "configSchema": True,
+    }
+    version = _optional_cli_string(manifest.get("version"))
+    if version is not None:
+        record["version"] = version
+    if contracts:
+        record["contracts"] = contracts
+    tool_names = contracts.get("tools")
+    if isinstance(tool_names, list):
+        record["toolNames"] = list(tool_names)
+    return record
+
+
+def _plugin_manifest_records_from_config_snapshot(
+    plugins_config: dict[str, object],
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for load_path in _plugin_manifest_load_paths(plugins_config):
+        manifest_path = _plugin_manifest_path_for_load_path(load_path)
+        if manifest_path is None:
+            continue
+        record = _plugin_record_from_openclaw_manifest(
+            manifest_path,
+            plugins_config=plugins_config,
+        )
+        if record is None:
+            continue
+        plugin_id = str(record.get("id") or "")
+        if not plugin_id or plugin_id in seen_ids:
+            continue
+        seen_ids.add(plugin_id)
+        records.append(record)
+    return records
+
+
 def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
     plugins = snapshot.get("plugins")
-    plugins_config = plugins if isinstance(plugins, dict) else {}
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    manifest_records = _plugin_manifest_records_from_config_snapshot(plugins_config)
+    records_by_id = {
+        str(record.get("id") or ""): dict(record)
+        for record in manifest_records
+        if str(record.get("id") or "")
+    }
     entries = plugins_config.get("entries")
     entry_records = entries if isinstance(entries, dict) else {}
     installs = plugins_config.get("installs")
@@ -6915,7 +7106,6 @@ def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[di
             *(str(key) for key in install_records),
         }
     )
-    records: list[dict[str, object]] = []
     for plugin_id in plugin_ids:
         entry = entry_records.get(plugin_id)
         entry_payload = entry if isinstance(entry, dict) else {}
@@ -6952,8 +7142,25 @@ def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[di
             record["shape"] = shape
         if entry_payload.get("usesLegacyBeforeAgentStart") is True:
             record["usesLegacyBeforeAgentStart"] = True
-        records.append(record)
-    return records
+        existing = records_by_id.get(plugin_id)
+        if existing is not None:
+            merged = dict(existing)
+            if entry_payload.get("enabled") is False:
+                merged["status"] = "disabled"
+            elif entry_payload.get("enabled") is True or install_payload:
+                merged["status"] = "loaded"
+            if version is not None:
+                merged["version"] = version
+            if install_payload:
+                merged["install"] = dict(install_payload)
+            if shape is not None:
+                merged["shape"] = shape
+            if entry_payload.get("usesLegacyBeforeAgentStart") is True:
+                merged["usesLegacyBeforeAgentStart"] = True
+            records_by_id[plugin_id] = merged
+        else:
+            records_by_id[plugin_id] = record
+    return [records_by_id[plugin_id] for plugin_id in sorted(records_by_id)]
 
 
 def _openclaw_plugin_status(parity_status: str) -> str:

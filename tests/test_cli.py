@@ -5014,6 +5014,104 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
     ]
 
 
+def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "native-runtime",
+                "name": "Native Runtime",
+                "description": "Metadata-only native plugin.",
+                "version": "0.3.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {
+                    "tools": ["native_runtime.search"],
+                    "webSearchProviders": ["native-search"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == [
+        {
+            "id": "native-runtime",
+            "name": "Native Runtime",
+            "status": "loaded",
+            "format": "openclaw",
+            "source": str(manifest_path),
+            "origin": "config",
+            "description": "Metadata-only native plugin.",
+            "capabilities": [
+                "tool:native_runtime.search",
+                "web-search:native-search",
+            ],
+            "parityStatus": "metadata",
+            "version": "0.3.0",
+            "rootDir": str(plugin_dir),
+            "manifestPath": str(manifest_path),
+            "configSchema": True,
+            "contracts": {
+                "tools": ["native_runtime.search"],
+                "webSearchProviders": ["native-search"],
+            },
+            "toolNames": ["native_runtime.search"],
+        }
+    ]
+
+
 def test_plugins_inspect_all_json_includes_saved_install_records(
     tmp_path,
     monkeypatch,

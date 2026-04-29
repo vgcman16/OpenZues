@@ -412,8 +412,8 @@ collisions, and honors `includePlugins=false` for core-only catalog reads.
 `tools.effective` now projects the same runtime specs as upstream-style
 `source="plugin"` entries under the `Connected tools` group while filtering
 empty groups from plugin-only sessions. Remaining tool parity is future
-production plugin metadata discovery beyond the fakeable registry adapter and
-deeper marketplace install/update/uninstall flows.
+production runtime activation/import metadata beyond the native manifest
+snapshot adapter and deeper marketplace install/update/uninstall flows.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
@@ -455,6 +455,12 @@ OpenClaw-shaped `plugins.entries` / `plugins.installs` records from the native
 gateway config owner, so config-installed marketplace plugins are visible even
 when the live platform deck has not loaded them yet; `plugins inspect --all --json`
 now preserves those saved install records in the report-level `install` field.
+`plugins list --json` now also performs OpenClaw-style metadata-only discovery
+for configured `plugins.load.paths` entries that contain `openclaw.plugin.json`,
+preserving manifest `id`, `name`, `description`, `version`, contracts, tool
+names, manifest/root paths, and enabled/default status without importing plugin
+code. Remaining plugin CLI parity is remote marketplace clone/update breadth and
+deeper runtime activation/import metadata beyond the native metadata snapshot.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
