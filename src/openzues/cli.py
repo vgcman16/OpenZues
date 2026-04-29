@@ -2443,6 +2443,66 @@ def _emit_cron_mutation(payload: dict[str, object], *, json_output: bool) -> Non
         typer.echo(f"id: {job_id}")
 
 
+def _cron_cli_schedule(
+    *,
+    cron_expr: str | None,
+    every: str | None,
+    at: str | None,
+) -> dict[str, object]:
+    normalized_cron = _optional_cli_string(cron_expr)
+    normalized_every = _optional_cli_string(every)
+    normalized_at = _optional_cli_string(at)
+    chosen = [
+        bool(normalized_cron),
+        bool(normalized_every),
+        bool(normalized_at),
+    ].count(True)
+    if chosen != 1:
+        raise typer.BadParameter("Choose exactly one schedule: --at, --every, or --cron")
+    if normalized_cron is not None:
+        return {"kind": "cron", "expr": normalized_cron}
+    if normalized_every is not None:
+        every_ms = _cron_duration_ms(normalized_every)
+        if every_ms is None:
+            raise typer.BadParameter("Invalid --every; use e.g. 10m, 1h, 1d")
+        return {"kind": "every", "everyMs": every_ms}
+    assert normalized_at is not None
+    return {"kind": "at", "at": normalized_at}
+
+
+def _cron_duration_ms(value: str) -> int | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(ms|s|m|h|d)", value.strip(), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    if amount <= 0:
+        return None
+    unit = match.group(2).lower()
+    factor = {
+        "ms": 1,
+        "s": 1000,
+        "m": 60_000,
+        "h": 3_600_000,
+        "d": 86_400_000,
+    }[unit]
+    return int(amount * factor)
+
+
+def _cron_cli_payload(
+    *,
+    message: str | None,
+    system_event: str | None,
+) -> dict[str, object]:
+    normalized_message = _optional_cli_string(message)
+    normalized_system_event = _optional_cli_string(system_event)
+    if [bool(normalized_message), bool(normalized_system_event)].count(True) != 1:
+        raise typer.BadParameter("Choose exactly one payload: --system-event or --message")
+    if normalized_system_event is not None:
+        return {"kind": "systemEvent", "text": normalized_system_event}
+    assert normalized_message is not None
+    return {"kind": "agentTurn", "message": normalized_message}
+
+
 def _emit_plugins_inventory(
     payload: dict[str, object],
     *,
@@ -9620,6 +9680,49 @@ def cron_disable_command(
     json_output: bool = typer.Option(False, "--json", help="Emit cron update result as JSON."),
 ) -> None:
     _cron_toggle_command(job_id, enabled=False, json_output=json_output)
+
+
+@cron_app.command("add")
+def cron_add_command(
+    name: str = typer.Option(..., "--name", help="Cron job name."),
+    cron_expr: str | None = typer.Option(None, "--cron", help="Cron expression."),
+    every: str | None = typer.Option(None, "--every", help="Run every duration, such as 10m."),
+    at: str | None = typer.Option(None, "--at", help="Run once at an ISO time."),
+    message: str | None = typer.Option(None, "--message", help="Agent message payload."),
+    system_event: str | None = typer.Option(
+        None,
+        "--system-event",
+        help="Main-session system event payload.",
+    ),
+    session: str | None = typer.Option(None, "--session", help="Session target."),
+    channel: str = typer.Option("last", "--channel", help="Announce delivery channel."),
+    disabled: bool = typer.Option(False, "--disabled", help="Create the job disabled."),
+    json_output: bool = typer.Option(False, "--json", help="Emit created cron job as JSON."),
+) -> None:
+    schedule = _cron_cli_schedule(cron_expr=cron_expr, every=every, at=at)
+    payload = _cron_cli_payload(message=message, system_event=system_event)
+    session_target = _optional_cli_string(session)
+    if session_target is None:
+        session_target = "isolated" if payload.get("kind") == "agentTurn" else "main"
+    params: dict[str, object] = {
+        "name": name,
+        "enabled": not disabled,
+        "schedule": schedule,
+        "sessionTarget": session_target,
+        "wakeMode": "now",
+        "payload": payload,
+    }
+    if payload.get("kind") == "agentTurn" and session_target != "main":
+        params["delivery"] = {
+            "mode": "announce",
+            "channel": channel,
+        }
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "cron.add", params)
+
+    result = _run(_run_with_services(_action))
+    _emit_cron_mutation(result, json_output=json_output)
 
 
 @sessions_app.command("spawn")
