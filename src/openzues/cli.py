@@ -10300,6 +10300,26 @@ _OPENCLAW_TASK_STATUS_VALUES = (
     "cancelled",
     "lost",
 )
+_OPENCLAW_TASK_AUDIT_CODES = (
+    "stale_queued",
+    "stale_running",
+    "lost",
+    "delivery_failed",
+    "missing_cleanup",
+    "inconsistent_timestamps",
+)
+_OPENCLAW_TASK_FLOW_AUDIT_CODES = (
+    "restore_failed",
+    "stale_running",
+    "stale_waiting",
+    "stale_blocked",
+    "cancel_stuck",
+    "missing_linked_tasks",
+    "blocked_task_missing",
+    "inconsistent_timestamps",
+)
+_TASK_AUDIT_STALE_QUEUED_MS = 10 * 60_000
+_TASK_AUDIT_STALE_RUNNING_MS = 30 * 60_000
 
 
 def _record_value(record: object, key: str, default: object = None) -> object:
@@ -10576,6 +10596,308 @@ def _task_failure_count(tasks: list[dict[str, object]]) -> int:
         if task.get("status") in {"failed", "timed_out", "lost"}
         or _optional_cli_string(task.get("error")) is not None
     )
+
+
+def _tasks_cli_positive_int(value: str | None, *, option: str) -> int | None:
+    normalized = _optional_cli_string(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{option} must be a positive integer") from exc
+    if parsed <= 0:
+        raise typer.BadParameter(f"{option} must be a positive integer")
+    return parsed
+
+
+def _task_int_field(task: dict[str, object], key: str) -> int | None:
+    value = task.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _task_audit_reference_ms(task: dict[str, object]) -> int:
+    return (
+        _task_int_field(task, "lastEventAt")
+        or _task_int_field(task, "startedAt")
+        or _task_int_field(task, "createdAt")
+        or 0
+    )
+
+
+def _task_audit_finding(
+    *,
+    severity: str,
+    code: str,
+    task: dict[str, object],
+    detail: str,
+    age_ms: int | None = None,
+) -> dict[str, object]:
+    finding: dict[str, object] = {
+        "kind": "task",
+        "severity": severity,
+        "code": code,
+        "detail": detail,
+        "status": task.get("status") or "n/a",
+        "token": task.get("taskId"),
+        "task": task,
+    }
+    if age_ms is not None:
+        finding["ageMs"] = age_ms
+    return finding
+
+
+def _list_task_audit_findings(
+    tasks: list[dict[str, object]],
+    *,
+    now_ms: int | None = None,
+) -> list[dict[str, object]]:
+    now = now_ms if now_ms is not None else int(time.time() * 1000)
+    findings: list[dict[str, object]] = []
+    for task in tasks:
+        reference_ms = _task_audit_reference_ms(task)
+        age_ms = max(0, now - reference_ms)
+        status = _optional_cli_string(task.get("status")) or ""
+        if status == "queued" and age_ms >= _TASK_AUDIT_STALE_QUEUED_MS:
+            findings.append(
+                _task_audit_finding(
+                    severity="warn",
+                    code="stale_queued",
+                    task=task,
+                    age_ms=age_ms,
+                    detail="queued task has not advanced recently",
+                )
+            )
+        if status == "running" and age_ms >= _TASK_AUDIT_STALE_RUNNING_MS:
+            findings.append(
+                _task_audit_finding(
+                    severity="error",
+                    code="stale_running",
+                    task=task,
+                    age_ms=age_ms,
+                    detail="running task appears stuck",
+                )
+            )
+        if status == "lost":
+            findings.append(
+                _task_audit_finding(
+                    severity="error",
+                    code="lost",
+                    task=task,
+                    age_ms=age_ms,
+                    detail=_optional_cli_string(task.get("error"))
+                    or "task lost its backing session",
+                )
+            )
+        if task.get("deliveryStatus") == "failed" and task.get("notifyPolicy") != "silent":
+            findings.append(
+                _task_audit_finding(
+                    severity="warn",
+                    code="delivery_failed",
+                    task=task,
+                    age_ms=age_ms,
+                    detail="terminal update delivery failed",
+                )
+            )
+        if status not in {"lost", "queued", "running"} and not isinstance(
+            task.get("cleanupAfter"),
+            int,
+        ):
+            findings.append(
+                _task_audit_finding(
+                    severity="warn",
+                    code="missing_cleanup",
+                    task=task,
+                    age_ms=age_ms,
+                    detail="terminal task is missing cleanupAfter",
+                )
+            )
+        created_ms = _task_int_field(task, "createdAt")
+        started_ms = _task_int_field(task, "startedAt")
+        ended_ms = _task_int_field(task, "endedAt")
+        if created_ms is not None and started_ms is not None and started_ms < created_ms:
+            findings.append(
+                _task_audit_finding(
+                    severity="warn",
+                    code="inconsistent_timestamps",
+                    task=task,
+                    detail="startedAt is earlier than createdAt",
+                )
+            )
+        if started_ms is not None and ended_ms is not None and ended_ms < started_ms:
+            findings.append(
+                _task_audit_finding(
+                    severity="warn",
+                    code="inconsistent_timestamps",
+                    task=task,
+                    detail="endedAt is earlier than startedAt",
+                )
+            )
+        if status in {"queued", "running"} and ended_ms is not None:
+            findings.append(
+                _task_audit_finding(
+                    severity="warn",
+                    code="inconsistent_timestamps",
+                    task=task,
+                    detail=f"{status} task should not already have endedAt",
+                )
+            )
+    return sorted(findings, key=_task_audit_sort_key)
+
+
+def _task_audit_sort_key(finding: dict[str, object]) -> tuple[int, int, int]:
+    severity_rank = 0 if finding.get("severity") == "error" else 1
+    age = finding.get("ageMs")
+    age_ms = age if isinstance(age, int) else -1
+    task = finding.get("task")
+    created_ms = (
+        _task_int_field(task, "createdAt")
+        if isinstance(task, dict)
+        else None
+    )
+    return (severity_rank, -age_ms, created_ms or 0)
+
+
+def _empty_task_audit_summary() -> dict[str, object]:
+    return {
+        "total": 0,
+        "warnings": 0,
+        "errors": 0,
+        "byCode": dict.fromkeys(_OPENCLAW_TASK_AUDIT_CODES, 0),
+    }
+
+
+def _empty_task_flow_audit_summary() -> dict[str, object]:
+    return {
+        "total": 0,
+        "warnings": 0,
+        "errors": 0,
+        "byCode": dict.fromkeys(_OPENCLAW_TASK_FLOW_AUDIT_CODES, 0),
+    }
+
+
+def _summarize_task_audit_findings(findings: list[dict[str, object]]) -> dict[str, object]:
+    summary = _empty_task_audit_summary()
+    by_code = cast("dict[str, int]", summary["byCode"])
+    for finding in findings:
+        summary["total"] = cast("int", summary["total"]) + 1
+        code = _optional_cli_string(finding.get("code"))
+        if code in by_code:
+            by_code[code] += 1
+        if finding.get("severity") == "error":
+            summary["errors"] = cast("int", summary["errors"]) + 1
+        else:
+            summary["warnings"] = cast("int", summary["warnings"]) + 1
+    return summary
+
+
+def _filter_task_audit_findings(
+    findings: list[dict[str, object]],
+    *,
+    severity_filter: str | None,
+    code_filter: str | None,
+) -> list[dict[str, object]]:
+    return [
+        finding
+        for finding in findings
+        if (severity_filter is None or finding.get("severity") == severity_filter)
+        and (code_filter is None or finding.get("code") == code_filter)
+    ]
+
+
+async def _build_tasks_audit_payload(
+    services: CliServices,
+    *,
+    severity_filter: str | None,
+    code_filter: str | None,
+    limit: int | None,
+) -> dict[str, object]:
+    normalized_severity = _optional_cli_string(severity_filter)
+    normalized_code = _optional_cli_string(code_filter)
+    all_findings = _list_task_audit_findings(await _list_openclaw_background_tasks(services))
+    filtered_findings = _filter_task_audit_findings(
+        all_findings,
+        severity_filter=normalized_severity,
+        code_filter=normalized_code,
+    )
+    displayed = filtered_findings[:limit] if limit is not None else filtered_findings
+    task_summary = _summarize_task_audit_findings(all_findings)
+    task_flow_summary = _empty_task_flow_audit_summary()
+    return {
+        "count": len(all_findings),
+        "filteredCount": len(filtered_findings),
+        "displayed": len(displayed),
+        "filters": {
+            "severity": normalized_severity,
+            "code": normalized_code,
+            "limit": limit,
+        },
+        "summary": {
+            **task_summary,
+            "taskFlows": task_flow_summary,
+            "combined": {
+                "total": len(all_findings),
+                "errors": task_summary["errors"],
+                "warnings": task_summary["warnings"],
+            },
+        },
+        "findings": displayed,
+    }
+
+
+def _emit_tasks_audit(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    summary = payload.get("summary")
+    combined = summary.get("combined") if isinstance(summary, dict) else None
+    if not isinstance(combined, dict):
+        combined = {"total": payload.get("count", 0), "errors": 0, "warnings": 0}
+    typer.echo(
+        "Tasks audit: "
+        f"{combined.get('total', 0)} findings | "
+        f"{combined.get('errors', 0)} errors | "
+        f"{combined.get('warnings', 0)} warnings"
+    )
+    filters = payload.get("filters")
+    if isinstance(filters, dict):
+        severity = _optional_cli_string(filters.get("severity"))
+        code = _optional_cli_string(filters.get("code"))
+        limit = filters.get("limit")
+        if severity is not None:
+            typer.echo(f"Severity filter: {severity}")
+        if code is not None:
+            typer.echo(f"Code filter: {code}")
+        if isinstance(limit, int):
+            typer.echo(f"Limit: {limit}")
+    raw_findings = payload.get("findings")
+    findings = (
+        [cast("dict[str, object]", item) for item in raw_findings if isinstance(item, dict)]
+        if isinstance(raw_findings, list)
+        else []
+    )
+    if not findings:
+        typer.echo("No tasks audit findings.")
+        return
+    typer.echo("Scope    Severity Code                   Item       Status     Age      Detail")
+    for finding in findings:
+        age = finding.get("ageMs")
+        age_text = f"{int(age / 1000)}s" if isinstance(age, int) else "fresh"
+        typer.echo(
+            " ".join(
+                [
+                    str(finding.get("kind") or "task").ljust(8),
+                    str(finding.get("severity") or "n/a").ljust(8),
+                    str(finding.get("code") or "n/a")[:22].ljust(22),
+                    str(finding.get("token") or "n/a")[:10].ljust(10),
+                    str(finding.get("status") or "n/a")[:10].ljust(10),
+                    age_text[:8].ljust(8),
+                    str(finding.get("detail") or ""),
+                ]
+            ).rstrip()
+        )
 
 
 def _emit_tasks_list(payload: dict[str, object], *, json_output: bool) -> None:
@@ -10998,6 +11320,27 @@ def tasks_list_subcommand(
 
     payload = _run(_run_with_services(_action))
     _emit_tasks_list(payload, json_output=json_output)
+
+
+@tasks_app.command("audit")
+def tasks_audit_command(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    severity: str | None = typer.Option(None, "--severity", help="Filter by severity."),
+    code: str | None = typer.Option(None, "--code", help="Filter by finding code."),
+    limit: str | None = typer.Option(None, "--limit", help="Limit displayed findings."),
+) -> None:
+    parsed_limit = _tasks_cli_positive_int(limit, option="--limit")
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_tasks_audit_payload(
+            services,
+            severity_filter=severity,
+            code_filter=code,
+            limit=parsed_limit,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_tasks_audit(payload, json_output=json_output)
 
 
 @tasks_app.command("show")

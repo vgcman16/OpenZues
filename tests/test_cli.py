@@ -3890,6 +3890,83 @@ def test_tasks_show_json_resolves_session_key(monkeypatch) -> None:
     assert payload["terminalSummary"] == "Verified and committed."
 
 
+def test_tasks_audit_json_filters_native_stale_running_tasks(monkeypatch) -> None:
+    created_at = datetime(2020, 1, 1, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=5,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "tasks",
+            "audit",
+            "--json",
+            "--severity",
+            "error",
+            "--code",
+            "stale_running",
+            "--limit",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["filteredCount"] == 1
+    assert payload["displayed"] == 1
+    assert payload["filters"] == {
+        "severity": "error",
+        "code": "stale_running",
+        "limit": 1,
+    }
+    assert payload["summary"]["combined"] == {"total": 1, "errors": 1, "warnings": 0}
+    assert payload["summary"]["taskFlows"]["total"] == 0
+    finding = payload["findings"][0]
+    assert finding["kind"] == "task"
+    assert finding["severity"] == "error"
+    assert finding["code"] == "stale_running"
+    assert finding["status"] == "running"
+    assert finding["token"] == "mission:17"
+    assert finding["ageMs"] > 30 * 60_000
+    assert finding["task"]["taskId"] == "mission:17"
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

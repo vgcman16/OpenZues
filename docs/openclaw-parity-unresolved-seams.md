@@ -147,10 +147,13 @@ session store. The CLI now also exposes read-only `tasks`, `tasks list`, and
 `tasks show` inspection over native OpenZues mission and task-blueprint state,
 returning OpenClaw-shaped task records with `runtime`, `status`, `taskId`,
 session/run lookup, delivery, notify, timestamp, progress, and terminal summary
-fields. Remaining tasks CLI/runtime parity is `tasks audit`,
-`tasks maintenance`, `tasks notify`, `tasks cancel`, and
-`tasks flow list/show/cancel`, plus a richer native TaskFlow registry if
-OpenZues grows a first-class flow owner. Top-level
+fields. `tasks audit` now applies OpenClaw-shaped stale-running, stale-queued,
+lost, delivery-failed, missing-cleanup, and timestamp-consistency checks to
+those native records with the upstream JSON filter/summary envelope and an
+explicit empty TaskFlow audit summary. Remaining tasks CLI/runtime parity is
+`tasks maintenance`, `tasks notify`, `tasks cancel`, and `tasks flow
+list/show/cancel`, plus a richer native TaskFlow registry if OpenZues grows a
+first-class flow owner. Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
