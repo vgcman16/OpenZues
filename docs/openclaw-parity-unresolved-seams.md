@@ -214,10 +214,12 @@ the model entry, reports the upstream empty-alias message when none remain, and
 returns the upstream not-found error for missing aliases. No smaller model alias
 CLI command remains. `models fallbacks list` now projects
 `agents.defaults.model.fallbacks` from the native config snapshot and supports
-the upstream JSON/plain/human output shapes. The next model CLI queue head is
-fallback add/remove/clear, followed by image fallback and auth-order mutation
-clusters. Live auth probes remain unavailable until the native model auth
-health runtime exists.
+the upstream JSON/plain/human output shapes. `models fallbacks add` now resolves
+model aliases to canonical provider/model keys, upserts the configured model
+entry, appends only missing fallback targets, and writes through
+`GatewayConfigService`. The next model CLI queue head is fallback remove/clear,
+followed by image fallback and auth-order mutation clusters. Live auth probes
+remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

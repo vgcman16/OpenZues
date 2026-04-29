@@ -5549,6 +5549,49 @@ def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypa
     }
 
 
+def test_models_fallbacks_add_resolves_alias_and_updates_config(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "openai/gpt-5.4", "fallbacks": []},
+                        "models": {"openai/gpt-5.4-mini": {"alias": "fast"}},
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "fallbacks", "add", "fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Fallbacks: openai/gpt-5.4-mini" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"]["fallbacks"] == ["openai/gpt-5.4-mini"]
+    assert snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"]["alias"] == "fast"
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

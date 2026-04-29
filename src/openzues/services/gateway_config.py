@@ -202,6 +202,26 @@ class GatewayConfigService:
         )
         return write_result
 
+    def add_model_fallback(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        target = _resolve_model_alias_target(model_ref, aliases=aliases)
+        existing = _model_fallbacks_from_config_snapshot(current)
+        existing_targets = {
+            resolved
+            for fallback in existing
+            for resolved in (_try_resolve_model_alias_target(fallback, aliases=aliases),)
+            if resolved is not None
+        }
+        fallbacks = existing if target in existing_targets else [*existing, target]
+        next_snapshot = _set_model_fallbacks_in_snapshot(current, fallbacks=fallbacks)
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "fallbacks": fallbacks})
+        return write_result
+
     def record_marketplace_plugin_install(
         self,
         *,
@@ -377,6 +397,13 @@ def _resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str:
     return f"{provider}/{model}"
 
 
+def _try_resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str | None:
+    try:
+        return _resolve_model_alias_target(raw, aliases=aliases)
+    except ValueError:
+        return None
+
+
 def _model_aliases_from_config_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
     models = _agents_defaults_models_from_snapshot(snapshot)
     aliases: dict[str, str] = {}
@@ -398,6 +425,22 @@ def _agents_defaults_models_from_snapshot(snapshot: dict[str, Any]) -> dict[str,
         return {}
     models = defaults.get("models")
     return dict(models) if isinstance(models, dict) else {}
+
+
+def _model_fallbacks_from_config_snapshot(snapshot: dict[str, Any]) -> list[str]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    defaults = agents.get("defaults")
+    if not isinstance(defaults, dict):
+        return []
+    model = defaults.get("model")
+    if not isinstance(model, dict):
+        return []
+    fallbacks = model.get("fallbacks")
+    if not isinstance(fallbacks, list):
+        return []
+    return [entry.strip() for entry in fallbacks if isinstance(entry, str) and entry.strip()]
 
 
 def _set_model_alias_in_snapshot(
@@ -423,6 +466,45 @@ def _set_model_alias_in_snapshot(
     raw_defaults = agents.get("defaults")
     defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
     defaults["models"] = next_models
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _set_model_fallbacks_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    fallbacks: list[str],
+) -> dict[str, Any]:
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    raw_model = defaults.get("model")
+    model = dict(raw_model) if isinstance(raw_model, dict) else {}
+    model["fallbacks"] = list(fallbacks)
+    defaults["model"] = model
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _ensure_model_config_entry_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    target: str,
+) -> dict[str, Any]:
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    raw_models = defaults.get("models")
+    models = dict(raw_models) if isinstance(raw_models, dict) else {}
+    target_entry = models.get(target)
+    models[target] = dict(target_entry) if isinstance(target_entry, dict) else {}
+    defaults["models"] = models
     agents["defaults"] = defaults
     next_snapshot["agents"] = agents
     return next_snapshot

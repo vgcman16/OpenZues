@@ -5632,6 +5632,18 @@ async def _remove_model_alias_payload(
     return dict(result)
 
 
+async def _add_model_fallback_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.add_model_fallback(model)
+    return dict(result)
+
+
 async def _build_models_list_payload(
     services: CliServices,
     *,
@@ -8969,6 +8981,27 @@ def models_fallbacks_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_fallbacks(payload, json_output=json_output, plain=plain)
+
+
+@models_fallbacks_app.command("add")
+def models_fallbacks_add_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _add_model_fallback_payload(
+                    services,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    typer.echo("Fallbacks: " + ", ".join(str(item) for item in fallbacks))
 
 
 @models_app.command("status")
