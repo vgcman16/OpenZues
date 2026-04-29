@@ -5704,6 +5704,63 @@ async def test_tools_invoke_runs_registry_plugin_executor_in_registration_order(
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_allows_optional_registry_plugin_executor_by_plugin_id_allowlist(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-optional-allow.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["matrix"]}},
+            }
+        )
+    )
+    observed_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def matrix_search(tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append((tool_call_id, args))
+        return {"ok": True, "query": args.get("query")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=(
+                {
+                    "tool": "matrix.search",
+                    "executor": matrix_search,
+                    "pluginId": "matrix",
+                    "pluginName": "Matrix",
+                    "optional": True,
+                },
+            ),
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "matrix.search", "args": {"query": "release"}},
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "query": "release"}}
+    assert observed_calls[0][0].startswith("http-")
+    assert observed_calls[0][1] == {"query": "release"}
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_keeps_core_mapping_before_registry_plugin_executor(
     tmp_path,
 ) -> None:

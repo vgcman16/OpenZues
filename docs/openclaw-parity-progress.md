@@ -88,13 +88,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Native plugin runtime executor specs now preserve OpenClaw's `optional`
+  metadata and `tools.invoke` can expose optional registry executors through
+  exact tool-name, plugin-id, or `group:plugins` allowlist tokens.
+- Verified the optional plugin allowlist slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "optional_registry_plugin_executor_by_plugin_id_allowlist"` (`1 passed`),
+  adjacent plugin-runtime executor proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "tools_invoke_runs_configured_plugin_executor
+  or tools_invoke_hides_plugin_executor_without_config_allow or
+  tools_invoke_runs_registry_plugin_executor_in_registration_order or
+  optional_registry_plugin_executor_by_plugin_id_allowlist or
+  tools_invoke_keeps_core_mapping_before_registry_plugin_executor or
+  tools_invoke_skips_disabled_registry_plugin_executor or
+  tools_invoke_keeps_registry_owner_only_executor_hidden_from_non_owner"` (`7
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_plugin_runtime.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_plugin_runtime.py`.
 
 ## Feature Families
 
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
-| Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
+| Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~98% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |

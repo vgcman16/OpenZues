@@ -446,7 +446,10 @@ from the same enabled plugin runtime specs by default, suppresses core-name
 collisions, and honors `includePlugins=false` for core-only catalog reads.
 `tools.effective` now projects the same runtime specs as upstream-style
 `source="plugin"` entries under the `Connected tools` group while filtering
-empty groups from plugin-only sessions. Remaining tool parity is future
+empty groups from plugin-only sessions. Optional plugin runtime executors now
+preserve OpenClaw's `optional` tool metadata and can be enabled by exact tool
+name, plugin id, or `group:plugins` allowlist entries before dispatching
+through `tools.invoke`. Remaining tool parity is future
 production runtime activation/import metadata beyond the native manifest
 snapshot adapter and deeper marketplace install/update/uninstall flows.
 

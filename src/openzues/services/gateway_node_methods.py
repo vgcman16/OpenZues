@@ -69,6 +69,7 @@ from openzues.services.gateway_node_pending_work import (
 from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
+    GatewayPluginRuntimeExecutorResolution,
     GatewayPluginRuntimeService,
 )
 from openzues.services.gateway_sandbox_spawn import (
@@ -904,6 +905,24 @@ def _normalized_tools_invoke_policy_set(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
     return {entry.strip() for entry in value if isinstance(entry, str) and entry.strip()}
+
+
+def _tools_invoke_policy_token(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _tools_invoke_plugin_executor_allowed(
+    resolution: GatewayPluginRuntimeExecutorResolution,
+    allow_tools: set[str],
+) -> bool:
+    allow_tokens = {_tools_invoke_policy_token(entry) for entry in allow_tools}
+    tool_token = _tools_invoke_policy_token(resolution.tool)
+    if tool_token in allow_tokens:
+        return True
+    if not resolution.optional:
+        return False
+    plugin_token = _tools_invoke_policy_token(resolution.plugin_id)
+    return bool(plugin_token and plugin_token in allow_tokens) or "group:plugins" in allow_tokens
 
 
 def _tools_invoke_sessions_send_result(
@@ -2092,14 +2111,14 @@ class GatewayNodeMethodService:
         tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
         plugin_executor: GatewayPluginExecutor | None = None
         if resolved_tool_method is None:
-            if tool_key not in allow_tools:
-                _raise_tools_invoke_not_found(tool_key)
             plugin_resolution = self._plugin_runtime_service.resolve_executor(
                 tool_key,
                 requester,
                 tool_args,
             )
             if plugin_resolution is None:
+                _raise_tools_invoke_not_found(tool_key)
+            if not _tools_invoke_plugin_executor_allowed(plugin_resolution, allow_tools):
                 _raise_tools_invoke_not_found(tool_key)
             plugin_executor = plugin_resolution.executor
 
