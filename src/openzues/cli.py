@@ -6191,6 +6191,96 @@ async def _build_models_list_payload(
     return {"models": models}
 
 
+def _auth_payload_from_gateway_status(
+    payload: dict[str, object],
+    *,
+    providers_in_use: list[str],
+    probe: bool,
+) -> dict[str, object]:
+    raw_providers = payload.get("providers")
+    providers = [
+        dict(provider)
+        for provider in (raw_providers if isinstance(raw_providers, list) else [])
+        if isinstance(provider, dict)
+    ]
+    provider_ids = {
+        provider_id
+        for provider in providers
+        for provider_id in (_optional_cli_string(provider.get("provider")),)
+        if provider_id is not None
+    }
+    missing = [
+        provider
+        for provider in providers_in_use
+        if provider not in provider_ids
+        or any(
+            _optional_cli_string(entry.get("provider")) == provider
+            and (_optional_cli_string(entry.get("status")) or "missing")
+            in {"missing", "expired"}
+            for entry in providers
+        )
+    ]
+    oauth_profiles: list[dict[str, object]] = []
+    oauth_provider_rows: list[dict[str, object]] = []
+    providers_with_oauth: list[str] = []
+    for provider in providers:
+        provider_id = _optional_cli_string(provider.get("provider"))
+        if provider_id is None:
+            continue
+        raw_profiles = provider.get("profiles")
+        profiles = [
+            dict(profile)
+            for profile in (raw_profiles if isinstance(raw_profiles, list) else [])
+            if isinstance(profile, dict)
+        ]
+        oauth_like = [
+            profile
+            for profile in profiles
+            if _optional_cli_string(profile.get("type")) in {"oauth", "token"}
+        ]
+        if oauth_like:
+            providers_with_oauth.append(f"{provider_id} ({len(oauth_like)})")
+            oauth_provider_rows.append({"provider": provider_id, "profiles": len(oauth_like)})
+        for profile in oauth_like:
+            row = dict(profile)
+            row.setdefault("provider", provider_id)
+            oauth_profiles.append(row)
+    provider_statuses = {
+        (_optional_cli_string(provider.get("status")) or "missing")
+        for provider in providers
+    }
+    if missing or provider_statuses & {"missing", "expired"}:
+        status = "error"
+    elif provider_statuses & {"expiring"}:
+        status = "expiring"
+    elif providers:
+        status = "ok"
+    else:
+        status = "unavailable"
+    probes: dict[str, object] | None
+    if probe:
+        probes = {
+            provider_id: {"status": _optional_cli_string(provider.get("status")) or "missing"}
+            for provider in providers
+            for provider_id in (_optional_cli_string(provider.get("provider")),)
+            if provider_id is not None
+        }
+    else:
+        probes = None
+    return {
+        "status": status,
+        "providersWithOAuth": providers_with_oauth,
+        "missingProvidersInUse": missing,
+        "providers": providers,
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": oauth_profiles,
+            "providers": oauth_provider_rows,
+        },
+        "probes": probes,
+    }
+
+
 async def _build_models_status_payload(
     services: CliServices,
     *,
@@ -6254,6 +6344,23 @@ async def _build_models_status_payload(
                 auth_payload.update(dict(runtime_auth))
             else:
                 auth_payload.update(dict(runtime_status))
+    elif auth_runtime is None and probe:
+        try:
+            runtime_status = await _call_gateway_node_method(
+                services,
+                "models.authStatus",
+                {"refresh": probe},
+            )
+        except RuntimeError:
+            runtime_status = {}
+        if runtime_status:
+            auth_payload.update(
+                _auth_payload_from_gateway_status(
+                    runtime_status,
+                    providers_in_use=providers_in_use,
+                    probe=probe,
+                )
+            )
     return {
         "ok": True,
         "defaultModel": default_label,

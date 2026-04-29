@@ -6732,6 +6732,87 @@ def test_models_status_probe_json_uses_model_auth_runtime(monkeypatch) -> None:
     assert auth_calls == [{"providers": ["openai"], "probe": True}]
 
 
+def test_models_status_probe_json_uses_gateway_auth_status_when_runtime_missing(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "models.authStatus":
+                return {
+                    "ts": 1234,
+                    "providers": [
+                        {
+                            "provider": "openai",
+                            "displayName": "OpenAI",
+                            "status": "ok",
+                            "profiles": [
+                                {
+                                    "profileId": "openai-default",
+                                    "type": "oauth",
+                                    "status": "ok",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--probe", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auth"] == {
+        "status": "ok",
+        "providersWithOAuth": ["openai (1)"],
+        "missingProvidersInUse": [],
+        "providers": [
+            {
+                "provider": "openai",
+                "displayName": "OpenAI",
+                "status": "ok",
+                "profiles": [
+                    {"profileId": "openai-default", "type": "oauth", "status": "ok"}
+                ],
+            }
+        ],
+        "unusableProfiles": [],
+        "oauth": {
+            "profiles": [
+                {
+                    "provider": "openai",
+                    "profileId": "openai-default",
+                    "type": "oauth",
+                    "status": "ok",
+                }
+            ],
+            "providers": [{"provider": "openai", "profiles": 1}],
+        },
+        "probes": {"openai": {"status": "ok"}},
+    }
+    assert calls == [("models.list", {}), ("models.authStatus", {"refresh": True})]
+
+
 def test_models_status_check_exits_nonzero_for_known_auth_problem(monkeypatch) -> None:
     class FakeGatewayNodeMethods:
         async def call(

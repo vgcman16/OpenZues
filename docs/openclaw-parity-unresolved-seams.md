@@ -274,8 +274,11 @@ posture; `models scan` now performs native OpenRouter chat-completions tool
 probes with a required `ping` tool and image probes with a small data-URL image
 for image-capable candidates, preserving the upstream missing-key guard and
 fakeable HTTP transport coverage. No smaller model-scan CLI/probe seam remains.
-Live auth
-probes remain unavailable until the native model auth health runtime exists.
+`models status --probe` now falls back to the native `models.authStatus`
+gateway owner when no explicit model-auth runtime is injected, adapting provider
+profile health into the existing auth JSON/check shape and preserving the
+explicit fakeable `model_auth.status` runtime precedence. No smaller live auth
+status/probe fallback seam remains in the model CLI cluster.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured
