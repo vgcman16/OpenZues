@@ -5154,6 +5154,86 @@ async def test_ops_mesh_service_send_direct_channel_poll_rejects_invalid_telegra
 
 
 @pytest.mark.parametrize(
+    ("question", "options", "expected_message"),
+    [
+        ("   ", ["Yes", "No"], "Poll question is required"),
+        ("Pick one", ["Yes", "   "], "Poll requires at least 2 options"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_invalid_poll_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    question: str,
+    options: list[str],
+    expected_message: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-shape"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bot123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 43,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-telegram-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match=re.escape(expected_message)):
+        await service.send_direct_channel_poll(
+            channel="telegram",
+            to="channel:-100123",
+            question=question,
+            options=options,
+            account_id="telegram-bot",
+            idempotency_key="idem-native-telegram-poll-invalid-shape",
+        )
+
+    assert telegram_posts == []
+
+
+@pytest.mark.parametrize(
     ("channel", "target", "account_id"),
     [
         ("telegram", "channel:-100123", "telegram-bot"),

@@ -2006,6 +2006,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- OpsMesh direct/provider poll delivery now applies the remaining OpenClaw
+  `normalizePollInput` shape guards for empty questions and fewer than two
+  cleaned options before provider lookup, persisted delivery creation, route
+  backed runtime posting, or native provider payload construction.
+- Verified the OpsMesh poll shape guard slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_invalid_poll_shape"` (`2 passed`),
+  adjacent provider poll pack `python -m pytest tests\test_ops_mesh.py -q -k
+  "rejects_invalid_poll_shape or
+  send_direct_channel_poll_uses_telegram_native_route or
+  send_direct_channel_poll_uses_discord_native_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  send_direct_channel_poll_uses_gateway_route_adapter or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one or
+  rejects_provider_option_caps or rejects_max_selections_above_options or
+  rejects_invalid_telegram_durations"` (`13 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

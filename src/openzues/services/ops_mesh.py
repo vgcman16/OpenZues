@@ -1412,6 +1412,13 @@ def _normalize_direct_channel_poll_options(options: list[str]) -> list[str]:
     return [normalized for option in options if (normalized := str(option).strip())]
 
 
+def _validate_direct_channel_poll_shape(question: str, options: list[str]) -> None:
+    if not question.strip():
+        raise ValueError("Poll question is required")
+    if len([option for option in options if option.strip()]) < 2:
+        raise ValueError("Poll requires at least 2 options")
+
+
 def _direct_channel_poll_max_options(channel: str) -> int:
     normalized = channel.strip().lower()
     if normalized in {"discord", "telegram"}:
@@ -6841,11 +6848,14 @@ class OpsMeshService:
             raise GatewayOutboundRuntimeUnavailableError(
                 "gateway outbound provider route is missing a conversation target"
             )
+        question = request.question.strip()
+        options = _normalize_direct_channel_poll_options(list(request.options))
+        _validate_direct_channel_poll_shape(question, options)
         payload: dict[str, Any] = {
             "channel": request.channel,
             "to": request.target,
-            "question": request.question,
-            "options": list(request.options),
+            "question": question,
+            "options": options,
         }
         if request.max_selections is not None:
             payload["maxSelections"] = request.max_selections
@@ -7300,6 +7310,7 @@ class OpsMeshService:
             raise ValueError("poll requires an explicit channel target")
         normalized_question = str(question).strip()
         normalized_options = _normalize_direct_channel_poll_options(options)
+        _validate_direct_channel_poll_shape(normalized_question, normalized_options)
         resolved_max_selections = max_selections if max_selections is not None else 1
         _validate_direct_channel_poll_option_count(
             conversation_target.channel,
@@ -8560,8 +8571,10 @@ class OpsMeshService:
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
         if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_shape(question, options)
             _validate_direct_channel_poll_option_count("telegram", options)
             _validate_direct_channel_poll_max_selections(
                 options,
@@ -8579,7 +8592,7 @@ class OpsMeshService:
             )
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
-                "question": str(event.get("question") or event.get("summary") or ""),
+                "question": question,
                 "options": options,
             }
             if _optional_bool_payload_value(event, "isAnonymous") is not None:
@@ -8712,8 +8725,10 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_shape(question, options)
             _validate_direct_channel_poll_option_count("discord", options)
             max_selections = _optional_int_payload_value(event, "maxSelections")
             _validate_direct_channel_poll_max_selections(options, max_selections)
@@ -8724,7 +8739,7 @@ class OpsMeshService:
             payload: dict[str, Any] = {
                 "poll": {
                     "question": {
-                        "text": str(event.get("question") or event.get("summary") or ""),
+                        "text": question,
                     },
                     "answers": [
                         {"poll_media": {"text": option}}
@@ -8814,6 +8829,7 @@ class OpsMeshService:
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_shape(question, options)
             _validate_direct_channel_poll_option_count("whatsapp", options)
             _validate_direct_channel_poll_max_selections(
                 options,

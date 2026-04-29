@@ -2266,6 +2266,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- Closed the remaining OpsMesh poll shape guards from OpenClaw
+  `normalizePollInput`: direct/provider poll delivery now rejects empty
+  questions and fewer than two cleaned options before provider lookup,
+  persisted delivery creation, route-backed runtime posting, or native provider
+  payload construction. Verified with `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_invalid_poll_shape"`, adjacent OpsMesh
+  provider poll pack, `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk
