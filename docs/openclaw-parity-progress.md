@@ -968,6 +968,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   re-checks the active-aware exact run-id lookup before session fallback, so an
   active exact run cannot be completed by an unrelated session terminal row.
 - Verified the active-exact-after-stale-terminal seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_preserves_active_exact_run_after_stale_terminal"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_child_cap_pruning_does_not_consume_wait_lifecycle or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn sandbox="require"` now resolves OpenClaw-style
+  `agents.defaults.sandbox` and `agents.list[].sandbox` target posture before
+  dispatch. Effective `mode="off"` targets return the existing precise
+  forbidden response even when a native sandbox send adapter is wired, while
+  `mode="all"` keeps the native workspace-write sandbox dispatch path.
+- Verified the config-gated required-sandbox seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_required_sandbox_when_target_config_is_off"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\gateway_config.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\gateway_config.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References

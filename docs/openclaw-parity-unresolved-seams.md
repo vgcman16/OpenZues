@@ -34,8 +34,12 @@ app-server child turns with an explicit `workspace-write` sandbox override,
 calls Windows sandbox setup before dispatch, persists `sandboxed`,
 `sandboxMode`, sandbox policy, runtime id, runtime thread/session ids, and
 still returns the existing precise forbidden response when no sandbox runtime
-is available. Remaining sandbox parity is config-driven per-agent sandbox
-target selection and deeper media/workspace staging behavior from OpenClaw.
+is available. `sandbox="require"` now also resolves OpenClaw's
+`agents.defaults.sandbox` plus `agents.list[].sandbox` target posture before
+dispatching; targets whose effective sandbox `mode` is `off` keep the same
+forbidden response even when a sandbox send adapter is wired. Remaining sandbox
+parity is the sandboxed-requester inherit guard, config-driven non-main/all
+inherit dispatch, and deeper media/workspace staging behavior from OpenClaw.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,

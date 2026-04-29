@@ -71,7 +71,10 @@ from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeService,
 )
-from openzues.services.gateway_sandbox_spawn import sandbox_runtime_metadata
+from openzues.services.gateway_sandbox_spawn import (
+    FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
+    sandbox_runtime_metadata,
+)
 from openzues.services.gateway_session_compaction import (
     GatewaySessionCompactionService,
     GatewaySessionCompactionUnavailableError,
@@ -303,6 +306,18 @@ class GatewayTrackedChatRun:
     run_id: str
     session_key: str
     started_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class GatewaySpawnSandboxRuntimeStatus:
+    agent_id: str
+    session_key: str
+    main_session_key: str
+    mode: Literal["off", "non-main", "all"]
+    sandboxed: bool
+    workspace_access: str | None = None
+    workspace_root: str | None = None
+    scope: str | None = None
 
 
 @dataclass(slots=True)
@@ -7160,27 +7175,13 @@ class GatewayNodeMethodService:
                 if self._sandbox_chat_send_service is None:
                     return {
                         "status": "forbidden",
-                        "error": (
-                            'sessions_spawn sandbox="require" needs a sandboxed target runtime. '
-                            'Pick a sandboxed agentId or use sandbox="inherit".'
-                        ),
+                        "error": FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
                         **role_context,
                     }
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="sessions.spawn is unavailable until session inventory is wired",
-                    status_code=503,
-                )
-            effective_chat_send_service = (
-                self._sandbox_chat_send_service
-                if sandbox == "require"
-                else self._chat_send_service
-            )
-            if effective_chat_send_service is None:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message="sessions.spawn is unavailable until control chat runtime is wired",
                     status_code=503,
                 )
             if agent_id is not None and not await self._agents_service.agent_exists(agent_id):
@@ -7262,6 +7263,33 @@ class GatewayNodeMethodService:
                 base_session_key=spawn_base_session_key,
                 thread_id=f"gateway-spawn-{secrets.token_hex(6)}",
             ).session_key
+            child_sandbox_status = _sessions_spawn_sandbox_runtime_status(
+                self._config_service,
+                session_key=canonical_key,
+            )
+            if not child_sandbox_status.sandboxed and sandbox == "require":
+                return {
+                    "status": "forbidden",
+                    "error": FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
+                    **role_context,
+                }
+            effective_chat_send_service = (
+                self._sandbox_chat_send_service
+                if sandbox == "require"
+                else self._chat_send_service
+            )
+            if effective_chat_send_service is None:
+                if sandbox == "require":
+                    return {
+                        "status": "forbidden",
+                        "error": FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
+                        **role_context,
+                    }
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="sessions.spawn is unavailable until control chat runtime is wired",
+                    status_code=503,
+                )
             label = _optional_session_label(payload.get("label"), label="label")
             model = _optional_non_empty_string(payload.get("model"), label="model")
             thinking = _optional_non_empty_string(payload.get("thinking"), label="thinking")
@@ -7346,9 +7374,16 @@ class GatewayNodeMethodService:
                 "spawnMode": tracked_mode,
                 "cleanup": tracked_cleanup,
             }
-            if sandbox == "require":
+            if sandbox == "require" and child_sandbox_status.sandboxed:
                 metadata["sandboxed"] = True
                 metadata["sandboxMode"] = "workspace-write"
+                metadata["sandboxConfigMode"] = child_sandbox_status.mode
+                if child_sandbox_status.workspace_access is not None:
+                    metadata["sandboxWorkspaceAccess"] = child_sandbox_status.workspace_access
+                if child_sandbox_status.workspace_root is not None:
+                    metadata["sandboxWorkspaceRoot"] = child_sandbox_status.workspace_root
+                if child_sandbox_status.scope is not None:
+                    metadata["sandboxScope"] = child_sandbox_status.scope
             if run_timeout_seconds is not None:
                 metadata["runTimeoutSeconds"] = run_timeout_seconds
             requester_origin = _requester_route_context(resolved_requester)
@@ -7469,6 +7504,9 @@ class GatewayNodeMethodService:
                     {
                         "sandbox": "require",
                         "sandbox_mode": "workspace-write",
+                        "agent_id": target_agent_id,
+                        "cwd": cwd,
+                        "model": model,
                     }
                     if sandbox == "require"
                     else {}
@@ -12094,6 +12132,120 @@ def _sessions_spawn_allowed_agent_policy(
             continue
         allowed.add(normalize_agent_id(text))
     return allow_any, tuple(sorted(allowed))
+
+
+def _sessions_spawn_sandbox_runtime_status(
+    config_service: GatewayConfigService | None,
+    *,
+    session_key: str,
+) -> GatewaySpawnSandboxRuntimeStatus:
+    agent_id = resolve_agent_id_from_session_key(session_key)
+    sandbox_config = _sessions_spawn_sandbox_config_for_agent(
+        config_service,
+        agent_id=agent_id,
+    )
+    mode = _sessions_spawn_sandbox_mode(sandbox_config.get("mode"))
+    main_session_key = build_agent_main_session_key(agent_id=agent_id)
+    sandboxed = mode == "all" or (
+        mode == "non-main"
+        and not _sessions_spawn_session_is_agent_main(
+            session_key,
+            main_session_key=main_session_key,
+        )
+    )
+    return GatewaySpawnSandboxRuntimeStatus(
+        agent_id=agent_id,
+        session_key=session_key,
+        main_session_key=main_session_key,
+        mode=mode,
+        sandboxed=sandboxed,
+        workspace_access=_string_or_none(sandbox_config.get("workspaceAccess")),
+        workspace_root=_string_or_none(sandbox_config.get("workspaceRoot")),
+        scope=_string_or_none(sandbox_config.get("scope")),
+    )
+
+
+def _sessions_spawn_sandbox_config_for_agent(
+    config_service: GatewayConfigService | None,
+    *,
+    agent_id: str,
+) -> dict[str, Any]:
+    if config_service is None:
+        return {}
+    resolved: dict[str, Any] = {}
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        defaults_config = agents_config.get("defaults")
+        if isinstance(defaults_config, dict):
+            default_sandbox = defaults_config.get("sandbox")
+            if isinstance(default_sandbox, dict):
+                resolved.update(default_sandbox)
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        if isinstance(agent_config, dict):
+            agent_sandbox = agent_config.get("sandbox")
+            if isinstance(agent_sandbox, dict):
+                resolved.update(agent_sandbox)
+    return resolved
+
+
+def _sessions_spawn_agents_config_roots(
+    config_service: GatewayConfigService,
+) -> tuple[dict[str, Any], ...]:
+    snapshot = config_service.build_snapshot()
+    roots: list[dict[str, Any]] = []
+    gateway_config = snapshot.get("gateway")
+    if isinstance(gateway_config, dict):
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
+
+
+def _sessions_spawn_agent_config_from_root(
+    agents_config: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    normalized_agent_id = normalize_agent_id(agent_id)
+    raw_list = agents_config.get("list")
+    if not isinstance(raw_list, list):
+        return None
+    for raw_agent in raw_list:
+        if not isinstance(raw_agent, dict):
+            continue
+        candidate_id = _string_or_none(raw_agent.get("id"))
+        if candidate_id is not None and normalize_agent_id(candidate_id) == normalized_agent_id:
+            return raw_agent
+    return None
+
+
+def _sessions_spawn_sandbox_mode(value: object) -> Literal["off", "non-main", "all"]:
+    text = _string_or_none(value)
+    if text in {"off", "non-main", "all"}:
+        return cast(Literal["off", "non-main", "all"], text)
+    return "off"
+
+
+def _sessions_spawn_session_is_agent_main(
+    session_key: str,
+    *,
+    main_session_key: str,
+) -> bool:
+    normalized_session_key = str(session_key or "").strip().lower()
+    normalized_main_session_key = str(main_session_key or "").strip().lower()
+    if not normalized_session_key:
+        return False
+    if normalized_session_key == normalized_main_session_key:
+        return True
+    return normalized_session_key in {
+        DEFAULT_MAIN_KEY,
+        f"agent:{DEFAULT_AGENT_ID}:{DEFAULT_MAIN_KEY}",
+    } and normalized_main_session_key == f"agent:{DEFAULT_AGENT_ID}:{DEFAULT_MAIN_KEY}"
 
 
 def _sessions_spawn_subagent_role(

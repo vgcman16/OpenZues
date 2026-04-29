@@ -14508,11 +14508,102 @@ async def test_sessions_spawn_rejects_required_sandbox_without_sandbox_runtime(t
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_rejects_required_sandbox_when_target_config_is_off(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-sandbox-config-off.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "off",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"runId": "run-should-not-start", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {"task": "Run this in a sandbox.", "sandbox": "require"},
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "error": (
+            'sessions_spawn sandbox="require" needs a sandboxed target runtime. '
+            'Pick a sandboxed agentId or use sandbox="inherit".'
+        ),
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_required_sandbox_dispatches_when_runtime_wired(
     tmp_path,
 ) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-sandbox-runtime.db")
     await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                },
+            }
+        )
+    )
     calls: list[dict[str, object]] = []
 
     async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
@@ -14523,6 +14614,7 @@ async def test_sessions_spawn_required_sandbox_dispatches_when_runtime_wired(
         GatewayNodeRegistry(),
         database=database,
         sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
         sandbox_chat_send_service=fake_sandbox_chat_send_service,
     )
 
@@ -14553,6 +14645,34 @@ async def test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata(
 ) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-sandbox-runtime-metadata.db")
     await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        },
+                    },
+                },
+            }
+        )
+    )
 
     async def fake_sandbox_chat_send_service(**_kwargs: object) -> dict[str, object]:
         return {
@@ -14571,6 +14691,7 @@ async def test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata(
         GatewayNodeRegistry(),
         database=database,
         sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
         sandbox_chat_send_service=fake_sandbox_chat_send_service,
     )
 
