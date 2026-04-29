@@ -36729,10 +36729,10 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             project_id=None,
             operator_id=None,
             conversation_target=ConversationTargetView(
-                channel="slack",
+                channel="telegram",
                 account_id="default",
                 peer_kind="channel",
-                peer_id="channel:C123",
+                peer_id="123",
             ),
         ),
         thread_id="1710000000.9999",
@@ -36785,14 +36785,14 @@ async def test_poll_uses_channel_poll_runtime() -> None:
     payload = await service.call(
         "poll",
         {
-            "to": " channel:C123 ",
+            "to": " 123 ",
             "question": " Ship it? ",
             "options": [" Yes ", " No "],
             "maxSelections": 1,
             "durationHours": 24,
             "silent": True,
             "isAnonymous": False,
-            "channel": "slack",
+            "channel": "telegram",
             "accountId": " default ",
             "threadId": " 1710000000.9999 ",
             "idempotencyKey": "idem-poll-runtime",
@@ -36801,8 +36801,8 @@ async def test_poll_uses_channel_poll_runtime() -> None:
 
     assert calls == [
         {
-            "channel": "slack",
-            "to": "channel:C123",
+            "channel": "telegram",
+            "to": "123",
             "question": "Ship it?",
             "options": ["Yes", "No"],
             "max_selections": 1,
@@ -36878,12 +36878,12 @@ async def test_poll_allows_duration_hours_and_silent_before_delivery_placeholder
 
 
 @pytest.mark.asyncio
-async def test_poll_allows_is_anonymous_before_delivery_placeholder() -> None:
+async def test_poll_rejects_is_anonymous_for_non_telegram_like_openclaw() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
     with pytest.raises(
         GatewayNodeMethodError,
-        match="poll is unavailable until channel-target poll delivery is wired",
+        match="isAnonymous is not supported for slack polls",
     ) as exc_info:
         await service.call(
             "poll",
@@ -36897,8 +36897,8 @@ async def test_poll_allows_is_anonymous_before_delivery_placeholder() -> None:
             },
         )
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio

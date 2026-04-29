@@ -133,6 +133,10 @@ payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
 saved delivery metadata path.
+Gateway `poll` now also mirrors OpenClaw's provider capability guard for
+anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
+outbound adapter advertises anonymous-poll support, and non-Telegram channels
+return `INVALID_REQUEST` before any runtime dispatch.
 Telegram topic-qualified native polls now have the same focused proof as
 topic-qualified sends: parent supergroup routes accept
 `telegram:group:<chatId>:topic:<threadId>` targets, and the Bot API

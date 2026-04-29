@@ -5691,6 +5691,14 @@ class GatewayNodeMethodService:
                 rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
+            if is_anonymous is not None and not _gateway_poll_supports_anonymous(
+                resolved_channel
+            ):
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=f"isAnonymous is not supported for {resolved_channel} polls",
+                    status_code=400,
+                )
             account_id = _optional_normalized_string(payload.get("accountId"), label="accountId")
             thread_id = _optional_normalized_string(payload.get("threadId"), label="threadId")
             idempotency_key = _require_non_empty_string(
@@ -16282,6 +16290,10 @@ def _gateway_channel_label(channel: str) -> str:
         "telegram": "Telegram",
         "whatsapp": "WhatsApp",
     }.get(channel, channel.title())
+
+
+def _gateway_poll_supports_anonymous(channel: str) -> bool:
+    return channel == "telegram"
 
 
 def _validate_gateway_outbound_target(channel: str, target: str) -> None:
