@@ -1662,6 +1662,40 @@ def _emit_plugins_inventory(
             )
 
 
+def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    errors = payload.get("errors")
+    diagnostics = payload.get("diagnostics")
+    error_rows = errors if isinstance(errors, list) else []
+    diagnostic_rows = diagnostics if isinstance(diagnostics, list) else []
+    if not error_rows and not diagnostic_rows:
+        typer.echo("No plugin issues detected.")
+        return
+    if error_rows:
+        typer.echo("Plugin errors:")
+        for entry in error_rows:
+            if not isinstance(entry, dict):
+                continue
+            plugin_id = str(entry.get("id") or "").strip()
+            error = str(entry.get("error") or "failed to load").strip()
+            source = str(entry.get("source") or "").strip()
+            suffix = f" ({source})" if source else ""
+            typer.echo(f"- {plugin_id}: {error}{suffix}")
+    if diagnostic_rows:
+        if error_rows:
+            typer.echo("")
+        typer.echo("Diagnostics:")
+        for entry in diagnostic_rows:
+            if not isinstance(entry, dict):
+                continue
+            plugin_id = str(entry.get("pluginId") or "").strip()
+            message = str(entry.get("message") or "").strip()
+            prefix = f"{plugin_id}: " if plugin_id else ""
+            typer.echo(f"- {prefix}{message}")
+
+
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -1834,6 +1868,46 @@ async def _build_plugins_inventory_payload(
         "workspaceDir": workspace_dir,
         "plugins": plugins,
         "diagnostics": diagnostics,
+    }
+
+
+async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, object]:
+    inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    plugins = inventory.get("plugins")
+    plugin_rows = plugins if isinstance(plugins, list) else []
+    errors: list[dict[str, object]] = []
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        if str(plugin.get("status") or "").strip() != "error":
+            continue
+        errors.append(
+            {
+                "id": str(plugin.get("id") or "").strip(),
+                "source": str(plugin.get("source") or "").strip(),
+                "error": str(plugin.get("description") or "failed to load").strip(),
+            }
+        )
+    raw_diagnostics = inventory.get("diagnostics")
+    diagnostic_rows = raw_diagnostics if isinstance(raw_diagnostics, list) else []
+    diagnostics = [
+        diagnostic
+        for diagnostic in diagnostic_rows
+        if isinstance(diagnostic, dict)
+        and str(diagnostic.get("level") or "").strip() == "error"
+    ]
+    issue_count = len(errors) + len(diagnostics)
+    return {
+        "ok": issue_count == 0,
+        "summary": (
+            "No plugin issues detected."
+            if issue_count == 0
+            else f"{issue_count} plugin issue(s) detected."
+        ),
+        "workspaceDir": inventory.get("workspaceDir"),
+        "errors": errors,
+        "diagnostics": diagnostics,
+        "docs": "https://docs.openclaw.ai/plugin",
     }
 
 
@@ -4096,6 +4170,21 @@ def plugins_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_plugins_inventory(payload, json_output=json_output, verbose=verbose)
+
+
+@plugins_app.command("doctor")
+def plugins_doctor_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit plugin diagnostics as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_doctor_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_plugins_doctor(payload, json_output=json_output)
 
 
 @sandbox_app.command("list")

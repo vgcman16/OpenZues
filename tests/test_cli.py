@@ -677,6 +677,65 @@ def test_plugins_list_enabled_filters_loaded_plugins(monkeypatch) -> None:
     assert [plugin["id"] for plugin in payload["plugins"]] == ["codex_plugins"]
 
 
+def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": ["Source-only inventory is advisory."],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "codex_plugins",
+                            "label": "Live Codex Plugins",
+                            "status": "ready",
+                            "summary": "Connected lanes expose plugins.",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "No plugin issues detected." in result.stdout
+
+
+def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "broken_plugin",
+                            "label": "Broken Plugin",
+                            "status": "error",
+                            "summary": "failed to load plugin: boom",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Plugin errors:" in result.stdout
+    assert "- broken_plugin: failed to load plugin: boom (openzues)" in result.stdout
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
