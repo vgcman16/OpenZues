@@ -46,6 +46,7 @@ from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
 )
+from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import (
     GatewayNodeMethodError,
     GatewayNodeMethodRequester,
@@ -787,17 +788,58 @@ async def test_models_list_returns_bounded_catalog_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_models_auth_status_returns_validated_unavailable_contract() -> None:
-    service = GatewayNodeMethodService(GatewayNodeRegistry())
+async def test_models_auth_status_returns_native_snapshot() -> None:
+    calls: list[dict[str, object]] = []
 
-    with pytest.raises(GatewayNodeMethodError) as exc_info:
-        await service.call("models.authStatus", {"refresh": True})
+    async def fake_auth_status_service(
+        *,
+        refresh: bool,
+        now_ms: int,
+    ) -> dict[str, object]:
+        calls.append({"refresh": refresh, "nowMs": now_ms})
+        return {
+            "ts": 1000,
+            "providers": [
+                {
+                    "provider": "openai-codex",
+                    "displayName": "OpenAI Codex",
+                    "status": "ok",
+                    "profiles": [
+                        {
+                            "profileId": "openai-codex:default",
+                            "type": "oauth",
+                            "status": "ok",
+                        }
+                    ],
+                }
+            ],
+        }
 
-    assert exc_info.value.code == "UNAVAILABLE"
-    assert exc_info.value.status_code == 503
-    assert str(exc_info.value) == (
-        "models.authStatus is unavailable until model auth health runtime is wired"
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        models_service=GatewayModelsService(auth_status_service=fake_auth_status_service),
     )
+
+    payload = await service.call("models.authStatus", {"refresh": True}, now_ms=777)
+
+    assert calls == [{"refresh": True, "nowMs": 777}]
+    assert payload == {
+        "ts": 1000,
+        "providers": [
+            {
+                "provider": "openai-codex",
+                "displayName": "OpenAI Codex",
+                "status": "ok",
+                "profiles": [
+                    {
+                        "profileId": "openai-codex:default",
+                        "type": "oauth",
+                        "status": "ok",
+                    }
+                ],
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio

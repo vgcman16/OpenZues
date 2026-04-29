@@ -3172,7 +3172,7 @@ def test_gateway_node_method_call_endpoint_supports_models_list(tmp_path) -> Non
     }
 
 
-def test_gateway_node_method_call_endpoint_returns_models_auth_status_unavailable_contract(
+def test_gateway_node_method_call_endpoint_returns_models_auth_status_snapshot(
     tmp_path,
 ) -> None:
     app_settings = Settings(
@@ -3188,10 +3188,10 @@ def test_gateway_node_method_call_endpoint_returns_models_auth_status_unavailabl
             json={"method": "models.authStatus", "params": {"refresh": True}},
         )
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "models.authStatus is unavailable until model auth health runtime is wired"
-    }
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["ts"], int)
+    assert payload["providers"] == []
 
 
 def test_gateway_node_method_call_endpoint_rejects_unknown_device_token_target(

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import math
+import os
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +48,10 @@ _FALLBACK_MODELS: tuple[dict[str, Any], ...] = tuple(
     }
     for entry in _DEFAULT_MODELS
 )
+_AUTH_STATUS_CACHE_TTL_MS = 60_000
+_AUTH_PROVIDER_STATUSES = {"ok", "expiring", "expired", "missing", "static"}
+_AUTH_PROFILE_TYPES = {"oauth", "token", "api_key"}
+_AUTH_PROFILE_STATUSES = {"ok", "expiring", "expired", "missing", "static"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,8 +74,11 @@ class GatewayModelsService:
         self,
         *,
         list_instance_views: Callable[[], Awaitable[list[InstanceView]]] | None = None,
+        auth_status_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
     ) -> None:
         self._list_instance_views = list_instance_views
+        self._auth_status_service = auth_status_service
+        self._auth_status_cache: tuple[int, dict[str, Any]] | None = None
 
     async def build_catalog(self) -> dict[str, Any]:
         entries: list[dict[str, Any]] = []
@@ -130,6 +141,233 @@ class GatewayModelsService:
 
         entries.sort(key=_model_sort_key)
         return {"models": entries}
+
+    async def build_auth_status(
+        self,
+        *,
+        refresh: bool = False,
+        now_ms: int | None = None,
+    ) -> dict[str, Any]:
+        resolved_now_ms = _auth_status_now_ms(now_ms)
+        if (
+            not refresh
+            and self._auth_status_cache is not None
+            and resolved_now_ms - self._auth_status_cache[0] < _AUTH_STATUS_CACHE_TTL_MS
+        ):
+            return _clone_auth_status_payload(self._auth_status_cache[1])
+
+        if self._auth_status_service is not None:
+            raw_payload = await self._auth_status_service(
+                refresh=refresh,
+                now_ms=resolved_now_ms,
+            )
+        else:
+            raw_payload = await self._build_native_auth_status(now_ms=resolved_now_ms)
+        payload = _normalize_auth_status_payload(raw_payload, fallback_ts=resolved_now_ms)
+        self._auth_status_cache = (resolved_now_ms, payload)
+        return _clone_auth_status_payload(payload)
+
+    async def _build_native_auth_status(self, *, now_ms: int) -> dict[str, Any]:
+        providers: dict[str, dict[str, Any]] = {}
+        if self._list_instance_views is not None:
+            for instance in await self._list_instance_views():
+                for provider in _collect_refreshable_auth_provider_ids(instance.config):
+                    providers.setdefault(
+                        provider,
+                        {
+                            "provider": provider,
+                            "displayName": provider,
+                            "status": "missing",
+                            "profiles": [],
+                        },
+                    )
+        return {
+            "ts": now_ms,
+            "providers": [providers[key] for key in sorted(providers)],
+        }
+
+
+def _auth_status_now_ms(value: int | None) -> int:
+    if value is not None:
+        return value
+    return int(time.time() * 1000)
+
+
+def _clone_auth_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return deepcopy(payload)
+
+
+def _normalize_auth_status_payload(
+    value: object,
+    *,
+    fallback_ts: int,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("models.authStatus returned invalid payload")
+    ts = value.get("ts")
+    resolved_ts = (
+        int(ts) if isinstance(ts, int | float) and not isinstance(ts, bool) else fallback_ts
+    )
+    raw_providers = value.get("providers")
+    if raw_providers is None:
+        raw_providers = []
+    if not isinstance(raw_providers, list):
+        raise ValueError("models.authStatus returned invalid payload")
+    providers = [
+        provider
+        for raw_provider in raw_providers
+        for provider in (_normalize_auth_status_provider(raw_provider),)
+        if provider is not None
+    ]
+    providers.sort(key=lambda entry: str(entry.get("provider") or "").casefold())
+    return {"ts": resolved_ts, "providers": providers}
+
+
+def _normalize_auth_status_provider(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    provider = _normalize_provider_id(_optional_non_empty_string(value.get("provider")))
+    if provider is None:
+        return None
+    status = _optional_non_empty_string(value.get("status"))
+    if status not in _AUTH_PROVIDER_STATUSES:
+        status = "missing"
+    display_name = _optional_non_empty_string(value.get("displayName")) or provider
+    raw_profiles = value.get("profiles")
+    profiles = (
+        [_normalize_auth_status_profile(entry) for entry in raw_profiles]
+        if isinstance(raw_profiles, list)
+        else []
+    )
+    normalized: dict[str, Any] = {
+        "provider": provider,
+        "displayName": display_name,
+        "status": status,
+        "profiles": [entry for entry in profiles if entry is not None],
+    }
+    expiry = _normalize_auth_status_expiry(value.get("expiry"))
+    if expiry is not None:
+        normalized["expiry"] = expiry
+    usage = _normalize_auth_status_usage(value.get("usage"))
+    if usage is not None:
+        normalized["usage"] = usage
+    return normalized
+
+
+def _normalize_auth_status_profile(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    profile_id = _optional_non_empty_string(value.get("profileId"))
+    profile_type = _optional_non_empty_string(value.get("type"))
+    status = _optional_non_empty_string(value.get("status"))
+    if (
+        profile_id is None
+        or profile_type not in _AUTH_PROFILE_TYPES
+        or status not in _AUTH_PROFILE_STATUSES
+    ):
+        return None
+    normalized: dict[str, Any] = {
+        "profileId": profile_id,
+        "type": profile_type,
+        "status": status,
+    }
+    expiry = _normalize_auth_status_expiry(value.get("expiry"))
+    if expiry is not None:
+        normalized["expiry"] = expiry
+    return normalized
+
+
+def _normalize_auth_status_expiry(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    at = value.get("at")
+    remaining_ms = value.get("remainingMs")
+    label = _optional_non_empty_string(value.get("label"))
+    if (
+        not isinstance(at, int | float)
+        or isinstance(at, bool)
+        or not math.isfinite(at)
+        or not isinstance(remaining_ms, int | float)
+        or isinstance(remaining_ms, bool)
+        or not math.isfinite(remaining_ms)
+        or label is None
+    ):
+        return None
+    return {"at": int(at), "remainingMs": int(remaining_ms), "label": label}
+
+
+def _normalize_auth_status_usage(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    raw_windows = value.get("windows")
+    if not isinstance(raw_windows, list):
+        return None
+    usage: dict[str, Any] = {
+        "windows": [dict(entry) for entry in raw_windows if isinstance(entry, Mapping)]
+    }
+    plan = _optional_non_empty_string(value.get("plan"))
+    if plan is not None:
+        usage["plan"] = plan
+    return usage
+
+
+def _collect_refreshable_auth_provider_ids(config: object) -> set[str]:
+    if not isinstance(config, Mapping):
+        return set()
+    env_backed = _collect_env_backed_model_provider_ids(config)
+    providers: set[str] = set()
+    raw_models = config.get("models")
+    raw_provider_map = raw_models.get("providers") if isinstance(raw_models, Mapping) else None
+    if isinstance(raw_provider_map, Mapping):
+        for raw_provider, raw_provider_config in raw_provider_map.items():
+            provider = _normalize_provider_id(_optional_non_empty_string(raw_provider))
+            if provider is None or provider in env_backed or not isinstance(
+                raw_provider_config, Mapping
+            ):
+                continue
+            if raw_provider_config.get("auth") in {"oauth", "token"}:
+                providers.add(provider)
+    raw_auth = config.get("auth")
+    raw_profiles = raw_auth.get("profiles") if isinstance(raw_auth, Mapping) else None
+    if isinstance(raw_profiles, Mapping):
+        for raw_profile in raw_profiles.values():
+            if not isinstance(raw_profile, Mapping):
+                continue
+            provider = _normalize_provider_id(
+                _optional_non_empty_string(raw_profile.get("provider"))
+            )
+            if provider is None or provider in env_backed:
+                continue
+            if raw_profile.get("mode") in {"oauth", "token"}:
+                providers.add(provider)
+    return providers
+
+
+def _collect_env_backed_model_provider_ids(config: Mapping[str, object]) -> set[str]:
+    raw_models = config.get("models")
+    raw_provider_map = raw_models.get("providers") if isinstance(raw_models, Mapping) else None
+    if not isinstance(raw_provider_map, Mapping):
+        return set()
+    providers: set[str] = set()
+    for raw_provider, raw_provider_config in raw_provider_map.items():
+        provider = _normalize_provider_id(_optional_non_empty_string(raw_provider))
+        if provider is None or not isinstance(raw_provider_config, Mapping):
+            continue
+        if _is_resolvable_secret_input(raw_provider_config.get("apiKey")):
+            providers.add(provider)
+    return providers
+
+
+def _is_resolvable_secret_input(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value)
+    if not isinstance(value, Mapping):
+        return False
+    source = _optional_non_empty_string(value.get("source"))
+    secret_id = _optional_non_empty_string(value.get("id"))
+    if source == "env":
+        return secret_id is not None and bool(os.environ.get(secret_id))
+    return source is not None and secret_id is not None
 
 
 def _upsert_model(

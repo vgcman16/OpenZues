@@ -1849,6 +1849,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   resolver, and validates the returned assignments/diagnostics/inactive refs
   into the OpenClaw `{ok, assignments, diagnostics, inactiveRefPaths}` result.
 - Verified the `secrets.resolve` resolver seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "secrets_resolve or secrets_reload"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "secrets_resolve or secrets_reload or config_patch_noop_skips_restart_sentinel or update_run"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `models.authStatus` now returns a native OpenClaw-shaped auth snapshot
+  instead of the placeholder unavailable response. The `GatewayModelsService`
+  owner supports a fakeable auth-status runtime, TTL caching with
+  `refresh=true` bypass, sanitized provider/profile projection, empty native
+  snapshots when no instances are present, and missing-provider synthesis for
+  refreshable configured providers without env-backed API keys.
+- Verified the `models.authStatus` seam with `python -m pytest tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status"`, adjacent `python -m pytest tests\test_gateway_models.py -q`, `python -m pytest tests\test_cli.py -q -k "model_auth_status or models_status or infer_model_auth"`, `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "models_auth_status or models_list or secrets_resolve or secrets_reload"`, `ruff check src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py tests\test_gateway_models.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_models.py src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

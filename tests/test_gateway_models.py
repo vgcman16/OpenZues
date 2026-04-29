@@ -50,6 +50,157 @@ async def test_gateway_models_build_catalog_returns_default_bounded_catalog() ->
 
 
 @pytest.mark.asyncio
+async def test_gateway_models_auth_status_returns_empty_snapshot_without_instances() -> None:
+    payload = await GatewayModelsService().build_auth_status(refresh=True, now_ms=1234)
+
+    assert payload == {"ts": 1234, "providers": []}
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_auth_status_uses_fakeable_runtime_and_sanitizes_profiles() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_auth_status_service(
+        *,
+        refresh: bool,
+        now_ms: int,
+    ) -> dict[str, object]:
+        calls.append({"refresh": refresh, "nowMs": now_ms})
+        return {
+            "ts": 1000,
+            "providers": [
+                {
+                    "provider": "openai-codex",
+                    "displayName": "OpenAI Codex",
+                    "status": "ok",
+                    "secret": "sk-hidden",
+                    "expiry": {"at": 2000, "remainingMs": 1000, "label": "1s"},
+                    "profiles": [
+                        {
+                            "profileId": "openai-codex:default",
+                            "type": "oauth",
+                            "status": "ok",
+                            "access": "sk-hidden",
+                            "expiry": {"at": 2000, "remainingMs": 1000, "label": "1s"},
+                        }
+                    ],
+                    "usage": {"windows": [{"window": "day", "used": 1}], "plan": "pro"},
+                }
+            ],
+        }
+
+    payload = await GatewayModelsService(
+        auth_status_service=fake_auth_status_service,
+    ).build_auth_status(refresh=True, now_ms=555)
+
+    assert calls == [{"refresh": True, "nowMs": 555}]
+    assert payload == {
+        "ts": 1000,
+        "providers": [
+            {
+                "provider": "openai-codex",
+                "displayName": "OpenAI Codex",
+                "status": "ok",
+                "expiry": {"at": 2000, "remainingMs": 1000, "label": "1s"},
+                "profiles": [
+                    {
+                        "profileId": "openai-codex:default",
+                        "type": "oauth",
+                        "status": "ok",
+                        "expiry": {"at": 2000, "remainingMs": 1000, "label": "1s"},
+                    }
+                ],
+                "usage": {"windows": [{"window": "day", "used": 1}], "plan": "pro"},
+            }
+        ],
+    }
+    assert "sk-hidden" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_auth_status_caches_until_refresh() -> None:
+    calls: list[int] = []
+
+    async def fake_auth_status_service(
+        *,
+        refresh: bool,
+        now_ms: int,
+    ) -> dict[str, object]:
+        calls.append(now_ms)
+        return {
+            "ts": now_ms,
+            "providers": [
+                {
+                    "provider": "anthropic",
+                    "displayName": "Anthropic",
+                    "status": "missing",
+                    "profiles": [],
+                }
+            ],
+        }
+
+    service = GatewayModelsService(auth_status_service=fake_auth_status_service)
+
+    first = await service.build_auth_status(now_ms=1000)
+    second = await service.build_auth_status(now_ms=1500)
+    refreshed = await service.build_auth_status(refresh=True, now_ms=2000)
+
+    assert calls == [1000, 2000]
+    assert second == first
+    assert refreshed["ts"] == 2000
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_auth_status_synthesizes_missing_refreshable_provider() -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={"models": {"providers": {"openai-codex": {"auth": "oauth"}}}},
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views,
+    ).build_auth_status(now_ms=1234)
+
+    assert payload == {
+        "ts": 1234,
+        "providers": [
+            {
+                "provider": "openai-codex",
+                "displayName": "openai-codex",
+                "status": "missing",
+                "profiles": [],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_auth_status_skips_env_backed_refreshable_provider() -> None:
+    async def list_instance_views() -> list[InstanceView]:
+        return [
+            _instance_view(
+                [],
+                config={
+                    "models": {
+                        "providers": {
+                            "openai-codex": {"auth": "oauth", "apiKey": "sk-present"}
+                        }
+                    }
+                },
+            )
+        ]
+
+    payload = await GatewayModelsService(
+        list_instance_views=list_instance_views,
+    ).build_auth_status(now_ms=1234)
+
+    assert payload == {"ts": 1234, "providers": []}
+
+
+@pytest.mark.asyncio
 async def test_gateway_models_build_catalog_normalizes_sorts_and_merges_duplicates() -> None:
     async def list_instance_views() -> list[InstanceView]:
         return [

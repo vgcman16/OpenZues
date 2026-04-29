@@ -4241,14 +4241,22 @@ class GatewayNodeMethodService:
 
         if resolved_method == "models.authStatus":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("refresh",))
-            _optional_bool(payload.get("refresh"), label="refresh")
-            raise GatewayNodeMethodError(
-                code="UNAVAILABLE",
-                message=(
-                    "models.authStatus is unavailable until model auth health runtime is wired"
-                ),
-                status_code=503,
+            refresh = (
+                bool(_optional_bool(payload.get("refresh"), label="refresh"))
+                if "refresh" in payload
+                else False
             )
+            try:
+                return await self._models_service.build_auth_status(
+                    refresh=refresh,
+                    now_ms=now_ms,
+                )
+            except Exception as exc:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=str(exc),
+                    status_code=503,
+                ) from exc
 
         if resolved_method == "cron.list":
             _validate_exact_keys(
