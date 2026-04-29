@@ -143,7 +143,14 @@ missing transcript-file pruning onto OpenZues' SQLite-backed session metadata
 by deleting only agent-filtered metadata rows whose control-chat transcript has
 no messages. Remaining cleanup parity is stale/age/count/disk-budget cleanup
 and richer multi-store/all-agent mutation semantics over OpenZues' native
-session store. Top-level
+session store. The CLI now also exposes read-only `tasks`, `tasks list`, and
+`tasks show` inspection over native OpenZues mission and task-blueprint state,
+returning OpenClaw-shaped task records with `runtime`, `status`, `taskId`,
+session/run lookup, delivery, notify, timestamp, progress, and terminal summary
+fields. Remaining tasks CLI/runtime parity is `tasks audit`,
+`tasks maintenance`, `tasks notify`, `tasks cancel`, and
+`tasks flow list/show/cancel`, plus a richer native TaskFlow registry if
+OpenZues grows a first-class flow owner. Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON

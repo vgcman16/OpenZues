@@ -374,6 +374,7 @@ acp_app = typer.Typer(
 )
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="List, spawn, and wait on gateway sessions.")
+tasks_app = typer.Typer(help="Inspect durable background tasks.")
 cron_app = typer.Typer(help="Inspect and run Gateway cron jobs.")
 capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
@@ -411,6 +412,7 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(tasks_app, name="tasks")
 app.add_typer(cron_app, name="cron")
 capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
@@ -10289,6 +10291,388 @@ def _cron_cli_failure_alert_patch(
     return payload
 
 
+_OPENCLAW_TASK_STATUS_VALUES = (
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "lost",
+)
+
+
+def _record_value(record: object, key: str, default: object = None) -> object:
+    if isinstance(record, dict):
+        return record.get(key, default)
+    return getattr(record, key, default)
+
+
+def _task_timestamp_ms(value: object) -> int | None:
+    if isinstance(value, datetime):
+        timestamp = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return int(timestamp.timestamp() * 1000)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = float(value)
+        return int(numeric if numeric > 10_000_000_000 else numeric * 1000)
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return int(parsed.timestamp() * 1000)
+
+
+def _openclaw_task_add_optional(
+    task: dict[str, object],
+    key: str,
+    value: object,
+) -> None:
+    if value is None:
+        return
+    if isinstance(value, str) and not value.strip():
+        return
+    task[key] = value
+
+
+def _openclaw_task_status_from_mission(mission: object) -> str:
+    status = str(_record_value(mission, "status", "") or "").strip().lower()
+    if status == "completed":
+        return "succeeded"
+    if status == "failed":
+        return "failed"
+    if status == "blocked":
+        return "failed"
+    if status == "active" and bool(_record_value(mission, "in_progress", False)):
+        return "running"
+    return "queued"
+
+
+def _openclaw_task_status_from_blueprint(task: object) -> str:
+    if not bool(_record_value(task, "enabled", True)):
+        return "cancelled"
+    status = str(_record_value(task, "last_status", "") or "").strip().lower()
+    if status in {"active", "running"}:
+        return "running"
+    if status == "completed":
+        return "succeeded"
+    if status == "failed":
+        return "failed"
+    return "queued"
+
+
+def _openclaw_task_runtime_from_blueprint(task: object) -> str:
+    schedule_kind = _optional_cli_string(_record_value(task, "schedule_kind"))
+    cadence = _record_value(task, "cadence_minutes")
+    if schedule_kind is not None or isinstance(cadence, int):
+        return "cron"
+    return "cli"
+
+
+def _openclaw_task_record_from_mission(mission: object) -> dict[str, object] | None:
+    mission_id = _record_value(mission, "id")
+    if not isinstance(mission_id, int):
+        return None
+    task_id = f"mission:{mission_id}"
+    status = _openclaw_task_status_from_mission(mission)
+    created_ms = _task_timestamp_ms(_record_value(mission, "created_at")) or 0
+    updated_ms = _task_timestamp_ms(
+        _record_value(mission, "last_activity_at")
+    ) or _task_timestamp_ms(_record_value(mission, "updated_at"))
+    session_key = _optional_cli_string(_record_value(mission, "session_key"))
+    run_id = _optional_cli_string(_record_value(mission, "thread_id")) or _optional_cli_string(
+        _record_value(mission, "last_turn_id")
+    )
+    task: dict[str, object] = {
+        "taskId": task_id,
+        "runtime": "subagent",
+        "taskKind": "mission",
+        "sourceId": task_id,
+        "requesterSessionKey": session_key or task_id,
+        "ownerKey": task_id,
+        "scopeKind": "session",
+        "agentId": "openzues",
+        "label": str(_record_value(mission, "name", "Mission")).strip() or task_id,
+        "task": str(_record_value(mission, "objective", "") or "").strip(),
+        "status": status,
+        "deliveryStatus": "not_applicable",
+        "notifyPolicy": "done_only",
+        "createdAt": created_ms,
+    }
+    _openclaw_task_add_optional(task, "childSessionKey", session_key)
+    _openclaw_task_add_optional(task, "runId", run_id)
+    if status in {"running", "succeeded", "failed"}:
+        task["startedAt"] = created_ms
+    if (
+        status in {"succeeded", "failed", "timed_out", "cancelled", "lost"}
+        and updated_ms is not None
+    ):
+        task["endedAt"] = updated_ms
+    if updated_ms is not None:
+        task["lastEventAt"] = updated_ms
+    last_turn_id = _optional_cli_string(_record_value(mission, "last_turn_id"))
+    if status == "running":
+        _openclaw_task_add_optional(task, "progressSummary", last_turn_id)
+    terminal_summary = _optional_cli_string(_record_value(mission, "last_checkpoint"))
+    if terminal_summary is not None:
+        task["terminalSummary"] = terminal_summary
+    error = _optional_cli_string(_record_value(mission, "last_error"))
+    if error is not None:
+        task["error"] = error
+    if status == "succeeded":
+        task["terminalOutcome"] = "succeeded"
+    elif status == "failed":
+        task["terminalOutcome"] = "blocked"
+    return task
+
+
+def _openclaw_task_record_from_blueprint(blueprint: object) -> dict[str, object] | None:
+    task_id_value = _record_value(blueprint, "id")
+    if not isinstance(task_id_value, int):
+        return None
+    task_id = f"task-blueprint:{task_id_value}"
+    status = _openclaw_task_status_from_blueprint(blueprint)
+    created_ms = _task_timestamp_ms(_record_value(blueprint, "created_at")) or 0
+    updated_ms = _task_timestamp_ms(_record_value(blueprint, "updated_at"))
+    launched_ms = _task_timestamp_ms(_record_value(blueprint, "last_launched_at"))
+    task_text = (
+        _optional_cli_string(_record_value(blueprint, "objective_template"))
+        or _optional_cli_string(_record_value(blueprint, "summary"))
+        or _optional_cli_string(_record_value(blueprint, "name"))
+        or task_id
+    )
+    task: dict[str, object] = {
+        "taskId": task_id,
+        "runtime": _openclaw_task_runtime_from_blueprint(blueprint),
+        "taskKind": "task_blueprint",
+        "sourceId": task_id,
+        "requesterSessionKey": task_id,
+        "ownerKey": task_id,
+        "scopeKind": "system",
+        "label": _optional_cli_string(_record_value(blueprint, "name")) or task_id,
+        "task": task_text,
+        "status": status,
+        "deliveryStatus": "not_applicable",
+        "notifyPolicy": "done_only",
+        "createdAt": created_ms,
+    }
+    if launched_ms is not None:
+        task["startedAt"] = launched_ms
+    if (
+        status in {"succeeded", "failed", "timed_out", "cancelled", "lost"}
+        and updated_ms is not None
+    ):
+        task["endedAt"] = updated_ms
+    if updated_ms is not None:
+        task["lastEventAt"] = updated_ms
+    terminal_summary = _optional_cli_string(_record_value(blueprint, "last_result_summary"))
+    if terminal_summary is not None:
+        task["terminalSummary"] = terminal_summary
+    if status == "succeeded":
+        task["terminalOutcome"] = "succeeded"
+    elif status == "failed":
+        task["terminalOutcome"] = "blocked"
+    return task
+
+
+async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    list_missions = getattr(getattr(services, "mission_service", None), "list_views", None)
+    if callable(list_missions):
+        for mission in await list_missions():
+            record = _openclaw_task_record_from_mission(mission)
+            if record is not None:
+                records.append(record)
+    list_task_blueprints = getattr(
+        getattr(services, "ops_mesh", None),
+        "list_task_blueprint_views",
+        None,
+    )
+    if callable(list_task_blueprints):
+        for blueprint in await list_task_blueprints():
+            record = _openclaw_task_record_from_blueprint(blueprint)
+            if record is not None:
+                records.append(record)
+    return records
+
+
+def _filter_openclaw_tasks(
+    tasks: list[dict[str, object]],
+    *,
+    runtime_filter: str | None,
+    status_filter: str | None,
+) -> list[dict[str, object]]:
+    return [
+        task
+        for task in tasks
+        if (runtime_filter is None or task.get("runtime") == runtime_filter)
+        and (status_filter is None or task.get("status") == status_filter)
+    ]
+
+
+async def _build_tasks_list_payload(
+    services: CliServices,
+    *,
+    runtime_filter: str | None,
+    status_filter: str | None,
+) -> dict[str, object]:
+    normalized_runtime = _optional_cli_string(runtime_filter)
+    normalized_status = _optional_cli_string(status_filter)
+    tasks = _filter_openclaw_tasks(
+        await _list_openclaw_background_tasks(services),
+        runtime_filter=normalized_runtime,
+        status_filter=normalized_status,
+    )
+    return {
+        "count": len(tasks),
+        "runtime": normalized_runtime,
+        "status": normalized_status,
+        "tasks": tasks,
+    }
+
+
+def _openclaw_task_matches_lookup(task: dict[str, object], lookup: str) -> bool:
+    lookup_token = lookup.strip()
+    if not lookup_token:
+        return False
+    for key in (
+        "taskId",
+        "runId",
+        "childSessionKey",
+        "requesterSessionKey",
+        "sourceId",
+        "ownerKey",
+    ):
+        value = _optional_cli_string(task.get(key))
+        if value == lookup_token:
+            return True
+    return False
+
+
+async def _resolve_openclaw_task(services: CliServices, lookup: str) -> dict[str, object] | None:
+    for task in await _list_openclaw_background_tasks(services):
+        if _openclaw_task_matches_lookup(task, lookup):
+            return task
+    return None
+
+
+def _task_status_counts(tasks: list[dict[str, object]]) -> dict[str, int]:
+    counts = dict.fromkeys(_OPENCLAW_TASK_STATUS_VALUES, 0)
+    for task in tasks:
+        status = str(task.get("status") or "")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _task_failure_count(tasks: list[dict[str, object]]) -> int:
+    return sum(
+        1
+        for task in tasks
+        if task.get("status") in {"failed", "timed_out", "lost"}
+        or _optional_cli_string(task.get("error")) is not None
+    )
+
+
+def _emit_tasks_list(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    raw_tasks = payload.get("tasks")
+    tasks = [
+        cast("dict[str, object]", task)
+        for task in raw_tasks
+        if isinstance(task, dict)
+    ] if isinstance(raw_tasks, list) else []
+    counts = _task_status_counts(tasks)
+    typer.echo(f"Background tasks: {len(tasks)}")
+    typer.echo(
+        "Task pressure: "
+        f"{counts['queued']} queued | {counts['running']} running | "
+        f"{_task_failure_count(tasks)} issues"
+    )
+    runtime_filter = _optional_cli_string(payload.get("runtime"))
+    if runtime_filter is not None:
+        typer.echo(f"Runtime filter: {runtime_filter}")
+    status_filter = _optional_cli_string(payload.get("status"))
+    if status_filter is not None:
+        typer.echo(f"Status filter: {status_filter}")
+    if not tasks:
+        typer.echo("No background tasks found.")
+        return
+    typer.echo(
+        " ".join(
+            [
+                "Task".ljust(14),
+                "Kind".ljust(8),
+                "Status".ljust(10),
+                "Delivery".ljust(14),
+                "Run".ljust(12),
+                "Child Session".ljust(30),
+                "Summary",
+            ]
+        )
+    )
+    for task in tasks:
+        label = (
+            _optional_cli_string(task.get("terminalSummary"))
+            or _optional_cli_string(task.get("progressSummary"))
+            or _optional_cli_string(task.get("label"))
+            or _optional_cli_string(task.get("task"))
+            or ""
+        )
+        typer.echo(
+            " ".join(
+                [
+                    str(task.get("taskId") or "n/a")[:14].ljust(14),
+                    str(task.get("runtime") or "n/a")[:8].ljust(8),
+                    str(task.get("status") or "n/a")[:10].ljust(10),
+                    str(task.get("deliveryStatus") or "n/a")[:14].ljust(14),
+                    str(task.get("runId") or "n/a")[:12].ljust(12),
+                    str(task.get("childSessionKey") or "n/a")[:30].ljust(30),
+                    label[:80],
+                ]
+            ).rstrip()
+        )
+
+
+def _emit_task_show(task: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(task, indent=2))
+        return
+    typer.echo("Background task:")
+    ordered_keys = (
+        ("taskId", "taskId"),
+        ("runtime", "kind"),
+        ("sourceId", "sourceId"),
+        ("status", "status"),
+        ("terminalOutcome", "result"),
+        ("deliveryStatus", "delivery"),
+        ("notifyPolicy", "notify"),
+        ("ownerKey", "ownerKey"),
+        ("childSessionKey", "childSessionKey"),
+        ("parentTaskId", "parentTaskId"),
+        ("agentId", "agentId"),
+        ("runId", "runId"),
+        ("label", "label"),
+        ("task", "task"),
+        ("createdAt", "createdAt"),
+        ("startedAt", "startedAt"),
+        ("endedAt", "endedAt"),
+        ("lastEventAt", "lastEventAt"),
+        ("cleanupAfter", "cleanupAfter"),
+        ("error", "error"),
+        ("progressSummary", "progressSummary"),
+        ("terminalSummary", "terminalSummary"),
+    )
+    for key, label in ordered_keys:
+        typer.echo(f"{label}: {task.get(key, 'n/a')}")
+
+
 @cron_app.command("edit")
 def cron_edit_command(
     job_id: str = typer.Argument(..., help="Cron job id."),
@@ -10560,6 +10944,75 @@ def cron_edit_command(
 
     result = _run(_run_with_services(_action))
     _emit_cron_mutation(result, json_output=json_output)
+
+
+@tasks_app.callback(invoke_without_command=True)
+def tasks_list_command(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    runtime_filter: str | None = typer.Option(
+        None,
+        "--runtime",
+        help="Filter by kind (subagent, acp, cron, cli).",
+    ),
+    status_filter: str | None = typer.Option(
+        None,
+        "--status",
+        help="Filter by status (queued, running, succeeded, failed, timed_out, cancelled, lost).",
+    ),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_tasks_list_payload(
+            services,
+            runtime_filter=runtime_filter,
+            status_filter=status_filter,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_tasks_list(payload, json_output=json_output)
+
+
+@tasks_app.command("list")
+def tasks_list_subcommand(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    runtime_filter: str | None = typer.Option(
+        None,
+        "--runtime",
+        help="Filter by kind (subagent, acp, cron, cli).",
+    ),
+    status_filter: str | None = typer.Option(
+        None,
+        "--status",
+        help="Filter by status (queued, running, succeeded, failed, timed_out, cancelled, lost).",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_tasks_list_payload(
+            services,
+            runtime_filter=runtime_filter,
+            status_filter=status_filter,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_tasks_list(payload, json_output=json_output)
+
+
+@tasks_app.command("show")
+def tasks_show_command(
+    lookup: str = typer.Argument(..., help="Task id, run id, or session key."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object] | None:
+        return await _resolve_openclaw_task(services, lookup)
+
+    task = _run(_run_with_services(_action))
+    if task is None:
+        typer.echo(f"Task not found: {lookup}", err=True)
+        raise typer.Exit(code=1)
+    _emit_task_show(task, json_output=json_output)
 
 
 @sessions_app.callback(invoke_without_command=True)
