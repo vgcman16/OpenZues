@@ -441,6 +441,10 @@ WhatsApp native media sends now also preserve OpenClaw's leading-caption
 contract: provider-visible image/document/video captions contain only the
 original outbound text, while generated media URL/settings summaries remain
 delivery metadata instead of being appended to captions.
+Gateway poll requests now mirror OpenClaw's provider capability guard for
+`durationSeconds`: Telegram can still opt into second-granularity polls, while
+Slack/Discord/WhatsApp reject `durationSeconds` before runtime dispatch and
+continue using `durationHours` where applicable.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings

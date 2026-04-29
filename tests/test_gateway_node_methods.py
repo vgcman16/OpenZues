@@ -36765,7 +36765,7 @@ async def test_poll_returns_validated_unavailable_contract() -> None:
                 "question": "Ship it?",
                 "options": ["Yes", "No"],
                 "maxSelections": 1,
-                "durationSeconds": 3600,
+                "durationHours": 1,
                 "channel": "slack",
                 "accountId": "default",
                 "idempotencyKey": "idem-poll",
@@ -36895,7 +36895,7 @@ async def test_poll_allows_thread_id_before_delivery_placeholder() -> None:
                 "question": "Ship it?",
                 "options": ["Yes", "No"],
                 "maxSelections": 1,
-                "durationSeconds": 3600,
+                "durationHours": 1,
                 "channel": "slack",
                 "accountId": "default",
                 "threadId": "1710000000.9999",
@@ -36951,6 +36951,30 @@ async def test_poll_rejects_is_anonymous_for_non_telegram_like_openclaw() -> Non
                 "isAnonymous": False,
                 "channel": "slack",
                 "idempotencyKey": "idem-poll-anon",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_duration_seconds_for_non_telegram_like_openclaw() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="durationSeconds is not supported for slack polls",
+    ) as exc_info:
+        await service.call(
+            "poll",
+            {
+                "to": "channel:C123",
+                "question": "Ship it?",
+                "options": ["Yes", "No"],
+                "durationSeconds": 3600,
+                "channel": "slack",
+                "idempotencyKey": "idem-poll-duration-seconds",
             },
         )
 

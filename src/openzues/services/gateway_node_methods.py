@@ -5710,6 +5710,14 @@ class GatewayNodeMethodService:
                 rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
+            if duration_seconds is not None and not _gateway_poll_supports_duration_seconds(
+                resolved_channel
+            ):
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=f"durationSeconds is not supported for {resolved_channel} polls",
+                    status_code=400,
+                )
             if is_anonymous is not None and not _gateway_poll_supports_anonymous(
                 resolved_channel
             ):
@@ -16312,6 +16320,10 @@ def _gateway_channel_label(channel: str) -> str:
 
 
 def _gateway_poll_supports_anonymous(channel: str) -> bool:
+    return channel == "telegram"
+
+
+def _gateway_poll_supports_duration_seconds(channel: str) -> bool:
     return channel == "telegram"
 
 
