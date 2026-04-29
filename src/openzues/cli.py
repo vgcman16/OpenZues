@@ -100,6 +100,7 @@ hermes_app = typer.Typer(help="Inspect and tune Hermes runtime posture.")
 routes_app = typer.Typer(help="Inspect and test notification routes.")
 agents_app = typer.Typer(help="Inspect configured agent inventory.")
 channels_app = typer.Typer(help="Inspect notification route channels.")
+sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -119,6 +120,7 @@ app.add_typer(hermes_app, name="hermes")
 app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
+app.add_typer(sandbox_app, name="sandbox")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
@@ -1482,6 +1484,111 @@ def _emit_direct_channel_delivery(payload: dict[str, object], *, json_output: bo
     poll_id = str(payload.get("pollId") or payload.get("poll_id") or "").strip()
     if poll_id:
         typer.echo(f"poll: {poll_id}")
+
+
+def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    containers = payload.get("containers")
+    browsers = payload.get("browsers")
+    container_rows = containers if isinstance(containers, list) else []
+    browser_rows = browsers if isinstance(browsers, list) else []
+    if not container_rows and not browser_rows:
+        typer.echo("No sandbox runtimes found.")
+        return
+    for item in container_rows:
+        if not isinstance(item, dict):
+            continue
+        session_key = str(item.get("sessionKey") or "").strip()
+        runtime = str(item.get("runtime") or "").strip()
+        mode = str(item.get("sandboxMode") or "").strip()
+        status = str(item.get("status") or "").strip() or "known"
+        label = session_key or runtime or "sandbox"
+        typer.echo(f"[container] {label} ({status})")
+        if runtime:
+            typer.echo(f"  runtime: {runtime}")
+        if mode:
+            typer.echo(f"  mode: {mode}")
+    for item in browser_rows:
+        if not isinstance(item, dict):
+            continue
+        session_key = str(item.get("sessionKey") or "").strip()
+        runtime = str(item.get("runtime") or "").strip()
+        status = str(item.get("status") or "").strip() or "known"
+        label = session_key or runtime or "browser"
+        typer.echo(f"[browser] {label} ({status})")
+
+
+async def _build_sandbox_inventory_payload(
+    services: CliServices,
+    *,
+    browser_only: bool,
+) -> dict[str, object]:
+    containers: list[dict[str, object]] = []
+    browsers: list[dict[str, object]] = []
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if callable(list_rows):
+        rows = await list_rows()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = _sandbox_inventory_item_from_metadata_row(row)
+            if item is None:
+                continue
+            containers.append(item)
+    containers.sort(key=lambda item: str(item.get("sessionKey") or ""))
+    if browser_only:
+        containers = []
+    return {"containers": containers, "browsers": browsers}
+
+
+def _sandbox_inventory_item_from_metadata_row(row: dict[str, object]) -> dict[str, object] | None:
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    sandbox_policy = metadata.get("sandboxPolicy")
+    sandboxed = metadata.get("sandboxed") is True
+    sandbox_mode = _optional_cli_string(metadata.get("sandboxMode"))
+    if not sandboxed and sandbox_mode is None and not isinstance(sandbox_policy, dict):
+        return None
+    session_key = _optional_cli_string(row.get("session_key"))
+    if session_key is None:
+        return None
+    item: dict[str, object] = {
+        "sessionKey": session_key,
+        "status": "known",
+        "source": "session_metadata",
+    }
+    for source_key, output_key in (
+        ("runtime", "runtime"),
+        ("runtimeThreadId", "runtimeThreadId"),
+        ("runtimeSessionId", "runtimeSessionId"),
+    ):
+        value = _optional_cli_string(metadata.get(source_key))
+        if value is not None:
+            item[output_key] = value
+    runtime_id = metadata.get("runtimeId")
+    if isinstance(runtime_id, int) and not isinstance(runtime_id, bool):
+        item["runtimeId"] = runtime_id
+    if sandbox_mode is not None:
+        item["sandboxMode"] = sandbox_mode
+    if isinstance(sandbox_policy, dict):
+        item["sandboxPolicy"] = dict(sandbox_policy)
+    updated_at = _optional_cli_string(row.get("updated_at"))
+    if updated_at is not None:
+        item["updatedAt"] = updated_at
+    return item
+
+
+def _optional_cli_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text
 
 
 def _first_text_line(value: object, *, limit: int = 220) -> str:
@@ -3664,6 +3771,29 @@ def channels_status(
         _run_with_services(lambda services: services.gateway_channels.build_snapshot())
     )
     _emit_channel_inventory(payload, json_output=json_output)
+
+
+@sandbox_app.command("list")
+def sandbox_list_command(
+    browser_only: bool = typer.Option(
+        False,
+        "--browser",
+        help="List browser sandbox runtimes only.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit sandbox inventory as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_sandbox_inventory_payload(
+            services,
+            browser_only=browser_only,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_sandbox_inventory(payload, json_output=json_output)
 
 
 @app.command("launch")

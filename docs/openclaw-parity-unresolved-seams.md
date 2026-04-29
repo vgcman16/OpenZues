@@ -32,7 +32,10 @@ calls Windows sandbox setup before dispatch, persists `sandboxed`,
 `sandboxMode`, sandbox policy, runtime id, runtime thread/session ids, and
 still returns the existing precise forbidden response when no sandbox runtime
 is available. Remaining sandbox parity is config-driven per-agent sandbox
-target selection and deeper media/workspace staging behavior from OpenClaw.
+target selection, deeper media/workspace staging behavior from OpenClaw, and
+destructive sandbox recreate/remove CLI flows. The CLI now exposes
+`sandbox list --json` with OpenClaw-shaped top-level `containers` / `browsers`
+arrays sourced from saved sandbox session metadata.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app

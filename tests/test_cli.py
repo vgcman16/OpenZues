@@ -385,6 +385,71 @@ def test_channels_status_json_includes_saved_notification_routes(tmp_path, monke
     assert payload["channelDefaultAccountId"]["slack"] == "workspace-bot"
 
 
+def test_sandbox_list_json_returns_openclaw_shaped_inventory(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"containers": [], "browsers": []}
+
+
+def test_sandbox_list_json_surfaces_saved_sandbox_runtime_metadata(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "updated_at": "2026-04-29T12:00:00Z",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "runtimeId": 7,
+                        "runtimeThreadId": "thread-7",
+                        "runtimeSessionId": "thread-7",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "sandboxPolicy": {"type": "workspaceWrite"},
+                    },
+                },
+                {
+                    "session_key": "agent:main:subagent:plain-worker",
+                    "metadata": {"label": "Plain worker"},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["browsers"] == []
+    assert payload["containers"] == [
+        {
+            "sessionKey": "agent:main:subagent:sandbox-worker",
+            "runtime": "codex-app-server",
+            "runtimeId": 7,
+            "runtimeThreadId": "thread-7",
+            "runtimeSessionId": "thread-7",
+            "sandboxMode": "workspace-write",
+            "sandboxPolicy": {"type": "workspaceWrite"},
+            "status": "known",
+            "source": "session_metadata",
+            "updatedAt": "2026-04-29T12:00:00Z",
+        }
+    ]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
