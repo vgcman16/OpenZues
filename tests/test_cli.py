@@ -4271,6 +4271,89 @@ def test_tasks_notify_persists_native_session_notify_policy(monkeypatch) -> None
     assert "Updated mission:17 notify policy to silent." in result.stdout
 
 
+def test_tasks_flow_cancel_disables_task_blueprint_and_pauses_linked_missions(monkeypatch) -> None:
+    paused: list[int] = []
+    updates: list[tuple[int, dict[str, object]]] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+        async def pause(self, mission_id: int) -> SimpleNamespace:
+            paused.append(mission_id)
+            return SimpleNamespace(id=mission_id, status="paused")
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=7,
+                    name="Nightly digest",
+                    objective_template="Send the recurring workspace digest.",
+                    summary="Recurring digest",
+                    schedule_kind="cron",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status="active",
+                    last_result_summary=None,
+                    last_launched_at=created_at,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+    class FakeDatabase:
+        async def update_task_blueprint(self, task_id: int, **fields: object) -> None:
+            updates.append((task_id, fields))
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "flow", "cancel", "task-blueprint:7"])
+
+    assert result.exit_code == 0, result.stdout
+    assert paused == [17]
+    assert updates == [
+        (
+            7,
+            {
+                "enabled": 0,
+                "last_status": "cancelled",
+                "last_result_summary": "TaskFlow task-blueprint:7 cancelled via CLI.",
+            },
+        )
+    ]
+    assert "Cancelled task-blueprint:7 (task_mirrored) with status cancelled." in result.stdout
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

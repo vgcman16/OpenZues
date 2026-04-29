@@ -11227,6 +11227,49 @@ async def _resolve_openclaw_task_flow(
     return None
 
 
+def _task_blueprint_id_from_flow_id(flow_id: object) -> int | None:
+    normalized = _optional_cli_string(flow_id)
+    if normalized is None or not normalized.startswith("task-blueprint:"):
+        return None
+    try:
+        return int(normalized.removeprefix("task-blueprint:"))
+    except ValueError:
+        return None
+
+
+async def _cancel_openclaw_task_flow(services: CliServices, lookup: str) -> str:
+    flow = await _resolve_openclaw_task_flow(services, lookup)
+    if flow is None:
+        raise ValueError(f"Flow not found: {lookup}")
+    if flow.get("status") in {"succeeded", "failed", "cancelled", "lost"}:
+        raise ValueError(f"Could not cancel TaskFlow: {lookup}")
+    task_id = _task_blueprint_id_from_flow_id(flow.get("flowId"))
+    update_task_blueprint = getattr(
+        getattr(services, "database", None),
+        "update_task_blueprint",
+        None,
+    )
+    if task_id is None or not callable(update_task_blueprint):
+        raise ValueError(f"Could not cancel TaskFlow: {lookup}")
+    flow_id = str(flow.get("flowId") or lookup)
+    await update_task_blueprint(
+        task_id,
+        enabled=0,
+        last_status="cancelled",
+        last_result_summary=f"TaskFlow {flow_id} cancelled via CLI.",
+    )
+    pause = getattr(getattr(services, "mission_service", None), "pause", None)
+    linked_tasks = flow.get("tasks")
+    if callable(pause) and isinstance(linked_tasks, list):
+        for task in linked_tasks:
+            if not isinstance(task, dict) or task.get("status") not in {"queued", "running"}:
+                continue
+            mission_id = _mission_id_from_task_record(cast("dict[str, object]", task))
+            if mission_id is not None:
+                await pause(mission_id)
+    return f"Cancelled {flow_id} ({flow.get('syncMode')}) with status cancelled."
+
+
 def _emit_task_flows_list(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -11859,6 +11902,20 @@ def tasks_flow_show_command(
         typer.echo(f"TaskFlow not found: {lookup}", err=True)
         raise typer.Exit(code=1)
     _emit_task_flow_show(flow, json_output=json_output)
+
+
+@tasks_flow_app.command("cancel")
+def tasks_flow_cancel_command(
+    lookup: str = typer.Argument(..., help="Flow id or owner key."),
+) -> None:
+    try:
+        message = _run(
+            _run_with_services(lambda services: _cancel_openclaw_task_flow(services, lookup))
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(message)
 
 
 @tasks_app.command("notify")

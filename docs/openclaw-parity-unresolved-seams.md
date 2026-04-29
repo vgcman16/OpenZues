@@ -160,9 +160,13 @@ or session key lookups against native task records and pauses active
 mission-backed tasks through `MissionService.pause()`, preserving the upstream
 not-found/could-not-cancel boundary for unsupported records. `tasks notify`
 now persists `taskNotifyPolicy` in gateway session metadata and the task
-read-model projects the saved policy through later list/show output. Remaining
-tasks CLI/runtime parity is `tasks flow cancel`, plus a richer native TaskFlow
-mutation registry if OpenZues grows a first-class flow owner.
+read-model projects the saved policy through later list/show output. `tasks
+flow cancel` now disables the native task blueprint, stamps an OpenClaw-shaped
+cancelled result, and pauses active linked mission tasks while preserving the
+upstream not-found/could-not-cancel boundary. No smaller source-backed `tasks`
+CLI command remains in the current native projection; deeper parity would be a
+richer native TaskFlow mutation registry if OpenZues grows a first-class flow
+owner.
 Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
