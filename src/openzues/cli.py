@@ -379,6 +379,7 @@ capability_image_app = typer.Typer(help="Inspect image generation and descriptio
 capability_audio_app = typer.Typer(help="Inspect audio transcription runtime metadata.")
 capability_video_app = typer.Typer(help="Inspect video generation and description metadata.")
 capability_web_app = typer.Typer(help="Inspect web search and fetch metadata.")
+capability_embedding_app = typer.Typer(help="Inspect embedding provider metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -411,6 +412,7 @@ capability_app.add_typer(capability_image_app, name="image")
 capability_app.add_typer(capability_audio_app, name="audio")
 capability_app.add_typer(capability_video_app, name="video")
 capability_app.add_typer(capability_web_app, name="web")
+capability_app.add_typer(capability_embedding_app, name="embedding")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -2676,6 +2678,15 @@ def _web_runtime(services: CliServices) -> Any | None:
     return runtime
 
 
+def _embedding_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "embedding_runtime", None)
+    if runtime is None:
+        runtime = getattr(services, "embedding", None)
+    if runtime is None:
+        runtime = getattr(services, "embedding_service", None)
+    return runtime
+
+
 async def _build_capability_image_providers_payload(
     services: CliServices,
 ) -> list[dict[str, object]]:
@@ -3075,6 +3086,48 @@ async def _build_capability_web_fetch_payload(
     if provider_id is not None:
         envelope["provider"] = provider_id
     return envelope
+
+
+async def _build_capability_embedding_providers_payload(
+    services: CliServices,
+) -> list[dict[str, object]]:
+    runtime = _embedding_runtime(services)
+    list_providers = getattr(runtime, "list_providers", None) if runtime is not None else None
+    if not callable(list_providers):
+        return []
+    raw_providers = await list_providers()
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+        }
+        default_model = _optional_cli_string(raw_provider.get("defaultModel"))
+        if default_model is not None:
+            entry["defaultModel"] = default_model
+        transport = _optional_cli_string(raw_provider.get("transport"))
+        if transport is not None:
+            entry["transport"] = transport
+        auto_select_priority = raw_provider.get("autoSelectPriority")
+        if isinstance(auto_select_priority, int):
+            entry["autoSelectPriority"] = auto_select_priority
+        providers.append(entry)
+    return providers
 
 
 async def _build_capability_video_describe_payload(
@@ -8689,6 +8742,17 @@ def capability_web_fetch_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_embedding_app.command("providers")
+def capability_embedding_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_capability_embedding_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
 
 
 @capability_video_app.command("describe")

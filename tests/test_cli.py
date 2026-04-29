@@ -4412,6 +4412,45 @@ def test_capability_web_fetch_json_wraps_native_web_runtime(monkeypatch) -> None
     ]
 
 
+def test_infer_embedding_providers_json_projects_native_registry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeEmbeddingRuntime:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("list_providers")
+            return [
+                {
+                    "id": "openai",
+                    "defaultModel": "text-embedding-3-small",
+                    "transport": "remote",
+                    "autoSelectPriority": 10,
+                    "configured": True,
+                    "selected": True,
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(embedding_runtime=FakeEmbeddingRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "embedding", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "available": True,
+            "configured": True,
+            "selected": True,
+            "id": "openai",
+            "defaultModel": "text-embedding-3-small",
+            "transport": "remote",
+            "autoSelectPriority": 10,
+        }
+    ]
+    assert calls == ["list_providers"]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
