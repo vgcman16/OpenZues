@@ -2699,6 +2699,74 @@ async def _build_capability_image_providers_payload(
     return providers
 
 
+def _media_understanding_runtime(services: CliServices) -> Any:
+    runtime = getattr(services, "image_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding_service", None)
+    if runtime is None:
+        raise ValueError(
+            "image.describe local transport is unavailable until media understanding is wired."
+        )
+    return runtime
+
+
+def _require_capability_provider_model_ref(
+    model_ref: str | None,
+) -> dict[str, str] | None:
+    if _optional_cli_string(model_ref) is None:
+        return None
+    provider, model = _split_capability_model_ref(model_ref)
+    if provider is None or model is None:
+        raise ValueError("Model overrides must use the form <provider/model>.")
+    return {"provider": provider, "model": model}
+
+
+async def _build_capability_image_describe_payload(
+    services: CliServices,
+    *,
+    file_path: str,
+    model_ref: str | None,
+) -> dict[str, object]:
+    active_model = _require_capability_provider_model_ref(model_ref)
+    runtime = _media_understanding_runtime(services)
+    describe_image_file = getattr(runtime, "describe_image_file", None)
+    if not callable(describe_image_file):
+        raise ValueError(
+            "image.describe local transport is unavailable until media understanding is wired."
+        )
+    resolved_path = str(Path(file_path).resolve())
+    result = await describe_image_file(file_path=resolved_path, active_model=active_model)
+    result_payload = dict(result) if isinstance(result, dict) else {}
+    text = _optional_cli_string(result_payload.get("text"))
+    if text is None:
+        raise ValueError(f"No description returned for image: {resolved_path}")
+    provider = _optional_cli_string(result_payload.get("provider"))
+    model = _optional_cli_string(result_payload.get("model"))
+    output: dict[str, object] = {
+        "path": resolved_path,
+        "text": text,
+        "kind": "image.description",
+    }
+    if provider is not None:
+        output["provider"] = provider
+    if model is not None:
+        output["model"] = model
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "image.describe",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [output],
+    }
+    if provider is not None:
+        envelope["provider"] = provider
+    if model is not None:
+        envelope["model"] = model
+    return envelope
+
+
 def _emit_capability_provider_summary(payload: object, *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -7982,6 +8050,27 @@ def capability_image_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_image_app.command("describe")
+def capability_image_describe_command(
+    file_path: str = typer.Option(..., "--file", help="Image file."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_image_describe_payload(
+            services,
+            file_path=file_path,
+            model_ref=model,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_tts_app.command("voices")

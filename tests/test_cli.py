@@ -3557,6 +3557,69 @@ def test_infer_image_providers_json_projects_native_image_registry(monkeypatch) 
     assert calls == ["list_providers"]
 
 
+def test_infer_image_describe_json_wraps_native_media_understanding(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeImageUnderstanding:
+        async def describe_image_file(
+            self,
+            *,
+            file_path: str,
+            active_model: dict[str, str] | None,
+        ) -> dict[str, object]:
+            calls.append({"file_path": file_path, "active_model": active_model})
+            return {
+                "text": "A small painted moon.",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(image_understanding=FakeImageUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "image",
+            "describe",
+            "--file",
+            "moon.png",
+            "--model",
+            "openai/gpt-5.4-vision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "ok": True,
+        "capability": "image.describe",
+        "transport": "local",
+        "provider": "openai",
+        "model": "gpt-5.4-vision",
+        "attempts": [],
+        "outputs": [
+            {
+                "path": calls[0]["file_path"],
+                "text": "A small painted moon.",
+                "provider": "openai",
+                "model": "gpt-5.4-vision",
+                "kind": "image.description",
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "file_path": str((Path.cwd() / "moon.png").resolve()),
+            "active_model": {"provider": "openai", "model": "gpt-5.4-vision"},
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
