@@ -4149,6 +4149,83 @@ def test_infer_video_describe_json_wraps_native_media_understanding(monkeypatch)
     ]
 
 
+def test_capability_video_generate_json_wraps_native_video_generation(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeVideoGeneration:
+        async def generate_video(
+            self,
+            *,
+            prompt: str,
+            active_model: dict[str, str] | None,
+            output_path: str | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "active_model": active_model,
+                    "output_path": output_path,
+                }
+            )
+            return {
+                "provider": "runway",
+                "model": "gen-3",
+                "attempts": [{"provider": "runway", "model": "gen-3", "ok": True}],
+                "outputs": [
+                    {
+                        "path": str((Path.cwd() / "generated" / "demo.mp4").resolve()),
+                        "mimeType": "video/mp4",
+                        "size": 2048,
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(video_generation=FakeVideoGeneration()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "video",
+            "generate",
+            "--prompt",
+            "demo reel",
+            "--model",
+            "runway/gen-3",
+            "--output",
+            "generated/demo.mp4",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "video.generate",
+        "transport": "local",
+        "provider": "runway",
+        "model": "gen-3",
+        "attempts": [{"provider": "runway", "model": "gen-3", "ok": True}],
+        "outputs": [
+            {
+                "path": str((Path.cwd() / "generated" / "demo.mp4").resolve()),
+                "mimeType": "video/mp4",
+                "size": 2048,
+            }
+        ],
+    }
+    assert calls == [
+        {
+            "prompt": "demo reel",
+            "active_model": {"provider": "runway", "model": "gen-3"},
+            "output_path": "generated/demo.mp4",
+        }
+    ]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
