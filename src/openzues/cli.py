@@ -372,6 +372,7 @@ capability_app = typer.Typer(
     help="Run provider-backed inference commands through a stable CLI surface."
 )
 capability_model_app = typer.Typer(help="Inspect text inference model catalog metadata.")
+capability_model_auth_app = typer.Typer(help="Inspect model provider auth metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -398,6 +399,7 @@ app.add_typer(acp_app, name="acp")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 capability_app.add_typer(capability_model_app, name="model")
+capability_model_app.add_typer(capability_model_auth_app, name="auth")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -7419,6 +7421,17 @@ def capability_model_providers_command(
             local_only=False,
         )
         return _build_capability_model_providers_payload(_model_catalog_entries(payload))
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_model_auth_app.command("status")
+def capability_model_auth_status_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_status_payload(services, probe=False)
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)

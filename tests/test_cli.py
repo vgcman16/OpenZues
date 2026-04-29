@@ -3405,6 +3405,44 @@ def test_infer_model_providers_json_groups_catalog_by_provider(monkeypatch) -> N
     assert calls == [("models.list", {})]
 
 
+def test_infer_model_auth_status_json_reuses_model_status_payload(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "model", "auth", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["defaultModel"] == "gpt-5.4"
+    assert payload["resolvedDefault"] == "openai/gpt-5.4"
+    assert payload["auth"]["status"] == "unavailable"
+    assert payload["auth"]["missingProvidersInUse"] == ["openai"]
+    assert calls == [("models.list", {})]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
