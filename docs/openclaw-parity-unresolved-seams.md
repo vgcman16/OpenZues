@@ -67,6 +67,10 @@ JSON/human wrappers over the same native direct send/poll runtime owner,
 including reply/thread/media/silent/document/idempotency options. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
+`context.message_id` and switch URL media sends to `type="document"` /
+`document.link` when `forceDocument=true`, while retaining saved delivery
+payload and provider-result metadata.
 
 Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `sessions wait` as thin JSON/human wrappers over the production
@@ -978,6 +982,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
 - Added a focused Telegram media-group proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) for two-photo media sends, caption placement on the first media item, and saved provider media IDs.
 - Closed the WhatsApp multi-media fallback slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp native sends now split multiple media URLs into multiple Cloud API image messages, captioning the first image and preserving every returned message id as `mediaIds`.
 - Added a focused WhatsApp media proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) for two-image sends, Bearer-token reuse, and saved provider media IDs.
+- Closed the WhatsApp reply/document payload slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp Cloud API direct sends now preserve `replyToId` as `context.message_id` and send forced-document media through `type="document"` / `document.link` while keeping caption text and saved provider result metadata.
+- Added a focused WhatsApp reply-document proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) covering `reply_to_id`, `force_document`, Bearer-token reuse, and saved delivery payload metadata.
 - Closed the provider failure-detail polish slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): HTTP provider error bodies are now parsed and included in webhook/provider upload error messages instead of reporting only the status code.
 - Added a focused HTTP-error proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) showing a provider JSON body such as `{"error":"channel_not_found"}` surfaces as `Webhook returned 400: channel_not_found`.
 - Verified this provider-runtime slice with:
@@ -993,6 +999,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m mypy src/openzues/services/ops_mesh.py`: clean
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "telegram_media_group or telegram_native_route or tests_slack_native_route or native_adapter_binding or uses_gateway_route_adapter" --basetemp .codex-tmp\pytest-telegram-media-group`: `8 passed`
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "whatsapp_media or whatsapp_native_route or telegram_media_group" --basetemp .codex-tmp\pytest-whatsapp-media`: `4 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "preserves_whatsapp_reply_document"`: `1 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_native_route or whatsapp_media or preserves_whatsapp_reply_document or splits_whatsapp_media"`: `4 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "telegram_native_route or discord_native_route or send_direct_channel_message_uses_whatsapp_native_route or preserves_whatsapp_reply_document"`: `6 passed`
+  - `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean
+  - `mypy src\openzues\services\ops_mesh.py`: clean
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "post_json_webhook_includes_provider_http_error_body or whatsapp_media or telegram_media_group" --basetemp .codex-tmp\pytest-webhook-error`: `3 passed`
 - Queue head narrowed after this run: provider-shaped runtime callbacks, route-backed gateway provider adapters, provider-result metadata, native adapter binding, native Slack/Telegram/Discord/WhatsApp provider execution, basic CLI/dashboard setup, native route replay/test dispatch, Telegram multi-media sends, WhatsApp multi-media fallbacks, and provider HTTP failure detail are now real. No smaller provider-runtime blocker remains in this queue; the next move is a final adjacent boundary sweep before moving to the next OpenClaw feature family.
 - Closed the final provider boundary sweep in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\gateway_outbound_runtime.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/gateway_outbound_runtime.py) and [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): cron failure direct-delivery branches now require a session-backed deliverer instead of treating provider-backed `gateway/send` route adapters as live cron announce delivery, and route-less webhook replay now distinguishes true ad-hoc webhook rows from notification-route rows that lost their `route_id`.

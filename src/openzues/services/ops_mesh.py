@@ -758,6 +758,12 @@ def _whatsapp_contact_id(result: object, fallback: str) -> str:
     return fallback
 
 
+def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> None:
+    normalized_reply_to_id = reply_to_id.strip()
+    if normalized_reply_to_id:
+        payload["context"] = {"message_id": normalized_reply_to_id}
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -6887,6 +6893,9 @@ class OpsMeshService:
                 },
             }
         else:
+            reply_to_id = str(event.get("replyToId") or "").strip()
+            force_document = _optional_bool_payload_value(event, "forceDocument") is True
+            media_payload_key = "document" if force_document else "image"
             raw_media_urls = event.get("mediaUrls")
             media_urls = _normalize_direct_channel_media_urls(
                 media_url=(
@@ -6906,17 +6915,20 @@ class OpsMeshService:
                     message_ids: list[str] = []
                     delivered_contact = recipient_id
                     for index, media_url in enumerate(media_urls):
-                        image_payload: dict[str, Any] = {"link": media_url}
+                        media_payload: dict[str, Any] = {"link": media_url}
                         if index == 0 and text:
-                            image_payload["caption"] = text[:1024]
+                            media_payload["caption"] = text[:1024]
+                        message_payload: dict[str, Any] = {
+                            "messaging_product": "whatsapp",
+                            "to": recipient_id,
+                            "type": media_payload_key,
+                            media_payload_key: media_payload,
+                        }
+                        if index == 0:
+                            _whatsapp_apply_reply_context(message_payload, reply_to_id)
                         result = self._post_json_webhook(
                             endpoint,
-                            {
-                                "messaging_product": "whatsapp",
-                                "to": recipient_id,
-                                "type": "image",
-                                "image": image_payload,
-                            },
+                            message_payload,
                             secret_header_name="Authorization",
                             secret_token=bearer_token,
                         )
@@ -6946,16 +6958,18 @@ class OpsMeshService:
                         "mediaIds": message_ids,
                         "mediaUrls": media_urls,
                     }
+                media_payload = {
+                    "link": media_urls[0],
+                }
+                if text:
+                    media_payload["caption"] = text[:1024]
                 payload = {
                     "messaging_product": "whatsapp",
                     "to": recipient_id,
-                    "type": "image",
-                    "image": {
-                        "link": media_urls[0],
-                    },
+                    "type": media_payload_key,
+                    media_payload_key: media_payload,
                 }
-                if text:
-                    payload["image"]["caption"] = text[:1024]
+                _whatsapp_apply_reply_context(payload, reply_to_id)
             else:
                 payload = {
                     "messaging_product": "whatsapp",
@@ -6963,6 +6977,7 @@ class OpsMeshService:
                     "type": "text",
                     "text": {"body": text[:4096]},
                 }
+                _whatsapp_apply_reply_context(payload, reply_to_id)
         result = self._post_json_webhook(
             _whatsapp_messages_endpoint(str(route.get("target") or "")),
             payload,
