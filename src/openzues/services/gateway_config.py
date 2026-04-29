@@ -186,6 +186,22 @@ class GatewayConfigService:
         write_result.update({"alias": alias_value, "target": target})
         return write_result
 
+    def remove_model_alias(self, alias: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        alias_value = _normalize_model_alias(alias)
+        next_snapshot = _remove_model_alias_in_snapshot(current, alias=alias_value)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        remaining_aliases = _model_aliases_from_config_snapshot(next_snapshot)
+        write_result.update(
+            {
+                "alias": alias_value,
+                "aliasesRemaining": len(remaining_aliases),
+            }
+        )
+        return write_result
+
     def record_marketplace_plugin_install(
         self,
         *,
@@ -401,6 +417,38 @@ def _set_model_alias_in_snapshot(
     next_entry = dict(target_entry) if isinstance(target_entry, dict) else {}
     next_entry["alias"] = alias
     next_models[target] = next_entry
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    defaults["models"] = next_models
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _remove_model_alias_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    alias: str,
+) -> dict[str, Any]:
+    models = _agents_defaults_models_from_snapshot(snapshot)
+    found_key: str | None = None
+    for model_key, raw_entry in models.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        existing = raw_entry.get("alias")
+        if isinstance(existing, str) and existing.strip() == alias:
+            found_key = model_key
+            break
+    if found_key is None:
+        raise ValueError(f"Alias not found: {alias}")
+    next_models = dict(models)
+    target_entry = next_models.get(found_key)
+    next_entry = dict(target_entry) if isinstance(target_entry, dict) else {}
+    next_entry.pop("alias", None)
+    next_models[found_key] = next_entry
     next_snapshot = dict(snapshot)
     raw_agents = next_snapshot.get("agents")
     agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}

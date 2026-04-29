@@ -5553,6 +5553,18 @@ async def _set_model_alias_payload(
     return dict(result)
 
 
+async def _remove_model_alias_payload(
+    services: CliServices,
+    *,
+    alias: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model alias config runtime is unavailable.")
+    result = gateway_config.remove_model_alias(alias)
+    return dict(result)
+
+
 async def _build_models_list_payload(
     services: CliServices,
     *,
@@ -8850,6 +8862,26 @@ def models_aliases_add_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Alias {payload.get('alias')} -> {payload.get('target')}")
+
+
+@models_aliases_app.command("remove")
+def models_aliases_remove_command(
+    alias: str = typer.Argument(..., help="Alias name."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _remove_model_alias_payload(
+                    services,
+                    alias=alias,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if payload.get("aliasesRemaining") == 0:
+        typer.echo("No aliases configured.")
 
 
 @models_app.command("status")

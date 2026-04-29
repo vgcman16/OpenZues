@@ -208,8 +208,11 @@ OpenZues config projection, falls back to model-catalog alias metadata when
 available, and supports the upstream JSON/plain/human output shapes. `models
 aliases add` now normalizes aliases, defaults unqualified model ids to the
 OpenAI provider, rejects duplicates pointing elsewhere, and writes the alias
-through `GatewayConfigService` into `agents.defaults.models`. Remaining model
-alias CLI parity is `models aliases remove` plus the broader fallback/auth-order
+through `GatewayConfigService` into `agents.defaults.models`. `models aliases
+remove` now clears the alias field from the matched configured model, preserves
+the model entry, reports the upstream empty-alias message when none remain, and
+returns the upstream not-found error for missing aliases. No smaller model alias
+CLI command remains; the next model CLI queue head is the fallback/auth-order
 mutation cluster. Live auth probes remain unavailable until the native model
 auth health runtime exists.
 Top-level `health`
