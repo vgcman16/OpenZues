@@ -3025,6 +3025,32 @@ async def _build_capability_web_providers_payload(
     return {"search": search, "fetch": fetch}
 
 
+async def _build_capability_web_search_payload(
+    services: CliServices,
+    *,
+    query: str,
+    provider: str | None,
+    limit: int | None,
+) -> dict[str, object]:
+    runtime = _web_runtime(services)
+    search = getattr(runtime, "search", None) if runtime is not None else None
+    if not callable(search):
+        raise ValueError("web.search local transport is unavailable until web runtime is wired.")
+    result = await search(query=query, provider=provider, limit=limit)
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "web.search",
+        "transport": "local",
+        "attempts": [],
+        "outputs": [{"result": result_payload.get("result")}],
+    }
+    provider_id = _optional_cli_string(result_payload.get("provider"))
+    if provider_id is not None:
+        envelope["provider"] = provider_id
+    return envelope
+
+
 async def _build_capability_video_describe_payload(
     services: CliServices,
     *,
@@ -8591,6 +8617,29 @@ def capability_web_providers_command(
 
     payload = _run(_run_with_services(_action))
     _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_web_app.command("search")
+def capability_web_search_command(
+    query: str = typer.Option(..., "--query", help="Search query."),
+    provider: str | None = typer.Option(None, "--provider", help="Provider id."),
+    limit: int | None = typer.Option(None, "--limit", help="Result limit."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_web_search_payload(
+            services,
+            query=query,
+            provider=provider,
+            limit=limit,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_video_app.command("describe")

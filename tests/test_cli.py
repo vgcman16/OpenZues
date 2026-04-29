@@ -4282,6 +4282,68 @@ def test_infer_web_providers_json_projects_search_and_fetch(monkeypatch) -> None
     assert calls == ["list_search_providers", "list_fetch_providers"]
 
 
+def test_infer_web_search_json_wraps_native_web_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeWebRuntime:
+        async def search(
+            self,
+            *,
+            query: str,
+            provider: str | None,
+            limit: int | None,
+        ) -> dict[str, object]:
+            calls.append({"query": query, "provider": provider, "limit": limit})
+            return {
+                "provider": "serpapi",
+                "result": {
+                    "items": [
+                        {"title": "OpenZues", "url": "https://example.test/openzues"}
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(web_runtime=FakeWebRuntime()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "web",
+            "search",
+            "--query",
+            "OpenZues parity",
+            "--provider",
+            "serpapi",
+            "--limit",
+            "3",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "web.search",
+        "transport": "local",
+        "provider": "serpapi",
+        "attempts": [],
+        "outputs": [
+            {
+                "result": {
+                    "items": [
+                        {"title": "OpenZues", "url": "https://example.test/openzues"}
+                    ]
+                }
+            }
+        ],
+    }
+    assert calls == [{"query": "OpenZues parity", "provider": "serpapi", "limit": 3}]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,
