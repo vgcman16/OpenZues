@@ -24,6 +24,9 @@ creation/resume, child turn start, durable ACP session metadata, tracked
 `agent.wait` cleanup, and parent completion announcements. The old unavailable
 boundary remains only when no ACP spawn service is registered, and ACP preflight
 errors for attachments, `lightContext`, and `sandbox="require"` are preserved.
+ACP `mode="session"` now also matches OpenClaw's guard by returning
+`errorCode="thread_required"` unless `thread=true`, before dispatching any
+RuntimeManager thread or turn.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
@@ -1487,6 +1490,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   return the specific unsupported-attachments result instead of a generic ACP
   boundary.
 - Verified the ACP preflight seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "light_context_for_acp or acp_attachments_before_runtime_boundary"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `RuntimeManagerAcpSpawnService` now preserves OpenClaw's ACP direct-spawn
+  session-mode policy: `mode="session"` returns `errorCode="thread_required"`
+  unless `thread=true`, and the RuntimeManager thread/turn dispatch path is not
+  touched for that rejected request.
+- Verified the ACP session-mode runtime guard with `python -m pytest tests\test_gateway_acp_spawn.py -q -k "rejects_session_mode_without_thread"`, adjacent `python -m pytest tests\test_gateway_acp_spawn.py -q`, gateway projection `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and spawn"`, `ruff check src\openzues\services\gateway_acp_spawn.py tests\test_gateway_acp_spawn.py`, and `mypy src\openzues\services\gateway_acp_spawn.py`.
 - `chat.history` and `sessions.history` now mirror OpenClaw's numeric history
   limit parsing: finite JSON numbers are floored and bounded instead of
   requiring integer-only input.

@@ -128,3 +128,29 @@ async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     assert payload["mode"] == "session"
     assert manager.start_thread_calls == []
     assert manager.start_turn_calls[0]["thread_id"] == "thread-existing"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_rejects_session_mode_without_thread() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Keep this ACP session alive.",
+            "mode": "session",
+            "thread": False,
+        },
+        {},
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "thread_required",
+        "error": (
+            'mode="session" requires thread=true so the ACP session can stay '
+            "bound to a thread."
+        ),
+    }
+    assert manager.start_thread_calls == []
+    assert manager.start_turn_calls == []

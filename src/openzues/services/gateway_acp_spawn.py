@@ -53,6 +53,20 @@ class RuntimeManagerAcpSpawnService:
         task = _optional_string(params.get("task"))
         if task is None:
             return {"status": "error", "error": "task is required"}
+        requested_mode = _optional_string(params.get("mode"))
+        thread_requested = params.get("thread") is True
+        mode = requested_mode if requested_mode in {"run", "session"} else (
+            "session" if thread_requested else "run"
+        )
+        if mode == "session" and not thread_requested:
+            return {
+                "status": "error",
+                "errorCode": "thread_required",
+                "error": (
+                    'mode="session" requires thread=true so the ACP session can stay '
+                    "bound to a thread."
+                ),
+            }
         instance_id = await self._select_instance_id()
         if instance_id is None:
             return {
@@ -61,11 +75,6 @@ class RuntimeManagerAcpSpawnService:
             }
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
-        requested_mode = _optional_string(params.get("mode"))
-        thread_requested = params.get("thread") is True
-        mode = requested_mode if requested_mode in {"run", "session"} else (
-            "session" if thread_requested else "run"
-        )
         try:
             thread_id: str | None
             if resume_session_id is not None:
