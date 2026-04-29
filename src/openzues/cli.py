@@ -10303,6 +10303,7 @@ _OPENCLAW_TASK_STATUS_VALUES = (
     "lost",
 )
 _OPENCLAW_TASK_RUNTIME_VALUES = ("subagent", "acp", "cli", "cron")
+_OPENCLAW_TASK_NOTIFY_VALUES = ("done_only", "state_changes", "silent")
 _OPENCLAW_TASK_AUDIT_CODES = (
     "stale_queued",
     "stale_running",
@@ -10474,6 +10475,42 @@ async def _native_task_blueprint_records(services: CliServices) -> list[object]:
     return list(await list_task_blueprints())
 
 
+async def _gateway_session_metadata_by_key(
+    services: CliServices,
+) -> dict[str, dict[str, object]]:
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if not callable(list_rows):
+        return {}
+    rows = await list_rows()
+    metadata_by_key: dict[str, dict[str, object]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        session_key = _optional_cli_string(row.get("session_key"))
+        metadata = row.get("metadata")
+        if session_key is not None and isinstance(metadata, dict):
+            metadata_by_key[session_key] = cast("dict[str, object]", metadata)
+    return metadata_by_key
+
+
+def _apply_task_session_metadata(
+    task: dict[str, object],
+    metadata_by_key: dict[str, dict[str, object]],
+) -> None:
+    for key in ("childSessionKey", "requesterSessionKey"):
+        session_key = _optional_cli_string(task.get(key))
+        if session_key is None:
+            continue
+        metadata = metadata_by_key.get(session_key)
+        if metadata is None:
+            continue
+        notify_policy = _optional_cli_string(metadata.get("taskNotifyPolicy"))
+        if notify_policy in _OPENCLAW_TASK_NOTIFY_VALUES:
+            task["notifyPolicy"] = notify_policy
+            return
+
+
 def _openclaw_task_record_from_blueprint(blueprint: object) -> dict[str, object] | None:
     task_id_value = _record_value(blueprint, "id")
     if not isinstance(task_id_value, int):
@@ -10533,6 +10570,10 @@ async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[st
         record = _openclaw_task_record_from_blueprint(blueprint)
         if record is not None:
             records.append(record)
+    metadata_by_key = await _gateway_session_metadata_by_key(services)
+    if metadata_by_key:
+        for record in records:
+            _apply_task_session_metadata(record, metadata_by_key)
     return records
 
 
@@ -10621,6 +10662,38 @@ async def _cancel_openclaw_task(services: CliServices, lookup: str) -> str:
     run_id = _optional_cli_string(task.get("runId"))
     run_text = f" run {run_id}" if run_id is not None else ""
     return f"Cancelled {task.get('taskId')} ({task.get('runtime')}){run_text}."
+
+
+async def _set_openclaw_task_notify_policy(
+    services: CliServices,
+    *,
+    lookup: str,
+    notify_policy: str,
+) -> str:
+    normalized_policy = _optional_cli_string(notify_policy)
+    if normalized_policy not in _OPENCLAW_TASK_NOTIFY_VALUES:
+        raise ValueError("Notify policy must be done_only, state_changes, or silent.")
+    task = await _resolve_openclaw_task(services, lookup)
+    if task is None:
+        raise ValueError(f"Task not found: {lookup}")
+    session_key = _optional_cli_string(task.get("childSessionKey")) or _optional_cli_string(
+        task.get("requesterSessionKey")
+    )
+    database = getattr(services, "database", None)
+    get_metadata = getattr(database, "get_gateway_session_metadata", None)
+    upsert_metadata = getattr(database, "upsert_gateway_session_metadata", None)
+    if session_key is None or not callable(get_metadata) or not callable(upsert_metadata):
+        raise ValueError(f"Could not update task notify policy: {lookup}")
+    existing_row = await get_metadata(session_key)
+    existing_metadata = (
+        existing_row.get("metadata")
+        if isinstance(existing_row, dict)
+        else None
+    )
+    metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}
+    metadata["taskNotifyPolicy"] = normalized_policy
+    await upsert_metadata(session_key=session_key, metadata=metadata)
+    return f"Updated {task.get('taskId')} notify policy to {normalized_policy}."
 
 
 def _task_status_counts(tasks: list[dict[str, object]]) -> dict[str, int]:
@@ -11786,6 +11859,27 @@ def tasks_flow_show_command(
         typer.echo(f"TaskFlow not found: {lookup}", err=True)
         raise typer.Exit(code=1)
     _emit_task_flow_show(flow, json_output=json_output)
+
+
+@tasks_app.command("notify")
+def tasks_notify_command(
+    lookup: str = typer.Argument(..., help="Task id, run id, or session key."),
+    notify_policy: str = typer.Argument(..., help="Notify policy."),
+) -> None:
+    try:
+        message = _run(
+            _run_with_services(
+                lambda services: _set_openclaw_task_notify_policy(
+                    services,
+                    lookup=lookup,
+                    notify_policy=notify_policy,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(message)
 
 
 @tasks_app.command("cancel")

@@ -4204,6 +4204,73 @@ def test_tasks_cancel_pauses_native_mission_task(monkeypatch) -> None:
     assert "Cancelled mission:17 (subagent) run thread-17." in result.stdout
 
 
+def test_tasks_notify_persists_native_session_notify_policy(monkeypatch) -> None:
+    upserts: list[tuple[str, dict[str, object]]] = []
+    created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=17,
+                    name="Gateway hardener",
+                    objective="Stabilize the next parity slice.",
+                    status="active",
+                    in_progress=True,
+                    task_blueprint_id=7,
+                    session_key="agent:worker:main",
+                    thread_id="thread-17",
+                    last_turn_id="turn-17",
+                    instance_id=2,
+                    model="gpt-5.4",
+                    last_error=None,
+                    last_checkpoint=None,
+                    last_activity_at=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            ]
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeDatabase:
+        async def get_gateway_session_metadata(self, session_key: str) -> dict[str, object]:
+            assert session_key == "agent:worker:main"
+            return {"session_key": session_key, "metadata": {"label": "Worker"}}
+
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            upserts.append((session_key, metadata))
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "notify", "agent:worker:main", "silent"])
+
+    assert result.exit_code == 0, result.stdout
+    assert upserts == [
+        (
+            "agent:worker:main",
+            {"label": "Worker", "taskNotifyPolicy": "silent"},
+        )
+    ]
+    assert "Updated mission:17 notify policy to silent." in result.stdout
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
