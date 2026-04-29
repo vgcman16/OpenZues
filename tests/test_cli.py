@@ -6007,6 +6007,63 @@ def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
     assert payload["securityAudit"]["status"] == "unavailable"
 
 
+def test_status_json_uses_registered_usage_and_security_runtime_adapters(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+
+    class FakeProviderUsageRuntime:
+        async def get_summary(self, *, timeout_ms: int) -> dict[str, object]:
+            calls.append(("usage", timeout_ms))
+            return {
+                "status": "ok",
+                "providers": [{"provider": "openai", "tokens": 123}],
+            }
+
+    class FakeSecurityAuditRuntime:
+        async def get_audit(self, *, timeout_ms: int) -> dict[str, object]:
+            calls.append(("security", timeout_ms))
+            return {
+                "status": "ok",
+                "findings": [{"severity": "low", "title": "No critical issues"}],
+            }
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {"headline": "Live dashboard headline", "summary": "Live dashboard summary"}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=cli_module._runtime_settings(),
+                provider_usage=FakeProviderUsageRuntime(),
+                security_audit=FakeSecurityAuditRuntime(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["status", "--json", "--usage", "--all", "--timeout", "7000"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["usage"] == {
+        "status": "ok",
+        "providers": [{"provider": "openai", "tokens": 123}],
+        "timeoutMs": 7000,
+    }
+    assert payload["securityAudit"] == {
+        "status": "ok",
+        "findings": [{"severity": "low", "title": "No critical issues"}],
+    }
+    assert calls == [("usage", 7000), ("security", 7000)]
+
+
 def test_status_all_human_output_renders_pasteable_diagnosis(
     tmp_path, monkeypatch
 ) -> None:

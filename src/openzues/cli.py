@@ -608,6 +608,54 @@ def _build_status_security_audit_unavailable_payload() -> dict[str, object]:
     }
 
 
+def _status_provider_usage_runtime(services: object | None) -> Any | None:
+    if services is None:
+        return None
+    runtime = getattr(services, "provider_usage", None)
+    if runtime is None:
+        runtime = getattr(services, "provider_usage_service", None)
+    return runtime
+
+
+async def _build_status_usage_payload(
+    services: object | None,
+    *,
+    timeout_ms: int,
+) -> dict[str, object]:
+    runtime = _status_provider_usage_runtime(services)
+    for method_name in ("get_summary", "snapshot", "load_summary"):
+        method = getattr(runtime, method_name, None) if runtime is not None else None
+        if callable(method):
+            result = await method(timeout_ms=timeout_ms)
+            payload = dict(result) if isinstance(result, dict) else {}
+            payload.setdefault("timeoutMs", timeout_ms)
+            return payload
+    return _build_status_usage_unavailable_payload(timeout_ms=timeout_ms)
+
+
+def _status_security_audit_runtime(services: object | None) -> Any | None:
+    if services is None:
+        return None
+    runtime = getattr(services, "security_audit", None)
+    if runtime is None:
+        runtime = getattr(services, "security_audit_service", None)
+    return runtime
+
+
+async def _build_status_security_audit_payload(
+    services: object | None,
+    *,
+    timeout_ms: int,
+) -> dict[str, object]:
+    runtime = _status_security_audit_runtime(services)
+    for method_name in ("get_audit", "snapshot", "run_audit"):
+        method = getattr(runtime, method_name, None) if runtime is not None else None
+        if callable(method):
+            result = await method(timeout_ms=timeout_ms)
+            return dict(result) if isinstance(result, dict) else {}
+    return _build_status_security_audit_unavailable_payload()
+
+
 async def _build_status_runtime_sections(
     app_settings: Settings,
     *,
@@ -615,6 +663,7 @@ async def _build_status_runtime_sections(
     usage: bool,
     all_output: bool,
     timeout_ms: int,
+    services: object | None = None,
 ) -> dict[str, object]:
     sections: dict[str, object] = {}
     if deep:
@@ -632,9 +681,15 @@ async def _build_status_runtime_sections(
     if deep or usage:
         sections["lastHeartbeat"] = None
     if usage:
-        sections["usage"] = _build_status_usage_unavailable_payload(timeout_ms=timeout_ms)
+        sections["usage"] = await _build_status_usage_payload(
+            services,
+            timeout_ms=timeout_ms,
+        )
     if all_output:
-        sections["securityAudit"] = _build_status_security_audit_unavailable_payload()
+        sections["securityAudit"] = await _build_status_security_audit_payload(
+            services,
+            timeout_ms=timeout_ms,
+        )
     return sections
 
 
@@ -7328,6 +7383,7 @@ def status_command(
                 usage=usage,
                 all_output=all_output,
                 timeout_ms=timeout_ms,
+                services=services,
             )
         )
         if all_output and not json_output:
