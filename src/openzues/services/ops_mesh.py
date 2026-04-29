@@ -6895,7 +6895,10 @@ class OpsMeshService:
         else:
             reply_to_id = str(event.get("replyToId") or "").strip()
             force_document = _optional_bool_payload_value(event, "forceDocument") is True
-            media_payload_key = "document" if force_document else "image"
+            gif_playback = _optional_bool_payload_value(event, "gifPlayback") is True
+            media_payload_key = (
+                "document" if force_document else "video" if gif_playback else "image"
+            )
             raw_media_urls = event.get("mediaUrls")
             media_urls = _normalize_direct_channel_media_urls(
                 media_url=(

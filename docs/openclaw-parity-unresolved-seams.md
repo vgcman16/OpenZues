@@ -70,7 +70,10 @@ tests and broader non-route CLI ergonomics.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery
-payload and provider-result metadata.
+payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
+now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
+WhatsApp video/GIF outbound behavior while keeping the existing caption and
+saved delivery metadata path.
 
 Current queue-head adjustment: the CLI now exposes `sessions spawn` and
 `sessions wait` as thin JSON/human wrappers over the production
@@ -984,6 +987,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
 - Added a focused WhatsApp media proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) for two-image sends, Bearer-token reuse, and saved provider media IDs.
 - Closed the WhatsApp reply/document payload slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp Cloud API direct sends now preserve `replyToId` as `context.message_id` and send forced-document media through `type="document"` / `document.link` while keeping caption text and saved provider result metadata.
 - Added a focused WhatsApp reply-document proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) covering `reply_to_id`, `force_document`, Bearer-token reuse, and saved delivery payload metadata.
+- Closed the WhatsApp GIF/video payload slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): WhatsApp Cloud API direct sends now map `gifPlayback=true` media sends to `type="video"` / `video.link`, with `forceDocument=true` still taking precedence.
+- Added a focused WhatsApp GIF/video proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) covering the native provider payload, caption settings, Bearer-token reuse, and saved `gifPlayback` event metadata.
 - Closed the provider failure-detail polish slice in [`C:\Users\skull\OneDrive\Documents\OpenZues\src\openzues\services\ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/src/openzues/services/ops_mesh.py): HTTP provider error bodies are now parsed and included in webhook/provider upload error messages instead of reporting only the status code.
 - Added a focused HTTP-error proof in [`C:\Users\skull\OneDrive\Documents\OpenZues\tests\test_ops_mesh.py`](C:/Users/skull/OneDrive/Documents/OpenZues/tests/test_ops_mesh.py) showing a provider JSON body such as `{"error":"channel_not_found"}` surfaces as `Webhook returned 400: channel_not_found`.
 - Verified this provider-runtime slice with:
@@ -1002,6 +1007,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   - `python -m pytest tests\test_ops_mesh.py -q -k "preserves_whatsapp_reply_document"`: `1 passed`
   - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_native_route or whatsapp_media or preserves_whatsapp_reply_document or splits_whatsapp_media"`: `4 passed`
   - `python -m pytest tests\test_ops_mesh.py -q -k "telegram_native_route or discord_native_route or send_direct_channel_message_uses_whatsapp_native_route or preserves_whatsapp_reply_document"`: `6 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_gif_video_payload"`: `1 passed`
+  - `python -m pytest tests\test_ops_mesh.py -q -k "whatsapp_gif_video_payload or preserves_whatsapp_reply_document or splits_whatsapp_media or whatsapp_native_route or whatsapp_media"`: `5 passed`
   - `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`: clean
   - `mypy src\openzues\services\ops_mesh.py`: clean
   - `PYTHONPATH=src;.venv\Lib\site-packages C:\Users\skull\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_ops_mesh.py -k "post_json_webhook_includes_provider_http_error_body or whatsapp_media or telegram_media_group" --basetemp .codex-tmp\pytest-webhook-error`: `3 passed`
