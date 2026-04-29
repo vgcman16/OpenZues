@@ -2565,6 +2565,33 @@ def _emit_models_status(
         typer.echo(f"auth: {auth.get('status') or 'unknown'}")
 
 
+def _models_status_check_exit_code(payload: dict[str, object]) -> int:
+    if payload.get("ok") is not True:
+        return 1
+    auth = payload.get("auth")
+    if not isinstance(auth, dict):
+        return 0
+    auth_status = (_optional_cli_string(auth.get("status")) or "").lower()
+    if auth_status in {"error", "failed", "failure", "unhealthy"}:
+        return 1
+    missing = auth.get("missingProvidersInUse")
+    if isinstance(missing, list) and any(_optional_cli_string(item) for item in missing):
+        return 1
+    oauth = auth.get("oauth")
+    profiles = oauth.get("profiles") if isinstance(oauth, dict) else None
+    has_expiring = False
+    if isinstance(profiles, list):
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            profile_status = (_optional_cli_string(profile.get("status")) or "").lower()
+            if profile_status in {"expired", "missing"}:
+                return 1
+            if profile_status == "expiring":
+                has_expiring = True
+    return 2 if has_expiring else 0
+
+
 def _model_catalog_entries(payload: dict[str, object]) -> list[dict[str, object]]:
     raw_models = payload.get("models")
     if not isinstance(raw_models, list):
@@ -8051,8 +8078,10 @@ def models_status_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_status(payload, json_output=json_output, plain=plain)
-    if check and payload.get("ok") is not True:
-        raise typer.Exit(code=1)
+    if check:
+        exit_code = _models_status_check_exit_code(payload)
+        if exit_code:
+            raise typer.Exit(code=exit_code)
 
 
 @plugins_app.command("list")

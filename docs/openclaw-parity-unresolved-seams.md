@@ -202,9 +202,11 @@ output envelopes. Model auth login/logout CLI commands now dispatch through a
 fakeable native model-auth runtime hook and keep a precise unavailable boundary
 when that runtime is absent. `models status --probe` now also consumes a
 fakeable native model-auth status/probe runtime when one is registered, while
-keeping the honest unavailable probe posture when it is absent. Remaining
-`infer` parity is production model-auth backend wiring, deeper TTS
-provider/runtime breadth beyond the now-landed CLI family, and any
+keeping the honest unavailable probe posture when it is absent. `models status
+--check` now mirrors OpenClaw's non-zero exit behavior for known auth failures
+or expired/missing OAuth profiles. Remaining `infer` parity is production
+model-auth backend wiring, deeper TTS provider/runtime breadth beyond the
+now-landed CLI family, and any
 gateway-backed capability transports not already covered by native OpenZues
 command families. The first TTS slices now project the native
 `tts.providers`, `tts.status`, `tts.enable`, `tts.disable`, and

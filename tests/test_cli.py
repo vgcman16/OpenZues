@@ -3352,6 +3352,62 @@ def test_models_status_probe_json_uses_model_auth_runtime(monkeypatch) -> None:
     assert auth_calls == [{"providers": ["openai"], "probe": True}]
 
 
+def test_models_status_check_exits_nonzero_for_known_auth_problem(monkeypatch) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "name": "gpt-5.4",
+                        "provider": "openai",
+                        "isDefault": True,
+                    }
+                ]
+            }
+
+    class FakeModelAuth:
+        async def status(
+            self,
+            *,
+            providers: list[str],
+            probe: bool,
+        ) -> dict[str, object]:
+            return {
+                "status": "error",
+                "providersWithOAuth": [],
+                "missingProvidersInUse": providers,
+                "providers": [],
+                "unusableProfiles": [],
+                "oauth": {
+                    "profiles": [{"id": "openai-default", "status": "missing"}],
+                    "providers": [],
+                },
+                "probes": None if not probe else {"openai": {"status": "auth"}},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                model_auth=FakeModelAuth(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "status", "--check", "--json"])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["auth"]["status"] == "error"
+    assert payload["auth"]["missingProvidersInUse"] == ["openai"]
+
+
 def test_infer_model_list_json_uses_openclaw_catalog_shape(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
