@@ -1721,6 +1721,7 @@ class ControlUiGatewayAgentConfigView(BaseModel):
 
     id: str
     name: str | None = None
+    default: bool | None = None
     workspace: str | None = None
     agent_dir: str | None = Field(default=None, alias="agentDir")
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None

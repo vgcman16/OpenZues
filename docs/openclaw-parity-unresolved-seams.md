@@ -231,8 +231,10 @@ now resolves aliases, removes matching canonical image fallback targets, keeps
 remaining order intact, and returns the upstream not-found error for missing
 image fallback targets. `models image-fallbacks clear` now empties the
 configured image fallback list while preserving the existing primary image model
-config. No smaller image fallback CLI command remains; the next model CLI queue
-head is auth-order mutation clusters. Live auth
+config. No smaller image fallback CLI command remains. `models auth order get`
+now reads the per-agent native `auth-state.json` order override with
+OpenClaw-style provider normalization and JSON/human output. The next model CLI
+queue head is auth-order set/clear mutation. Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits

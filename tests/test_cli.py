@@ -5865,6 +5865,57 @@ def test_models_image_fallbacks_clear_empties_config_fallbacks(
     assert snapshot["agents"]["defaults"]["imageModel"]["primary"] == "openai/gpt-image-1"
 
 
+def test_models_auth_order_get_json_reads_agent_auth_state(tmp_path, monkeypatch) -> None:
+    agent_dir = tmp_path / "agents" / "main" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth-state.json").write_text(
+        json.dumps({"version": 1, "order": {"openai": ["openai:first", "openai:second"]}}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"list": [{"id": "main", "agentDir": str(agent_dir)}]},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "auth", "order", "get", "--provider", "OPENAI", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "agentId": "main",
+        "agentDir": str(agent_dir),
+        "provider": "openai",
+        "authStatePath": str(agent_dir / "auth-state.json"),
+        "order": ["openai:first", "openai:second"],
+    }
+
+
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

@@ -391,6 +391,8 @@ capability_embedding_app = typer.Typer(help="Inspect embedding provider metadata
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
+models_auth_app = typer.Typer(help="Manage model auth profiles.")
+models_auth_order_app = typer.Typer(help="Manage per-agent auth profile order overrides.")
 models_aliases_app = typer.Typer(help="Inspect configured model aliases.")
 models_fallbacks_app = typer.Typer(help="Inspect configured model fallbacks.")
 models_image_fallbacks_app = typer.Typer(help="Inspect configured image model fallbacks.")
@@ -431,6 +433,8 @@ app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
+models_app.add_typer(models_auth_app, name="auth")
+models_auth_app.add_typer(models_auth_order_app, name="order")
 models_app.add_typer(models_aliases_app, name="aliases")
 models_app.add_typer(models_fallbacks_app, name="fallbacks")
 models_app.add_typer(models_image_fallbacks_app, name="image-fallbacks")
@@ -3255,6 +3259,25 @@ def _emit_models_fallbacks(
         typer.echo(f"- {fallback}")
 
 
+def _emit_models_auth_order(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"Agent: {payload.get('agentId')}")
+    typer.echo(f"Provider: {payload.get('provider')}")
+    typer.echo(f"Auth state file: {payload.get('authStatePath')}")
+    raw_order = payload.get("order")
+    order = raw_order if isinstance(raw_order, list) else []
+    if order:
+        typer.echo("Order override: " + ", ".join(str(item) for item in order))
+    else:
+        typer.echo("Order override: (none)")
+
+
 def _emit_models_status(
     payload: dict[str, object],
     *,
@@ -5616,6 +5639,18 @@ async def _build_models_fallbacks_payload(services: CliServices) -> dict[str, ob
 
 async def _build_models_image_fallbacks_payload(services: CliServices) -> dict[str, object]:
     return {"fallbacks": _model_fallbacks_from_services_config(services, key="imageModel")}
+
+
+async def _build_models_auth_order_get_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    agent: str | None,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model auth order config runtime is unavailable.")
+    return dict(gateway_config.get_model_auth_order(provider=provider, agent=agent))
 
 
 async def _set_model_alias_payload(
@@ -8963,6 +8998,40 @@ def models_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_list(payload, json_output=json_output, plain=plain)
+
+
+@models_auth_order_app.command("get")
+def models_auth_order_get_command(
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id (default: configured default agent).",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit auth order as JSON.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_order_get_payload(
+                    services,
+                    provider=provider,
+                    agent=agent,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_models_auth_order(payload, json_output=json_output)
 
 
 @models_aliases_app.command("list")

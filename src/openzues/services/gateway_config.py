@@ -39,6 +39,23 @@ _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
 }
 _MODEL_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 _DEFAULT_MODEL_PROVIDER = "openai"
+_DEFAULT_AGENT_ID = "main"
+_AGENT_ID_VALID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
+_AGENT_ID_INVALID_CHARS_PATTERN = re.compile(r"[^a-z0-9_-]+")
+_PROVIDER_ID_ALIASES = {
+    "aws-bedrock": "amazon-bedrock",
+    "bedrock": "amazon-bedrock",
+    "bytedance": "volcengine",
+    "doubao": "volcengine",
+    "kimi-code": "kimi",
+    "kimi-coding": "kimi",
+    "modelstudio": "qwen",
+    "opencode-go-auth": "opencode-go",
+    "opencode-zen": "opencode",
+    "qwencloud": "qwen",
+    "z.ai": "zai",
+    "z-ai": "zai",
+}
 
 
 def _escape_powershell_single_quoted_string(value: str) -> str:
@@ -104,6 +121,7 @@ class GatewayConfigService:
         self._local_media_preview_roots = list(local_media_preview_roots or [])
         self._embed_sandbox = embed_sandbox
         self._allow_external_embed_urls = allow_external_embed_urls
+        self._data_dir = data_dir
         self._config_path = data_dir / "settings" / "control-ui-config.json" if data_dir else None
         self._open_path = open_path or _open_gateway_config_path
 
@@ -310,6 +328,28 @@ class GatewayConfigService:
         write_result.update({"fallbacks": []})
         return write_result
 
+    def get_model_auth_order(
+        self,
+        *,
+        provider: str,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        context = _resolve_model_auth_order_context(
+            self.build_snapshot(),
+            data_dir=self._require_data_dir(),
+            provider=provider,
+            agent=agent,
+        )
+        state = _read_json_object(context["auth_state_path"])
+        order = _auth_order_from_state(state, provider=context["provider"])
+        return {
+            "agentId": context["agent_id"],
+            "agentDir": str(context["agent_dir"]),
+            "provider": context["provider"],
+            "authStatePath": str(context["auth_state_path"]),
+            "order": order if order else None,
+        }
+
     def record_marketplace_plugin_install(
         self,
         *,
@@ -402,6 +442,11 @@ class GatewayConfigService:
             raise RuntimeError("config file path unavailable")
         return self._config_path
 
+    def _require_data_dir(self) -> Path:
+        if self._data_dir is None:
+            raise ValueError("model auth order config runtime is unavailable.")
+        return self._data_dir
+
     def _parse_raw_object(self, raw: str, *, label: str) -> dict[str, Any]:
         try:
             parsed = json.loads(raw)
@@ -490,6 +535,143 @@ def _try_resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str
         return _resolve_model_alias_target(raw, aliases=aliases)
     except ValueError:
         return None
+
+
+def _normalize_model_auth_provider(provider: str) -> str:
+    normalized = provider.strip().lower()
+    if not normalized:
+        raise ValueError("Missing --provider.")
+    return _PROVIDER_ID_ALIASES.get(normalized, normalized)
+
+
+def _normalize_agent_id(value: str | None) -> str:
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return _DEFAULT_AGENT_ID
+    lowered = trimmed.lower()
+    if _AGENT_ID_VALID_PATTERN.fullmatch(trimmed) is not None:
+        return lowered
+    normalized = _AGENT_ID_INVALID_CHARS_PATTERN.sub("-", lowered)
+    normalized = normalized.strip("-")[:64]
+    return normalized or _DEFAULT_AGENT_ID
+
+
+def _agent_entries_from_config_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    raw_entries = agents.get("list")
+    if not isinstance(raw_entries, list):
+        return []
+    return [entry for entry in raw_entries if isinstance(entry, dict)]
+
+
+def _known_agent_ids_from_config_snapshot(snapshot: dict[str, Any]) -> list[str]:
+    entries = _agent_entries_from_config_snapshot(snapshot)
+    if not entries:
+        return [_DEFAULT_AGENT_ID]
+    ids: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        agent_id = _normalize_agent_id(str(entry.get("id") or ""))
+        if agent_id in seen:
+            continue
+        seen.add(agent_id)
+        ids.append(agent_id)
+    return ids or [_DEFAULT_AGENT_ID]
+
+
+def _default_agent_id_from_config_snapshot(snapshot: dict[str, Any]) -> str:
+    entries = _agent_entries_from_config_snapshot(snapshot)
+    if not entries:
+        return _DEFAULT_AGENT_ID
+    for entry in entries:
+        if entry.get("default") is True:
+            return _normalize_agent_id(str(entry.get("id") or ""))
+    return _normalize_agent_id(str(entries[0].get("id") or ""))
+
+
+def _agent_entry_from_config_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    for entry in _agent_entries_from_config_snapshot(snapshot):
+        if _normalize_agent_id(str(entry.get("id") or "")) == agent_id:
+            return entry
+    return None
+
+
+def _resolve_model_auth_agent_dir(
+    *,
+    data_dir: Path,
+    agent_id: str,
+    raw_agent_dir: object,
+) -> Path:
+    if isinstance(raw_agent_dir, str) and raw_agent_dir.strip():
+        configured = Path(raw_agent_dir.strip()).expanduser()
+        if configured.is_absolute():
+            return configured
+        return data_dir / configured
+    return data_dir / "agents" / agent_id / "agent"
+
+
+def _resolve_model_auth_order_context(
+    snapshot: dict[str, Any],
+    *,
+    data_dir: Path,
+    provider: str,
+    agent: str | None,
+) -> dict[str, Any]:
+    provider_id = _normalize_model_auth_provider(provider)
+    if agent is not None and agent.strip():
+        raw_agent = agent.strip()
+        agent_id = _normalize_agent_id(raw_agent)
+        known_agents = _known_agent_ids_from_config_snapshot(snapshot)
+        if agent_id not in known_agents:
+            raise ValueError(
+                f'Unknown agent id "{raw_agent}". Use "openclaw agents list" '
+                "to see configured agents."
+            )
+    else:
+        agent_id = _default_agent_id_from_config_snapshot(snapshot)
+    entry = _agent_entry_from_config_snapshot(snapshot, agent_id=agent_id)
+    agent_dir = _resolve_model_auth_agent_dir(
+        data_dir=data_dir,
+        agent_id=agent_id,
+        raw_agent_dir=entry.get("agentDir") if entry is not None else None,
+    )
+    return {
+        "agent_id": agent_id,
+        "agent_dir": agent_dir,
+        "provider": provider_id,
+        "auth_state_path": agent_dir / "auth-state.json",
+        "auth_store_path": agent_dir / "auth-profiles.json",
+    }
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _auth_order_from_state(state: dict[str, Any], *, provider: str) -> list[str]:
+    raw_order = state.get("order")
+    if not isinstance(raw_order, dict):
+        return []
+    provider_key = _normalize_model_auth_provider(provider)
+    for raw_provider, raw_entries in raw_order.items():
+        if not isinstance(raw_provider, str):
+            continue
+        if _normalize_model_auth_provider(raw_provider) != provider_key:
+            continue
+        if not isinstance(raw_entries, list):
+            return []
+        return [entry.strip() for entry in raw_entries if isinstance(entry, str) and entry.strip()]
+    return []
 
 
 def _model_aliases_from_config_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
