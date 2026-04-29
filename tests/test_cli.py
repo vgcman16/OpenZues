@@ -542,6 +542,59 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     assert r"C:\work\OpenZues" in result.stderr
 
 
+def test_acp_bridge_rejects_mixed_token_sources(tmp_path) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    token_file.write_text("file-token\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--token",
+            "inline-token",
+            "--token-file",
+            str(token_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either --token or --token-file for Gateway token." in result.stderr
+    assert "ACP Gateway bridge is not available" not in result.stderr
+
+
+def test_acp_bridge_reports_missing_token_file() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--token-file",
+            r"C:\missing\openzues-acp-token.txt",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Failed to inspect Gateway token file" in result.stderr
+    assert "ACP Gateway bridge is not available" not in result.stderr
+
+
+def test_acp_bridge_warns_for_inline_secrets() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--token",
+            "inline-token",
+            "--password",
+            "inline-password",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--token can be exposed via process listings" in result.stderr
+    assert "--password can be exposed via process listings" in result.stderr
+    assert "ACP Gateway bridge is not available" in result.stderr
+
+
 def test_sandbox_recreate_session_force_json_forgets_saved_sandbox_metadata(monkeypatch) -> None:
     deleted: list[str] = []
 

@@ -1982,6 +1982,66 @@ def _validate_acp_provenance(value: str | None) -> str | None:
     return normalized
 
 
+def _read_acp_secret_file(path: str, *, label: str) -> str:
+    normalized_path = _optional_cli_string(path)
+    if normalized_path is None:
+        raise ValueError(f"Failed to inspect Gateway {label} file: path is empty.")
+    secret_path = Path(normalized_path)
+    try:
+        return secret_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"Failed to inspect Gateway {label} file: {normalized_path}"
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            f"Failed to read Gateway {label} file: {normalized_path}: {exc}"
+        ) from exc
+
+
+def _resolve_acp_gateway_auth_options(
+    *,
+    token: str | None,
+    token_file: str | None,
+    password: str | None,
+    password_file: str | None,
+) -> dict[str, object]:
+    normalized_token = _optional_cli_string(token)
+    normalized_token_file = _optional_cli_string(token_file)
+    normalized_password = _optional_cli_string(password)
+    normalized_password_file = _optional_cli_string(password_file)
+    if normalized_token is not None and normalized_token_file is not None:
+        raise ValueError("Use either --token or --token-file for Gateway token.")
+    if normalized_password is not None and normalized_password_file is not None:
+        raise ValueError("Use either --password or --password-file for Gateway password.")
+
+    warnings: list[str] = []
+    if normalized_token is not None:
+        warnings.append("--token can be exposed via process listings; prefer --token-file.")
+    if normalized_password is not None:
+        warnings.append(
+            "--password can be exposed via process listings; prefer --password-file."
+        )
+
+    resolved_token = (
+        _read_acp_secret_file(normalized_token_file, label="token")
+        if normalized_token_file is not None
+        else normalized_token
+    )
+    resolved_password = (
+        _read_acp_secret_file(normalized_password_file, label="password")
+        if normalized_password_file is not None
+        else normalized_password
+    )
+    return {
+        "gatewayToken": resolved_token,
+        "gatewayPassword": resolved_password,
+        "tokenFile": normalized_token_file,
+        "passwordFile": normalized_password_file,
+        "warnings": warnings,
+    }
+
+
 def _emit_models_list(
     payload: dict[str, object],
     *,
@@ -5513,6 +5573,20 @@ def acp_bridge_command(
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    try:
+        auth_options = _resolve_acp_gateway_auth_options(
+            token=token,
+            token_file=token_file,
+            password=password,
+            password_file=password_file,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    warnings = auth_options.get("warnings")
+    if isinstance(warnings, list):
+        for warning in warnings:
+            typer.echo(str(warning), err=True)
     _emit_acp_bridge_unavailable(
         kind="Gateway",
         context={
@@ -5524,10 +5598,10 @@ def acp_bridge_command(
             "prefixCwd": not no_prefix_cwd,
             "provenance": provenance_mode,
             "verbose": verbose,
-            "tokenFile": token_file,
-            "passwordFile": password_file,
-            "token": "provided" if token else None,
-            "password": "provided" if password else None,
+            "tokenFile": auth_options.get("tokenFile"),
+            "passwordFile": auth_options.get("passwordFile"),
+            "token": "provided" if auth_options.get("gatewayToken") else None,
+            "password": "provided" if auth_options.get("gatewayPassword") else None,
         },
     )
     raise typer.Exit(code=1)

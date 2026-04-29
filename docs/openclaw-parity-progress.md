@@ -166,6 +166,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "acp_ or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 4 passed after rechecking adjacent ACP/session CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the ACP CLI boundary slice.
 - `mypy src\openzues\cli.py`: clean after the ACP CLI boundary slice.
+- `python -m pytest tests\test_cli.py -q -k "acp_bridge_rejects_mixed_token_sources or acp_bridge_reports_missing_token_file or acp_bridge_warns_for_inline_secrets"`: 3 passed after adding ACP CLI secret-source validation and inline secret warnings.
+- `python -m pytest tests\test_cli.py -q -k "acp_ or sessions_spawn_json_calls_gateway_method_owner or sessions_wait_human_output_calls_agent_wait"`: 7 passed after rechecking adjacent ACP/session CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the ACP CLI option validation slice.
+- `mypy src\openzues\cli.py`: clean after the ACP CLI option validation slice.
 - `ruff check src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py tests\test_gateway_acp_spawn.py tests\test_gateway_node_methods.py tests\test_ops_mesh.py`: clean.
 - `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\services\gateway_node_methods.py src\openzues\services\gateway_outbound_runtime.py src\openzues\services\gateway_plugin_runtime.py src\openzues\services\ops_mesh.py src\openzues\app.py`: clean.
 - `pytest tests/test_gateway_node_methods.py -q -k cron`: 48 passed after adding cron-expression schedule create/update/due-run coverage.

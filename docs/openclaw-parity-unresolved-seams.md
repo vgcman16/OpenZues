@@ -90,8 +90,10 @@ line and config-mismatch recreate hint after listing native saved sandbox
 runtimes. The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
-ACP CLI parity is the real bridge server/client runtime and stricter
-secret-file/collision handling.
+ACP CLI parity is the real bridge server/client runtime. The unavailable
+boundary now validates provenance modes, rejects mixed inline/file secret
+sources, validates secret-file readability, and warns when inline token or
+password flags are used.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
