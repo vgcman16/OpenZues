@@ -5,6 +5,7 @@ import codecs
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -2606,6 +2607,173 @@ def _emit_capability_provider_summary(payload: object, *, json_output: bool) -> 
             typer.echo(json.dumps(entry))
         return
     typer.echo(json.dumps(payload, indent=2))
+
+
+def _resolve_capability_model_run_transport(*, local: bool, gateway: bool) -> str:
+    if local and gateway:
+        raise ValueError("Pass only one of --local or --gateway.")
+    return "gateway" if gateway else "local"
+
+
+def _split_capability_model_ref(model_ref: str | None) -> tuple[str | None, str | None]:
+    normalized = _optional_cli_string(model_ref)
+    if normalized is None:
+        return None, None
+    slash = normalized.find("/")
+    if slash <= 0 or slash == len(normalized) - 1:
+        return None, normalized
+    return normalized[:slash], normalized[slash + 1 :]
+
+
+def _capability_model_run_outputs_from_payloads(
+    raw_payloads: object,
+) -> list[dict[str, object]]:
+    if not isinstance(raw_payloads, list):
+        return []
+    outputs: list[dict[str, object]] = []
+    for item in raw_payloads:
+        if not isinstance(item, dict):
+            continue
+        output: dict[str, object] = {}
+        text = item.get("text")
+        if isinstance(text, str):
+            output["text"] = text
+        if "mediaUrl" in item:
+            media_url = item.get("mediaUrl")
+            if media_url is None or isinstance(media_url, str):
+                output["mediaUrl"] = media_url
+        media_urls = item.get("mediaUrls")
+        if isinstance(media_urls, list):
+            output["mediaUrls"] = [
+                media_url for media_url in media_urls if isinstance(media_url, str)
+            ]
+        if not output:
+            output = dict(item)
+        outputs.append(output)
+    return outputs
+
+
+def _normalize_capability_model_run_envelope(
+    result: dict[str, object],
+    *,
+    transport: str,
+    provider: str | None,
+    model: str | None,
+) -> dict[str, object]:
+    payload_source: dict[str, object] = result
+    nested_result = result.get("result")
+    if isinstance(nested_result, dict):
+        payload_source = nested_result
+    meta = payload_source.get("meta")
+    agent_meta = meta.get("agentMeta") if isinstance(meta, dict) else None
+    resolved_provider = provider
+    resolved_model = model
+    if isinstance(agent_meta, dict):
+        resolved_provider = _optional_cli_string(agent_meta.get("provider")) or resolved_provider
+        resolved_model = _optional_cli_string(agent_meta.get("model")) or resolved_model
+    outputs = _capability_model_run_outputs_from_payloads(payload_source.get("payloads"))
+    if not outputs:
+        run_id = _optional_cli_string(result.get("runId")) or _optional_cli_string(
+            payload_source.get("runId")
+        )
+        status = _optional_cli_string(result.get("status")) or _optional_cli_string(
+            payload_source.get("status")
+        )
+        fallback: dict[str, object] = {}
+        if run_id is not None:
+            fallback["runId"] = run_id
+        if status is not None:
+            fallback["status"] = status
+        outputs = [fallback or dict(payload_source)]
+    envelope: dict[str, object] = {
+        "ok": True,
+        "capability": "model.run",
+        "transport": transport,
+        "attempts": [],
+        "outputs": outputs,
+    }
+    if resolved_provider is not None:
+        envelope["provider"] = resolved_provider
+    if resolved_model is not None:
+        envelope["model"] = resolved_model
+    return envelope
+
+
+async def _build_capability_model_run_payload(
+    services: CliServices,
+    *,
+    prompt: str,
+    model_ref: str | None,
+    transport: str,
+) -> dict[str, object]:
+    provider, model = _split_capability_model_ref(model_ref)
+    if transport == "gateway":
+        params: dict[str, object] = {
+            "agentId": "main",
+            "message": prompt,
+            "idempotencyKey": f"model-run-{secrets.token_urlsafe(18)}",
+        }
+        if provider is not None:
+            params["provider"] = provider
+        if model is not None:
+            params["model"] = model
+        result = await _call_gateway_node_method(services, "agent", params)
+        return _normalize_capability_model_run_envelope(
+            result,
+            transport=transport,
+            provider=provider,
+            model=model,
+        )
+
+    control_chat = getattr(services, "control_chat", None)
+    if control_chat is None:
+        raise ValueError("model.run local transport is unavailable until control chat is wired.")
+    dashboard = await _build_operator_dashboard(services)
+    response = await control_chat.submit(
+        prompt,
+        cast("DashboardView", dashboard),
+        session_key=None,
+    )
+    assistant = getattr(response, "assistant", None)
+    reply = getattr(assistant, "content", None)
+    text = reply if isinstance(reply, str) else ""
+    return _normalize_capability_model_run_envelope(
+        {
+            "payloads": [{"text": text}],
+            "meta": {"agentMeta": {"provider": provider, "model": model}},
+        },
+        transport=transport,
+        provider=provider,
+        model=model,
+    )
+
+
+def _emit_capability_model_run(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"{payload.get('capability') or 'model.run'} via {payload.get('transport')}")
+    provider = _optional_cli_string(payload.get("provider"))
+    model = _optional_cli_string(payload.get("model"))
+    if provider is not None:
+        typer.echo(f"provider: {provider}")
+    if model is not None:
+        typer.echo(f"model: {model}")
+    outputs = payload.get("outputs")
+    output_items = [item for item in outputs if isinstance(item, dict)] if isinstance(
+        outputs,
+        list,
+    ) else []
+    typer.echo(f"outputs: {len(output_items)}")
+    for output in output_items:
+        path_value = _optional_cli_string(output.get("path"))
+        text_value = _optional_cli_string(output.get("text"))
+        if path_value is not None:
+            typer.echo(path_value)
+        elif text_value is not None:
+            typer.echo(text_value)
+        else:
+            typer.echo(json.dumps(output))
 
 
 def _capability_list_payload() -> list[dict[str, object]]:
@@ -7364,6 +7532,39 @@ def capability_inspect_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_capability_inspect(payload, json_output=json_output)
+
+
+@capability_model_app.command("run")
+def capability_model_run_command(
+    prompt: str = typer.Option(..., "--prompt", help="Prompt text."),
+    model: str | None = typer.Option(None, "--model", help="Model override."),
+    local: bool = typer.Option(False, "--local", help="Force local execution."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        transport = _resolve_capability_model_run_transport(
+            local=local,
+            gateway=gateway,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_model_run_payload(
+            services,
+            prompt=prompt,
+            model_ref=model,
+            transport=transport,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_run(payload, json_output=json_output)
 
 
 @capability_model_app.command("list")

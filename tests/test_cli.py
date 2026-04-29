@@ -3443,6 +3443,145 @@ def test_infer_model_auth_status_json_reuses_model_status_payload(monkeypatch) -
     assert calls == [("models.list", {})]
 
 
+def test_capability_model_run_rejects_local_and_gateway_together() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "model",
+            "run",
+            "--prompt",
+            "hello",
+            "--local",
+            "--gateway",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Pass only one of --local or --gateway." in result.stderr
+
+
+def test_infer_model_run_json_wraps_local_control_chat_reply(monkeypatch) -> None:
+    submitted: dict[str, object] = {}
+
+    class FakeControlChat:
+        async def submit(
+            self,
+            prompt: str,
+            dashboard: object,
+            *,
+            session_key: str | None = None,
+        ) -> object:
+            submitted.update(
+                {
+                    "prompt": prompt,
+                    "dashboard": dashboard,
+                    "session_key": session_key,
+                }
+            )
+            return SimpleNamespace(assistant=SimpleNamespace(content="Local reply"))
+
+    async def fake_build_operator_dashboard(_services):
+        return {"dashboard": "ok"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(control_chat=FakeControlChat()))
+
+    monkeypatch.setattr("openzues.cli._build_operator_dashboard", fake_build_operator_dashboard)
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "infer",
+            "model",
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "openai/gpt-5.4",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "model.run",
+        "transport": "local",
+        "provider": "openai",
+        "model": "gpt-5.4",
+        "attempts": [],
+        "outputs": [{"text": "Local reply"}],
+    }
+    assert submitted == {
+        "prompt": "hello",
+        "dashboard": {"dashboard": "ok"},
+        "session_key": None,
+    }
+
+
+def test_capability_model_run_gateway_json_wraps_agent_payloads(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "result": {
+                    "payloads": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
+                    "meta": {"agentMeta": {"provider": "openai", "model": "gpt-5.4"}},
+                }
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "capability",
+            "model",
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "openai/gpt-5.4",
+            "--gateway",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "ok": True,
+        "capability": "model.run",
+        "transport": "gateway",
+        "provider": "openai",
+        "model": "gpt-5.4",
+        "attempts": [],
+        "outputs": [{"text": "Gateway reply", "mediaUrls": ["media://one"]}],
+    }
+    assert calls == [
+        (
+            "agent",
+            {
+                "agentId": "main",
+                "message": "hello",
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "idempotencyKey": calls[0][1]["idempotencyKey"],
+            },
+        )
+    ]
+
+
 def test_control_plane_base_url_prefers_lease_metadata(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
