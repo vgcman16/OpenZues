@@ -229,8 +229,10 @@ add` now appends canonical image fallback model ids, defaults unqualified ids to
 OpenAI, and upserts the configured model entry. `models image-fallbacks remove`
 now resolves aliases, removes matching canonical image fallback targets, keeps
 remaining order intact, and returns the upstream not-found error for missing
-image fallback targets. The next model CLI queue head is image fallback clear,
-followed by auth-order mutation clusters. Live auth
+image fallback targets. `models image-fallbacks clear` now empties the
+configured image fallback list while preserving the existing primary image model
+config. No smaller image fallback CLI command remains; the next model CLI queue
+head is auth-order mutation clusters. Live auth
 probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
