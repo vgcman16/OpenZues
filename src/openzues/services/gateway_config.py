@@ -613,7 +613,15 @@ def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:
 
 
 def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    omitted_null_sections = ("agents", "gateway", "session", "tools", "plugins", "channels")
+    omitted_null_sections = (
+        "agents",
+        "gateway",
+        "session",
+        "tools",
+        "acp",
+        "plugins",
+        "channels",
+    )
     if any(snapshot.get(section) is None for section in omitted_null_sections):
         snapshot = dict(snapshot)
         for section in omitted_null_sections:

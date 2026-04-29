@@ -35,6 +35,13 @@ best-effort interrupts active Codex app-server turns during cancel, while the
 local metadata/transcript mutation remains native to OpenZues. Remaining ACP
 parity is the standalone ACP bridge server/client harness and deeper protocol
 session presentation, permission, and replay breadth.
+ACP `sessions.spawn` now also resolves OpenClaw's target-agent policy before
+runtime dispatch: explicit `agentId` wins, `acp.defaultAgent` supplies the
+default, missing targets return `errorCode="target_agent_required"`, and
+`acp.allowedAgents` rejects forbidden targets with
+`errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
+now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
+resolved target agent id in session metadata.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

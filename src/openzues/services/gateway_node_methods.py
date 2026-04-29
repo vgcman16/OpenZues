@@ -186,6 +186,10 @@ _SESSIONS_SPAWN_ACCEPTED_NOTE = (
 _SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound session stays active after this task; continue in-thread for follow-ups."
 )
+_ACP_TARGET_AGENT_REQUIRED_ERROR = (
+    "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
+    "or set `acp.defaultAgent` in config."
+)
 _SANDBOXED_REQUESTER_UNSANDBOXED_CHILD_ERROR = (
     "Sandboxed sessions cannot spawn unsandboxed subagents. Set a sandboxed target agent "
     "or use the same agent runtime."
@@ -7172,6 +7176,28 @@ class GatewayNodeMethodService:
                         message="sessions.spawn is unavailable until session inventory is wired",
                         status_code=503,
                     )
+                acp_agent_id = _sessions_spawn_acp_target_agent_id(
+                    requested_agent_id=agent_id,
+                    config_service=self._config_service,
+                )
+                if acp_agent_id is None:
+                    return {
+                        "status": "error",
+                        "errorCode": "target_agent_required",
+                        "error": _ACP_TARGET_AGENT_REQUIRED_ERROR,
+                        **role_context,
+                    }
+                acp_agent_policy_error = _sessions_spawn_acp_agent_policy_error(
+                    self._config_service,
+                    agent_id=acp_agent_id,
+                )
+                if acp_agent_policy_error is not None:
+                    return {
+                        "status": "forbidden",
+                        "errorCode": "agent_forbidden",
+                        "error": acp_agent_policy_error,
+                        **role_context,
+                    }
                 timestamp_ms = _timestamp_ms(now_ms)
                 requester_session_key = _optional_non_empty_string(
                     payload.get("requesterSessionKey"),
@@ -7246,7 +7272,7 @@ class GatewayNodeMethodService:
                     {
                         "task": task,
                         "label": _optional_session_label(payload.get("label"), label="label"),
-                        "agentId": agent_id,
+                        "agentId": acp_agent_id,
                         "resumeSessionId": resume_session_id,
                         "cwd": _optional_non_empty_string(payload.get("cwd"), label="cwd"),
                         "mode": mode,
@@ -7336,8 +7362,7 @@ class GatewayNodeMethodService:
                 label = _optional_session_label(payload.get("label"), label="label")
                 if label is not None:
                     acp_metadata["label"] = label
-                if agent_id is not None:
-                    acp_metadata["agentId"] = agent_id
+                acp_metadata["agentId"] = acp_agent_id
                 await self._database.upsert_gateway_session_metadata(
                     session_key=child_session_key,
                     metadata=acp_metadata,
@@ -12447,6 +12472,48 @@ def _sessions_spawn_allowed_agent_policy(
             continue
         allowed.add(normalize_agent_id(text))
     return allow_any, tuple(sorted(allowed))
+
+
+def _sessions_spawn_acp_config(
+    config_service: GatewayConfigService | None,
+) -> dict[str, Any]:
+    if config_service is None:
+        return {}
+    snapshot = config_service.build_snapshot()
+    acp_config = snapshot.get("acp")
+    return acp_config if isinstance(acp_config, dict) else {}
+
+
+def _sessions_spawn_acp_target_agent_id(
+    *,
+    requested_agent_id: str | None,
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if requested_agent_id is not None:
+        return normalize_agent_id(requested_agent_id)
+    configured_default = _string_or_none(
+        _sessions_spawn_acp_config(config_service).get("defaultAgent")
+    )
+    return normalize_agent_id(configured_default) if configured_default is not None else None
+
+
+def _sessions_spawn_acp_agent_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    agent_id: str,
+) -> str | None:
+    acp_config = _sessions_spawn_acp_config(config_service)
+    raw_allowed_agents = acp_config.get("allowedAgents")
+    if not isinstance(raw_allowed_agents, list):
+        return None
+    allowed_agents = {
+        normalize_agent_id(agent)
+        for raw_agent in raw_allowed_agents
+        if (agent := _string_or_none(raw_agent)) is not None
+    }
+    if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
+        return None
+    return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
 
 
 def _sessions_spawn_sandbox_runtime_status(

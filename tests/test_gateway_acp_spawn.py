@@ -80,6 +80,7 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
     payload = await service.spawn(
         {
             "task": "Run this through ACP.",
+            "agentId": "Codex",
             "cwd": "C:/workspace",
             "mode": "run",
             "thread": False,
@@ -89,7 +90,7 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
 
     assert payload == {
         "status": "accepted",
-        "childSessionKey": "agent:main:acp:thread-acp-new",
+        "childSessionKey": "agent:codex:acp:thread-acp-new",
         "runId": "turn-acp-new",
         "mode": "run",
         "runtimeThreadId": "thread-acp-new",
@@ -125,6 +126,7 @@ async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     payload = await service.spawn(
         {
             "task": "Continue this ACP session.",
+            "agentId": "codex",
             "resumeSessionId": "thread-existing",
             "mode": "session",
             "thread": True,
@@ -133,7 +135,7 @@ async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     )
 
     assert payload["status"] == "accepted"
-    assert payload["childSessionKey"] == "agent:main:acp:thread-existing"
+    assert payload["childSessionKey"] == "agent:codex:acp:thread-existing"
     assert payload["runId"] == "turn-acp-new"
     assert payload["mode"] == "session"
     assert manager.start_thread_calls == []
@@ -160,6 +162,32 @@ async def test_runtime_manager_acp_spawn_rejects_session_mode_without_thread() -
         "error": (
             'mode="session" requires thread=true so the ACP session can stay '
             "bound to a thread."
+        ),
+    }
+    assert manager.start_thread_calls == []
+    assert manager.start_turn_calls == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_requires_target_agent_id() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Run this through ACP.",
+            "mode": "run",
+            "thread": False,
+        },
+        {},
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "target_agent_required",
+        "error": (
+            "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
+            "or set `acp.defaultAgent` in config."
         ),
     }
     assert manager.start_thread_calls == []

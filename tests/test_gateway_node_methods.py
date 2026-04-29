@@ -15300,6 +15300,191 @@ async def test_sessions_spawn_rejects_acp_attachments_before_runtime_boundary() 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_requires_target_agent_without_default(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-target-required.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:thread-should-not-run",
+                "runId": "run-should-not-run",
+                "mode": "run",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through ACP.",
+            "runtime": "acp",
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "target_agent_required",
+        "error": (
+            "ACP target agent is not configured. Pass `agentId` in `sessions_spawn` "
+            "or set `acp.defaultAgent` in config."
+        ),
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_uses_configured_default_agent(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-default-agent.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "defaultAgent": "Codex",
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            assert params["agentId"] == "codex"
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-default",
+                "runId": "run-acp-default-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-default",
+                "runtimeSessionId": "thread-acp-default",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through the configured ACP default.",
+            "runtime": "acp",
+        },
+        now_ms=10_000,
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["childSessionKey"] == "agent:codex:acp:thread-acp-default"
+    assert calls[0]["params"]["agentId"] == "codex"
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-acp-default"
+    )
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["agentId"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_rejects_agent_outside_acp_allowlist(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-agent-allowlist.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("disallowed ACP target should reject before runtime dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through a forbidden ACP agent.",
+            "runtime": "acp",
+            "agentId": "claude",
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "agent_forbidden",
+        "error": 'ACP agent "claude" is not allowed by policy.',
+        "role": "claude",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:
