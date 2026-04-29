@@ -464,7 +464,10 @@ load errors from the same projection and preserves OpenClaw's
 its `plugins info` alias now return OpenClaw-shaped JSON reports with
 `plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
 install metadata projected from the same inventory, and `inspect --all` returns
-all records with top-level saved install metadata when present. `plugins enable`
+all records with top-level saved install metadata when present. Runtime-backed
+`plugins inspect` tool reports now preserve OpenClaw's registered-tool
+`optional` metadata instead of collapsing native executor tools into a single
+required group. `plugins enable`
 / `plugins disable` now write through the
 existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,

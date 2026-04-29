@@ -7416,7 +7416,8 @@ def _plugin_inspect_report(
         if str(capability).strip()
     ]
     install = plugin.get("install")
-    runtime_tools = _plugin_runtime_tool_names(plugin, runtime_specs)
+    runtime_tool_entries = _plugin_runtime_tool_entries(plugin, runtime_specs)
+    runtime_tools = _plugin_runtime_tool_names(runtime_tool_entries)
     inspected_plugin = dict(plugin)
     if runtime_tools:
         inspected_plugin["imported"] = True
@@ -7432,11 +7433,7 @@ def _plugin_inspect_report(
         "bundleCapabilities": _plugin_record_string_list(plugin, "bundleCapabilities"),
         "typedHooks": [],
         "customHooks": [],
-        "tools": (
-            [{"names": runtime_tools, "optional": False}]
-            if runtime_tools
-            else []
-        ),
+        "tools": runtime_tool_entries,
         "commands": _plugin_record_string_list(plugin, "commands"),
         "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
         "services": _plugin_record_string_list(plugin, "services"),
@@ -7503,22 +7500,47 @@ def _plugin_runtime_specs_from_services(
     return ()
 
 
-def _plugin_runtime_tool_names(
+def _plugin_runtime_tool_entries(
     plugin: dict[str, object],
     runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...],
-) -> list[str]:
+) -> list[dict[str, object]]:
     plugin_id = _optional_cli_string(plugin.get("id"))
     plugin_name = _optional_cli_string(plugin.get("name"))
-    tool_names = [
-        spec.tool
-        for spec in runtime_specs
-        if _plugin_runtime_spec_matches_plugin(
+    entries: list[tuple[str, bool]] = []
+    seen: set[tuple[str, bool]] = set()
+    for spec in runtime_specs:
+        if not _plugin_runtime_spec_matches_plugin(
             spec,
             plugin_id=plugin_id,
             plugin_name=plugin_name,
-        )
+        ):
+            continue
+        tool = _optional_cli_string(spec.tool)
+        if tool is None:
+            continue
+        key = (tool, spec.optional)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(key)
+    return [
+        {"names": [tool], "optional": optional}
+        for tool, optional in sorted(entries, key=lambda item: item[0])
     ]
-    return sorted(_dedupe_cli_strings(tool_names))
+
+
+def _plugin_runtime_tool_names(runtime_tool_entries: list[dict[str, object]]) -> list[str]:
+    names: list[str] = []
+    for entry in runtime_tool_entries:
+        raw_names = entry.get("names")
+        if not isinstance(raw_names, list):
+            continue
+        names.extend(
+            text
+            for item in raw_names
+            if (text := _optional_cli_string(item)) is not None
+        )
+    return sorted(_dedupe_cli_strings(names))
 
 
 def _plugin_runtime_spec_matches_plugin(
