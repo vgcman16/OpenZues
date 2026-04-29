@@ -10,6 +10,7 @@ FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE = (
     'Pick a sandboxed agentId or use sandbox="inherit".'
 )
 WORKSPACE_WRITE_SANDBOX_POLICY: dict[str, str] = {"type": "workspaceWrite"}
+READ_ONLY_SANDBOX_POLICY: dict[str, str] = {"type": "readOnly"}
 
 
 def _optional_string(value: object) -> str | None:
@@ -29,6 +30,12 @@ def _read_thread_id(result: object) -> str | None:
     if isinstance(thread_id, str):
         return thread_id.strip() or None
     return None
+
+
+def _sandbox_policy_for_mode(sandbox_mode: str) -> dict[str, str]:
+    if sandbox_mode == "read-only":
+        return dict(READ_ONLY_SANDBOX_POLICY)
+    return dict(WORKSPACE_WRITE_SANDBOX_POLICY)
 
 
 class RuntimeManagerSandboxChatSendService:
@@ -103,7 +110,7 @@ class RuntimeManagerSandboxChatSendService:
             "runtimeSessionId": thread_id,
             "sandboxed": True,
             "sandboxMode": sandbox_mode,
-            "sandboxPolicy": dict(WORKSPACE_WRITE_SANDBOX_POLICY),
+            "sandboxPolicy": _sandbox_policy_for_mode(sandbox_mode),
         }
 
     async def _select_instance_id(self) -> int | None:

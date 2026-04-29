@@ -984,6 +984,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   through the native sandbox send adapter and persisting the same sandbox
   runtime metadata as explicit `sandbox="require"` spawns.
 - Verified the inherited sandbox dispatch seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_inherit_dispatches_sandboxed_config_target"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `RuntimeManagerSandboxChatSendService` now reports a read-only sandbox policy
+  when dispatched with `sandbox_mode="read-only"` instead of stamping every
+  sandboxed turn as workspace-write.
+- Verified the adapter policy seam with `python -m pytest tests\test_gateway_sandbox_spawn.py -q -k "read_only_policy"`, adjacent `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_sandbox_spawn.py tests\test_gateway_sandbox_spawn.py`, and `mypy src\openzues\services\gateway_sandbox_spawn.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References
