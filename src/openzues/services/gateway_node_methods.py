@@ -186,6 +186,10 @@ _SESSIONS_SPAWN_ACCEPTED_NOTE = (
 _SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound session stays active after this task; continue in-thread for follow-ups."
 )
+_SANDBOXED_REQUESTER_UNSANDBOXED_CHILD_ERROR = (
+    "Sandboxed sessions cannot spawn unsandboxed subagents. Set a sandboxed target agent "
+    "or use the same agent runtime."
+)
 _GATEWAY_TOOLS_INVOKE_DEFAULT_DENY = {
     "exec",
     "spawn",
@@ -7267,10 +7271,20 @@ class GatewayNodeMethodService:
                 self._config_service,
                 session_key=canonical_key,
             )
-            if not child_sandbox_status.sandboxed and sandbox == "require":
+            requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
+                self._config_service,
+                session_key=spawn_parent_session_key,
+            )
+            if not child_sandbox_status.sandboxed and (
+                requester_sandbox_status.sandboxed or sandbox == "require"
+            ):
                 return {
                     "status": "forbidden",
-                    "error": FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
+                    "error": (
+                        _SANDBOXED_REQUESTER_UNSANDBOXED_CHILD_ERROR
+                        if requester_sandbox_status.sandboxed
+                        else FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE
+                    ),
                     **role_context,
                 }
             effective_chat_send_service = (

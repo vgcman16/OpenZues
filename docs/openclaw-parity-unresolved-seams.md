@@ -38,8 +38,10 @@ is available. `sandbox="require"` now also resolves OpenClaw's
 `agents.defaults.sandbox` plus `agents.list[].sandbox` target posture before
 dispatching; targets whose effective sandbox `mode` is `off` keep the same
 forbidden response even when a sandbox send adapter is wired. Remaining sandbox
-parity is the sandboxed-requester inherit guard, config-driven non-main/all
-inherit dispatch, and deeper media/workspace staging behavior from OpenClaw.
+parity is config-driven non-main/all inherit dispatch and deeper
+media/workspace staging behavior from OpenClaw. Sandboxed requesters now also
+match OpenClaw's guard by forbidding unsandboxed child targets even when the
+caller leaves `sandbox="inherit"`.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,

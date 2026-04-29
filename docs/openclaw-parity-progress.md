@@ -974,6 +974,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   forbidden response even when a native sandbox send adapter is wired, while
   `mode="all"` keeps the native workspace-write sandbox dispatch path.
 - Verified the config-gated required-sandbox seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_required_sandbox_when_target_config_is_off"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\gateway_config.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\gateway_config.py`.
+- `sessions.spawn sandbox="inherit"` now preserves OpenClaw's sandbox escape
+  guard: when the requester session is sandboxed by effective config, spawning
+  an unsandboxed target agent returns the upstream forbidden message before any
+  child dispatch.
+- Verified the sandboxed-requester guard with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_rejects_sandboxed_requester_to_unsandboxed_target"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References
