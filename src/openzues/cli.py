@@ -1808,6 +1808,53 @@ def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> N
             typer.echo(f"  - {item}")
 
 
+def _emit_sandbox_recreate(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    containers = payload.get("containers")
+    browsers = payload.get("browsers")
+    container_count = len(containers) if isinstance(containers, list) else 0
+    browser_count = len(browsers) if isinstance(browsers, list) else 0
+    if container_count + browser_count == 0:
+        typer.echo("No sandbox runtimes found matching the criteria.")
+        return
+    typer.echo("")
+    typer.echo("Sandbox runtimes to be recreated:")
+    typer.echo("")
+    if isinstance(containers, list) and containers:
+        typer.echo("Sandbox Runtimes:")
+        for item in containers:
+            if not isinstance(item, dict):
+                continue
+            session_key = str(item.get("sessionKey") or "").strip()
+            runtime = str(item.get("runtime") or "session_metadata").strip()
+            status = str(item.get("status") or "known").strip()
+            typer.echo(f"  - {session_key or runtime} [{runtime}] ({status})")
+    if isinstance(browsers, list) and browsers:
+        typer.echo("")
+        typer.echo("Browser Containers:")
+        for item in browsers:
+            if not isinstance(item, dict):
+                continue
+            session_key = str(item.get("sessionKey") or "").strip()
+            status = str(item.get("status") or "known").strip()
+            typer.echo(f"  - {session_key or 'browser'} ({status})")
+    typer.echo("")
+    typer.echo(f"Total: {container_count + browser_count} runtime(s)")
+    if payload.get("cancelled"):
+        typer.echo("Cancelled.")
+        return
+    typer.echo("")
+    typer.echo(
+        f"Done: {payload.get('successCount', 0)} removed, "
+        f"{payload.get('failCount', 0)} failed"
+    )
+    if payload.get("successCount"):
+        typer.echo("")
+        typer.echo("Runtimes will be automatically recreated when the agent is next used.")
+
+
 async def _build_sandbox_inventory_payload(
     services: CliServices,
     *,
@@ -1830,6 +1877,116 @@ async def _build_sandbox_inventory_payload(
     if browser_only:
         containers = []
     return {"containers": containers, "browsers": browsers}
+
+
+async def _build_sandbox_recreate_payload(
+    services: CliServices,
+    *,
+    all_runtimes: bool,
+    session_key: str | None,
+    agent_id: str | None,
+    browser_only: bool,
+    force: bool,
+) -> dict[str, object]:
+    normalized_session, normalized_agent = _validate_sandbox_recreate_selection(
+        all_runtimes=all_runtimes,
+        session_key=session_key,
+        agent_id=agent_id,
+    )
+
+    containers: list[dict[str, object]] = []
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if callable(list_rows) and not browser_only:
+        for row in await list_rows():
+            if not isinstance(row, dict):
+                continue
+            item = _sandbox_inventory_item_from_metadata_row(row)
+            if item is None:
+                continue
+            item_session_key = _optional_cli_string(item.get("sessionKey"))
+            if item_session_key is None:
+                continue
+            if normalized_session is not None and item_session_key != normalized_session:
+                continue
+            if normalized_agent is not None and not _sandbox_session_matches_agent(
+                item_session_key,
+                normalized_agent,
+            ):
+                continue
+            containers.append(item)
+    containers.sort(key=lambda item: str(item.get("sessionKey") or ""))
+    browsers: list[dict[str, object]] = []
+    removed: list[str] = []
+    failed: list[dict[str, object]] = []
+    if not force:
+        return {
+            "ok": False,
+            "cancelled": True,
+            "force": False,
+            "containers": containers,
+            "browsers": browsers,
+            "successCount": 0,
+            "failCount": 0,
+            "removed": removed,
+            "failed": failed,
+        }
+
+    delete_metadata = getattr(database, "delete_gateway_session_metadata", None)
+    for item in containers:
+        item_session_key = _optional_cli_string(item.get("sessionKey"))
+        if item_session_key is None:
+            continue
+        if not callable(delete_metadata):
+            failed.append(
+                {
+                    "sessionKey": item_session_key,
+                    "error": "Gateway session metadata removal is unavailable.",
+                }
+            )
+            continue
+        try:
+            await delete_metadata(item_session_key)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            failed.append({"sessionKey": item_session_key, "error": str(exc)})
+        else:
+            removed.append(item_session_key)
+
+    return {
+        "ok": len(failed) == 0,
+        "cancelled": False,
+        "force": True,
+        "containers": containers,
+        "browsers": browsers,
+        "successCount": len(removed),
+        "failCount": len(failed),
+        "removed": removed,
+        "failed": failed,
+    }
+
+
+def _validate_sandbox_recreate_selection(
+    *,
+    all_runtimes: bool,
+    session_key: str | None,
+    agent_id: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_session = _optional_cli_string(session_key)
+    normalized_agent = _optional_cli_string(agent_id)
+    selected_count = sum(
+        1
+        for selected in (
+            all_runtimes,
+            normalized_session is not None,
+            normalized_agent is not None,
+        )
+        if selected
+    )
+    if selected_count == 0:
+        raise ValueError("Please specify --all, --session <key>, or --agent <id>")
+    if selected_count > 1:
+        raise ValueError("Please specify only one of: --all, --session, --agent")
+    return normalized_session, normalized_agent
 
 
 async def _build_sandbox_explain_payload(
@@ -1944,6 +2101,11 @@ def _agent_id_from_session_key(session_key: str | None) -> str | None:
 
 def _main_session_key_for_agent(agent_id: str) -> str:
     return f"agent:{agent_id}:main"
+
+
+def _sandbox_session_matches_agent(session_key: str, agent_id: str) -> bool:
+    agent_prefix = f"agent:{agent_id}"
+    return session_key == agent_prefix or session_key.startswith(f"{agent_prefix}:")
 
 
 def _sandbox_inventory_item_from_metadata_row(row: dict[str, object]) -> dict[str, object] | None:
@@ -4531,6 +4693,69 @@ def sandbox_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_sandbox_inventory(payload, json_output=json_output)
+
+
+@sandbox_app.command("recreate")
+def sandbox_recreate_command(
+    all_runtimes: bool = typer.Option(
+        False,
+        "--all",
+        help="Recreate all saved sandbox runtimes.",
+    ),
+    session_key: str | None = typer.Option(
+        None,
+        "--session",
+        help="Session key to recreate.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id to recreate, including subagent sessions.",
+    ),
+    browser_only: bool = typer.Option(
+        False,
+        "--browser",
+        help="Only recreate browser sandbox runtimes.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip confirmation and remove matching runtime records.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit sandbox recreation result as JSON.",
+    ),
+) -> None:
+    try:
+        _validate_sandbox_recreate_selection(
+            all_runtimes=all_runtimes,
+            session_key=session_key,
+            agent_id=agent_id,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_sandbox_recreate_payload(
+            services,
+            all_runtimes=all_runtimes,
+            session_key=session_key,
+            agent_id=agent_id,
+            browser_only=browser_only,
+            force=force,
+        )
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_sandbox_recreate(payload, json_output=json_output)
+    if payload.get("failCount"):
+        raise typer.Exit(code=1)
 
 
 @sandbox_app.command("explain")

@@ -450,6 +450,77 @@ def test_sandbox_list_json_surfaces_saved_sandbox_runtime_metadata(monkeypatch) 
     ]
 
 
+def test_sandbox_recreate_session_force_json_forgets_saved_sandbox_metadata(monkeypatch) -> None:
+    deleted: list[str] = []
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "runtimeId": 7,
+                        "runtimeThreadId": "thread-7",
+                        "runtimeSessionId": "thread-7",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "sandboxPolicy": {"type": "workspaceWrite"},
+                    },
+                },
+                {
+                    "session_key": "agent:main:subagent:plain-worker",
+                    "metadata": {"label": "Plain worker"},
+                },
+            ]
+
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "recreate",
+            "--session",
+            "agent:main:subagent:sandbox-worker",
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["successCount"] == 1
+    assert payload["failCount"] == 0
+    assert payload["removed"] == ["agent:main:subagent:sandbox-worker"]
+    assert payload["failed"] == []
+    assert deleted == ["agent:main:subagent:sandbox-worker"]
+
+
+def test_sandbox_recreate_rejects_multiple_targets() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "recreate",
+            "--all",
+            "--session",
+            "agent:main:subagent:sandbox-worker",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Please specify only one of: --all, --session, --agent" in result.stderr
+
+
 def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
     class FakeDatabase:
         async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:

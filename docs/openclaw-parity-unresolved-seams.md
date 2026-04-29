@@ -32,13 +32,14 @@ calls Windows sandbox setup before dispatch, persists `sandboxed`,
 `sandboxMode`, sandbox policy, runtime id, runtime thread/session ids, and
 still returns the existing precise forbidden response when no sandbox runtime
 is available. Remaining sandbox parity is config-driven per-agent sandbox
-target selection, deeper media/workspace staging behavior from OpenClaw, and
-destructive sandbox recreate/remove CLI flows. The CLI now exposes
-`sandbox list --json` with OpenClaw-shaped top-level `containers` / `browsers`
-arrays sourced from saved sandbox session metadata, plus `sandbox explain`
-JSON/human output with OpenClaw's top-level `docsUrl`, `agentId`,
-`sessionKey`, `mainSessionKey`, `sandbox`, `elevated`, and `fixIt` fields
-backed by saved sandbox runtime metadata.
+target selection and deeper media/workspace staging behavior from OpenClaw.
+The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
+`containers` / `browsers` arrays sourced from saved sandbox session metadata,
+`sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,
+`agentId`, `sessionKey`, `mainSessionKey`, `sandbox`, `elevated`, and `fixIt`
+fields backed by saved sandbox runtime metadata, and `sandbox recreate` target
+validation plus `--force` cleanup for saved sandbox runtime metadata so stale
+runtime posture is forgotten and recreated on the next use.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
@@ -74,8 +75,8 @@ service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
 control-chat submit seams used by the app-server path. Remaining CLI/runtime
 parity includes ACP/sandbox status commands, plugin/runtime inspection, doctor
-readiness checks, destructive sandbox lifecycle commands, and broader TUI
-ergonomics.
+readiness checks, non-metadata external sandbox container cleanup, and broader
+TUI ergonomics.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
