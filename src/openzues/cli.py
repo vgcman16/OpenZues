@@ -2365,29 +2365,78 @@ def _sessions_cleanup_summary(
     agent_id: str | None,
     mode: str,
     dry_run: bool,
+    missing_keys: list[str] | None = None,
 ) -> dict[str, object]:
     raw_sessions = payload.get("sessions")
     sessions = raw_sessions if isinstance(raw_sessions, list) else []
     count = payload.get("count")
     if not isinstance(count, int) or isinstance(count, bool):
         count = len(sessions)
+    missing_count = len(missing_keys or [])
+    after_count = max(0, count - missing_count)
     summary: dict[str, object] = {
         "agentId": agent_id or "default",
         "storePath": "native-gateway-session-store",
         "mode": mode,
         "dryRun": dry_run,
         "beforeCount": count,
-        "afterCount": count,
-        "missing": 0,
+        "afterCount": after_count,
+        "missing": missing_count,
         "pruned": 0,
         "capped": 0,
         "diskBudget": None,
-        "wouldMutate": False,
+        "wouldMutate": missing_count > 0,
     }
     if not dry_run:
         summary["applied"] = True
-        summary["appliedCount"] = count
+        summary["appliedCount"] = after_count
     return summary
+
+
+async def _sessions_cleanup_missing_metadata_keys(
+    services: object,
+    *,
+    agent_id: str | None,
+) -> list[str]:
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    count_messages = getattr(database, "count_control_chat_messages", None)
+    if not callable(list_rows) or not callable(count_messages):
+        raise typer.BadParameter(
+            "Native session cleanup --fix-missing requires session metadata storage"
+        )
+    missing_keys: list[str] = []
+    rows = await list_rows()
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        session_key = _optional_cli_string(row.get("session_key"))
+        if session_key is None:
+            continue
+        if agent_id is not None and not _sandbox_session_matches_agent(session_key, agent_id):
+            continue
+        message_count = await count_messages(session_key=session_key)
+        if isinstance(message_count, bool) or not isinstance(message_count, int):
+            continue
+        if message_count <= 0:
+            missing_keys.append(session_key)
+    return missing_keys
+
+
+async def _sessions_cleanup_delete_metadata_keys(
+    services: object,
+    session_keys: list[str],
+) -> None:
+    if not session_keys:
+        return
+    database = getattr(services, "database", None)
+    delete_metadata = getattr(database, "delete_gateway_session_metadata", None)
+    if not callable(delete_metadata):
+        raise typer.BadParameter(
+            "Native session cleanup --fix-missing requires session metadata deletion"
+        )
+    for session_key in session_keys:
+        await delete_metadata(session_key)
 
 
 def _emit_sessions_cleanup(payload: dict[str, object], *, json_output: bool) -> None:
@@ -10602,11 +10651,22 @@ def sessions_cleanup_command(
 
     async def _action(services: CliServices) -> dict[str, object]:
         inventory = await _call_gateway_node_method(services, "sessions.list", params)
+        missing_keys = (
+            await _sessions_cleanup_missing_metadata_keys(
+                services,
+                agent_id=None if include_all_agents else normalized_agent,
+            )
+            if fix_missing
+            else []
+        )
+        if fix_missing and not dry_run:
+            await _sessions_cleanup_delete_metadata_keys(services, missing_keys)
         return _sessions_cleanup_summary(
             inventory,
             agent_id=normalized_agent,
             mode=mode,
             dry_run=dry_run,
+            missing_keys=missing_keys,
         )
 
     result = _run(_run_with_services(_action))

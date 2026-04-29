@@ -3673,6 +3673,72 @@ def test_sessions_cleanup_enforce_json_returns_applied_noop_summary(monkeypatch)
     assert calls == [("sessions.list", {"agentId": "worker"})]
 
 
+def test_sessions_cleanup_fix_missing_enforce_deletes_metadata_rows(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    deleted: list[str] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "count": 2,
+                "sessions": [
+                    {"key": "agent:worker:main", "sessionKey": "agent:worker:main"},
+                    {"key": "agent:worker:child", "sessionKey": "agent:worker:child"},
+                ],
+            }
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {"session_key": "agent:worker:main", "metadata": {}},
+                {"session_key": "agent:worker:child", "metadata": {}},
+                {"session_key": "agent:other:child", "metadata": {}},
+            ]
+
+        async def count_control_chat_messages(self, *, session_key: str) -> int:
+            return 3 if session_key == "agent:worker:main" else 0
+
+        async def delete_gateway_session_metadata(self, session_key: str) -> None:
+            deleted.append(session_key)
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_node_methods=FakeGatewayNodeMethods(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sessions",
+            "cleanup",
+            "--enforce",
+            "--fix-missing",
+            "--json",
+            "--agent",
+            "worker",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["missing"] == 1
+    assert payload["afterCount"] == 1
+    assert payload["appliedCount"] == 1
+    assert payload["wouldMutate"] is True
+    assert deleted == ["agent:worker:child"]
+    assert calls == [("sessions.list", {"agentId": "worker"})]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

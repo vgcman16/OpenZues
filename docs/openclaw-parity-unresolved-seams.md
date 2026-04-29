@@ -138,10 +138,12 @@ route-backed thread binder, direct send/poll, config, model inventory, and
 control-chat submit seams used by the app-server path. `sessions cleanup`
 now accepts the upstream command shape and returns OpenClaw-shaped no-mutation
 maintenance summaries from the native `sessions.list` owner for both dry-run
-preview and enforce/apply no-op cases; remaining cleanup parity is actual
-stale/missing cleanup mutation, `--fix-missing` transcript pruning, and
-multi-store/all-agent mutation semantics over OpenZues' SQLite-backed session
-metadata. Top-level
+preview and enforce/apply no-op cases. `--fix-missing` now maps OpenClaw's
+missing transcript-file pruning onto OpenZues' SQLite-backed session metadata
+by deleting only agent-filtered metadata rows whose control-chat transcript has
+no messages. Remaining cleanup parity is stale/age/count/disk-budget cleanup
+and richer multi-store/all-agent mutation semantics over OpenZues' native
+session store. Top-level
 `status --json` now accepts OpenClaw's `--all`, `--usage`, `--deep`, and
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
