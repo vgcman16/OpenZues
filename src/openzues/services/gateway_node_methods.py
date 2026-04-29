@@ -3977,8 +3977,50 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            await self._runtime_update_tick()
-            return await self._runtime_update_view()
+            timeout_ms = _normalized_update_run_timeout_ms(payload.get("timeoutMs"))
+            restart_delay_ms = _optional_min_int(
+                payload.get("restartDelayMs"),
+                label="restartDelayMs",
+                minimum=0,
+            )
+            started_at = time.monotonic()
+            try:
+                restarted = await self._runtime_update_tick()
+                update_view = await self._runtime_update_view()
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                update_result = _build_update_run_result(
+                    update_view,
+                    restarted=restarted,
+                    timeout_ms=timeout_ms,
+                    duration_ms=duration_ms,
+                )
+            except Exception as exc:
+                restarted = False
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                update_result = _build_update_run_error_result(
+                    exc,
+                    timeout_ms=timeout_ms,
+                    duration_ms=duration_ms,
+                )
+            restart_payload = _build_update_run_restart_payload(
+                update_result,
+                restarted=restarted,
+                restart_delay_ms=restart_delay_ms,
+            )
+            sentinel_payload = _build_update_run_sentinel_payload(payload, update_result)
+            sentinel_path = await _write_update_run_sentinel(
+                self._database,
+                sentinel_payload,
+            )
+            return {
+                "ok": update_result.get("status") != "error",
+                "result": update_result,
+                "restart": restart_payload,
+                "sentinel": {
+                    "path": sentinel_path,
+                    "payload": sentinel_payload,
+                },
+            }
 
         if resolved_method == "wizard.start":
             _validate_exact_keys(
@@ -13859,6 +13901,179 @@ def _validate_optional_restart_request_fields(
             label="timeoutMs",
             minimum=1,
         )
+
+
+def _normalized_update_run_timeout_ms(value: object) -> int | None:
+    timeout_ms = _optional_min_int(value, label="timeoutMs", minimum=1)
+    if timeout_ms is None:
+        return None
+    return max(1000, timeout_ms)
+
+
+def _build_update_run_result(
+    view: dict[str, object],
+    *,
+    restarted: bool,
+    timeout_ms: int | None,
+    duration_ms: int,
+) -> dict[str, object]:
+    reason = _string_or_none(view.get("last_error"))
+    result: dict[str, object] = {
+        "status": "error" if reason is not None else "ok",
+        "mode": "openzues-runtime",
+        "root": view.get("repo_root"),
+        "before": view.get("startup_revision"),
+        "after": view.get("current_revision"),
+        "steps": [
+            {
+                "name": "runtime_update.tick",
+                "command": None,
+                "cwd": view.get("repo_root"),
+                "durationMs": duration_ms,
+                "log": {
+                    "stdoutTail": None,
+                    "stderrTail": reason,
+                    "exitCode": 1 if reason is not None else 0,
+                },
+            }
+        ],
+        "durationMs": duration_ms,
+        "snapshot": dict(view),
+        "restartScheduled": restarted,
+    }
+    if timeout_ms is not None:
+        result["timeoutMs"] = timeout_ms
+    if reason is not None:
+        result["reason"] = reason
+    return result
+
+
+def _build_update_run_error_result(
+    exc: Exception,
+    *,
+    timeout_ms: int | None,
+    duration_ms: int,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "status": "error",
+        "mode": "openzues-runtime",
+        "reason": str(exc),
+        "steps": [],
+        "durationMs": duration_ms,
+        "restartScheduled": False,
+    }
+    if timeout_ms is not None:
+        result["timeoutMs"] = timeout_ms
+    return result
+
+
+def _build_update_run_restart_payload(
+    result: dict[str, object],
+    *,
+    restarted: bool,
+    restart_delay_ms: int | None,
+) -> dict[str, object] | None:
+    if result.get("status") == "error" or not restarted:
+        return None
+    return {
+        "scheduled": True,
+        "delayMs": restart_delay_ms,
+        "reason": "update.run",
+        "coalesced": False,
+    }
+
+
+def _build_update_run_sentinel_payload(
+    payload: dict[str, Any],
+    result: dict[str, object],
+) -> dict[str, object]:
+    session_key = _string_or_none(payload.get("sessionKey"))
+    requested_delivery_context, requested_thread_id = _restart_delivery_context_from_payload(
+        payload.get("deliveryContext")
+    )
+    session_delivery_context, session_thread_id = _restart_delivery_context_from_session_key(
+        session_key
+    )
+    delivery_context = requested_delivery_context or session_delivery_context
+    thread_id = requested_thread_id or session_thread_id
+    stats_steps = []
+    raw_steps = result.get("steps")
+    if isinstance(raw_steps, list):
+        stats_steps = [dict(step) for step in raw_steps if isinstance(step, dict)]
+    stats: dict[str, object] = {
+        "mode": result.get("mode"),
+        "root": result.get("root"),
+        "before": result.get("before"),
+        "after": result.get("after"),
+        "steps": stats_steps,
+        "reason": result.get("reason"),
+        "durationMs": result.get("durationMs"),
+    }
+    return {
+        "kind": "update",
+        "status": result.get("status"),
+        "ts": _timestamp_ms(None),
+        "sessionKey": session_key,
+        "deliveryContext": delivery_context,
+        "threadId": thread_id,
+        "message": _string_or_none(payload.get("note")),
+        "doctorHint": "Run `openzues doctor` for restart diagnostics.",
+        "stats": stats,
+    }
+
+
+def _restart_delivery_context_from_payload(
+    value: object,
+) -> tuple[dict[str, str] | None, str | None]:
+    if not isinstance(value, dict):
+        return None, None
+    delivery_context: dict[str, str] = {}
+    for source_key, target_key in (
+        ("channel", "channel"),
+        ("to", "to"),
+        ("accountId", "accountId"),
+    ):
+        normalized = _string_or_none(value.get(source_key))
+        if normalized is not None:
+            delivery_context[target_key] = normalized
+    thread_id = _stringified_route_id(value.get("threadId"))
+    return delivery_context or None, thread_id
+
+
+def _restart_delivery_context_from_session_key(
+    session_key: str | None,
+) -> tuple[dict[str, str] | None, str | None]:
+    if session_key is None:
+        return None, None
+    target = _sessions_send_announce_target_from_key(session_key)
+    thread_id = parse_thread_session_suffix(session_key).thread_id
+    if target is None:
+        return None, thread_id
+    delivery_context = dict(target)
+    target_thread_id = delivery_context.pop("threadId", None)
+    return delivery_context or None, thread_id or target_thread_id
+
+
+async def _write_update_run_sentinel(
+    database: Database | None,
+    payload: dict[str, object],
+) -> str | None:
+    if database is None:
+        return None
+    path = database.path.parent / "runtime" / "restart-sentinel.json"
+
+    def write_payload() -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return str(path)
+
+    try:
+        return await asyncio.to_thread(write_payload)
+    except OSError:
+        return None
 
 
 def _validate_optional_restart_delivery_context(value: object, *, label: str) -> None:

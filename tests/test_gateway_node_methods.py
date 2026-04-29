@@ -12815,6 +12815,87 @@ async def test_logs_tail_redacts_sensitive_tokens_from_returned_lines(
 
 
 @pytest.mark.asyncio
+async def test_update_run_returns_openclaw_envelope_sentinel_and_timeout_minimum(
+    tmp_path,
+) -> None:
+    view: dict[str, object] = {
+        "headline": "Runtime self-update is watching the repo",
+        "summary": "The current process is aligned with the checked-out repo revision.",
+        "enabled": True,
+        "repo_root": "C:/workspace/OpenZues",
+        "startup_revision": "rev-a",
+        "current_revision": "rev-b",
+        "pending_revision": "rev-b",
+        "pending_restart": True,
+        "restart_in_progress": False,
+        "safe_to_restart": False,
+        "last_checked_at": "2026-04-29T12:00:00Z",
+        "last_restart_at": None,
+        "last_error": None,
+        "auto_restart": True,
+    }
+    tick_calls: list[str] = []
+
+    async def fake_tick() -> bool:
+        tick_calls.append("tick")
+        return False
+
+    async def fake_view() -> dict[str, object]:
+        return dict(view)
+
+    database = Database(tmp_path / "openzues.db")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        runtime_update_tick=fake_tick,
+        runtime_update_view=fake_view,
+    )
+    payload = await service.call(
+        "update.run",
+        {
+            "timeoutMs": 1,
+            "sessionKey": "agent:main:slack:channel:C0123ABC:thread:1234567890.123456",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "slack:C0123ABC",
+                "accountId": "workspace-1",
+            },
+            "note": "Apply the runtime update.",
+        },
+    )
+
+    assert tick_calls == ["tick"]
+    assert payload["ok"] is True
+    assert payload["restart"] is None
+    result = payload["result"]
+    assert isinstance(result, dict)
+    assert result["status"] == "ok"
+    assert result["mode"] == "openzues-runtime"
+    assert result["timeoutMs"] == 1000
+    assert result["snapshot"] == view
+    sentinel = payload["sentinel"]
+    assert isinstance(sentinel, dict)
+    sentinel_path = sentinel["path"]
+    assert isinstance(sentinel_path, str)
+    assert Path(sentinel_path).exists()
+    sentinel_payload = sentinel["payload"]
+    assert isinstance(sentinel_payload, dict)
+    assert sentinel_payload["kind"] == "update"
+    assert sentinel_payload["status"] == "ok"
+    assert sentinel_payload["sessionKey"] == (
+        "agent:main:slack:channel:C0123ABC:thread:1234567890.123456"
+    )
+    assert sentinel_payload["threadId"] == "1234567890.123456"
+    assert sentinel_payload["deliveryContext"] == {
+        "channel": "slack",
+        "to": "slack:C0123ABC",
+        "accountId": "workspace-1",
+    }
+    assert sentinel_payload["message"] == "Apply the runtime update."
+    assert sentinel_payload["stats"]["mode"] == "openzues-runtime"
+
+
+@pytest.mark.asyncio
 async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() -> None:
     payload: dict[str, object] = {
         "headline": "Runtime self-update is watching the repo",
@@ -12863,7 +12944,9 @@ async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() 
     result = await service.call("update.run", {})
 
     assert tick_calls == ["tick"]
-    assert result == payload
+    assert result["ok"] is True
+    assert result["restart"] is None
+    assert result["result"]["snapshot"] == payload
 
 
 @pytest.mark.asyncio
@@ -12915,7 +12998,11 @@ async def test_update_run_accepts_upstream_optional_restart_request_params() -> 
     )
 
     assert tick_calls == ["tick"]
-    assert result == payload
+    assert result["ok"] is True
+    assert result["restart"] is None
+    assert result["result"]["timeoutMs"] == 5_000
+    assert result["result"]["snapshot"] == payload
+    assert result["sentinel"]["payload"]["threadId"] == "1771242986529939"
 
 
 @pytest.mark.asyncio

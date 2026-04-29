@@ -1825,6 +1825,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   spawned child runs by consuming `parentSessionKey` and
   `expectsCompletionMessage` metadata.
 - Verified the wait-consumed completion announcement seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait_announces_spawn_completion_to_parent_session or agent_wait_skips_spawn_completion_announcement_when_not_expected"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_wait or sessions_spawn_creates_openclaw_style_subagent_session or sessions_spawn_persists_completion_expectation_override or sessions_spawn_defaults_omitted_run_timeout_to_zero"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `update.run` now returns the OpenClaw-shaped runtime-control envelope
+  (`ok`, `result`, `restart`, `sentinel`) instead of the flat update view,
+  clamps tiny `timeoutMs` values to the upstream 1000ms minimum, writes a
+  data-dir restart sentinel payload with session delivery/note/thread context,
+  and only reports a restart object when the native update tick actually
+  requested one.
+- Verified the `update.run` envelope/sentinel seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, endpoint proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially ACP spawn harness parity, richer `tools.invoke` executor parity
   (real plugin HTTP ordering and any additional intentional high-risk

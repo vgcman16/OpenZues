@@ -9515,12 +9515,16 @@ def test_gateway_node_method_call_endpoint_supports_update_run(tmp_path) -> None
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["headline"] == "A newer repo revision is waiting for a safe boundary"
-    assert payload["pending_restart"] is True
-    assert payload["pending_revision"] == "rev-b"
-    assert payload["safe_to_restart"] is False
-    assert payload["restart_in_progress"] is False
-    assert payload["last_checked_at"]
+    snapshot = payload["result"]["snapshot"]
+    assert payload["ok"] is True
+    assert payload["restart"] is None
+    assert snapshot["headline"] == "A newer repo revision is waiting for a safe boundary"
+    assert snapshot["pending_restart"] is True
+    assert snapshot["pending_revision"] == "rev-b"
+    assert snapshot["safe_to_restart"] is False
+    assert snapshot["restart_in_progress"] is False
+    assert snapshot["last_checked_at"]
+    assert payload["sentinel"]["payload"]["kind"] == "update"
     assert restart_calls == []
 
 
@@ -9584,12 +9588,17 @@ def test_gateway_node_method_call_endpoint_update_run_accepts_optional_restart_r
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["headline"] == "A newer repo revision is waiting for a safe boundary"
-    assert payload["pending_restart"] is True
-    assert payload["pending_revision"] == "rev-b"
-    assert payload["safe_to_restart"] is False
-    assert payload["restart_in_progress"] is False
-    assert payload["last_checked_at"]
+    snapshot = payload["result"]["snapshot"]
+    assert payload["ok"] is True
+    assert payload["restart"] is None
+    assert payload["result"]["timeoutMs"] == 5_000
+    assert snapshot["headline"] == "A newer repo revision is waiting for a safe boundary"
+    assert snapshot["pending_restart"] is True
+    assert snapshot["pending_revision"] == "rev-b"
+    assert snapshot["safe_to_restart"] is False
+    assert snapshot["restart_in_progress"] is False
+    assert snapshot["last_checked_at"]
+    assert payload["sentinel"]["payload"]["threadId"] == "1771242986529939"
     assert restart_calls == []
 
 

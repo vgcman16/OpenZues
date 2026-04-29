@@ -1131,6 +1131,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
   carries Bot API `message_thread_id`.
 - Verified the Telegram topic poll proof with `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_poll_parses_telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram_native_route or send_direct_channel_poll_parses_telegram_topic_target"`, and `ruff check tests\test_ops_mesh.py`.
+- `update.run` now returns the OpenClaw-shaped runtime update envelope with
+  `ok`, native update result stats, restart scheduling metadata, and a restart
+  sentinel payload/file carrying session delivery context, thread id, note, and
+  the upstream 1000ms minimum timeout normalization.
+- Verified the update-run envelope/sentinel slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
 - Next repo-level parity work should continue outside the browser command family, with remaining channel/session transcript/runtime gaps (`chat.*`, `sessions.*`) now the strongest nearby seam.
 
 ## References
