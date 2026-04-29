@@ -2064,6 +2064,7 @@ def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) ->
     browser_rows = browsers if isinstance(browsers, list) else []
     if not container_rows and not browser_rows:
         typer.echo("No sandbox runtimes found.")
+        _emit_sandbox_inventory_summary(container_rows, browser_rows)
         return
     for item in container_rows:
         if not isinstance(item, dict):
@@ -2086,6 +2087,27 @@ def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) ->
         status = str(item.get("status") or "").strip() or "known"
         label = session_key or runtime or "browser"
         typer.echo(f"[browser] {label} ({status})")
+    _emit_sandbox_inventory_summary(container_rows, browser_rows)
+
+
+def _emit_sandbox_inventory_summary(
+    containers: list[object],
+    browsers: list[object],
+) -> None:
+    total_count = len(containers) + len(browsers)
+    running_count = sum(
+        1 for item in [*containers, *browsers] if _sandbox_inventory_is_running(item)
+    )
+    typer.echo(f"Total: {total_count} ({running_count} running)")
+
+
+def _sandbox_inventory_is_running(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("running") is True:
+        return True
+    status = str(item.get("status") or "").strip().lower()
+    return status == "running"
 
 
 def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> None:

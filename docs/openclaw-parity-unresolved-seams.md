@@ -84,7 +84,9 @@ diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model
 auth/probe inspection, provider usage/security-audit runtime adapters,
 plugin/runtime inspection, doctor readiness checks, non-metadata external
-sandbox container cleanup, and broader TUI ergonomics.
+sandbox container cleanup, and broader TUI ergonomics. The existing
+`sandbox list` human output now also mirrors OpenClaw's total/running summary
+line after listing native saved sandbox runtimes.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and

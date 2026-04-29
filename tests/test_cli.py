@@ -451,6 +451,32 @@ def test_sandbox_list_json_surfaces_saved_sandbox_runtime_metadata(monkeypatch) 
     ]
 
 
+def test_sandbox_list_human_output_includes_total_summary(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["sandbox", "list"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "[container] agent:main:subagent:sandbox-worker (known)" in result.stdout
+    assert "Total: 1 (0 running)" in result.stdout
+
+
 def test_sandbox_recreate_session_force_json_forgets_saved_sandbox_metadata(monkeypatch) -> None:
     deleted: list[str] = []
 
