@@ -5505,6 +5505,120 @@ def test_models_aliases_remove_clears_config_model_alias(tmp_path, monkeypatch) 
     assert "alias" not in snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"]
 
 
+def test_models_set_updates_default_model_preserving_fallbacks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {
+                            "primary": "openai/gpt-5.4",
+                            "fallbacks": ["anthropic/claude-opus-4.5"],
+                        },
+                        "models": {"openai/gpt-5.4-mini": {"alias": "fast"}},
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "set", "fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Default model: openai/gpt-5.4-mini" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"] == {
+        "primary": "openai/gpt-5.4-mini",
+        "fallbacks": ["anthropic/claude-opus-4.5"],
+    }
+    assert snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"] == {
+        "alias": "fast"
+    }
+
+
+def test_models_set_normalizes_provider_alias_and_legacy_openrouter_key(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "models": {
+                            "openrouter/openrouter/hunter-alpha": {
+                                "params": {"thinking": "high"}
+                            }
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "set", "openrouter/hunter-alpha"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Default model: openrouter/hunter-alpha" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    defaults = snapshot["agents"]["defaults"]
+    assert defaults["model"] == {"primary": "openrouter/hunter-alpha"}
+    assert defaults["models"] == {
+        "openrouter/hunter-alpha": {"params": {"thinking": "high"}}
+    }
+
+    result = runner.invoke(app, ["models", "set", "Z.AI/glm-4.7"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Default model: zai/glm-4.7" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"] == {"primary": "zai/glm-4.7"}
+    assert snapshot["agents"]["defaults"]["models"]["zai/glm-4.7"] == {}
+
+
 def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypatch) -> None:
     gateway_config = GatewayConfigService(
         assistant_name="OpenZues",

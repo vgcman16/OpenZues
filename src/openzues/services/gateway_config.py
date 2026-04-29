@@ -186,6 +186,20 @@ class GatewayConfigService:
         )
         return write_result
 
+    def set_default_model(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        target = _resolve_model_alias_target(
+            model_ref,
+            aliases=_model_aliases_from_config_snapshot(current),
+        )
+        next_snapshot = _set_model_primary_in_snapshot(current, target=target)
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "field": "model"})
+        return write_result
+
     def set_model_alias(self, *, alias: str, model_ref: str) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()
@@ -589,11 +603,11 @@ def _resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str:
         provider, model = normalized.split("/", 1)
     else:
         provider, model = _DEFAULT_MODEL_PROVIDER, normalized
-    provider = provider.strip().lower()
-    model = model.strip()
+    provider = _normalize_model_provider_id(provider)
+    model = _normalize_model_id_for_provider(provider, model)
     if not provider or not model:
         raise ValueError(f"Invalid model reference: {raw}")
-    return f"{provider}/{model}"
+    return _model_config_key(provider, model)
 
 
 def _try_resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str | None:
@@ -607,7 +621,59 @@ def _normalize_model_auth_provider(provider: str) -> str:
     normalized = provider.strip().lower()
     if not normalized:
         raise ValueError("Missing --provider.")
+    return _normalize_model_provider_id(normalized)
+
+
+def _normalize_model_provider_id(provider: str) -> str:
+    normalized = provider.strip().lower()
     return _PROVIDER_ID_ALIASES.get(normalized, normalized)
+
+
+def _normalize_model_id_for_provider(provider: str, model: str) -> str:
+    trimmed = model.strip()
+    if provider == "anthropic":
+        anthropic_aliases = {
+            "opus-4.6": "claude-opus-4-6",
+            "opus-4.5": "claude-opus-4-5",
+            "sonnet-4.6": "claude-sonnet-4-6",
+            "sonnet-4.5": "claude-sonnet-4-5",
+        }
+        return anthropic_aliases.get(trimmed.lower(), trimmed)
+    if provider == "huggingface" and trimmed.lower().startswith("huggingface/"):
+        return trimmed[len("huggingface/") :]
+    if provider == "openrouter" and "/" not in trimmed:
+        return f"openrouter/{trimmed}"
+    if provider == "vercel-ai-gateway" and "/" not in trimmed:
+        anthropic_aliases = {
+            "opus-4.6": "claude-opus-4-6",
+            "opus-4.5": "claude-opus-4-5",
+            "sonnet-4.6": "claude-sonnet-4-6",
+            "sonnet-4.5": "claude-sonnet-4-5",
+        }
+        normalized = anthropic_aliases.get(trimmed.lower(), trimmed)
+        return f"anthropic/{normalized}" if normalized.startswith("claude-") else normalized
+    return trimmed
+
+
+def _model_config_key(provider: str, model: str) -> str:
+    provider_id = provider.strip()
+    model_id = model.strip()
+    if not provider_id:
+        return model_id
+    if not model_id:
+        return provider_id
+    if model_id.lower().startswith(f"{provider_id.lower()}/"):
+        return model_id
+    return f"{provider_id}/{model_id}"
+
+
+def _legacy_model_config_key(target: str) -> str | None:
+    if not target.startswith("openrouter/"):
+        return None
+    remainder = target[len("openrouter/") :]
+    if not remainder or "/" in remainder:
+        return None
+    return f"openrouter/{target}"
 
 
 def _normalize_agent_id(value: str | None) -> str:
@@ -937,6 +1003,29 @@ def _set_model_fallbacks_in_snapshot(
     return next_snapshot
 
 
+def _set_model_primary_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    target: str,
+    key: str = "model",
+) -> dict[str, Any]:
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    raw_model = defaults.get(key)
+    if isinstance(raw_model, dict):
+        model = dict(raw_model)
+    else:
+        model = {}
+    model["primary"] = target
+    defaults[key] = model
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
 def _ensure_model_config_entry_in_snapshot(
     snapshot: dict[str, Any],
     *,
@@ -950,7 +1039,12 @@ def _ensure_model_config_entry_in_snapshot(
     raw_models = defaults.get("models")
     models = dict(raw_models) if isinstance(raw_models, dict) else {}
     target_entry = models.get(target)
+    legacy_key = _legacy_model_config_key(target)
+    if not isinstance(target_entry, dict) and legacy_key is not None:
+        target_entry = models.get(legacy_key)
     models[target] = dict(target_entry) if isinstance(target_entry, dict) else {}
+    if legacy_key is not None:
+        models.pop(legacy_key, None)
     defaults["models"] = models
     agents["defaults"] = defaults
     next_snapshot["agents"] = agents
