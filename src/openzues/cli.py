@@ -2379,9 +2379,160 @@ def _emit_sessions_inventory(payload: dict[str, object], *, json_output: bool) -
         )
 
 
+_SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
+_SESSION_CLEANUP_DEFAULT_MAX_ENTRIES = 500
+_SESSION_CLEANUP_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?\s*$", re.I)
+
+
+def _sessions_cleanup_parse_duration_ms(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        if value < 0:
+            return None
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    match = _SESSION_CLEANUP_DURATION_RE.match(value)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = (match.group(2) or "d").lower()
+    multipliers = {
+        "ms": 1,
+        "s": 1000,
+        "m": 60 * 1000,
+        "h": 60 * 60 * 1000,
+        "d": 24 * 60 * 60 * 1000,
+    }
+    return int(amount * multipliers[unit])
+
+
+def _sessions_cleanup_parse_positive_int(value: object, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int | float):
+        if value < 0:
+            return default
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            try:
+                parsed = int(float(text))
+            except ValueError:
+                return default
+            return parsed if parsed >= 0 else default
+    return default
+
+
+def _sessions_cleanup_maintenance_config(services: object) -> dict[str, int]:
+    maintenance: dict[str, object] = {}
+    gateway_config = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(gateway_config, "build_snapshot", None)
+    if callable(build_snapshot):
+        try:
+            snapshot = build_snapshot()
+        except Exception:
+            snapshot = None
+        if isinstance(snapshot, dict):
+            session_config = snapshot.get("session")
+            if isinstance(session_config, dict):
+                raw_maintenance = session_config.get("maintenance")
+                if isinstance(raw_maintenance, dict):
+                    maintenance = raw_maintenance
+
+    prune_after_ms = (
+        _sessions_cleanup_parse_duration_ms(
+            maintenance.get("pruneAfter") or maintenance.get("pruneDays")
+        )
+        or _SESSION_CLEANUP_DEFAULT_PRUNE_AFTER_MS
+    )
+    max_entries = _sessions_cleanup_parse_positive_int(
+        maintenance.get("maxEntries"),
+        default=_SESSION_CLEANUP_DEFAULT_MAX_ENTRIES,
+    )
+    return {"pruneAfterMs": prune_after_ms, "maxEntries": max_entries}
+
+
+def _sessions_cleanup_updated_at_ms(row: dict[str, object]) -> int | None:
+    for key in ("updatedAt", "updatedAtMs", "lastActivity"):
+        value = row.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int | float):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                continue
+            try:
+                return int(float(text))
+            except ValueError:
+                try:
+                    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                    return int(parsed.timestamp() * 1000)
+                except ValueError:
+                    continue
+    return None
+
+
+def _sessions_cleanup_sort_updated_at_ms(row: dict[str, object]) -> int:
+    updated_at = _sessions_cleanup_updated_at_ms(row)
+    return updated_at if updated_at is not None else -1
+
+
+def _sessions_cleanup_planned_keys(
+    sessions: list[object],
+    *,
+    missing_keys: list[str],
+    services: object,
+) -> dict[str, list[str]]:
+    row_by_key: dict[str, dict[str, object]] = {}
+    ordered_keys: list[str] = []
+    for item in sessions:
+        if not isinstance(item, dict):
+            continue
+        key = _sessions_cli_session_key(item)
+        if not key or key in row_by_key:
+            continue
+        row_by_key[key] = item
+        ordered_keys.append(key)
+
+    missing_set = {key for key in missing_keys if key in row_by_key}
+    maintenance = _sessions_cleanup_maintenance_config(services)
+    cutoff_ms = int(time.time() * 1000) - maintenance["pruneAfterMs"]
+    stale_keys: list[str] = []
+    for key in ordered_keys:
+        if key in missing_set:
+            continue
+        updated_at = _sessions_cleanup_updated_at_ms(row_by_key[key])
+        if updated_at is not None and updated_at < cutoff_ms:
+            stale_keys.append(key)
+
+    removed_before_cap = missing_set | set(stale_keys)
+    remaining_keys = [key for key in ordered_keys if key not in removed_before_cap]
+    max_entries = maintenance["maxEntries"]
+    capped_keys: list[str] = []
+    if len(remaining_keys) > max_entries:
+        sorted_remaining = sorted(
+            remaining_keys,
+            key=lambda key: _sessions_cleanup_sort_updated_at_ms(row_by_key[key]),
+            reverse=True,
+        )
+        capped_keys = sorted_remaining[max_entries:]
+
+    return {
+        "missing": list(missing_set),
+        "stale": stale_keys,
+        "capped": capped_keys,
+    }
+
+
 def _sessions_cleanup_summary(
     payload: dict[str, object],
     *,
+    services: object,
     agent_id: str | None,
     mode: str,
     dry_run: bool,
@@ -2392,8 +2543,15 @@ def _sessions_cleanup_summary(
     count = payload.get("count")
     if not isinstance(count, int) or isinstance(count, bool):
         count = len(sessions)
-    missing_count = len(missing_keys or [])
-    after_count = max(0, count - missing_count)
+    plan = _sessions_cleanup_planned_keys(
+        sessions,
+        missing_keys=missing_keys or [],
+        services=services,
+    )
+    missing_count = len(plan["missing"])
+    pruned_count = len(plan["stale"]) if dry_run or mode == "enforce" else 0
+    capped_count = len(plan["capped"]) if dry_run or mode == "enforce" else 0
+    after_count = max(0, count - missing_count - pruned_count - capped_count)
     summary: dict[str, object] = {
         "agentId": agent_id or "default",
         "storePath": "native-gateway-session-store",
@@ -2402,10 +2560,10 @@ def _sessions_cleanup_summary(
         "beforeCount": count,
         "afterCount": after_count,
         "missing": missing_count,
-        "pruned": 0,
-        "capped": 0,
+        "pruned": pruned_count,
+        "capped": capped_count,
         "diskBudget": None,
-        "wouldMutate": missing_count > 0,
+        "wouldMutate": missing_count > 0 or pruned_count > 0 or capped_count > 0,
     }
     if not dry_run:
         summary["applied"] = True
@@ -13437,13 +13595,27 @@ def sessions_cleanup_command(
         )
         if fix_missing and not dry_run:
             await _sessions_cleanup_delete_metadata_keys(services, missing_keys)
-        return _sessions_cleanup_summary(
+        summary = _sessions_cleanup_summary(
             inventory,
+            services=services,
             agent_id=normalized_agent,
             mode=mode,
             dry_run=dry_run,
             missing_keys=missing_keys,
         )
+        if not dry_run and mode == "enforce":
+            raw_sessions = inventory.get("sessions")
+            sessions = raw_sessions if isinstance(raw_sessions, list) else []
+            cleanup_plan = _sessions_cleanup_planned_keys(
+                sessions,
+                missing_keys=missing_keys,
+                services=services,
+            )
+            await _sessions_cleanup_delete_metadata_keys(
+                services,
+                [*cleanup_plan["stale"], *cleanup_plan["capped"]],
+            )
+        return summary
 
     result = _run(_run_with_services(_action))
     _emit_sessions_cleanup(result, json_output=json_output)

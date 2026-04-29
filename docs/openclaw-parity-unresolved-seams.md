@@ -141,9 +141,12 @@ maintenance summaries from the native `sessions.list` owner for both dry-run
 preview and enforce/apply no-op cases. `--fix-missing` now maps OpenClaw's
 missing transcript-file pruning onto OpenZues' SQLite-backed session metadata
 by deleting only agent-filtered metadata rows whose control-chat transcript has
-no messages. Remaining cleanup parity is stale/age/count/disk-budget cleanup
-and richer multi-store/all-agent mutation semantics over OpenZues' native
-session store. The CLI now also exposes read-only `tasks`, `tasks list`, and
+no messages. `sessions cleanup` dry-run now also previews OpenClaw-shaped stale
+`updatedAt` pruning and `session.maintenance.maxEntries` count caps from the
+native `sessions.list` rows, and `--enforce` deletes those stale/capped native
+metadata rows. Remaining cleanup parity is disk-budget cleanup and richer
+multi-store/all-agent mutation semantics over OpenZues' native session store.
+The CLI now also exposes read-only `tasks`, `tasks list`, and
 `tasks show` inspection over native OpenZues mission and task-blueprint state,
 returning OpenClaw-shaped task records with `runtime`, `status`, `taskId`,
 session/run lookup, delivery, notify, timestamp, progress, and terminal summary
