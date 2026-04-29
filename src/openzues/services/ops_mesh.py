@@ -5855,6 +5855,45 @@ class OpsMeshService:
                     guild_channel_payload["name"] = channel_name
                 results.append(guild_channel_payload)
                 continue
+            if channel_query:
+                normalized_channel_query = _normalize_discord_slug(channel_query)
+                candidates: list[dict[str, object]] = []
+                for guild in guilds:
+                    channels = self._list_discord_guild_channels(
+                        authorization,
+                        str(guild.get("id") or ""),
+                    )
+                    for channel in channels:
+                        if str(channel.get("slug") or "") == normalized_channel_query:
+                            candidates.append(channel)
+                match = _prefer_active_discord_channel(candidates)
+                if match is None:
+                    results.append(
+                        _unresolved_channel_target(input_value, "channel not found")
+                    )
+                    continue
+                match_guild_id = str(match.get("guildId") or "").strip()
+                guild = next(
+                    (
+                        entry
+                        for entry in guilds
+                        if str(entry.get("id") or "").strip() == match_guild_id
+                    ),
+                    None,
+                )
+                global_channel_payload: dict[str, object] = {
+                    "input": input_value,
+                    "resolved": True,
+                    "id": str(match.get("id") or ""),
+                }
+                channel_name = str(match.get("name") or "").strip()
+                if channel_name:
+                    global_channel_payload["name"] = channel_name
+                guild_name = str((guild or {}).get("name") or "").strip()
+                if len(candidates) > 1 and guild_name:
+                    global_channel_payload["note"] = f"matched multiple; chose {guild_name}"
+                results.append(global_channel_payload)
+                continue
             if not channel_id:
                 results.append(
                     _unresolved_channel_target(
