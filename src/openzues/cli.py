@@ -919,6 +919,32 @@ def _emit_channel_capabilities(payload: dict[str, object], *, json_output: bool)
             typer.echo("  Probe: " + str(probe.get("status") or "unknown"))
 
 
+def _emit_channel_resolve_results(
+    results: list[dict[str, object]],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(results, json_output=True)
+        return
+    if not results:
+        typer.echo("No channel targets resolved.")
+        return
+    for result in results:
+        entry = str(result.get("input") or "").strip()
+        if result.get("resolved") is True and result.get("id"):
+            name = str(result.get("name") or "").strip()
+            note = str(result.get("note") or "").strip()
+            line = f"{entry} -> {result['id']}"
+            if name:
+                line += f" ({name})"
+            if note:
+                line += f" [{note}]"
+            typer.echo(line)
+            continue
+        typer.echo(f"{entry} -> unresolved")
+
+
 def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -4592,6 +4618,145 @@ async def _build_channel_capabilities_payload(
     }
 
 
+def _normalize_channel_resolve_kind(kind: str | None) -> str:
+    normalized = (_optional_cli_string(kind) or "auto").lower()
+    valid_kinds = {"auto", "user", "group", "channel"}
+    if normalized not in valid_kinds:
+        raise ValueError("--kind must be one of: auto, user, group, channel.")
+    return normalized
+
+
+def _channel_target_field(target: dict[str, object], *names: str) -> str | None:
+    for name in names:
+        text = _optional_cli_string(target.get(name))
+        if text is not None:
+            return text
+    return None
+
+
+def _channel_resolve_kind_matches(target_kind: str | None, requested_kind: str) -> bool:
+    if requested_kind == "auto":
+        return True
+    normalized_target_kind = (target_kind or "").strip().lower()
+    if requested_kind == "group":
+        return normalized_target_kind in {"group", "channel"}
+    return normalized_target_kind == requested_kind
+
+
+def _channel_resolve_route_targets(
+    snapshot: dict[str, object],
+    *,
+    channel: str | None,
+    account: str | None,
+    kind: str,
+) -> list[dict[str, str]]:
+    normalized_channel = _optional_cli_string(channel)
+    normalized_account = _optional_cli_string(account)
+    routes = snapshot.get("routes")
+    if not isinstance(routes, list):
+        return []
+
+    matches: list[dict[str, str]] = []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        target = route.get("conversation_target")
+        if not isinstance(target, dict):
+            target = route.get("conversationTarget")
+        if not isinstance(target, dict):
+            continue
+        typed_target = cast(dict[str, object], target)
+        target_channel = _channel_target_field(typed_target, "channel")
+        if normalized_channel is not None and (
+            target_channel is None or target_channel.lower() != normalized_channel.lower()
+        ):
+            continue
+        target_account = _channel_target_field(typed_target, "account_id", "accountId")
+        if normalized_account is not None and (
+            target_account is None or target_account != normalized_account
+        ):
+            continue
+        target_kind = _channel_target_field(typed_target, "peer_kind", "peerKind")
+        if not _channel_resolve_kind_matches(target_kind, kind):
+            continue
+        target_id = _channel_target_field(typed_target, "peer_id", "peerId")
+        if target_id is None:
+            continue
+        summary = _channel_target_field(typed_target, "summary")
+        route_name = _optional_cli_string(route.get("name"))
+        matches.append(
+            {
+                "id": target_id,
+                "name": route_name or summary or target_id,
+                "summary": summary or "",
+                "channel": target_channel or "",
+                "account": target_account or "",
+                "kind": target_kind or "",
+            }
+        )
+    return matches
+
+
+def _channel_resolve_match_entry(
+    entry: str,
+    targets: list[dict[str, str]],
+) -> dict[str, str] | None:
+    normalized_entry = entry.strip().lower()
+    for target in targets:
+        candidates = {
+            target.get("id", ""),
+            target.get("name", ""),
+            target.get("summary", ""),
+        }
+        if any(candidate.strip().lower() == normalized_entry for candidate in candidates):
+            return target
+    return None
+
+
+async def _build_channel_resolve_results(
+    services: CliServices,
+    *,
+    entries: list[str],
+    channel: str | None,
+    account: str | None,
+    kind: str | None,
+) -> list[dict[str, object]]:
+    normalized_entries = [entry.strip() for entry in entries if entry.strip()]
+    if not normalized_entries:
+        raise ValueError("At least one entry is required.")
+    normalized_kind = _normalize_channel_resolve_kind(kind)
+    snapshot = await services.gateway_channels.build_snapshot()
+    targets = _channel_resolve_route_targets(
+        snapshot,
+        channel=channel,
+        account=account,
+        kind=normalized_kind,
+    )
+
+    results: list[dict[str, object]] = []
+    for entry in normalized_entries:
+        target = _channel_resolve_match_entry(entry, targets)
+        if target is None:
+            results.append(
+                {
+                    "input": entry,
+                    "resolved": False,
+                    "note": "native provider resolver unavailable",
+                }
+            )
+            continue
+        results.append(
+            {
+                "input": entry,
+                "resolved": True,
+                "id": target["id"],
+                "name": target["name"],
+                "note": "saved conversation target",
+            }
+        )
+    return results
+
+
 async def _build_operator_dashboard(services: CliServices) -> DashboardView | SimpleNamespace:
     live_dashboard = await _try_live_dashboard_view(services.settings)
     if live_dashboard is not None:
@@ -5548,6 +5713,47 @@ def channels_capabilities(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_channel_capabilities(payload, json_output=json_output)
+
+
+@channels_app.command("resolve")
+def channels_resolve(
+    entries: Annotated[list[str], typer.Argument(help="Entries to resolve.")],
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Channel id to resolve against.",
+    ),
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="Account id to resolve against.",
+    ),
+    kind: str = typer.Option(
+        "auto",
+        "--kind",
+        help="Target kind (auto, user, group, channel).",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit resolved targets as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_channel_resolve_results(
+            services,
+            entries=entries,
+            channel=channel,
+            account=account,
+            kind=kind,
+        )
+
+    try:
+        results = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_channel_resolve_results(results, json_output=json_output)
 
 
 @models_app.command("list")
