@@ -450,6 +450,57 @@ def test_sandbox_list_json_surfaces_saved_sandbox_runtime_metadata(monkeypatch) 
     ]
 
 
+def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": "agent:main:subagent:sandbox-worker",
+                    "metadata": {
+                        "runtime": "codex-app-server",
+                        "runtimeId": 7,
+                        "runtimeThreadId": "thread-7",
+                        "runtimeSessionId": "thread-7",
+                        "sandboxed": True,
+                        "sandboxMode": "workspace-write",
+                        "sandboxPolicy": {"type": "workspaceWrite"},
+                        "spawnedWorkspaceDir": r"C:\work\OpenZues",
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(database=FakeDatabase()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "explain",
+            "--session",
+            "agent:main:subagent:sandbox-worker",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["docsUrl"] == "https://docs.openclaw.ai/sandbox"
+    assert payload["agentId"] == "main"
+    assert payload["sessionKey"] == "agent:main:subagent:sandbox-worker"
+    assert payload["mainSessionKey"] == "agent:main:main"
+    assert payload["sandbox"]["sessionIsSandboxed"] is True
+    assert payload["sandbox"]["mode"] == "workspace-write"
+    assert payload["sandbox"]["scope"] == "session"
+    assert payload["sandbox"]["workspaceRoot"] == r"C:\work\OpenZues"
+    assert payload["sandbox"]["runtime"] == "codex-app-server"
+    assert payload["sandbox"]["runtimeId"] == 7
+    assert payload["sandbox"]["policy"] == {"type": "workspaceWrite"}
+    assert "agents.defaults.sandbox.mode" in payload["fixIt"]
+
+
 def test_sessions_spawn_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

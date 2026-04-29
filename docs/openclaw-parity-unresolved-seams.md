@@ -35,7 +35,10 @@ is available. Remaining sandbox parity is config-driven per-agent sandbox
 target selection, deeper media/workspace staging behavior from OpenClaw, and
 destructive sandbox recreate/remove CLI flows. The CLI now exposes
 `sandbox list --json` with OpenClaw-shaped top-level `containers` / `browsers`
-arrays sourced from saved sandbox session metadata.
+arrays sourced from saved sandbox session metadata, plus `sandbox explain`
+JSON/human output with OpenClaw's top-level `docsUrl`, `agentId`,
+`sessionKey`, `mainSessionKey`, `sandbox`, `elevated`, and `fixIt` fields
+backed by saved sandbox runtime metadata.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app

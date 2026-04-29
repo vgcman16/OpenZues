@@ -1772,6 +1772,42 @@ def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) ->
         typer.echo(f"[browser] {label} ({status})")
 
 
+def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo("Effective sandbox:")
+    for key in ("agentId", "sessionKey", "mainSessionKey"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            typer.echo(f"  {key}: {value}")
+    sandbox = payload.get("sandbox")
+    if isinstance(sandbox, dict):
+        runtime_label = "sandboxed" if sandbox.get("sessionIsSandboxed") else "direct"
+        typer.echo(f"  runtime: {runtime_label}")
+        typer.echo(
+            "  mode: "
+            + str(sandbox.get("mode") or "off")
+            + " scope: "
+            + str(sandbox.get("scope") or "session")
+        )
+        workspace_access = str(sandbox.get("workspaceAccess") or "").strip()
+        workspace_root = str(sandbox.get("workspaceRoot") or "").strip()
+        if workspace_access or workspace_root:
+            typer.echo(
+                "  workspaceAccess: "
+                + (workspace_access or "(unknown)")
+                + " workspaceRoot: "
+                + (workspace_root or "(unknown)")
+            )
+    fix_it = payload.get("fixIt")
+    if isinstance(fix_it, list) and fix_it:
+        typer.echo("")
+        typer.echo("Fix-it:")
+        for item in fix_it:
+            typer.echo(f"  - {item}")
+
+
 async def _build_sandbox_inventory_payload(
     services: CliServices,
     *,
@@ -1794,6 +1830,120 @@ async def _build_sandbox_inventory_payload(
     if browser_only:
         containers = []
     return {"containers": containers, "browsers": browsers}
+
+
+async def _build_sandbox_explain_payload(
+    services: CliServices,
+    *,
+    session_key: str | None,
+    agent_id: str | None,
+) -> dict[str, object]:
+    resolved_agent_id = (
+        _optional_cli_string(agent_id)
+        or _agent_id_from_session_key(session_key)
+        or "main"
+    )
+    resolved_session_key = _optional_cli_string(session_key) or _main_session_key_for_agent(
+        resolved_agent_id
+    )
+    main_session_key = _main_session_key_for_agent(resolved_agent_id)
+    metadata = await _sandbox_metadata_for_session(services, resolved_session_key)
+    sandboxed = bool(metadata.get("sandboxed")) if metadata is not None else False
+    sandbox_mode = (
+        _optional_cli_string(metadata.get("sandboxMode"))
+        if metadata is not None
+        else None
+    )
+    sandbox_policy = metadata.get("sandboxPolicy") if metadata is not None else None
+    workspace_root = (
+        _optional_cli_string(metadata.get("spawnedWorkspaceDir"))
+        if metadata is not None
+        else None
+    )
+    sandbox: dict[str, object] = {
+        "mode": sandbox_mode or ("workspace-write" if sandboxed else "off"),
+        "scope": "session",
+        "workspaceAccess": sandbox_mode or ("workspace-write" if sandboxed else "direct"),
+        "workspaceRoot": workspace_root,
+        "sessionIsSandboxed": sandboxed,
+        "tools": {
+            "allow": [],
+            "deny": [],
+            "sources": {
+                "allow": {"source": "openzues-metadata"},
+                "deny": {"source": "openzues-metadata"},
+            },
+        },
+    }
+    if metadata is not None:
+        for key in ("runtime", "runtimeThreadId", "runtimeSessionId"):
+            value = _optional_cli_string(metadata.get(key))
+            if value is not None:
+                sandbox[key] = value
+        runtime_id = metadata.get("runtimeId")
+        if isinstance(runtime_id, int) and not isinstance(runtime_id, bool):
+            sandbox["runtimeId"] = runtime_id
+        if isinstance(sandbox_policy, dict):
+            sandbox["policy"] = dict(sandbox_policy)
+    return {
+        "docsUrl": "https://docs.openclaw.ai/sandbox",
+        "agentId": resolved_agent_id,
+        "sessionKey": resolved_session_key,
+        "mainSessionKey": main_session_key,
+        "sandbox": sandbox,
+        "elevated": {
+            "enabled": False,
+            "channel": None,
+            "allowedByConfig": False,
+            "alwaysAllowedByConfig": False,
+            "allowFrom": {"global": None, "agent": None},
+            "failures": [],
+        },
+        "fixIt": [
+            "agents.defaults.sandbox.mode",
+            "agents.list[].sandbox.mode",
+            "tools.sandbox.tools.allow",
+            "tools.sandbox.tools.alsoAllow",
+            "tools.sandbox.tools.deny",
+            "agents.list[].tools.sandbox.tools.allow",
+            "agents.list[].tools.sandbox.tools.alsoAllow",
+            "agents.list[].tools.sandbox.tools.deny",
+            "tools.elevated.enabled",
+        ],
+    }
+
+
+async def _sandbox_metadata_for_session(
+    services: CliServices,
+    session_key: str,
+) -> dict[str, object] | None:
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if not callable(list_rows):
+        return None
+    for row in await list_rows():
+        if not isinstance(row, dict):
+            continue
+        row_session_key = _optional_cli_string(row.get("session_key"))
+        if row_session_key != session_key:
+            continue
+        metadata = row.get("metadata")
+        return dict(metadata) if isinstance(metadata, dict) else None
+    return None
+
+
+def _agent_id_from_session_key(session_key: str | None) -> str | None:
+    normalized = _optional_cli_string(session_key)
+    if normalized is None:
+        return None
+    parts = normalized.split(":")
+    if len(parts) >= 2 and parts[0].lower() == "agent":
+        return parts[1] or None
+    return None
+
+
+def _main_session_key_for_agent(agent_id: str) -> str:
+    return f"agent:{agent_id}:main"
 
 
 def _sandbox_inventory_item_from_metadata_row(row: dict[str, object]) -> dict[str, object] | None:
@@ -4381,6 +4531,35 @@ def sandbox_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_sandbox_inventory(payload, json_output=json_output)
+
+
+@sandbox_app.command("explain")
+def sandbox_explain_command(
+    session_key: str | None = typer.Option(
+        None,
+        "--session",
+        help="Session key to inspect.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id to inspect.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit effective sandbox posture as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_sandbox_explain_payload(
+            services,
+            session_key=session_key,
+            agent_id=agent_id,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_sandbox_explain(payload, json_output=json_output)
 
 
 @sessions_app.command("spawn")
