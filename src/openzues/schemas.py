@@ -1713,6 +1713,7 @@ class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
     models: dict[str, dict[str, Any]] | None = None
     model: dict[str, Any] | str | None = None
+    image_model: dict[str, Any] | str | None = Field(default=None, alias="imageModel")
 
 
 class ControlUiGatewayAgentConfigView(BaseModel):
@@ -1720,6 +1721,7 @@ class ControlUiGatewayAgentConfigView(BaseModel):
 
     id: str
     name: str | None = None
+    default: bool | None = None
     workspace: str | None = None
     agent_dir: str | None = Field(default=None, alias="agentDir")
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None

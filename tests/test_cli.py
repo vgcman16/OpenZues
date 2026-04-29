@@ -5505,6 +5505,214 @@ def test_models_aliases_remove_clears_config_model_alias(tmp_path, monkeypatch) 
     assert "alias" not in snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"]
 
 
+def test_models_set_updates_default_model_preserving_fallbacks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {
+                            "primary": "openai/gpt-5.4",
+                            "fallbacks": ["anthropic/claude-opus-4.5"],
+                        },
+                        "models": {"openai/gpt-5.4-mini": {"alias": "fast"}},
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "set", "fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Default model: openai/gpt-5.4-mini" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"] == {
+        "primary": "openai/gpt-5.4-mini",
+        "fallbacks": ["anthropic/claude-opus-4.5"],
+    }
+    assert snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"] == {
+        "alias": "fast"
+    }
+
+
+def test_models_set_normalizes_provider_alias_and_legacy_openrouter_key(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "models": {
+                            "openrouter/openrouter/hunter-alpha": {
+                                "params": {"thinking": "high"}
+                            }
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "set", "openrouter/hunter-alpha"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Default model: openrouter/hunter-alpha" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    defaults = snapshot["agents"]["defaults"]
+    assert defaults["model"] == {"primary": "openrouter/hunter-alpha"}
+    assert defaults["models"] == {
+        "openrouter/hunter-alpha": {"params": {"thinking": "high"}}
+    }
+
+    result = runner.invoke(app, ["models", "set", "Z.AI/glm-4.7"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Default model: zai/glm-4.7" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"] == {"primary": "zai/glm-4.7"}
+    assert snapshot["agents"]["defaults"]["models"]["zai/glm-4.7"] == {}
+
+
+def test_models_set_image_updates_image_model_preserving_fallbacks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "imageModel": {
+                            "primary": "openai/gpt-image-1",
+                            "fallbacks": ["openai/dall-e-3"],
+                        },
+                        "models": {"openai/gpt-image-1-mini": {"alias": "image-fast"}},
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "set-image", "image-fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Image model: openai/gpt-image-1-mini" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["imageModel"] == {
+        "primary": "openai/gpt-image-1-mini",
+        "fallbacks": ["openai/dall-e-3"],
+    }
+    assert snapshot["agents"]["defaults"]["models"]["openai/gpt-image-1-mini"] == {
+        "alias": "image-fast"
+    }
+
+
+def test_models_set_image_normalizes_provider_alias(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"defaults": {}},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "set-image", "Z.AI/glm-4.5-image"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Image model: zai/glm-4.5-image" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["imageModel"] == {
+        "primary": "zai/glm-4.5-image"
+    }
+    assert snapshot["agents"]["defaults"]["models"]["zai/glm-4.5-image"] == {}
+
+
 def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypatch) -> None:
     gateway_config = GatewayConfigService(
         assistant_name="OpenZues",
@@ -5547,6 +5755,691 @@ def test_models_fallbacks_list_json_projects_config_fallbacks(tmp_path, monkeypa
     assert json.loads(result.stdout) == {
         "fallbacks": ["openai/gpt-5.4-mini", "anthropic/claude-opus-4.5"]
     }
+
+
+def test_models_fallbacks_add_resolves_alias_and_updates_config(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "openai/gpt-5.4", "fallbacks": []},
+                        "models": {"openai/gpt-5.4-mini": {"alias": "fast"}},
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "fallbacks", "add", "fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Fallbacks: openai/gpt-5.4-mini" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"]["fallbacks"] == ["openai/gpt-5.4-mini"]
+    assert snapshot["agents"]["defaults"]["models"]["openai/gpt-5.4-mini"]["alias"] == "fast"
+
+
+def test_models_fallbacks_remove_resolves_alias_and_updates_config(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {
+                            "primary": "openai/gpt-5.4",
+                            "fallbacks": [
+                                "openai/gpt-5.4-mini",
+                                "anthropic/claude-opus-4.5",
+                            ],
+                        },
+                        "models": {"openai/gpt-5.4-mini": {"alias": "fast"}},
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "fallbacks", "remove", "fast"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Fallbacks: anthropic/claude-opus-4.5" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"]["fallbacks"] == [
+        "anthropic/claude-opus-4.5"
+    ]
+
+
+def test_models_fallbacks_clear_empties_config_fallbacks(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "model": {
+                            "primary": "openai/gpt-5.4",
+                            "fallbacks": ["openai/gpt-5.4-mini"],
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "fallbacks", "clear"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Fallback list cleared." in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["model"]["fallbacks"] == []
+
+
+def test_models_image_fallbacks_list_json_projects_config_fallbacks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "imageModel": {
+                            "primary": "openai/gpt-image-1",
+                            "fallbacks": ["openai/dall-e-3", "google/imagen-4"],
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "image-fallbacks", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"fallbacks": ["openai/dall-e-3", "google/imagen-4"]}
+
+
+def test_models_image_fallbacks_add_updates_config(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "imageModel": {"primary": "openai/gpt-image-1", "fallbacks": []}
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "image-fallbacks", "add", "dall-e-3"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Image fallbacks: openai/dall-e-3" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["imageModel"]["fallbacks"] == ["openai/dall-e-3"]
+    assert snapshot["agents"]["defaults"]["models"]["openai/dall-e-3"] == {}
+
+
+def test_models_image_fallbacks_remove_updates_config(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "imageModel": {
+                            "primary": "openai/gpt-image-1",
+                            "fallbacks": ["openai/dall-e-3", "google/imagen-4"],
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "image-fallbacks", "remove", "dall-e-3"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Image fallbacks: google/imagen-4" in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["imageModel"]["fallbacks"] == ["google/imagen-4"]
+
+
+def test_models_image_fallbacks_clear_empties_config_fallbacks(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {
+                        "imageModel": {
+                            "primary": "openai/gpt-image-1",
+                            "fallbacks": ["openai/dall-e-3", "google/imagen-4"],
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "image-fallbacks", "clear"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Image fallback list cleared." in result.stdout
+    snapshot = gateway_config.build_snapshot()
+    assert snapshot["agents"]["defaults"]["imageModel"]["fallbacks"] == []
+    assert snapshot["agents"]["defaults"]["imageModel"]["primary"] == "openai/gpt-image-1"
+
+
+def test_models_auth_order_get_json_reads_agent_auth_state(tmp_path, monkeypatch) -> None:
+    agent_dir = tmp_path / "agents" / "main" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth-state.json").write_text(
+        json.dumps({"version": 1, "order": {"openai": ["openai:first", "openai:second"]}}),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"list": [{"id": "main", "agentDir": str(agent_dir)}]},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "auth", "order", "get", "--provider", "OPENAI", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "agentId": "main",
+        "agentDir": str(agent_dir),
+        "provider": "openai",
+        "authStatePath": str(agent_dir / "auth-state.json"),
+        "order": ["openai:first", "openai:second"],
+    }
+
+
+def test_models_auth_order_set_writes_agent_auth_state(tmp_path, monkeypatch) -> None:
+    agent_dir = tmp_path / "agents" / "main" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth-profiles.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    "openai:first": {"type": "api_key", "provider": "openai"},
+                    "openai:second": {"type": "api_key", "provider": "openai"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"list": [{"id": "main", "agentDir": str(agent_dir)}]},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "auth",
+            "order",
+            "set",
+            "--provider",
+            "openai",
+            "openai:second",
+            "openai:first",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Agent: main" in result.stdout
+    assert "Provider: openai" in result.stdout
+    assert "Order override: openai:second, openai:first" in result.stdout
+    state = json.loads((agent_dir / "auth-state.json").read_text(encoding="utf-8"))
+    assert state == {
+        "version": 1,
+        "order": {"openai": ["openai:second", "openai:first"]},
+    }
+
+
+def test_models_auth_order_clear_removes_provider_order(tmp_path, monkeypatch) -> None:
+    agent_dir = tmp_path / "agents" / "main" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "auth-state.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "order": {
+                    "anthropic": ["anthropic:default"],
+                    "openai": ["openai:first", "openai:second"],
+                },
+                "lastGood": {"openai": "openai:first"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {"list": [{"id": "main", "agentDir": str(agent_dir)}]},
+            }
+        )
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "auth", "order", "clear", "--provider", "openai"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Agent: main" in result.stdout
+    assert "Provider: openai" in result.stdout
+    assert "Cleared per-agent order override." in result.stdout
+    state = json.loads((agent_dir / "auth-state.json").read_text(encoding="utf-8"))
+    assert state == {
+        "version": 1,
+        "lastGood": {"openai": "openai:first"},
+        "order": {"anthropic": ["anthropic:default"]},
+    }
+
+
+def test_models_auth_login_calls_model_auth_runtime_with_options(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def login(
+            self,
+            *,
+            provider: str | None,
+            method: str | None,
+            set_default: bool,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "provider": provider,
+                    "method": method,
+                    "set_default": set_default,
+                }
+            )
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Login started for {provider} via {method}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "auth",
+            "login",
+            "--provider",
+            "anthropic",
+            "--method",
+            "cli",
+            "--set-default",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Login started for anthropic via cli." in result.stdout
+    assert calls == [{"provider": "anthropic", "method": "cli", "set_default": True}]
+
+
+def test_models_auth_login_github_copilot_calls_device_login(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def login(
+            self,
+            *,
+            provider: str,
+            method: str,
+            yes: bool,
+        ) -> dict[str, object]:
+            calls.append({"provider": provider, "method": method, "yes": yes})
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": "GitHub Copilot device login started.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "auth", "login-github-copilot", "--yes"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "GitHub Copilot device login started." in result.stdout
+    assert calls == [{"provider": "github-copilot", "method": "device", "yes": True}]
+
+
+def test_models_auth_setup_token_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def setup_token(
+            self,
+            *,
+            provider: str | None,
+            yes: bool,
+        ) -> dict[str, object]:
+            calls.append({"provider": provider, "yes": yes})
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Setup-token started for {provider}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["models", "auth", "setup-token", "--provider", "moonshot", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Setup-token started for moonshot." in result.stdout
+    assert calls == [{"provider": "moonshot", "yes": True}]
+
+
+def test_models_auth_paste_token_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModelAuth:
+        async def paste_token(
+            self,
+            *,
+            provider: str,
+            profile_id: str | None,
+            expires_in: str | None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "provider": provider,
+                    "profile_id": profile_id,
+                    "expires_in": expires_in,
+                }
+            )
+            return {
+                "provider": provider,
+                "status": "interactive",
+                "message": f"Paste-token ready for {profile_id}.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "models",
+            "auth",
+            "paste-token",
+            "--provider",
+            "anthropic",
+            "--profile-id",
+            "anthropic:work",
+            "--expires-in",
+            "30d",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Paste-token ready for anthropic:work." in result.stdout
+    assert calls == [
+        {
+            "provider": "anthropic",
+            "profile_id": "anthropic:work",
+            "expires_in": "30d",
+        }
+    ]
+
+
+def test_models_auth_add_calls_model_auth_runtime(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeModelAuth:
+        async def add(self) -> dict[str, object]:
+            calls.append("add")
+            return {
+                "provider": "custom",
+                "status": "interactive",
+                "message": "Interactive auth helper started.",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(model_auth=FakeModelAuth()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["models", "auth", "add"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Interactive auth helper started." in result.stdout
+    assert calls == ["add"]
 
 
 def test_models_status_json_projects_default_catalog_state(monkeypatch) -> None:

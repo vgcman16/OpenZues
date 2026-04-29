@@ -39,6 +39,23 @@ _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
 }
 _MODEL_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 _DEFAULT_MODEL_PROVIDER = "openai"
+_DEFAULT_AGENT_ID = "main"
+_AGENT_ID_VALID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
+_AGENT_ID_INVALID_CHARS_PATTERN = re.compile(r"[^a-z0-9_-]+")
+_PROVIDER_ID_ALIASES = {
+    "aws-bedrock": "amazon-bedrock",
+    "bedrock": "amazon-bedrock",
+    "bytedance": "volcengine",
+    "doubao": "volcengine",
+    "kimi-code": "kimi",
+    "kimi-coding": "kimi",
+    "modelstudio": "qwen",
+    "opencode-go-auth": "opencode-go",
+    "opencode-zen": "opencode",
+    "qwencloud": "qwen",
+    "z.ai": "zai",
+    "z-ai": "zai",
+}
 
 
 def _escape_powershell_single_quoted_string(value: str) -> str:
@@ -104,6 +121,7 @@ class GatewayConfigService:
         self._local_media_preview_roots = list(local_media_preview_roots or [])
         self._embed_sandbox = embed_sandbox
         self._allow_external_embed_urls = allow_external_embed_urls
+        self._data_dir = data_dir
         self._config_path = data_dir / "settings" / "control-ui-config.json" if data_dir else None
         self._open_path = open_path or _open_gateway_config_path
 
@@ -168,6 +186,38 @@ class GatewayConfigService:
         )
         return write_result
 
+    def set_default_model(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        target = _resolve_model_alias_target(
+            model_ref,
+            aliases=_model_aliases_from_config_snapshot(current),
+        )
+        next_snapshot = _set_model_primary_in_snapshot(current, target=target)
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "field": "model"})
+        return write_result
+
+    def set_default_image_model(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        target = _resolve_model_alias_target(
+            model_ref,
+            aliases=_model_aliases_from_config_snapshot(current),
+        )
+        next_snapshot = _set_model_primary_in_snapshot(
+            current,
+            target=target,
+            key="imageModel",
+        )
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "field": "imageModel"})
+        return write_result
+
     def set_model_alias(self, *, alias: str, model_ref: str) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()
@@ -201,6 +251,202 @@ class GatewayConfigService:
             }
         )
         return write_result
+
+    def add_model_fallback(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        target = _resolve_model_alias_target(model_ref, aliases=aliases)
+        existing = _model_fallbacks_from_config_snapshot(current)
+        existing_targets = {
+            resolved
+            for fallback in existing
+            for resolved in (_try_resolve_model_alias_target(fallback, aliases=aliases),)
+            if resolved is not None
+        }
+        fallbacks = existing if target in existing_targets else [*existing, target]
+        next_snapshot = _set_model_fallbacks_in_snapshot(current, fallbacks=fallbacks)
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "fallbacks": fallbacks})
+        return write_result
+
+    def add_image_model_fallback(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        target = _resolve_model_alias_target(model_ref, aliases=aliases)
+        existing = _model_fallbacks_from_config_snapshot(current, key="imageModel")
+        existing_targets = {
+            resolved
+            for fallback in existing
+            for resolved in (_try_resolve_model_alias_target(fallback, aliases=aliases),)
+            if resolved is not None
+        }
+        fallbacks = existing if target in existing_targets else [*existing, target]
+        next_snapshot = _set_model_fallbacks_in_snapshot(
+            current,
+            fallbacks=fallbacks,
+            key="imageModel",
+        )
+        next_snapshot = _ensure_model_config_entry_in_snapshot(next_snapshot, target=target)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "fallbacks": fallbacks})
+        return write_result
+
+    def remove_model_fallback(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        target = _resolve_model_alias_target(model_ref, aliases=aliases)
+        existing = _model_fallbacks_from_config_snapshot(current)
+        fallbacks = [
+            fallback
+            for fallback in existing
+            if _try_resolve_model_alias_target(fallback, aliases=aliases) != target
+        ]
+        if len(fallbacks) == len(existing):
+            raise ValueError(f"Fallback not found: {target}")
+        next_snapshot = _set_model_fallbacks_in_snapshot(current, fallbacks=fallbacks)
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "fallbacks": fallbacks})
+        return write_result
+
+    def remove_image_model_fallback(self, model_ref: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        aliases = _model_aliases_from_config_snapshot(current)
+        target = _resolve_model_alias_target(model_ref, aliases=aliases)
+        existing = _model_fallbacks_from_config_snapshot(current, key="imageModel")
+        fallbacks = [
+            fallback
+            for fallback in existing
+            if _try_resolve_model_alias_target(fallback, aliases=aliases) != target
+        ]
+        if len(fallbacks) == len(existing):
+            raise ValueError(f"Image fallback not found: {target}")
+        next_snapshot = _set_model_fallbacks_in_snapshot(
+            current,
+            fallbacks=fallbacks,
+            key="imageModel",
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"target": target, "fallbacks": fallbacks})
+        return write_result
+
+    def clear_model_fallbacks(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        next_snapshot = _set_model_fallbacks_in_snapshot(current, fallbacks=[])
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"fallbacks": []})
+        return write_result
+
+    def clear_image_model_fallbacks(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        next_snapshot = _set_model_fallbacks_in_snapshot(
+            current,
+            fallbacks=[],
+            key="imageModel",
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(next_snapshot, base_hash=base_hash)
+        write_result.update({"fallbacks": []})
+        return write_result
+
+    def get_model_auth_order(
+        self,
+        *,
+        provider: str,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        context = _resolve_model_auth_order_context(
+            self.build_snapshot(),
+            data_dir=self._require_data_dir(),
+            provider=provider,
+            agent=agent,
+        )
+        state = _read_json_object(context["auth_state_path"])
+        order = _auth_order_from_state(state, provider=context["provider"])
+        return {
+            "agentId": context["agent_id"],
+            "agentDir": str(context["agent_dir"]),
+            "provider": context["provider"],
+            "authStatePath": str(context["auth_state_path"]),
+            "order": order if order else None,
+        }
+
+    def set_model_auth_order(
+        self,
+        *,
+        provider: str,
+        order: list[str],
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        context = _resolve_model_auth_order_context(
+            self.build_snapshot(),
+            data_dir=self._require_data_dir(),
+            provider=provider,
+            agent=agent,
+        )
+        requested = _normalize_string_entries(order)
+        if not requested:
+            raise ValueError("Missing profile ids. Provide one or more profile ids.")
+        profiles = _auth_profiles_from_store(_read_json_object(context["auth_store_path"]))
+        for profile_id in requested:
+            credential = profiles.get(profile_id)
+            if not isinstance(credential, dict):
+                agent_dir = context["agent_dir"]
+                raise ValueError(f'Auth profile "{profile_id}" not found in {agent_dir}.')
+            credential_provider = str(credential.get("provider") or "")
+            if _normalize_model_auth_provider(credential_provider) != context["provider"]:
+                raise ValueError(
+                    f'Auth profile "{profile_id}" is for {credential_provider}, '
+                    f'not {context["provider"]}.'
+                )
+        state = _read_json_object(context["auth_state_path"])
+        next_state = _set_auth_order_in_state(
+            state,
+            provider=context["provider"],
+            order=requested,
+        )
+        _write_json_object(context["auth_state_path"], next_state)
+        return {
+            "agentId": context["agent_id"],
+            "agentDir": str(context["agent_dir"]),
+            "provider": context["provider"],
+            "authStatePath": str(context["auth_state_path"]),
+            "order": requested,
+        }
+
+    def clear_model_auth_order(
+        self,
+        *,
+        provider: str,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        context = _resolve_model_auth_order_context(
+            self.build_snapshot(),
+            data_dir=self._require_data_dir(),
+            provider=provider,
+            agent=agent,
+        )
+        state = _read_json_object(context["auth_state_path"])
+        next_state = _clear_auth_order_in_state(state, provider=context["provider"])
+        _write_or_remove_auth_state(context["auth_state_path"], next_state)
+        return {
+            "agentId": context["agent_id"],
+            "agentDir": str(context["agent_dir"]),
+            "provider": context["provider"],
+            "authStatePath": str(context["auth_state_path"]),
+            "order": None,
+        }
 
     def record_marketplace_plugin_install(
         self,
@@ -294,6 +540,11 @@ class GatewayConfigService:
             raise RuntimeError("config file path unavailable")
         return self._config_path
 
+    def _require_data_dir(self) -> Path:
+        if self._data_dir is None:
+            raise ValueError("model auth order config runtime is unavailable.")
+        return self._data_dir
+
     def _parse_raw_object(self, raw: str, *, label: str) -> dict[str, Any]:
         try:
             parsed = json.loads(raw)
@@ -370,11 +621,313 @@ def _resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str:
         provider, model = normalized.split("/", 1)
     else:
         provider, model = _DEFAULT_MODEL_PROVIDER, normalized
-    provider = provider.strip().lower()
-    model = model.strip()
+    provider = _normalize_model_provider_id(provider)
+    model = _normalize_model_id_for_provider(provider, model)
     if not provider or not model:
         raise ValueError(f"Invalid model reference: {raw}")
-    return f"{provider}/{model}"
+    return _model_config_key(provider, model)
+
+
+def _try_resolve_model_alias_target(raw: str, *, aliases: dict[str, str]) -> str | None:
+    try:
+        return _resolve_model_alias_target(raw, aliases=aliases)
+    except ValueError:
+        return None
+
+
+def _normalize_model_auth_provider(provider: str) -> str:
+    normalized = provider.strip().lower()
+    if not normalized:
+        raise ValueError("Missing --provider.")
+    return _normalize_model_provider_id(normalized)
+
+
+def _normalize_model_provider_id(provider: str) -> str:
+    normalized = provider.strip().lower()
+    return _PROVIDER_ID_ALIASES.get(normalized, normalized)
+
+
+def _normalize_model_id_for_provider(provider: str, model: str) -> str:
+    trimmed = model.strip()
+    if provider == "anthropic":
+        anthropic_aliases = {
+            "opus-4.6": "claude-opus-4-6",
+            "opus-4.5": "claude-opus-4-5",
+            "sonnet-4.6": "claude-sonnet-4-6",
+            "sonnet-4.5": "claude-sonnet-4-5",
+        }
+        return anthropic_aliases.get(trimmed.lower(), trimmed)
+    if provider == "huggingface" and trimmed.lower().startswith("huggingface/"):
+        return trimmed[len("huggingface/") :]
+    if provider == "openrouter" and "/" not in trimmed:
+        return f"openrouter/{trimmed}"
+    if provider == "vercel-ai-gateway" and "/" not in trimmed:
+        anthropic_aliases = {
+            "opus-4.6": "claude-opus-4-6",
+            "opus-4.5": "claude-opus-4-5",
+            "sonnet-4.6": "claude-sonnet-4-6",
+            "sonnet-4.5": "claude-sonnet-4-5",
+        }
+        normalized = anthropic_aliases.get(trimmed.lower(), trimmed)
+        return f"anthropic/{normalized}" if normalized.startswith("claude-") else normalized
+    return trimmed
+
+
+def _model_config_key(provider: str, model: str) -> str:
+    provider_id = provider.strip()
+    model_id = model.strip()
+    if not provider_id:
+        return model_id
+    if not model_id:
+        return provider_id
+    if model_id.lower().startswith(f"{provider_id.lower()}/"):
+        return model_id
+    return f"{provider_id}/{model_id}"
+
+
+def _legacy_model_config_key(target: str) -> str | None:
+    if not target.startswith("openrouter/"):
+        return None
+    remainder = target[len("openrouter/") :]
+    if not remainder or "/" in remainder:
+        return None
+    return f"openrouter/{target}"
+
+
+def _normalize_agent_id(value: str | None) -> str:
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return _DEFAULT_AGENT_ID
+    lowered = trimmed.lower()
+    if _AGENT_ID_VALID_PATTERN.fullmatch(trimmed) is not None:
+        return lowered
+    normalized = _AGENT_ID_INVALID_CHARS_PATTERN.sub("-", lowered)
+    normalized = normalized.strip("-")[:64]
+    return normalized or _DEFAULT_AGENT_ID
+
+
+def _agent_entries_from_config_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    raw_entries = agents.get("list")
+    if not isinstance(raw_entries, list):
+        return []
+    return [entry for entry in raw_entries if isinstance(entry, dict)]
+
+
+def _known_agent_ids_from_config_snapshot(snapshot: dict[str, Any]) -> list[str]:
+    entries = _agent_entries_from_config_snapshot(snapshot)
+    if not entries:
+        return [_DEFAULT_AGENT_ID]
+    ids: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        agent_id = _normalize_agent_id(str(entry.get("id") or ""))
+        if agent_id in seen:
+            continue
+        seen.add(agent_id)
+        ids.append(agent_id)
+    return ids or [_DEFAULT_AGENT_ID]
+
+
+def _default_agent_id_from_config_snapshot(snapshot: dict[str, Any]) -> str:
+    entries = _agent_entries_from_config_snapshot(snapshot)
+    if not entries:
+        return _DEFAULT_AGENT_ID
+    for entry in entries:
+        if entry.get("default") is True:
+            return _normalize_agent_id(str(entry.get("id") or ""))
+    return _normalize_agent_id(str(entries[0].get("id") or ""))
+
+
+def _agent_entry_from_config_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    for entry in _agent_entries_from_config_snapshot(snapshot):
+        if _normalize_agent_id(str(entry.get("id") or "")) == agent_id:
+            return entry
+    return None
+
+
+def _resolve_model_auth_agent_dir(
+    *,
+    data_dir: Path,
+    agent_id: str,
+    raw_agent_dir: object,
+) -> Path:
+    if isinstance(raw_agent_dir, str) and raw_agent_dir.strip():
+        configured = Path(raw_agent_dir.strip()).expanduser()
+        if configured.is_absolute():
+            return configured
+        return data_dir / configured
+    return data_dir / "agents" / agent_id / "agent"
+
+
+def _resolve_model_auth_order_context(
+    snapshot: dict[str, Any],
+    *,
+    data_dir: Path,
+    provider: str,
+    agent: str | None,
+) -> dict[str, Any]:
+    provider_id = _normalize_model_auth_provider(provider)
+    if agent is not None and agent.strip():
+        raw_agent = agent.strip()
+        agent_id = _normalize_agent_id(raw_agent)
+        known_agents = _known_agent_ids_from_config_snapshot(snapshot)
+        if agent_id not in known_agents:
+            raise ValueError(
+                f'Unknown agent id "{raw_agent}". Use "openclaw agents list" '
+                "to see configured agents."
+            )
+    else:
+        agent_id = _default_agent_id_from_config_snapshot(snapshot)
+    entry = _agent_entry_from_config_snapshot(snapshot, agent_id=agent_id)
+    agent_dir = _resolve_model_auth_agent_dir(
+        data_dir=data_dir,
+        agent_id=agent_id,
+        raw_agent_dir=entry.get("agentDir") if entry is not None else None,
+    )
+    return {
+        "agent_id": agent_id,
+        "agent_dir": agent_dir,
+        "provider": provider_id,
+        "auth_state_path": agent_dir / "auth-state.json",
+        "auth_store_path": agent_dir / "auth-profiles.json",
+    }
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_object(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_or_remove_auth_state(path: Path, payload: dict[str, Any] | None) -> None:
+    if payload is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    _write_json_object(path, payload)
+
+
+def _normalize_string_entries(entries: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        value = entry.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _auth_profiles_from_store(store: dict[str, Any]) -> dict[str, Any]:
+    profiles = store.get("profiles")
+    return dict(profiles) if isinstance(profiles, dict) else {}
+
+
+def _auth_order_from_state(state: dict[str, Any], *, provider: str) -> list[str]:
+    raw_order = state.get("order")
+    if not isinstance(raw_order, dict):
+        return []
+    provider_key = _normalize_model_auth_provider(provider)
+    for raw_provider, raw_entries in raw_order.items():
+        if not isinstance(raw_provider, str):
+            continue
+        if _normalize_model_auth_provider(raw_provider) != provider_key:
+            continue
+        if not isinstance(raw_entries, list):
+            return []
+        return [entry.strip() for entry in raw_entries if isinstance(entry, str) and entry.strip()]
+    return []
+
+
+def _set_auth_order_in_state(
+    state: dict[str, Any],
+    *,
+    provider: str,
+    order: list[str],
+) -> dict[str, Any]:
+    provider_key = _normalize_model_auth_provider(provider)
+    raw_order = state.get("order")
+    next_order: dict[str, list[str]] = {}
+    if isinstance(raw_order, dict):
+        for raw_provider, raw_entries in raw_order.items():
+            if not isinstance(raw_provider, str):
+                continue
+            if _normalize_model_auth_provider(raw_provider) == provider_key:
+                continue
+            if not isinstance(raw_entries, list):
+                continue
+            entries = [
+                entry.strip()
+                for entry in raw_entries
+                if isinstance(entry, str) and entry.strip()
+            ]
+            if entries:
+                next_order[raw_provider] = entries
+    next_order[provider_key] = order
+    next_state: dict[str, Any] = {
+        key: value
+        for key, value in state.items()
+        if key in {"lastGood", "usageStats"} and isinstance(value, dict)
+    }
+    next_state["version"] = 1
+    next_state["order"] = next_order
+    return next_state
+
+
+def _clear_auth_order_in_state(
+    state: dict[str, Any],
+    *,
+    provider: str,
+) -> dict[str, Any] | None:
+    provider_key = _normalize_model_auth_provider(provider)
+    raw_order = state.get("order")
+    next_order: dict[str, list[str]] = {}
+    if isinstance(raw_order, dict):
+        for raw_provider, raw_entries in raw_order.items():
+            if not isinstance(raw_provider, str):
+                continue
+            if _normalize_model_auth_provider(raw_provider) == provider_key:
+                continue
+            if not isinstance(raw_entries, list):
+                continue
+            entries = [
+                entry.strip()
+                for entry in raw_entries
+                if isinstance(entry, str) and entry.strip()
+            ]
+            if entries:
+                next_order[raw_provider] = entries
+    next_state: dict[str, Any] = {
+        key: value
+        for key, value in state.items()
+        if key in {"lastGood", "usageStats"} and isinstance(value, dict)
+    }
+    if next_order:
+        next_state["order"] = next_order
+    if not next_state:
+        return None
+    next_state["version"] = 1
+    return next_state
 
 
 def _model_aliases_from_config_snapshot(snapshot: dict[str, Any]) -> dict[str, str]:
@@ -400,6 +953,26 @@ def _agents_defaults_models_from_snapshot(snapshot: dict[str, Any]) -> dict[str,
     return dict(models) if isinstance(models, dict) else {}
 
 
+def _model_fallbacks_from_config_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    key: str = "model",
+) -> list[str]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    defaults = agents.get("defaults")
+    if not isinstance(defaults, dict):
+        return []
+    model = defaults.get(key)
+    if not isinstance(model, dict):
+        return []
+    fallbacks = model.get("fallbacks")
+    if not isinstance(fallbacks, list):
+        return []
+    return [entry.strip() for entry in fallbacks if isinstance(entry, str) and entry.strip()]
+
+
 def _set_model_alias_in_snapshot(
     snapshot: dict[str, Any],
     *,
@@ -423,6 +996,74 @@ def _set_model_alias_in_snapshot(
     raw_defaults = agents.get("defaults")
     defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
     defaults["models"] = next_models
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _set_model_fallbacks_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    fallbacks: list[str],
+    key: str = "model",
+) -> dict[str, Any]:
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    raw_model = defaults.get(key)
+    model = dict(raw_model) if isinstance(raw_model, dict) else {}
+    model["fallbacks"] = list(fallbacks)
+    defaults[key] = model
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _set_model_primary_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    target: str,
+    key: str = "model",
+) -> dict[str, Any]:
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    raw_model = defaults.get(key)
+    if isinstance(raw_model, dict):
+        model = dict(raw_model)
+    else:
+        model = {}
+    model["primary"] = target
+    defaults[key] = model
+    agents["defaults"] = defaults
+    next_snapshot["agents"] = agents
+    return next_snapshot
+
+
+def _ensure_model_config_entry_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    target: str,
+) -> dict[str, Any]:
+    next_snapshot = dict(snapshot)
+    raw_agents = next_snapshot.get("agents")
+    agents = dict(raw_agents) if isinstance(raw_agents, dict) else {}
+    raw_defaults = agents.get("defaults")
+    defaults = dict(raw_defaults) if isinstance(raw_defaults, dict) else {}
+    raw_models = defaults.get("models")
+    models = dict(raw_models) if isinstance(raw_models, dict) else {}
+    target_entry = models.get(target)
+    legacy_key = _legacy_model_config_key(target)
+    if not isinstance(target_entry, dict) and legacy_key is not None:
+        target_entry = models.get(legacy_key)
+    models[target] = dict(target_entry) if isinstance(target_entry, dict) else {}
+    if legacy_key is not None:
+        models.pop(legacy_key, None)
+    defaults["models"] = models
     agents["defaults"] = defaults
     next_snapshot["agents"] = agents
     return next_snapshot

@@ -214,10 +214,57 @@ the model entry, reports the upstream empty-alias message when none remain, and
 returns the upstream not-found error for missing aliases. No smaller model alias
 CLI command remains. `models fallbacks list` now projects
 `agents.defaults.model.fallbacks` from the native config snapshot and supports
-the upstream JSON/plain/human output shapes. The next model CLI queue head is
-fallback add/remove/clear, followed by image fallback and auth-order mutation
-clusters. Live auth probes remain unavailable until the native model auth
-health runtime exists.
+the upstream JSON/plain/human output shapes. `models fallbacks add` now resolves
+model aliases to canonical provider/model keys, upserts the configured model
+entry, appends only missing fallback targets, and writes through
+`GatewayConfigService`. `models fallbacks remove` now resolves model aliases,
+removes matching canonical fallback targets, preserves the remaining order, and
+returns the upstream not-found error for missing fallback targets. `models
+fallbacks clear` now empties the configured text fallback list while preserving
+the existing primary model config. No smaller text fallback CLI command remains;
+`models image-fallbacks list` now projects
+`agents.defaults.imageModel.fallbacks` from the native config snapshot and
+supports the upstream JSON/plain/human output shapes. `models image-fallbacks
+add` now appends canonical image fallback model ids, defaults unqualified ids to
+OpenAI, and upserts the configured model entry. `models image-fallbacks remove`
+now resolves aliases, removes matching canonical image fallback targets, keeps
+remaining order intact, and returns the upstream not-found error for missing
+image fallback targets. `models image-fallbacks clear` now empties the
+configured image fallback list while preserving the existing primary image model
+config. No smaller image fallback CLI command remains. `models auth order get`
+now reads the per-agent native `auth-state.json` order override with
+OpenClaw-style provider normalization and JSON/human output. `models auth order
+set` now validates requested profile ids against the target agent's
+`auth-profiles.json`, rejects provider mismatches with OpenClaw-shaped errors,
+dedupes the requested order, and writes the per-agent `auth-state.json` order
+override. `models auth order clear` now removes the selected provider order
+override while preserving neighboring auth-state metadata. No smaller auth-order
+CLI command remains; the next model CLI queue head is the provider auth command
+cluster. `models auth login` now forwards `--provider`, `--method`, and
+`--set-default` through the native fakeable model-auth runtime, preserving the
+existing precise unavailable boundary when that runtime is not wired. `models
+auth login-github-copilot` now maps to the native model-auth runtime with
+`provider="github-copilot"`, `method="device"`, and `--yes`. `models auth
+setup-token` now forwards `--provider` and `--yes` through the native fakeable
+model-auth runtime while preserving the same unavailable boundary when no
+setup-token owner is wired. `models auth paste-token` now forwards `--provider`,
+`--profile-id`, and `--expires-in` through the same runtime boundary. The
+remaining provider-auth CLI head is `models auth add`. `models auth add` now
+forwards to the native fakeable model-auth runtime's interactive add helper, so
+no smaller provider-auth CLI command remains. `models set` now resolves aliases
+and provider aliases, rewrites `agents.defaults.model.primary` into the
+OpenClaw object form, preserves fallback metadata, upserts the canonical model
+entry, migrates the duplicated OpenRouter legacy key, and reports the resolved
+default model. The remaining root model mutation queue head is
+`models set-image`, then non-interactive `models scan` posture. `models
+set-image` now resolves aliases and provider aliases through the same native
+model config writer, rewrites `agents.defaults.imageModel.primary` into the
+OpenClaw object form, preserves image fallback metadata, upserts the canonical
+model entry, and reports the resolved image model. No smaller root model
+mutation command remains; the next model CLI queue head is non-interactive
+`models scan` posture.
+Live auth
+probes remain unavailable until the native model auth health runtime exists.
 Top-level `health`
 now queries the live gateway `/api/health` and `/readyz` owners, emits
 OpenClaw-shaped JSON/human readiness fields, and propagates the configured

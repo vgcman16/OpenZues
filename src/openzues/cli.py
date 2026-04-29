@@ -391,8 +391,11 @@ capability_embedding_app = typer.Typer(help="Inspect embedding provider metadata
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
+models_auth_app = typer.Typer(help="Manage model auth profiles.")
+models_auth_order_app = typer.Typer(help="Manage per-agent auth profile order overrides.")
 models_aliases_app = typer.Typer(help="Inspect configured model aliases.")
 models_fallbacks_app = typer.Typer(help="Inspect configured model fallbacks.")
+models_image_fallbacks_app = typer.Typer(help="Inspect configured image model fallbacks.")
 hermes_profile_app = typer.Typer(
     help="Inspect or update the saved Hermes runtime profile.",
     invoke_without_command=True,
@@ -430,8 +433,11 @@ app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(models_app, name="models")
+models_app.add_typer(models_auth_app, name="auth")
+models_auth_app.add_typer(models_auth_order_app, name="order")
 models_app.add_typer(models_aliases_app, name="aliases")
 models_app.add_typer(models_fallbacks_app, name="fallbacks")
+models_app.add_typer(models_image_fallbacks_app, name="image-fallbacks")
 plugins_app.add_typer(plugins_marketplace_app, name="marketplace")
 hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
@@ -3234,6 +3240,7 @@ def _emit_models_fallbacks(
     *,
     json_output: bool,
     plain: bool,
+    label: str = "Fallbacks",
 ) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -3244,12 +3251,31 @@ def _emit_models_fallbacks(
         for fallback in fallbacks:
             typer.echo(str(fallback))
         return
-    typer.echo(f"Fallbacks ({len(fallbacks)}):")
+    typer.echo(f"{label} ({len(fallbacks)}):")
     if not fallbacks:
         typer.echo("- none")
         return
     for fallback in fallbacks:
         typer.echo(f"- {fallback}")
+
+
+def _emit_models_auth_order(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo(f"Agent: {payload.get('agentId')}")
+    typer.echo(f"Provider: {payload.get('provider')}")
+    typer.echo(f"Auth state file: {payload.get('authStatePath')}")
+    raw_order = payload.get("order")
+    order = raw_order if isinstance(raw_order, list) else []
+    if order:
+        typer.echo("Order override: " + ", ".join(str(item) for item in order))
+    else:
+        typer.echo("Order override: (none)")
 
 
 def _emit_models_status(
@@ -3376,6 +3402,108 @@ async def _build_capability_model_auth_login_payload(
         raise ValueError("model auth login is unavailable until model auth runtime is wired.")
     result = await login(provider)
     return dict(result) if isinstance(result, dict) else {"provider": provider}
+
+
+async def _build_models_auth_login_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+    method: str | None,
+    set_default: bool,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    login = getattr(runtime, "login", None)
+    if not callable(login):
+        raise ValueError("model auth login is unavailable until model auth runtime is wired.")
+    try:
+        result = await login(provider=provider, method=method, set_default=set_default)
+    except TypeError as exc:
+        if method is not None or set_default:
+            raise ValueError(
+                "model auth login runtime does not support --method or --set-default."
+            ) from exc
+        if provider is None:
+            raise ValueError("Missing --provider.") from exc
+        result = await login(provider)
+    payload = dict(result) if isinstance(result, dict) else {}
+    if provider is not None:
+        payload.setdefault("provider", provider)
+    return payload
+
+
+async def _build_models_auth_login_github_copilot_payload(
+    services: CliServices,
+    *,
+    yes: bool,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    login = getattr(runtime, "login", None)
+    if not callable(login):
+        raise ValueError("model auth login is unavailable until model auth runtime is wired.")
+    try:
+        result = await login(provider="github-copilot", method="device", yes=yes)
+    except TypeError as exc:
+        raise ValueError(
+            "model auth login runtime does not support GitHub Copilot device auth."
+        ) from exc
+    payload = dict(result) if isinstance(result, dict) else {}
+    payload.setdefault("provider", "github-copilot")
+    return payload
+
+
+async def _build_models_auth_setup_token_payload(
+    services: CliServices,
+    *,
+    provider: str | None,
+    yes: bool,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    setup_token = getattr(runtime, "setup_token", None)
+    if not callable(setup_token):
+        setup_token = getattr(runtime, "setupToken", None)
+    if not callable(setup_token):
+        raise ValueError("model auth setup-token is unavailable until model auth runtime is wired.")
+    result = await setup_token(provider=provider, yes=yes)
+    payload = dict(result) if isinstance(result, dict) else {}
+    if provider is not None:
+        payload.setdefault("provider", provider)
+    return payload
+
+
+async def _build_models_auth_paste_token_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    profile_id: str | None,
+    expires_in: str | None,
+) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    paste_token = getattr(runtime, "paste_token", None)
+    if not callable(paste_token):
+        paste_token = getattr(runtime, "pasteToken", None)
+    if not callable(paste_token):
+        raise ValueError("model auth paste-token is unavailable until model auth runtime is wired.")
+    result = await paste_token(
+        provider=provider,
+        profile_id=profile_id,
+        expires_in=expires_in,
+    )
+    payload = dict(result) if isinstance(result, dict) else {}
+    payload.setdefault("provider", provider)
+    return payload
+
+
+async def _build_models_auth_add_payload(services: CliServices) -> dict[str, object]:
+    runtime = _model_auth_runtime(services)
+    add = getattr(runtime, "add", None)
+    if not callable(add):
+        add = getattr(runtime, "add_auth", None)
+    if not callable(add):
+        add = getattr(runtime, "addAuth", None)
+    if not callable(add):
+        raise ValueError("model auth add is unavailable until model auth runtime is wired.")
+    result = await add()
+    return dict(result) if isinstance(result, dict) else {}
 
 
 async def _build_capability_model_auth_logout_payload(
@@ -5573,11 +5701,15 @@ def _model_aliases_from_services_config(services: CliServices) -> dict[str, str]
     return _model_aliases_from_config_snapshot(gateway_config.build_snapshot())
 
 
-def _model_fallbacks_from_services_config(services: CliServices) -> list[str]:
+def _model_fallbacks_from_services_config(
+    services: CliServices,
+    *,
+    key: str = "model",
+) -> list[str]:
     gateway_config = getattr(services, "gateway_config", None)
     if not isinstance(gateway_config, GatewayConfigService):
         return []
-    return _model_fallbacks_from_config_snapshot(gateway_config.build_snapshot())
+    return _model_fallbacks_from_config_snapshot(gateway_config.build_snapshot(), key=key)
 
 
 async def _build_models_aliases_payload(services: CliServices) -> dict[str, object]:
@@ -5607,6 +5739,71 @@ async def _build_models_fallbacks_payload(services: CliServices) -> dict[str, ob
     return {"fallbacks": _model_fallbacks_from_services_config(services)}
 
 
+async def _build_models_image_fallbacks_payload(services: CliServices) -> dict[str, object]:
+    return {"fallbacks": _model_fallbacks_from_services_config(services, key="imageModel")}
+
+
+async def _build_models_auth_order_get_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    agent: str | None,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model auth order config runtime is unavailable.")
+    return dict(gateway_config.get_model_auth_order(provider=provider, agent=agent))
+
+
+async def _set_models_auth_order_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    agent: str | None,
+    order: list[str],
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model auth order config runtime is unavailable.")
+    return dict(gateway_config.set_model_auth_order(provider=provider, agent=agent, order=order))
+
+
+async def _clear_models_auth_order_payload(
+    services: CliServices,
+    *,
+    provider: str,
+    agent: str | None,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model auth order config runtime is unavailable.")
+    return dict(gateway_config.clear_model_auth_order(provider=provider, agent=agent))
+
+
+async def _set_default_model_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model config runtime is unavailable.")
+    result = gateway_config.set_default_model(model)
+    return dict(result)
+
+
+async def _set_default_image_model_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model config runtime is unavailable.")
+    result = gateway_config.set_default_image_model(model)
+    return dict(result)
+
+
 async def _set_model_alias_payload(
     services: CliServices,
     *,
@@ -5629,6 +5826,70 @@ async def _remove_model_alias_payload(
     if not isinstance(gateway_config, GatewayConfigService):
         raise ValueError("model alias config runtime is unavailable.")
     result = gateway_config.remove_model_alias(alias)
+    return dict(result)
+
+
+async def _add_model_fallback_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.add_model_fallback(model)
+    return dict(result)
+
+
+async def _add_image_model_fallback_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.add_image_model_fallback(model)
+    return dict(result)
+
+
+async def _remove_image_model_fallback_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.remove_image_model_fallback(model)
+    return dict(result)
+
+
+async def _remove_model_fallback_payload(
+    services: CliServices,
+    *,
+    model: str,
+) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.remove_model_fallback(model)
+    return dict(result)
+
+
+async def _clear_model_fallbacks_payload(services: CliServices) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.clear_model_fallbacks()
+    return dict(result)
+
+
+async def _clear_image_model_fallbacks_payload(services: CliServices) -> dict[str, object]:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        raise ValueError("model fallback config runtime is unavailable.")
+    result = gateway_config.clear_image_model_fallbacks()
     return dict(result)
 
 
@@ -5728,7 +5989,7 @@ async def _build_models_status_payload(
         "resolvedDefault": resolved_default,
         "fallbacks": _model_fallbacks_from_services_config(services),
         "imageModel": None,
-        "imageFallbacks": [],
+        "imageFallbacks": _model_fallbacks_from_services_config(services, key="imageModel"),
         "aliases": _model_aliases_from_services_config(services),
         "allowed": allowed,
         "auth": auth_payload,
@@ -8890,6 +9151,266 @@ def models_list_command(
     _emit_models_list(payload, json_output=json_output, plain=plain)
 
 
+@models_app.command("set")
+def models_set_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _set_default_model_payload(services, model=model)
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Default model: {payload.get('target')}")
+
+
+@models_app.command("set-image")
+def models_set_image_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _set_default_image_model_payload(services, model=model)
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Image model: {payload.get('target')}")
+
+
+@models_auth_app.command("login")
+def models_auth_login_command(
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Provider id registered by a plugin.",
+    ),
+    method: str | None = typer.Option(
+        None,
+        "--method",
+        help="Provider auth method id.",
+    ),
+    set_default: bool = typer.Option(
+        False,
+        "--set-default",
+        help="Apply the provider's default model recommendation.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_login_payload(
+                    services,
+                    provider=provider,
+                    method=method,
+                    set_default=set_default,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("add")
+def models_auth_add_command() -> None:
+    try:
+        payload = _run(_run_with_services(_build_models_auth_add_payload))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("login-github-copilot")
+def models_auth_login_github_copilot_command(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Overwrite existing profile without prompting.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_login_github_copilot_payload(
+                    services,
+                    yes=yes,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("setup-token")
+def models_auth_setup_token_command(
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Provider id.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Skip confirmation.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_setup_token_payload(
+                    services,
+                    provider=provider,
+                    yes=yes,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_app.command("paste-token")
+def models_auth_paste_token_command(
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    profile_id: str | None = typer.Option(
+        None,
+        "--profile-id",
+        help="Auth profile id.",
+    ),
+    expires_in: str | None = typer.Option(
+        None,
+        "--expires-in",
+        help="Optional expiry duration.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_paste_token_payload(
+                    services,
+                    provider=provider,
+                    profile_id=profile_id,
+                    expires_in=expires_in,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_capability_model_auth_login(payload)
+
+
+@models_auth_order_app.command("get")
+def models_auth_order_get_command(
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id (default: configured default agent).",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit auth order as JSON.",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_models_auth_order_get_payload(
+                    services,
+                    provider=provider,
+                    agent=agent,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_models_auth_order(payload, json_output=json_output)
+
+
+@models_auth_order_app.command("set")
+def models_auth_order_set_command(
+    profile_ids: Annotated[list[str], typer.Argument(help="Auth profile ids.")],
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id (default: configured default agent).",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _set_models_auth_order_payload(
+                    services,
+                    provider=provider,
+                    agent=agent,
+                    order=profile_ids,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_models_auth_order(payload, json_output=False)
+
+
+@models_auth_order_app.command("clear")
+def models_auth_order_clear_command(
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider id.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id (default: configured default agent).",
+    ),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _clear_models_auth_order_payload(
+                    services,
+                    provider=provider,
+                    agent=agent,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Agent: {payload.get('agentId')}")
+    typer.echo(f"Provider: {payload.get('provider')}")
+    typer.echo("Cleared per-agent order override.")
+
+
 @models_aliases_app.command("list")
 def models_aliases_list_command(
     json_output: bool = typer.Option(
@@ -8969,6 +9490,135 @@ def models_fallbacks_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_models_fallbacks(payload, json_output=json_output, plain=plain)
+
+
+@models_image_fallbacks_app.command("list")
+def models_image_fallbacks_list_command(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit image fallback models as JSON.",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Emit one image fallback model per line.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_models_image_fallbacks_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_models_fallbacks(
+        payload,
+        json_output=json_output,
+        plain=plain,
+        label="Image fallbacks",
+    )
+
+
+@models_image_fallbacks_app.command("add")
+def models_image_fallbacks_add_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _add_image_model_fallback_payload(
+                    services,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    typer.echo("Image fallbacks: " + ", ".join(str(item) for item in fallbacks))
+
+
+@models_image_fallbacks_app.command("remove")
+def models_image_fallbacks_remove_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _remove_image_model_fallback_payload(
+                    services,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    typer.echo("Image fallbacks: " + ", ".join(str(item) for item in fallbacks))
+
+
+@models_image_fallbacks_app.command("clear")
+def models_image_fallbacks_clear_command() -> None:
+    try:
+        _run(_run_with_services(_clear_image_model_fallbacks_payload))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo("Image fallback list cleared.")
+
+
+@models_fallbacks_app.command("add")
+def models_fallbacks_add_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _add_model_fallback_payload(
+                    services,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    typer.echo("Fallbacks: " + ", ".join(str(item) for item in fallbacks))
+
+
+@models_fallbacks_app.command("remove")
+def models_fallbacks_remove_command(
+    model: str = typer.Argument(..., help="Model id or alias."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _remove_model_fallback_payload(
+                    services,
+                    model=model,
+                )
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    raw_fallbacks = payload.get("fallbacks")
+    fallbacks = raw_fallbacks if isinstance(raw_fallbacks, list) else []
+    typer.echo("Fallbacks: " + ", ".join(str(item) for item in fallbacks))
+
+
+@models_fallbacks_app.command("clear")
+def models_fallbacks_clear_command() -> None:
+    try:
+        _run(_run_with_services(_clear_model_fallbacks_payload))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo("Fallback list cleared.")
 
 
 @models_app.command("status")
