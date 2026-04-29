@@ -3895,6 +3895,47 @@ def test_capability_image_edit_json_wraps_native_image_generation(monkeypatch) -
     ]
 
 
+def test_infer_audio_providers_json_filters_audio_capable_registry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeMediaUnderstanding:
+        async def list_providers(self) -> list[dict[str, object]]:
+            calls.append("list_providers")
+            return [
+                {
+                    "id": "openai",
+                    "capabilities": ["image", "audio"],
+                    "defaultModels": {"audio": "whisper-1"},
+                    "configured": True,
+                },
+                {
+                    "id": "vision-only",
+                    "capabilities": ["image"],
+                    "defaultModels": {"image": "gpt-5.4-vision"},
+                },
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(media_understanding=FakeMediaUnderstanding()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["infer", "audio", "providers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
+        {
+            "available": True,
+            "configured": True,
+            "selected": False,
+            "id": "openai",
+            "capabilities": ["image", "audio"],
+            "defaultModels": {"audio": "whisper-1"},
+        }
+    ]
+    assert calls == ["list_providers"]
+
+
 def test_capability_model_run_rejects_local_and_gateway_together() -> None:
     result = runner.invoke(
         app,

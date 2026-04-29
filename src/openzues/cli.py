@@ -376,6 +376,7 @@ capability_model_app = typer.Typer(help="Inspect text inference model catalog me
 capability_model_auth_app = typer.Typer(help="Inspect model provider auth metadata.")
 capability_tts_app = typer.Typer(help="Inspect text-to-speech runtime metadata.")
 capability_image_app = typer.Typer(help="Inspect image generation and description metadata.")
+capability_audio_app = typer.Typer(help="Inspect audio transcription runtime metadata.")
 plugins_app = typer.Typer(help="Inspect plugin and runtime inventory.")
 plugins_marketplace_app = typer.Typer(help="Inspect Claude-compatible plugin marketplaces.")
 models_app = typer.Typer(help="Inspect model catalog and runtime posture.")
@@ -405,6 +406,7 @@ capability_app.add_typer(capability_model_app, name="model")
 capability_model_app.add_typer(capability_model_auth_app, name="auth")
 capability_app.add_typer(capability_tts_app, name="tts")
 capability_app.add_typer(capability_image_app, name="image")
+capability_app.add_typer(capability_audio_app, name="audio")
 app.add_typer(capability_app, name="capability")
 app.add_typer(capability_app, name="infer")
 app.add_typer(plugins_app, name="plugins")
@@ -2768,6 +2770,58 @@ def _media_understanding_runtime(services: CliServices) -> Any:
             "image.describe local transport is unavailable until media understanding is wired."
         )
     return runtime
+
+
+def _optional_media_understanding_runtime(services: CliServices) -> Any | None:
+    runtime = getattr(services, "image_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding", None)
+    if runtime is None:
+        runtime = getattr(services, "media_understanding_service", None)
+    return runtime
+
+
+async def _build_capability_audio_providers_payload(
+    services: CliServices,
+) -> list[dict[str, object]]:
+    runtime = _optional_media_understanding_runtime(services)
+    list_providers = getattr(runtime, "list_providers", None) if runtime is not None else None
+    if not callable(list_providers):
+        return []
+    raw_providers = await list_providers()
+    if not isinstance(raw_providers, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for raw_provider in raw_providers:
+        if not isinstance(raw_provider, dict):
+            continue
+        capabilities = raw_provider.get("capabilities")
+        capability_items = [
+            capability for capability in capabilities if isinstance(capability, str)
+        ] if isinstance(capabilities, list) else []
+        if "audio" not in capability_items:
+            continue
+        provider_id = _optional_cli_string(raw_provider.get("id"))
+        if provider_id is None:
+            continue
+        entry: dict[str, object] = {
+            "available": raw_provider.get("available")
+            if isinstance(raw_provider.get("available"), bool)
+            else True,
+            "configured": raw_provider.get("configured")
+            if isinstance(raw_provider.get("configured"), bool)
+            else False,
+            "selected": raw_provider.get("selected")
+            if isinstance(raw_provider.get("selected"), bool)
+            else False,
+            "id": provider_id,
+            "capabilities": capability_items,
+        }
+        default_models = raw_provider.get("defaultModels")
+        if isinstance(default_models, dict):
+            entry["defaultModels"] = dict(default_models)
+        providers.append(entry)
+    return providers
 
 
 def _require_capability_provider_model_ref(
@@ -8194,6 +8248,17 @@ def capability_image_edit_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_capability_model_run(payload, json_output=json_output)
+
+
+@capability_audio_app.command("providers")
+def capability_audio_providers_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> list[dict[str, object]]:
+        return await _build_capability_audio_providers_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
 
 
 @capability_image_app.command("describe")
