@@ -7419,6 +7419,7 @@ class OpsMeshService:
             )
         if channel == "discord" and action in {
             "channel-create",
+            "channel-delete",
             "channel-edit",
             "channel-info",
             "channel-list",
@@ -7559,6 +7560,13 @@ class OpsMeshService:
             if action == "channel-edit":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-delete":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_delete_message_action,
                     route,
                     request,
                     secret_token,
@@ -9466,6 +9474,32 @@ class OpsMeshService:
         if channel.get("error"):
             raise RuntimeError(str(channel.get("error")))
         return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_channel_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-delete requires channelId.")
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "channelId": channel_id}
 
     def _dispatch_discord_thread_create_message_action(
         self,
