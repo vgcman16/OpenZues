@@ -281,6 +281,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py -q -k "device_pairing or pending_device_pairing or
   gateway_memory_probe or gateway_health_contribution"` (`4 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- CLI service construction now wires the native `GatewayNodePairingService`
+  into `GatewayNodeMethodService`, matching the app-server graph so
+  `device.pair.list` / `node.pair.*` are available to real `doctor` runs and
+  device commands instead of only injected test fakes.
+- Verified the CLI device-pairing runtime wiring with `python -m pytest
+  tests\test_cli.py::test_cli_services_wire_device_pairing_runtime_for_doctor
+  -q` (`1 passed`), adjacent CLI/device doctor proof `python -m pytest
+  tests\test_cli.py -q -k "cli_services_wire_device_pairing_runtime_for_doctor
+  or device_pairing or pending_device_pairing or gateway_memory_probe or
+  gateway_health_contribution"` (`5 passed`), adjacent gateway pairing proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair or
+  device_token"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `doctor:device-pairing` now also reads OpenClaw-shaped local
+  `identity/device.json` and `identity/device-auth.json` files when present
+  under the native data directory, warning when cached local device auth
+  predates gateway token rotation, no longer has a matching active gateway
+  token, or has cached scopes that differ from the gateway record.
+- Verified the local device-auth doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_local_device_auth_token_is_stale
+  -q` (`1 passed`), adjacent doctor/gateway proof `python -m pytest
+  tests\test_cli.py -q -k "local_device_auth_token or device_pairing or
+  pending_device_pairing or gateway_memory_probe or gateway_health_contribution
+  or doctor_json_warns"` (`37 passed`), adjacent gateway pairing proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair or
+  device_token"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and
@@ -1884,6 +1911,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `sessions.history` now matches OpenClaw `sessions_history` tool-message
   filtering for `toolResult`: hidden by default and preserved only when
   `includeTools=true`.
+- `sessions.history` now also applies OpenClaw's `session-transcript-repair`
+  redaction for structured `sessions_spawn` tool-call inputs: inline
+  `attachments[].content` is replaced with `__OPENCLAW_REDACTED__`, only safe
+  attachment metadata is preserved, and the original attachment bytes do not
+  replay through the history read model.
 - `sessions.list` now accepts OpenClaw numeric filters for `limit`,
   `activeMinutes`, and `messageLimit`, flooring/clamping them instead of
   rejecting non-integer numbers.
@@ -2079,6 +2111,69 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn` now also mirrors OpenClaw's materialized-attachment failure
+  cleanup: if provisional child metadata/session materialization fails after
+  inline attachments are staged but before runtime dispatch, OpenZues removes
+  the attachment directory, deletes provisional metadata/messages, cleans
+  thread binding state, and returns the spawn error envelope without starting
+  the child runtime.
+- Verified the attachment materialization failure cleanup seam with `python -m
+  pytest tests\test_gateway_node_methods.py -q -k
+  "removes_materialized_attachments_when_metadata_patch_fails"` (`1 passed`),
+  adjacent spawn coverage `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails
+  or sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails or
+  sessions_spawn_required_sandbox_dispatches_when_runtime_wired or
+  sessions_spawn_required_sandbox_persists_runtime_policy_metadata"` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Tracked `sessions.spawn` attachment directories now participate in the
+  OpenClaw terminal cleanup lifecycle: completed child runs remove staged
+  attachment directories when `cleanup="delete"` or when the session is kept
+  without `tools.sessions_spawn.attachments.retainOnSessionKeep=true`, while
+  provisional child metadata and transcripts remain intact for kept sessions.
+- Verified the attachment retention cleanup seam with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_removes_spawn_attachments_when_child_run_is_kept"` (`1 passed`),
+  adjacent wait/spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_removes_spawn_attachments_when_child_run_is_kept or
+  sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails or
+  sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails or
+  agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run or
+  agent_wait_waits_for_tracked_gateway_run_completion or
+  agent_wait_prefers_terminal_session_mission_over_stale_active or
+  agent_wait_does_not_duplicate_spawn_completion_announcement"` (`9 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- OpenClaw's `tools.sessions_spawn.attachments` config block is now preserved
+  by the native control config schema and consumed by `sessions.spawn` for
+  explicit `enabled=false`, `maxFiles`, `maxFileBytes`, `maxTotalBytes`, and
+  `retainOnSessionKeep` attachment behavior while leaving absent config on the
+  existing OpenZues-compatible enabled path.
+- Verified the attachment config-limit seam with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "attachment_limits_follow_openclaw_config or
+  rejects_attachments_when_openclaw_config_disables_them"` (`2 passed`),
+  adjacent attachment coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "attachment_limits_follow_openclaw_config or
+  rejects_attachments_when_openclaw_config_disables_them or
+  sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails or
+  agent_wait_removes_spawn_attachments_when_child_run_is_kept or
+  sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_rejects_acp_attachments_before_runtime_boundary or
+  sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails"` (`8
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 - Sandboxed `chat.send` attachment delivery now stages decoded base64 media
   inside the saved session workspace at `media/inbound/...`, strips inline
   payload bytes before attachment-runtime handoff, and carries sandbox-relative
@@ -2768,9 +2863,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`.
 - `doctor --json` and human doctor output now include stable OpenClaw doctor
   contribution surfaces for `doctor:security` and `doctor:shell-completion`.
-  The native CLI marks security as unavailable and shell completion as partial
-  until production repair adapters are wired, while preserving any future real
-  adapter payloads.
+  The native CLI returns a structured security read model and keeps shell
+  completion as partial until production repair adapters are wired, while
+  preserving any future real adapter payloads.
 - Verified the doctor contribution-surface seam with `python -m pytest
   tests\test_cli.py::test_doctor_json_includes_security_and_shell_completion_surfaces -q`
   (`1 passed`), adjacent doctor coverage `python -m pytest tests\test_cli.py
@@ -2781,6 +2876,121 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_human_output_reports_session_lock_files or
   doctor_json_includes_cli_runtime_surfaces"` (`4 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- The `doctor:security` contribution now implements OpenClaw's
+  `approvals.exec.enabled=false` warning: doctor JSON reports that approval
+  forwarding is disabled only for forwarding, points at the host
+  `~/.openclaw/exec-approvals.json` policy, and suggests
+  `openclaw approvals get --gateway`, while failing soft if legacy config must
+  be reported by the earlier migrator first.
+- Verified the security forwarding warning with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled
+  -q` (`1 passed`), adjacent security/shell/legacy proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_thread_binding_ttl_hours
+  tests\test_cli.py::test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled
+  tests\test_cli.py::test_doctor_json_includes_security_and_shell_completion_surfaces
+  -q` (`3 passed`), broader doctor proof `python -m pytest tests\test_cli.py
+  -q -k "approvals_exec_forwarding or security_and_shell_completion_surfaces
+  or doctor_json_warns or gateway_auth or gateway_mode_is_unset"` (`37
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `doctor:security` now also mirrors OpenClaw's implicit heartbeat
+  direct-policy upgrade warning for configured default or per-agent heartbeat
+  delivery whose `directPolicy` is unset, including the upstream
+  `allow`/`block` pinning guidance.
+- Verified the heartbeat direct-policy security slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_heartbeat_direct_policy_is_implicit
+  -q` (`1 passed`), adjacent security/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "heartbeat_direct_policy or approvals_exec_forwarding
+  or security_and_shell_completion_surfaces or doctor_json_warns or gateway_auth
+  or gateway_mode_is_unset"` (`38 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `doctor:security` now mirrors OpenClaw's gateway network-exposure warning
+  for canonical non-loopback binds without configured auth, including the
+  CRITICAL control warning, loopback fix, SSH tunnel guidance, remote docs link,
+  and token-generation hints while leaving legacy raw bind aliases under the
+  legacy-config migrator.
+- Verified the gateway exposure security slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth
+  -q` (`1 passed`), legacy ownership proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_gateway_bind_host_alias
+  tests\test_cli.py::test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth
+  -q` (`2 passed`), broader security/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "gateway_bind_is_exposed or heartbeat_direct_policy
+  or approvals_exec_forwarding or security_and_shell_completion_surfaces or
+  doctor_json_warns or gateway_auth or gateway_mode_is_unset"` (`39 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `doctor:security` now mirrors OpenClaw's `tools.exec` host-policy conflict
+  warning. The native doctor reads the existing
+  `settings/exec-approvals.json` runtime policy, compares global and per-agent
+  requested `security`/`ask` values against the stricter host effective policy,
+  reports the OpenClaw-shaped config/host/effective lines, and preserves
+  `tools.exec` config through the native config snapshot schema.
+- Verified the exec-policy security slice with `python -m pytest
+  tests\test_cli.py -k "exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor"` (`2
+  passed`) and adjacent security/doctor proof `python -m pytest
+  tests\test_cli.py -k "doctor_json_warns_when_approvals_exec_forwarding_is_disabled
+  or doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  legacy_gateway_bind_host_alias or legacy_thread_binding_ttl_hours"` (`10
+  passed`).
+- `doctor:security` now mirrors OpenClaw's configured channel DM policy
+  warnings. The native doctor reads enabled/configured channel snapshots,
+  resolves the default account, preserves top-level and nested `dmPolicy` /
+  `allowFrom` paths, consults the pairing allowFrom store, and reports OPEN,
+  invalid-open, locked, disabled, and shared-main-session warnings with
+  OpenClaw-shaped pairing and `session.dmScope` guidance.
+- Verified the DM-policy security slice with `python -m pytest
+  tests\test_cli.py -k "channel_dm_policy_security"` (`1 passed`), adjacent
+  security/allowFrom proof `python -m pytest tests\test_cli.py -k
+  "channel_dm_policy_security or exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  doctor_json_warns_when_approvals_exec_forwarding_is_disabled or
+  doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  open_policy_allow_from or allowlist_policy_allow_from"` (`10 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `doctor:shell-completion` now has a native OpenClaw-shaped status and repair
+  path for existing profile installations. The doctor detects the current
+  shell, profile path, cache path, cache presence, and slow dynamic
+  `openzues completion` profile lines; `doctor --fix` regenerates the local
+  Typer completion cache and rewrites slow profile stanzas to source the cached
+  file.
+- Verified the shell-completion status/repair slice with `python -m pytest
+  tests\test_cli.py -k "shell_completion_uses_slow_dynamic_profile or
+  regenerates_shell_completion_cache"` (`2 passed`), adjacent doctor proof
+  `python -m pytest tests\test_cli.py -k "shell_completion_uses_slow_dynamic_profile
+  or regenerates_shell_completion_cache or security_and_shell_completion_surfaces
+  or channel_dm_policy_security or exec_policy_config_exceeds_host_policy or
+  doctor_json_warns_when_approvals_exec_forwarding_is_disabled or
+  doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  open_policy_allow_from or allowlist_policy_allow_from"` (`11 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `doctor:shell-completion --fix` now also covers first-time native
+  installation when no profile completion exists. The doctor generates the
+  cache, creates the shell profile if needed, writes an `# OpenZues Completion`
+  cached-source stanza, and returns the recomputed healthy status.
+- Verified the first-time completion install slice with `python -m pytest
+  tests\test_cli.py -k "installs_shell_completion_when_profile_is_missing"`
+  (`1 passed`), adjacent shell/doctor proof `python -m pytest
+  tests\test_cli.py -k "shell_completion_uses_slow_dynamic_profile or
+  regenerates_shell_completion_cache or installs_shell_completion_when_profile_is_missing
+  or security_and_shell_completion_surfaces or channel_dm_policy_security or
+  exec_policy_config_exceeds_host_policy or
+  doctor_json_warns_when_approvals_exec_forwarding_is_disabled or
+  doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  open_policy_allow_from or allowlist_policy_allow_from"` (`12 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the

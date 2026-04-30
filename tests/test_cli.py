@@ -14709,6 +14709,123 @@ def test_doctor_json_classifies_device_pairing_repairs_and_token_gaps(
     assert warnings[1] in payload["warnings"]
 
 
+def test_cli_services_wire_device_pairing_runtime_for_doctor(tmp_path) -> None:
+    async def run() -> dict[str, object]:
+        data_dir = tmp_path / "data"
+        services = await cli_module._build_services(
+            Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+        )
+        try:
+            created = await services.gateway_node_methods.call(
+                "node.pair.request",
+                {
+                    "nodeId": "cli-device-1",
+                    "displayName": "CLI Device",
+                },
+                now_ms=1_000,
+            )
+            listed = await services.gateway_node_methods.call("device.pair.list", {})
+            return {
+                "requestId": created["request"]["requestId"],
+                "listed": listed,
+            }
+        finally:
+            await _close_services(services)
+
+    result = asyncio.run(run())
+
+    assert result["listed"] == {
+        "pending": [
+            {
+                "requestId": result["requestId"],
+                "deviceId": "cli-device-1",
+                "displayName": "CLI Device",
+                "ts": 1_000,
+                "requiredApproveScopes": ["operator.pairing"],
+            }
+        ],
+        "paired": [],
+    }
+
+
+def test_doctor_json_warns_when_local_device_auth_token_is_stale(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    identity_dir = data_dir / "identity"
+    identity_dir.mkdir(parents=True)
+    (identity_dir / "device.json").write_text(
+        json.dumps({"version": 1, "deviceId": "device-local-1"}),
+        encoding="utf-8",
+    )
+    (identity_dir / "device-auth.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "deviceId": "device-local-1",
+                "tokens": {
+                    "operator": {
+                        "token": "stale-local-token",
+                        "role": "operator",
+                        "scopes": ["operator.read"],
+                        "updatedAtMs": 1,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            if method == "device.pair.list":
+                return {
+                    "pending": [],
+                    "paired": [
+                        {
+                            "deviceId": "device-local-1",
+                            "publicKey": "paired-pubkey",
+                            "displayName": "Local Dashboard",
+                            "role": "operator",
+                            "roles": ["operator"],
+                            "approvedScopes": ["operator.read"],
+                            "tokens": [
+                                {
+                                    "role": "operator",
+                                    "scopes": ["operator.read"],
+                                    "createdAtMs": 50,
+                                    "rotatedAtMs": 100,
+                                }
+                            ],
+                            "createdAtMs": 10,
+                            "approvedAtMs": 20,
+                        }
+                    ],
+                }
+            raise AssertionError(method)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "remote"}},
+        settings=SimpleNamespace(data_dir=data_dir),
+        gateway_node_methods=FakeGatewayNodeMethods(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["devicePairing"]["warnings"][0]
+    assert "Local cached operator device token for Local Dashboard" in warning
+    assert "predates the gateway rotation" in warning
+    assert "stale device-token pattern" in warning
+    assert "openclaw devices rotate --device device-local-1 --role operator" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,
@@ -18819,14 +18936,13 @@ def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
     assert payload["security"] == {
-        "status": "unavailable",
-        "summary": (
-            "Security doctor contribution is not available from the native OpenZues "
-            "CLI runtime yet."
-        ),
+        "status": "ok",
+        "summary": "No channel security warnings detected.",
         "source": "openzues-native",
         "openClawContribution": "doctor:security",
         "repairAvailable": False,
+        "warnings": [],
+        "auditHint": "openclaw security audit --deep",
     }
     assert payload["shellCompletion"] == {
         "status": "partial",
@@ -18838,6 +18954,350 @@ def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch
         "openClawContribution": "doctor:shell-completion",
         "repairAvailable": False,
     }
+
+
+def test_doctor_json_warns_when_shell_completion_uses_slow_dynamic_profile(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".zshrc").write_text("source <(openzues completion)\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        settings=SimpleNamespace(data_dir=tmp_path),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    shell_completion = payload["shellCompletion"]
+    warning = shell_completion["warnings"][0]
+    assert shell_completion["status"] == "warning"
+    assert shell_completion["shell"] == "zsh"
+    assert shell_completion["profileInstalled"] is True
+    assert shell_completion["cacheExists"] is False
+    assert shell_completion["usesSlowPattern"] is True
+    assert str(home / ".zshrc") == shell_completion["profilePath"]
+    assert str(tmp_path / "completions" / "openzues.zsh") == shell_completion["cachePath"]
+    assert "slow dynamic completion" in warning
+    assert "openzues doctor --fix" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    profile_path = home / ".zshrc"
+    profile_path.write_text("source <(openzues completion)\n", encoding="utf-8")
+    cache_path = tmp_path / "completions" / "openzues.zsh"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        settings=SimpleNamespace(data_dir=tmp_path),
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    shell_completion = payload["shellCompletion"]
+    profile = profile_path.read_text(encoding="utf-8")
+    assert shell_completion["status"] == "ok"
+    assert shell_completion["repairRequested"] is True
+    assert shell_completion["changed"] is True
+    assert shell_completion["cacheExists"] is True
+    assert shell_completion["usesSlowPattern"] is False
+    assert cache_path.exists()
+    assert "# OpenZues Completion" in profile
+    assert str(cache_path) in profile
+    assert "<(openzues completion" not in profile
+    assert "warnings" not in shell_completion or shell_completion["warnings"] == []
+    assert any("Generated completion cache" in item for item in shell_completion["changes"])
+    assert any("Updated zsh profile" in item for item in shell_completion["changes"])
+
+
+def test_doctor_fix_installs_shell_completion_when_profile_is_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    profile_path = home / ".zshrc"
+    cache_path = tmp_path / "completions" / "openzues.zsh"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        settings=SimpleNamespace(data_dir=tmp_path),
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    shell_completion = payload["shellCompletion"]
+    profile = profile_path.read_text(encoding="utf-8")
+    assert shell_completion["status"] == "ok"
+    assert shell_completion["repairRequested"] is True
+    assert shell_completion["changed"] is True
+    assert shell_completion["profileInstalled"] is True
+    assert shell_completion["cacheExists"] is True
+    assert cache_path.exists()
+    assert "# OpenZues Completion" in profile
+    assert str(cache_path) in profile
+    assert any("Generated completion cache" in item for item in shell_completion["changes"])
+    assert any("Installed zsh completion" in item for item in shell_completion["changes"])
+
+
+def test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"approvals": {"exec": {"enabled": False}}},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["security"]["warnings"][0]
+    assert payload["security"]["status"] == "warning"
+    assert payload["security"]["openClawContribution"] == "doctor:security"
+    assert "approvals.exec.enabled=false disables approval forwarding only" in warning
+    assert "exec-approvals.json" in warning
+    assert "openclaw approvals get --gateway" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_heartbeat_direct_policy_is_implicit(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "agents": {
+                "defaults": {"heartbeat": {"target": "last"}},
+                "list": [
+                    {
+                        "id": "ops",
+                        "heartbeat": {"target": "last"},
+                    }
+                ],
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["security"]["warnings"]
+    assert payload["security"]["status"] == "warning"
+    assert any(
+        "Heartbeat defaults: heartbeat delivery is configured" in warning
+        and "agents.defaults.heartbeat.directPolicy is unset" in warning
+        and 'Set it explicitly to "allow" or "block"' in warning
+        for warning in warnings
+    )
+    assert any(
+        'Heartbeat agent "ops": heartbeat delivery is configured' in warning
+        and 'heartbeat.directPolicy for agent "ops" is unset' in warning
+        for warning in warnings
+    )
+
+
+def test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "local", "bind": "lan", "auth": {"mode": "token"}}},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = next(
+        item
+        for item in payload["security"]["warnings"]
+        if "Gateway bound" in item
+    )
+    assert payload["security"]["status"] == "warning"
+    assert "CRITICAL: Gateway bound to" in warning
+    assert "without authentication" in warning
+    assert "Anyone on your network" in warning
+    assert "openclaw config set gateway.bind loopback" in warning
+    assert "ssh -N -L 18789:127.0.0.1:18789" in warning
+    assert "openclaw doctor --fix" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    approvals_path = tmp_path / "settings" / "exec-approvals.json"
+    approvals_path.parent.mkdir(parents=True)
+    approvals_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "defaults": {"security": "allowlist", "ask": "always"},
+                "agents": {
+                    "runner": {"security": "deny", "ask": "always"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "tools": {"exec": {"security": "full", "ask": "off"}},
+            "agents": {
+                "list": [
+                    {
+                        "id": "runner",
+                        "tools": {"exec": {"security": "allowlist", "ask": "off"}},
+                    }
+                ]
+            },
+        },
+        settings=SimpleNamespace(data_dir=tmp_path),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["security"]["warnings"]
+    global_warning = next(
+        warning for warning in warnings if "tools.exec is broader" in warning
+    )
+    agent_warning = next(
+        warning
+        for warning in warnings
+        if "agents.list.runner.tools.exec is broader" in warning
+    )
+    assert payload["security"]["status"] == "warning"
+    assert 'tools.exec.security="full"' in global_warning
+    assert 'tools.exec.ask="off"' in global_warning
+    assert f"{approvals_path} defaults.security=\"allowlist\"" in global_warning
+    assert f"{approvals_path} defaults.ask=\"always\"" in global_warning
+    assert 'security="allowlist" ask="always"' in global_warning
+    assert 'agents.list.runner.tools.exec.security="allowlist"' in agent_warning
+    assert 'agents.list.runner.tools.exec.ask="off"' in agent_warning
+    assert f"{approvals_path} agents.runner.security=\"deny\"" in agent_warning
+    assert f"{approvals_path} agents.runner.ask=\"always\"" in agent_warning
+    assert 'security="deny" ask="always"' in agent_warning
+    assert "openclaw approvals get --gateway" in global_warning
+    assert global_warning in payload["warnings"]
+    assert agent_warning in payload["warnings"]
+
+
+def test_gateway_config_preserves_exec_policy_config_for_security_doctor(
+    tmp_path,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    saved = gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {"exec": {"security": "full", "ask": "off"}},
+                "agents": {
+                    "list": [
+                        {
+                            "id": "runner",
+                            "tools": {
+                                "exec": {"security": "allowlist", "ask": "on-miss"}
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    snapshot = saved["config"]
+    assert snapshot["tools"]["exec"] == {"security": "full", "ask": "off"}
+    assert snapshot["agents"]["list"][0]["tools"]["exec"] == {
+        "security": "allowlist",
+        "ask": "on-miss",
+    }
+    assert gateway_config.build_snapshot() == snapshot
+
+
+def test_doctor_json_warns_about_channel_dm_policy_security(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "session": {"dmScope": "main"},
+            "channels": {
+                "signal": {"enabled": True, "configured": True, "dmPolicy": "open"},
+                "matrix": {"enabled": True, "configured": True, "dm": {"policy": "allowlist"}},
+                "slack": {
+                    "enabled": True,
+                    "configured": True,
+                    "accounts": {
+                        "work": {
+                            "dmPolicy": "allowlist",
+                            "allowFrom": ["U123", "U456"],
+                        }
+                    },
+                },
+                "discord": {"enabled": True, "configured": True, "dmPolicy": "disabled"},
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["security"]["warnings"]
+    open_warning = next(warning for warning in warnings if "Signal DMs: OPEN" in warning)
+    invalid_open_warning = next(
+        warning
+        for warning in warnings
+        if 'requires channels.signal.allowFrom to include "*"' in warning
+    )
+    locked_warning = next(warning for warning in warnings if "Matrix DMs: locked" in warning)
+    approve_hint = next(
+        warning for warning in warnings if "openclaw pairing approve matrix <code>" in warning
+    )
+    multi_user_warning = next(
+        warning
+        for warning in warnings
+        if "Slack DMs: multiple senders share the main session" in warning
+    )
+    disabled_warning = next(warning for warning in warnings if "Discord DMs: disabled" in warning)
+    assert payload["security"]["status"] == "warning"
+    assert 'channels.signal.dmPolicy="open"' in open_warning
+    assert invalid_open_warning in payload["warnings"]
+    assert 'channels.matrix.dm.policy="allowlist"' in locked_warning
+    assert "unknown senders will be blocked / get a pairing code" in locked_warning
+    assert approve_hint in payload["warnings"]
+    assert 'openclaw config set session.dmScope "per-channel-peer"' in multi_user_warning
+    assert 'channels.discord.dmPolicy="disabled"' in disabled_warning
 
 
 def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(

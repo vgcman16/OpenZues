@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -66,12 +66,15 @@ from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import (
     GatewayConfigService,
+    _normalize_allowlist_entries,
     _normalize_openclaw_channel_plugin_id,
+    _read_channel_allow_from_store,
 )
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
 from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
+from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
 from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
@@ -976,6 +979,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     gateway_agents = GatewayAgentsService(database=database)
     gateway_commands = GatewayCommandsService()
+    gateway_node_pairing = GatewayNodePairingService(database)
     gateway_config = GatewayConfigService(
         assistant_name=app_settings.app_name,
         assistant_avatar="/static/favicon.svg",
@@ -1095,6 +1099,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         database=database,
         hub=hub,
         agents_service=gateway_agents,
+        pairing_service=gateway_node_pairing,
         channels_service=gateway_channels,
         commands_service=gateway_commands,
         config_service=gateway_config,
@@ -3992,20 +3997,1050 @@ def _with_doctor_legacy_cron_payload(
     return next_payload
 
 
-def _build_doctor_security_payload() -> dict[str, object]:
+def _doctor_security_snapshot(config_service: object | None) -> dict[str, object] | None:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return None
+    try:
+        snapshot = build_snapshot()
+    except Exception:
+        return None
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def _doctor_security_approvals_warnings(snapshot: dict[str, object]) -> list[str]:
+    approvals = snapshot.get("approvals")
+    if not isinstance(approvals, dict):
+        return []
+    exec_config = approvals.get("exec")
+    if not isinstance(exec_config, dict):
+        return []
+    if exec_config.get("enabled") is not False:
+        return []
+    return [
+        "\n".join(
+            [
+                "- Note: approvals.exec.enabled=false disables approval forwarding only.",
+                "  Host exec gating still comes from ~/.openclaw/exec-approvals.json.",
+                "  Check local policy with: openclaw approvals get --gateway",
+            ]
+        )
+    ]
+
+
+def _doctor_security_heartbeat_warning(
+    *,
+    label: str,
+    heartbeat: object,
+    path_hint: str,
+) -> str | None:
+    if not isinstance(heartbeat, dict):
+        return None
+    target = heartbeat.get("target")
+    if target is None or target == "none":
+        return None
+    if "directPolicy" in heartbeat:
+        return None
+    return "\n".join(
+        [
+            f"- {label}: heartbeat delivery is configured while {path_hint} is unset.",
+            '  Heartbeat now allows direct/DM targets by default. Set it explicitly to '
+            '"allow" or "block" to pin upgrade behavior.',
+        ]
+    )
+
+
+def _doctor_security_heartbeat_warnings(snapshot: dict[str, object]) -> list[str]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    warnings: list[str] = []
+    defaults = agents.get("defaults")
+    if isinstance(defaults, dict):
+        warning = _doctor_security_heartbeat_warning(
+            label="Heartbeat defaults",
+            heartbeat=defaults.get("heartbeat"),
+            path_hint="agents.defaults.heartbeat.directPolicy",
+        )
+        if warning is not None:
+            warnings.append(warning)
+    for agent in _object_list(agents.get("list")):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = _optional_cli_string(agent.get("id"))
+        if agent_id is None:
+            continue
+        warning = _doctor_security_heartbeat_warning(
+            label=f'Heartbeat agent "{agent_id}"',
+            heartbeat=agent.get("heartbeat"),
+            path_hint=f'heartbeat.directPolicy for agent "{agent_id}"',
+        )
+        if warning is not None:
+            warnings.append(warning)
+    return warnings
+
+
+_DOCTOR_EXEC_SECURITY_RANK = {"deny": 0, "allowlist": 1, "full": 2}
+_DOCTOR_EXEC_ASK_RANK = {"off": 0, "on-miss": 1, "always": 2}
+_DOCTOR_EXEC_DEFAULT_SECURITY = "full"
+_DOCTOR_EXEC_DEFAULT_ASK = "off"
+
+
+def _doctor_exec_security_value(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    return normalized if normalized in _DOCTOR_EXEC_SECURITY_RANK else None
+
+
+def _doctor_exec_ask_value(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    return normalized if normalized in _DOCTOR_EXEC_ASK_RANK else None
+
+
+def _doctor_exec_policy_config(value: object) -> dict[str, str]:
+    config = _dict_config(value)
+    resolved: dict[str, str] = {}
+    security = _doctor_exec_security_value(config.get("security"))
+    if security is not None:
+        resolved["security"] = security
+    ask = _doctor_exec_ask_value(config.get("ask"))
+    if ask is not None:
+        resolved["ask"] = ask
+    return resolved
+
+
+def _doctor_security_exec_approvals_path(data_dir: Path | None) -> Path:
+    if data_dir is not None:
+        return data_dir / "settings" / "exec-approvals.json"
+    return Path.home() / ".openclaw" / "exec-approvals.json"
+
+
+def _doctor_security_read_exec_approvals_file(
+    data_dir: Path | None,
+) -> tuple[Path, dict[str, object]]:
+    path = _doctor_security_exec_approvals_path(data_dir)
+    try:
+        raw = path.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+    except (OSError, ValueError):
+        return path, {"version": 1, "agents": {}}
+    if not isinstance(parsed, dict) or parsed.get("version") != 1:
+        return path, {"version": 1, "agents": {}}
+    return path, parsed
+
+
+def _doctor_exec_requested_field(
+    *,
+    scope_config: dict[str, str],
+    global_config: dict[str, str],
+    field: Literal["security", "ask"],
+    config_path: str,
+) -> tuple[str, str]:
+    if field in scope_config:
+        return scope_config[field], f"{config_path}.{field}"
+    if field in global_config:
+        return global_config[field], f"tools.exec.{field}"
+    default_value = (
+        _DOCTOR_EXEC_DEFAULT_SECURITY
+        if field == "security"
+        else _DOCTOR_EXEC_DEFAULT_ASK
+    )
+    return default_value, f"OpenClaw default ({default_value})"
+
+
+def _doctor_exec_host_field(
+    *,
+    approvals_file: dict[str, object],
+    approvals_path: Path,
+    field: Literal["security", "ask"],
+    requested: str,
+    agent_id: str | None,
+) -> tuple[str, str]:
+    agents = _dict_config(approvals_file.get("agents"))
+    if agent_id is not None:
+        agent = _dict_config(agents.get(agent_id))
+        value = (
+            _doctor_exec_security_value(agent.get(field))
+            if field == "security"
+            else _doctor_exec_ask_value(agent.get(field))
+        )
+        if value is not None:
+            return value, f"{approvals_path} agents.{agent_id}.{field}"
+        wildcard = _dict_config(agents.get("*"))
+        value = (
+            _doctor_exec_security_value(wildcard.get(field))
+            if field == "security"
+            else _doctor_exec_ask_value(wildcard.get(field))
+        )
+        if value is not None:
+            return value, f"{approvals_path} agents.*.{field}"
+
+    defaults = _dict_config(approvals_file.get("defaults"))
+    value = (
+        _doctor_exec_security_value(defaults.get(field))
+        if field == "security"
+        else _doctor_exec_ask_value(defaults.get(field))
+    )
+    if value is not None:
+        return value, f"{approvals_path} defaults.{field}"
+    return requested, "inherits requested tool policy"
+
+
+def _doctor_security_exec_policy_warning(
+    *,
+    scope_label: str,
+    scope_config: dict[str, str],
+    global_config: dict[str, str],
+    approvals_file: dict[str, object],
+    approvals_path: Path,
+    agent_id: str | None = None,
+) -> str | None:
+    if not scope_config and not global_config:
+        return None
+
+    security_requested, security_requested_source = _doctor_exec_requested_field(
+        scope_config=scope_config,
+        global_config=global_config,
+        field="security",
+        config_path=scope_label,
+    )
+    ask_requested, ask_requested_source = _doctor_exec_requested_field(
+        scope_config=scope_config,
+        global_config=global_config,
+        field="ask",
+        config_path=scope_label,
+    )
+    security_host, security_host_source = _doctor_exec_host_field(
+        approvals_file=approvals_file,
+        approvals_path=approvals_path,
+        field="security",
+        requested=security_requested,
+        agent_id=agent_id,
+    )
+    ask_host, ask_host_source = _doctor_exec_host_field(
+        approvals_file=approvals_file,
+        approvals_path=approvals_path,
+        field="ask",
+        requested=ask_requested,
+        agent_id=agent_id,
+    )
+    security_effective = (
+        security_requested
+        if _DOCTOR_EXEC_SECURITY_RANK[security_requested]
+        <= _DOCTOR_EXEC_SECURITY_RANK[security_host]
+        else security_host
+    )
+    ask_effective = (
+        ask_requested
+        if _DOCTOR_EXEC_ASK_RANK[ask_requested] >= _DOCTOR_EXEC_ASK_RANK[ask_host]
+        else ask_host
+    )
+    security_conflict = (
+        security_requested_source != "OpenClaw default (full)"
+        and _DOCTOR_EXEC_SECURITY_RANK[security_requested]
+        > _DOCTOR_EXEC_SECURITY_RANK[security_effective]
+    )
+    ask_conflict = (
+        ask_requested_source != "OpenClaw default (off)"
+        and _DOCTOR_EXEC_ASK_RANK[ask_requested]
+        < _DOCTOR_EXEC_ASK_RANK[ask_effective]
+    )
+    if not security_conflict and not ask_conflict:
+        return None
+
+    config_parts: list[str] = []
+    host_parts: list[str] = []
+    if security_conflict:
+        config_parts.append(f'{security_requested_source}="{security_requested}"')
+        host_parts.append(f'{security_host_source}="{security_host}"')
+    if ask_conflict:
+        config_parts.append(f'{ask_requested_source}="{ask_requested}"')
+        host_parts.append(f'{ask_host_source}="{ask_host}"')
+    return "\n".join(
+        [
+            f"- {scope_label} is broader than the host exec policy.",
+            f"  Config: {', '.join(config_parts)}",
+            f"  Host: {', '.join(host_parts)}",
+            (
+                f'  Effective host exec stays security="{security_effective}" '
+                f'ask="{ask_effective}" because the stricter side wins.'
+            ),
+            (
+                "  Headless runs like isolated cron cannot answer approval prompts; "
+                "align both files or enable Web UI, terminal UI, or chat exec approvals."
+            ),
+            "  Inspect with: openclaw approvals get --gateway",
+        ]
+    )
+
+
+def _doctor_security_exec_policy_warnings(
+    snapshot: dict[str, object],
+    data_dir: Path | None,
+) -> list[str]:
+    approvals_path, approvals_file = _doctor_security_read_exec_approvals_file(data_dir)
+    tools = _dict_config(snapshot.get("tools"))
+    global_config = _doctor_exec_policy_config(tools.get("exec"))
+    warnings: list[str] = []
+    global_warning = _doctor_security_exec_policy_warning(
+        scope_label="tools.exec",
+        scope_config=global_config,
+        global_config={},
+        approvals_file=approvals_file,
+        approvals_path=approvals_path,
+    )
+    if global_warning is not None:
+        warnings.append(global_warning)
+
+    agents = _dict_config(snapshot.get("agents"))
+    for agent in _object_list(agents.get("list")):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = _optional_cli_string(agent.get("id"))
+        if agent_id is None:
+            continue
+        agent_tools = _dict_config(agent.get("tools"))
+        agent_config = _doctor_exec_policy_config(agent_tools.get("exec"))
+        agent_warning = _doctor_security_exec_policy_warning(
+            scope_label=f"agents.list.{agent_id}.tools.exec",
+            scope_config=agent_config,
+            global_config=global_config,
+            approvals_file=approvals_file,
+            approvals_path=approvals_path,
+            agent_id=agent_id,
+        )
+        if agent_warning is not None:
+            warnings.append(agent_warning)
+    return warnings
+
+
+def _doctor_security_is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower().strip("[]")
+    return (
+        normalized == "localhost"
+        or normalized == "::1"
+        or normalized.startswith("127.")
+        or normalized in {"0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"}
+    )
+
+
+def _doctor_security_gateway_bind_host(gateway: dict[str, object]) -> tuple[str, str]:
+    bind = _optional_cli_string(gateway.get("bind")) or "loopback"
+    if bind == "loopback":
+        return bind, "127.0.0.1"
+    if bind == "custom":
+        return bind, _optional_cli_string(gateway.get("customBindHost")) or "0.0.0.0"
+    if bind == "tailnet":
+        return bind, "tailnet"
+    if bind in {"auto", "lan"}:
+        return bind, "0.0.0.0"
+    return bind, bind
+
+
+def _doctor_security_gateway_has_auth(gateway: dict[str, object]) -> bool:
+    auth = _dict_config(gateway.get("auth"))
+    mode = _optional_cli_string(auth.get("mode")) or "token"
+    token_configured = _has_configured_secret_input(
+        auth.get("token")
+    ) or _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN")) is not None
+    password_configured = _has_configured_secret_input(
+        auth.get("password")
+    ) or _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD")) is not None
+    if mode == "password":
+        return password_configured
+    if mode == "token":
+        return token_configured
+    return token_configured or password_configured
+
+
+def _doctor_security_gateway_exposure_warnings(
+    snapshot: dict[str, object],
+) -> list[str]:
+    gateway = _dict_config(snapshot.get("gateway"))
+    raw_bind = _optional_cli_string(gateway.get("bind"))
+    if raw_bind is not None and raw_bind not in {
+        "auto",
+        "lan",
+        "loopback",
+        "custom",
+        "tailnet",
+    }:
+        return []
+    bind, resolved_host = _doctor_security_gateway_bind_host(gateway)
+    if _doctor_security_is_loopback_host(resolved_host):
+        return []
+    bind_descriptor = f'"{bind}" ({resolved_host})'
+    safer_remote_access = [
+        "  Safer remote access: keep bind loopback and use Tailscale Serve/Funnel "
+        "or an SSH tunnel.",
+        "  Example tunnel: ssh -N -L 18789:127.0.0.1:18789 user@gateway-host",
+        "  Docs: https://docs.openclaw.ai/gateway/remote",
+    ]
+    if not _doctor_security_gateway_has_auth(gateway):
+        return [
+            "\n".join(
+                [
+                    f"- CRITICAL: Gateway bound to {bind_descriptor} without authentication.",
+                    (
+                        "  Anyone on your network (or internet if port-forwarded) can "
+                        "fully control your agent."
+                    ),
+                    "  Fix: openclaw config set gateway.bind loopback",
+                    *safer_remote_access,
+                    "  Fix: openclaw doctor --fix to generate a token",
+                    "  Or set token directly: openclaw config set gateway.auth.mode token",
+                ]
+            )
+        ]
+    return [
+        "\n".join(
+            [
+                f"- WARNING: Gateway bound to {bind_descriptor} (network-accessible).",
+                "  Ensure your auth credentials are strong and not exposed.",
+                *safer_remote_access,
+            ]
+        )
+    ]
+
+
+_DOCTOR_CHANNEL_LABELS = {
+    "discord": "Discord",
+    "feishu": "Feishu",
+    "googlechat": "Google Chat",
+    "imessage": "iMessage",
+    "irc": "IRC",
+    "line": "LINE",
+    "matrix": "Matrix",
+    "msteams": "Microsoft Teams",
+    "nextcloud-talk": "Nextcloud Talk",
+    "nostr": "Nostr",
+    "signal": "Signal",
+    "slack": "Slack",
+    "telegram": "Telegram",
+    "whatsapp": "WhatsApp",
+    "zalo": "Zalo",
+    "zulip": "Zulip",
+}
+_DOCTOR_CHANNEL_CREDENTIAL_KEYS = {
+    "accessToken",
+    "apiKey",
+    "apiToken",
+    "appToken",
+    "authToken",
+    "botToken",
+    "clientSecret",
+    "homeserver",
+    "password",
+    "phoneNumberId",
+    "signingSecret",
+    "token",
+    "userId",
+    "webhookSecret",
+    "webhookUrl",
+}
+
+
+@dataclass(frozen=True)
+class _DoctorChannelDmPolicy:
+    policy: str
+    allow_from: list[str]
+    policy_path: str
+    allow_from_path: str
+
+
+def _doctor_channel_label(channel_id: str) -> str:
+    normalized = _normalize_openclaw_channel_plugin_id(channel_id) or channel_id.strip().lower()
+    if normalized in _DOCTOR_CHANNEL_LABELS:
+        return _DOCTOR_CHANNEL_LABELS[normalized]
+    words = normalized.replace("-", " ").replace("_", " ").split()
+    return " ".join(word.capitalize() for word in words) or channel_id
+
+
+def _doctor_channel_enabled(
+    *,
+    channel_config: dict[str, object],
+    account_config: dict[str, object],
+) -> bool:
+    if channel_config.get("enabled") is False or account_config.get("enabled") is False:
+        return False
+    return True
+
+
+def _doctor_channel_secret_configured(value: object) -> bool:
+    if _optional_cli_string(value) is not None:
+        return True
+    if not isinstance(value, dict):
+        return False
+    if _optional_cli_string(value.get("id")) is not None and _optional_cli_string(
+        value.get("source")
+    ) is not None:
+        return True
+    return any(_doctor_channel_secret_configured(child) for child in value.values())
+
+
+def _doctor_channel_has_runtime_config(config: dict[str, object]) -> bool:
+    for key in _DOCTOR_CHANNEL_CREDENTIAL_KEYS:
+        if key in config and _doctor_channel_secret_configured(config.get(key)):
+            return True
+    return False
+
+
+def _doctor_channel_configured(
+    *,
+    channel_config: dict[str, object],
+    account_config: dict[str, object],
+) -> bool:
+    account_configured = account_config.get("configured")
+    if isinstance(account_configured, bool):
+        return account_configured
+    channel_configured = channel_config.get("configured")
+    if isinstance(channel_configured, bool):
+        return channel_configured
+    return _doctor_channel_has_runtime_config(account_config) or _doctor_channel_has_runtime_config(
+        channel_config
+    )
+
+
+def _doctor_channel_default_account(
+    channel_config: dict[str, object],
+) -> tuple[str | None, dict[str, object]]:
+    accounts = _dict_config(channel_config.get("accounts"))
+    if not accounts:
+        return None, channel_config
+    configured_default = _optional_cli_string(channel_config.get("defaultAccountId"))
+    if configured_default is not None and configured_default in accounts:
+        return configured_default, _dict_config(accounts.get(configured_default))
+    if DEFAULT_ACCOUNT_ID in accounts:
+        return DEFAULT_ACCOUNT_ID, _dict_config(accounts.get(DEFAULT_ACCOUNT_ID))
+    account_id = next(iter(accounts))
+    return str(account_id), _dict_config(accounts.get(account_id))
+
+
+def _doctor_dm_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for item in value:
+        entry = str(item).strip()
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def _doctor_dm_field(
+    config: dict[str, object],
+    *,
+    prefix: str,
+    policy_only: bool = False,
+) -> tuple[str | None, list[str] | None, str | None, str | None]:
+    policy = _optional_cli_string(config.get("dmPolicy"))
+    allow_from = _doctor_dm_list(config.get("allowFrom"))
+    if policy is not None or (allow_from and not policy_only):
+        return (
+            policy,
+            allow_from if allow_from else None,
+            f"{prefix}.dmPolicy" if policy is not None else None,
+            f"{prefix}.",
+        )
+    dm = _dict_config(config.get("dm"))
+    nested_policy = _optional_cli_string(dm.get("policy"))
+    nested_allow_from = _doctor_dm_list(dm.get("allowFrom"))
+    if nested_policy is not None or (nested_allow_from and not policy_only):
+        return (
+            nested_policy,
+            nested_allow_from if nested_allow_from else None,
+            f"{prefix}.dm.policy" if nested_policy is not None else None,
+            f"{prefix}.dm.",
+        )
+    return None, None, None, None
+
+
+def _doctor_security_resolve_dm_policy(
+    *,
+    channel_id: str,
+    channel_config: dict[str, object],
+    account_id: str | None,
+    account_config: dict[str, object],
+) -> _DoctorChannelDmPolicy:
+    root_prefix = f"channels.{channel_id}"
+    account_prefix = (
+        f"{root_prefix}.accounts.{account_id}" if account_id is not None else root_prefix
+    )
+    field_sources: list[tuple[dict[str, object], str]] = []
+    if account_id is not None:
+        field_sources.append((account_config, account_prefix))
+    field_sources.append((channel_config, root_prefix))
+
+    allow_from: list[str] | None = None
+    allow_from_path: str | None = None
+    for config, prefix in field_sources:
+        policy, source_allow_from, policy_path, source_allow_from_path = _doctor_dm_field(
+            config,
+            prefix=prefix,
+        )
+        if source_allow_from is not None and allow_from is None:
+            allow_from = source_allow_from
+            allow_from_path = source_allow_from_path
+        if policy is not None:
+            return _DoctorChannelDmPolicy(
+                policy=policy,
+                allow_from=allow_from or [],
+                policy_path=policy_path or f"{prefix}.dmPolicy",
+                allow_from_path=source_allow_from_path or f"{prefix}.",
+            )
+
+    default_prefix = account_prefix if account_id is not None else root_prefix
+    return _DoctorChannelDmPolicy(
+        policy="pairing",
+        allow_from=allow_from or [],
+        policy_path=f"{default_prefix}.dmPolicy",
+        allow_from_path=allow_from_path or f"{default_prefix}.",
+    )
+
+
+def _doctor_dm_allow_state(
+    *,
+    channel_id: str,
+    account_id: str | None,
+    allow_from: list[str],
+    data_dir: Path | None,
+) -> tuple[bool, int, bool]:
+    has_wildcard = any(entry.strip() == "*" for entry in allow_from)
+    normalized = _normalize_allowlist_entries(allow_from)
+    store_entries = _read_channel_allow_from_store(
+        channel_id,
+        account_id=account_id,
+        data_dir=data_dir,
+    )
+    allow_count = len({*normalized, *store_entries})
+    return has_wildcard, allow_count, has_wildcard or allow_count > 1
+
+
+def _doctor_security_channel_dm_warning_lines(
+    *,
+    label: str,
+    channel_id: str,
+    account_id: str | None,
+    dm_policy: _DoctorChannelDmPolicy,
+    dm_scope: str,
+    data_dir: Path | None,
+) -> list[str]:
+    warnings: list[str] = []
+    has_wildcard, allow_count, is_multi_user_dm = _doctor_dm_allow_state(
+        channel_id=channel_id,
+        account_id=account_id,
+        allow_from=dm_policy.allow_from,
+        data_dir=data_dir,
+    )
+    if dm_policy.policy == "open":
+        warnings.append(
+            f'- {label} DMs: OPEN ({dm_policy.policy_path}="open"). Anyone can DM it.'
+        )
+        if not has_wildcard:
+            warnings.append(
+                f'- {label} DMs: config invalid - "open" requires '
+                f'{dm_policy.allow_from_path}allowFrom to include "*".'
+            )
+    if dm_policy.policy == "disabled":
+        warnings.append(f'- {label} DMs: disabled ({dm_policy.policy_path}="disabled").')
+        return warnings
+    if dm_policy.policy != "open" and allow_count == 0:
+        warnings.append(
+            f'- {label} DMs: locked ({dm_policy.policy_path}="{dm_policy.policy}") '
+            "with no allowlist; unknown senders will be blocked / get a pairing code."
+        )
+        warnings.append(
+            f"  Approve via: openclaw pairing list {channel_id} / "
+            f"openclaw pairing approve {channel_id} <code>"
+        )
+    if dm_scope == "main" and is_multi_user_dm:
+        warnings.append(
+            f"- {label} DMs: multiple senders share the main session; run: "
+            'openclaw config set session.dmScope "per-channel-peer" '
+            '(or "per-account-channel-peer" for multi-account channels) to isolate sessions.'
+        )
+    return warnings
+
+
+def _doctor_security_channel_dm_warnings(
+    snapshot: dict[str, object],
+    data_dir: Path | None,
+) -> list[str]:
+    channels = _dict_config(snapshot.get("channels"))
+    if not channels:
+        return []
+    session = _dict_config(snapshot.get("session"))
+    dm_scope = _optional_cli_string(session.get("dmScope")) or "main"
+    warnings: list[str] = []
+    for raw_channel_id, raw_channel_config in channels.items():
+        channel_id = str(raw_channel_id)
+        if channel_id == "defaults" or not isinstance(raw_channel_config, dict):
+            continue
+        channel_config = raw_channel_config
+        account_id, account_config = _doctor_channel_default_account(channel_config)
+        if not _doctor_channel_enabled(
+            channel_config=channel_config,
+            account_config=account_config,
+        ):
+            continue
+        if not _doctor_channel_configured(
+            channel_config=channel_config,
+            account_config=account_config,
+        ):
+            continue
+        dm_policy = _doctor_security_resolve_dm_policy(
+            channel_id=channel_id,
+            channel_config=channel_config,
+            account_id=account_id,
+            account_config=account_config,
+        )
+        warnings.extend(
+            _doctor_security_channel_dm_warning_lines(
+                label=_doctor_channel_label(channel_id),
+                channel_id=channel_id,
+                account_id=account_id,
+                dm_policy=dm_policy,
+                dm_scope=dm_scope,
+                data_dir=data_dir,
+            )
+        )
+    return warnings
+
+
+def _build_doctor_security_payload(
+    config_service: object | None = None,
+    data_dir: Path | None = None,
+) -> dict[str, object]:
+    snapshot = _doctor_security_snapshot(config_service)
+    if snapshot is None:
+        return {
+            "status": "unavailable",
+            "summary": (
+                "Security doctor contribution is unavailable because gateway config "
+                "could not be read."
+            ),
+            "source": "openzues-native",
+            "openClawContribution": "doctor:security",
+            "repairAvailable": False,
+            "warnings": [],
+        }
+    warnings = [
+        *_doctor_security_approvals_warnings(snapshot),
+        *_doctor_security_heartbeat_warnings(snapshot),
+        *_doctor_security_exec_policy_warnings(snapshot, data_dir),
+        *_doctor_security_gateway_exposure_warnings(snapshot),
+        *_doctor_security_channel_dm_warnings(snapshot, data_dir),
+    ]
     return {
-        "status": "unavailable",
+        "status": "warning" if warnings else "ok",
         "summary": (
-            "Security doctor contribution is not available from the native OpenZues "
-            "CLI runtime yet."
+            "Security doctor found configuration warnings."
+            if warnings
+            else "No channel security warnings detected."
         ),
         "source": "openzues-native",
         "openClawContribution": "doctor:security",
         "repairAvailable": False,
+        "warnings": warnings,
+        "auditHint": "openclaw security audit --deep",
     }
 
 
-def _build_doctor_shell_completion_payload() -> dict[str, object]:
+def _with_doctor_security_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    data_dir: Path | None = None,
+) -> dict[str, object]:
+    security = _build_doctor_security_payload(config_service, data_dir=data_dir)
+    next_payload = dict(payload)
+    next_payload["security"] = security
+    warnings = [str(item) for item in _object_list(security.get("warnings"))]
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, warnings)
+    return next_payload
+
+
+_DOCTOR_COMPLETION_SHELL_EXTENSIONS = {
+    "bash": "bash",
+    "fish": "fish",
+    "powershell": "ps1",
+    "zsh": "zsh",
+}
+
+
+def _doctor_completion_shell_from_env(env: Mapping[str, str] | None = None) -> str:
+    environ = env or os.environ
+    shell_path = _optional_cli_string(environ.get("SHELL")) or ""
+    shell_name = Path(shell_path).name.lower() if shell_path else ""
+    if shell_name in {"bash", "fish", "zsh"}:
+        return shell_name
+    if shell_name in {"powershell", "pwsh"}:
+        return "powershell"
+    if os.name == "nt":
+        return "powershell"
+    return "zsh"
+
+
+def _doctor_completion_cache_path(
+    *,
+    data_dir: Path,
+    shell: str,
+    bin_name: str,
+) -> Path:
+    safe_bin_name = re.sub(r"[^a-zA-Z0-9._-]", "-", bin_name.strip() or "openzues")
+    extension = _DOCTOR_COMPLETION_SHELL_EXTENSIONS.get(shell, shell)
+    return data_dir / "completions" / f"{safe_bin_name}.{extension}"
+
+
+def _doctor_completion_profile_path(
+    *,
+    shell: str,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    environ = env or os.environ
+    home = Path(
+        _optional_cli_string(environ.get("HOME"))
+        or _optional_cli_string(environ.get("USERPROFILE"))
+        or str(Path.home())
+    )
+    if shell == "zsh":
+        return home / ".zshrc"
+    if shell == "bash":
+        bashrc = home / ".bashrc"
+        return bashrc if bashrc.exists() else home / ".bash_profile"
+    if shell == "fish":
+        return home / ".config" / "fish" / "config.fish"
+    if os.name == "nt":
+        user_profile = Path(_optional_cli_string(environ.get("USERPROFILE")) or str(home))
+        return (
+            user_profile
+            / "Documents"
+            / "PowerShell"
+            / "Microsoft.PowerShell_profile.ps1"
+        )
+    return home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"
+
+
+def _doctor_completion_profile_lines(profile_path: Path) -> list[str]:
+    try:
+        return profile_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+
+def _doctor_completion_is_profile_line(
+    line: str,
+    *,
+    bin_name: str,
+    cache_path: Path | None,
+) -> bool:
+    stripped = line.strip()
+    if stripped in {"# OpenClaw Completion", "# OpenZues Completion"}:
+        return True
+    if f"{bin_name} completion" in line:
+        return True
+    if cache_path is not None and str(cache_path) in line:
+        return True
+    return False
+
+
+def _doctor_completion_is_slow_line(line: str, *, bin_name: str, cache_path: Path) -> bool:
+    return (
+        (f"<({bin_name} completion" in line)
+        or (f"{bin_name} completion" in line and "| source" in line)
+    ) and str(cache_path) not in line
+
+
+def _doctor_completion_source_line(*, shell: str, cache_path: Path) -> str:
+    if shell == "powershell":
+        return f'. "{cache_path}"'
+    return f'source "{cache_path}"'
+
+
+def _doctor_completion_generate_cache(cache_path: Path) -> bool:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "openzues.cli", "--show-completion"],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    try:
+        cache_path.write_text(result.stdout, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _doctor_completion_update_profile(
+    *,
+    shell: str,
+    bin_name: str,
+    cache_path: Path,
+    profile_path: Path,
+) -> bool:
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = _doctor_completion_profile_lines(profile_path)
+    filtered: list[str] = []
+    skip_next = False
+    for line in lines:
+        if skip_next:
+            skip_next = False
+            continue
+        if line.strip() in {"# OpenClaw Completion", "# OpenZues Completion"}:
+            skip_next = True
+            continue
+        if _doctor_completion_is_profile_line(
+            line,
+            bin_name=bin_name,
+            cache_path=cache_path,
+        ):
+            continue
+        if _doctor_completion_is_slow_line(line, bin_name=bin_name, cache_path=cache_path):
+            continue
+        filtered.append(line)
+
+    trimmed = "\n".join(filtered).rstrip()
+    source_line = _doctor_completion_source_line(shell=shell, cache_path=cache_path)
+    block = f"# OpenZues Completion\n{source_line}"
+    next_content = f"{trimmed}\n\n{block}\n" if trimmed else f"{block}\n"
+    try:
+        current = profile_path.read_text(encoding="utf-8")
+    except OSError:
+        current = ""
+    if next_content == current:
+        return False
+    profile_path.write_text(next_content, encoding="utf-8")
+    return True
+
+
+def _build_doctor_shell_completion_payload(
+    data_dir: Path | None = None,
+    *,
+    bin_name: str = "openzues",
+    should_repair: bool = False,
+) -> dict[str, object]:
+    if data_dir is not None:
+        shell = _doctor_completion_shell_from_env()
+        cache_path = _doctor_completion_cache_path(
+            data_dir=data_dir,
+            shell=shell,
+            bin_name=bin_name,
+        )
+        profile_path = _doctor_completion_profile_path(shell=shell)
+        cache_exists = cache_path.exists()
+        profile_lines = _doctor_completion_profile_lines(profile_path)
+        profile_installed = any(
+            _doctor_completion_is_profile_line(
+                line,
+                bin_name=bin_name,
+                cache_path=cache_path if cache_exists else None,
+            )
+            for line in profile_lines
+        )
+        uses_slow_pattern = any(
+            _doctor_completion_is_slow_line(line, bin_name=bin_name, cache_path=cache_path)
+            for line in profile_lines
+        )
+        repair_changes: list[str] = []
+        repair_errors: list[str] = []
+        if should_repair and (
+            uses_slow_pattern or not profile_installed or not cache_exists
+        ):
+            cache_generated = cache_exists or _doctor_completion_generate_cache(cache_path)
+            if cache_generated and not cache_exists:
+                repair_changes.append(f"Generated completion cache at {cache_path}.")
+            if not cache_generated:
+                repair_errors.append(
+                    f"Failed to generate completion cache at {cache_path}."
+                )
+            if cache_generated and (uses_slow_pattern or not profile_installed):
+                try:
+                    profile_changed = _doctor_completion_update_profile(
+                        shell=shell,
+                        bin_name=bin_name,
+                        cache_path=cache_path,
+                        profile_path=profile_path,
+                    )
+                except OSError as exc:
+                    profile_changed = False
+                    repair_errors.append(f"Failed to update {shell} profile: {exc}")
+                if profile_changed:
+                    if profile_installed:
+                        repair_changes.append(f"Updated {shell} profile at {profile_path}.")
+                    else:
+                        repair_changes.append(
+                            f"Installed {shell} completion in {profile_path}."
+                        )
+            cache_exists = cache_path.exists()
+            profile_lines = _doctor_completion_profile_lines(profile_path)
+            profile_installed = any(
+                _doctor_completion_is_profile_line(
+                    line,
+                    bin_name=bin_name,
+                    cache_path=cache_path if cache_exists else None,
+                )
+                for line in profile_lines
+            )
+            uses_slow_pattern = any(
+                _doctor_completion_is_slow_line(line, bin_name=bin_name, cache_path=cache_path)
+                for line in profile_lines
+            )
+
+        warnings: list[str] = []
+        if uses_slow_pattern:
+            warnings.append(
+                f"- Shell completion: {shell} profile uses slow dynamic completion. "
+                "Run openzues doctor --fix to upgrade to cached completion."
+            )
+        if profile_installed and not cache_exists:
+            warnings.append(
+                f"- Shell completion: {shell} profile is configured but cache is missing "
+                f"at {cache_path}. Run openzues doctor --fix to regenerate it."
+            )
+        summary = (
+            "Shell completion repair applied."
+            if repair_changes and not warnings and not repair_errors
+            else (
+                "Shell completion needs attention."
+                if warnings or repair_errors
+                else "Shell completion profile and cache state are healthy."
+            )
+        )
+        payload: dict[str, object] = {
+            "status": "warning" if warnings else "ok",
+            "summary": summary,
+            "source": "openzues-native",
+            "openClawContribution": "doctor:shell-completion",
+            "repairAvailable": True,
+            "repairRequested": should_repair,
+            "changed": bool(repair_changes),
+            "shell": shell,
+            "profileInstalled": profile_installed,
+            "cacheExists": cache_exists,
+            "cachePath": str(cache_path),
+            "profilePath": str(profile_path),
+            "usesSlowPattern": uses_slow_pattern,
+            "warnings": warnings,
+        }
+        if repair_changes:
+            payload["changes"] = repair_changes
+        if repair_errors:
+            payload["errors"] = repair_errors
+            payload["status"] = "warning"
+        return payload
     return {
         "status": "partial",
         "summary": (
@@ -4016,6 +5051,24 @@ def _build_doctor_shell_completion_payload() -> dict[str, object]:
         "openClawContribution": "doctor:shell-completion",
         "repairAvailable": False,
     }
+
+
+def _with_doctor_shell_completion_payload(
+    payload: dict[str, object],
+    data_dir: Path | None,
+    *,
+    should_repair: bool = False,
+) -> dict[str, object]:
+    shell_completion = _build_doctor_shell_completion_payload(
+        data_dir,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["shellCompletion"] = shell_completion
+    warnings = [str(item) for item in _object_list(shell_completion.get("warnings"))]
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, warnings)
+    return next_payload
 
 
 def _doctor_bundled_plugin_runtime_dependency_summary(
@@ -4570,6 +5623,16 @@ def _doctor_find_active_token(
     return None
 
 
+def _doctor_number_ms(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
 def _doctor_paired_record_warnings(paired: dict[str, object]) -> list[str]:
     device_id = _doctor_safe_device_text(paired.get("deviceId")) or "unknown-device"
     device_label = _doctor_paired_device_label(paired)
@@ -4608,8 +5671,142 @@ def _doctor_paired_record_warnings(paired: dict[str, object]) -> list[str]:
     return warnings
 
 
+def _doctor_read_local_device_identity(data_dir: Path | None) -> str | None:
+    if data_dir is None:
+        return None
+    identity = _read_cli_json_object(data_dir / "identity" / "device.json")
+    if identity is None:
+        return None
+    if _doctor_number_ms(identity.get("version")) != 1:
+        return None
+    return _optional_cli_string(identity.get("deviceId"))
+
+
+def _doctor_local_auth_token_entry(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    if _optional_cli_string(value.get("token")) is None:
+        return None
+    role = _optional_cli_string(value.get("role"))
+    updated_at_ms = _doctor_number_ms(value.get("updatedAtMs"))
+    if role is None or updated_at_ms is None:
+        return None
+    raw_scopes = value.get("scopes")
+    if not isinstance(raw_scopes, list):
+        return None
+    scopes: list[str] = []
+    for scope in raw_scopes:
+        if not isinstance(scope, str):
+            return None
+        scopes.append(scope)
+    return {
+        "role": role,
+        "scopes": scopes,
+        "updatedAtMs": updated_at_ms,
+    }
+
+
+def _doctor_read_local_device_auth_store(
+    data_dir: Path | None,
+) -> dict[str, object] | None:
+    if data_dir is None:
+        return None
+    store = _read_cli_json_object(data_dir / "identity" / "device-auth.json")
+    if store is None:
+        return None
+    if _doctor_number_ms(store.get("version")) != 1:
+        return None
+    device_id = _optional_cli_string(store.get("deviceId"))
+    raw_tokens = store.get("tokens")
+    if device_id is None or not isinstance(raw_tokens, dict):
+        return None
+    tokens: list[dict[str, object]] = []
+    for entry in raw_tokens.values():
+        token = _doctor_local_auth_token_entry(entry)
+        if token is None:
+            return None
+        tokens.append(token)
+    return {"deviceId": device_id, "tokens": tokens}
+
+
+def _doctor_local_device_auth_warnings(
+    paired: Sequence[dict[str, object]],
+    data_dir: Path | None,
+) -> list[str]:
+    identity_device_id = _doctor_read_local_device_identity(data_dir)
+    store = _doctor_read_local_device_auth_store(data_dir)
+    if identity_device_id is None or store is None:
+        return []
+    store_device_id = _optional_cli_string(store.get("deviceId"))
+    if store_device_id != identity_device_id:
+        return []
+    paired_device = next(
+        (
+            device
+            for device in paired
+            if _optional_cli_string(device.get("deviceId")) == identity_device_id
+        ),
+        None,
+    )
+    if paired_device is None:
+        return []
+    device_label = _doctor_paired_device_label(paired_device)
+    approved_roles = set(_doctor_approved_roles(paired_device))
+    warnings: list[str] = []
+    for entry in _object_list(store.get("tokens")):
+        if not isinstance(entry, dict):
+            continue
+        role = _optional_cli_string(entry.get("role"))
+        updated_at_ms = _doctor_number_ms(entry.get("updatedAtMs"))
+        if role is None or updated_at_ms is None:
+            continue
+        rotate_command = _doctor_format_cli_args(
+            [
+                "openclaw",
+                "devices",
+                "rotate",
+                "--device",
+                identity_device_id,
+                "--role",
+                role,
+            ]
+        )
+        paired_token = _doctor_find_active_token(paired_device, role)
+        if paired_token is None:
+            if role in approved_roles:
+                continue
+            warnings.append(
+                f"- Local cached {role} device auth for {device_label} no longer has a "
+                "matching active gateway token. Reconnect with shared gateway auth to "
+                f"refresh it, or rotate with {rotate_command}."
+            )
+            continue
+        gateway_issued_at_ms = _doctor_number_ms(
+            paired_token.get("rotatedAtMs")
+        ) or _doctor_number_ms(paired_token.get("createdAtMs"))
+        if gateway_issued_at_ms is not None and updated_at_ms < gateway_issued_at_ms:
+            warnings.append(
+                f"- Local cached {role} device token for {device_label} predates the "
+                "gateway rotation. This is a stale device-token pattern and can fail "
+                "with device token mismatch. Reconnect with shared gateway auth to "
+                f"refresh it, or rotate again with {rotate_command}."
+            )
+            continue
+        cached_scopes = _doctor_normalize_device_scopes(entry.get("scopes"))
+        paired_scopes = _doctor_normalize_device_scopes(paired_token.get("scopes"))
+        if "\n".join(cached_scopes) != "\n".join(paired_scopes):
+            warnings.append(
+                f"- Local cached {role} device scopes for {device_label} differ from the "
+                f"gateway record. Cached scopes [{_doctor_format_scopes(cached_scopes)}], "
+                f"gateway scopes [{_doctor_format_scopes(paired_scopes)}]. Reconnect "
+                f"with shared gateway auth to refresh it, or rotate with {rotate_command}."
+            )
+    return warnings
+
+
 async def _build_doctor_device_pairing_payload(
     gateway_node_methods: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
     base_payload: dict[str, object] = {
         "source": "openzues-native",
@@ -4661,6 +5858,7 @@ async def _build_doctor_device_pairing_payload(
     ]
     for paired_device in paired:
         warnings.extend(_doctor_paired_record_warnings(paired_device))
+    warnings.extend(_doctor_local_device_auth_warnings(paired, data_dir))
     return {
         **base_payload,
         "status": "warning" if warnings else "ok",
@@ -4679,8 +5877,12 @@ async def _build_doctor_device_pairing_payload(
 async def _with_doctor_device_pairing_payload(
     payload: dict[str, object],
     gateway_node_methods: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
-    device_pairing = await _build_doctor_device_pairing_payload(gateway_node_methods)
+    device_pairing = await _build_doctor_device_pairing_payload(
+        gateway_node_methods,
+        data_dir=data_dir,
+    )
     next_payload = dict(payload)
     next_payload["devicePairing"] = device_pairing
     warnings = [
@@ -19911,6 +21113,16 @@ def doctor(
             services.gateway_config,
             should_repair=fix,
         )
+        payload = _with_doctor_security_payload(
+            payload,
+            services.gateway_config,
+            data_dir if isinstance(data_dir, Path) else None,
+        )
+        payload = _with_doctor_shell_completion_payload(
+            payload,
+            data_dir if isinstance(data_dir, Path) else None,
+            should_repair=fix,
+        )
         payload = await _with_doctor_gateway_health_payload(
             payload,
             services.settings,
@@ -19923,6 +21135,7 @@ def doctor(
         payload = await _with_doctor_device_pairing_payload(
             payload,
             getattr(services, "gateway_node_methods", None),
+            data_dir if isinstance(data_dir, Path) else None,
         )
         payload = await _with_doctor_startup_channel_maintenance_payload(
             payload,

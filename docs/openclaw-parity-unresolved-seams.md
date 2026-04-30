@@ -188,6 +188,18 @@ Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+If provisional child metadata/session materialization fails after inline
+attachment staging, OpenZues now removes the staged attachment directory,
+forgets provisional child state, and returns the spawn error envelope before
+dispatching the child runtime.
+Tracked child-run completion now also applies OpenClaw-style attachment
+retention cleanup: staged `sessions.spawn` attachment dirs are removed for
+`cleanup="delete"` and for kept sessions unless
+`tools.sessions_spawn.attachments.retainOnSessionKeep=true` is configured.
+The same OpenClaw attachment config block is now schema-preserved and consumed
+for explicit `enabled=false`, `maxFiles`, `maxFileBytes`, `maxTotalBytes`, and
+`retainOnSessionKeep` behavior; absent config stays on OpenZues' compatible
+enabled path.
 Sandboxed `chat.send` attachment delivery now stages base64 media into the
 session workspace under `media/inbound/...`, strips inline payload bytes before
 runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
@@ -472,9 +484,25 @@ contribution for configured file-backed cron stores: it reports legacy
 issues, and `doctor --fix` rewrites the store before the scheduler has to
 consume old shapes.
 Top-level doctor output now also includes the upstream `doctor:security` and
-`doctor:shell-completion` contribution surfaces as stable native read models,
-currently marked honest unavailable/partial until production security and shell
-completion repair adapters are wired.
+`doctor:shell-completion` contribution surfaces as stable native read models.
+`doctor:security` now covers OpenClaw's
+`approvals.exec.enabled=false` forwarding-only warning and fails soft when
+legacy config must be reported by earlier migrators first. It also covers the
+implicit heartbeat direct-policy upgrade warning for configured default and
+per-agent heartbeat delivery whose `directPolicy` is unset, plus canonical
+non-loopback gateway bind exposure without configured auth while leaving raw
+legacy bind aliases under the legacy-config migrator. It now also compares
+global and per-agent `tools.exec` policy against the native
+`settings/exec-approvals.json` host policy and emits the OpenClaw-shaped
+config/host/effective-policy warning when the requested policy is broader or
+less prompt-heavy than the host permits. Configured channel DM security now
+also mirrors OpenClaw's OPEN, invalid-open-allowFrom, locked allowlist/pairing,
+disabled, and shared-main-session warnings using native config snapshots and
+the existing pairing allowFrom store. `doctor:shell-completion` now reports
+native shell/profile/cache/slow-pattern status and `doctor --fix` regenerates a
+missing cache and replaces slow dynamic profile stanzas with a cached source
+line. First-time `doctor --fix` installation for profiles with no existing
+completion is also wired through the same native cache/profile path.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes
 the OpenAI auth endpoint through a fakeable boundary, classifies TLS
@@ -499,8 +527,14 @@ Top-level doctor output now includes the first OpenClaw
 and the upstream review/approve command guidance. The same contribution now
 classifies paired-device repair, role-upgrade, scope-upgrade, missing-token,
 operator-baseline, and token-scope drift states from the gateway snapshot while
-quoting untrusted device/role command arguments. Deeper local pairing-store
-fallback and token-file migration checks remain future device doctor seams.
+quoting untrusted device/role command arguments. CLI service construction now
+wires the same native pairing runtime as the app server, so real CLI doctor
+runs can read local `device.pair.list` state. The contribution now also reads
+OpenClaw-shaped local `identity/device.json` / `identity/device-auth.json`
+cache files from the native data directory and warns for stale cached tokens,
+missing gateway-token matches, and cached-scope drift. Remaining device doctor
+work is limited to deeper repair automation if OpenZues adopts a first-class
+local device-auth cache writer.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
@@ -960,8 +994,12 @@ Current queue-head adjustment: `sessions.spawn` now materializes inline
 subagent attachments into `.openclaw/attachments/<id>` under the target
 workspace, writes a manifest, returns a receipt, persists the receipt in session
 metadata, and appends an untrusted-attachment prompt suffix to the child task.
-Remaining attachment parity is cleanup/retention policy and deeper config
-limits; remaining spawn parity also includes ACP and sandbox/depth guardrails.
+OpenClaw-style cleanup for failures after staging but before runtime dispatch is
+now closed as well, and terminal child-run cleanup removes staged attachment
+dirs unless explicit retention is configured. OpenClaw attachment config limits
+and explicit disabled posture are now closed for the native spawn path.
+Remaining spawn parity includes ACP protocol breadth and deeper sandbox
+lifecycle guardrails.
 
 Current queue-head adjustment: `sessions.spawn` now accepts internal
 `requesterSessionKey` context for native executor calls, resolves that requester
@@ -2219,6 +2257,24 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   default history hides them and `includeTools=true` preserves the original
   `toolResult` role instead of leaking them as `other`.
 - Verified `toolResult` filtering parity with `python -m pytest tests\test_gateway_node_methods.py -q -k "tool_result_role_by_default"`, focused `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_history"`, the adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`.
+- `sessions.history` now applies OpenClaw `session-transcript-repair`
+  redaction to structured `sessions_spawn` tool-call blocks, replacing inline
+  attachment content with `__OPENCLAW_REDACTED__` while preserving only
+  `name`, `encoding`, and `mimeType`.
+- Verified the `sessions_spawn` attachment transcript redaction seam with
+  `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_history_redacts_sessions_spawn_tool_call_attachments"` (`1
+  passed`), adjacent history coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_history_redacts_sessions_spawn_tool_call_attachments or
+  sessions_history_returns_redacted_agent_tool_projection or
+  sessions_history_filters_openclaw_tool_result_role_by_default or
+  sessions_history_supports_tool_opt_in_and_text_truncation or
+  sessions_history_floors_numeric_openclaw_limit or
+  sessions_history_uses_resolved_subagent_store_key or chat_history"` (`18
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `sessions.list` now mirrors OpenClaw's numeric filter parsing for `limit`,
   `activeMinutes`, and `messageLimit`: finite numbers are floored, minimums
   are enforced with OpenClaw-style lower bounds, and capped fields clamp at the

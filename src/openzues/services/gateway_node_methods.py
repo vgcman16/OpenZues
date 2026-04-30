@@ -186,6 +186,8 @@ _ASSISTANT_VISIBLE_THINK_BLOCK_RE = re.compile(
 _SESSIONS_HISTORY_MAX_BYTES = 80 * 1024
 _SESSIONS_HISTORY_TEXT_MAX_CHARS = 4_000
 _SESSIONS_HISTORY_OVERSIZED_PLACEHOLDER = "[sessions_history omitted: message too large]"
+_SESSIONS_SPAWN_ATTACHMENT_REDACTED_CONTENT = "__OPENCLAW_REDACTED__"
+_SESSIONS_SPAWN_ATTACHMENT_METADATA_KEYS = ("name", "encoding", "mimeType")
 _SESSIONS_SPAWN_MAX_ATTACHMENTS = 50
 _SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES = 1024 * 1024
 _SESSIONS_SPAWN_MAX_TOTAL_ATTACHMENT_BYTES = 5 * 1024 * 1024
@@ -493,6 +495,13 @@ class GatewaySpawnSandboxRuntimeStatus:
     workspace_access: str | None = None
     workspace_root: str | None = None
     scope: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionsSpawnAttachmentLimits:
+    max_total_bytes: int
+    max_files: int
+    max_file_bytes: int
 
 
 @dataclass(slots=True)
@@ -8264,37 +8273,105 @@ class GatewayNodeMethodService:
             attachment_suffix: str | None = None
             attachment_dir: Path | None = None
             if payload.get("attachments") not in (None, []):
+                if _sessions_spawn_attachments_disabled(self._config_service):
+                    await self._cleanup_failed_thread_binding(
+                        session_key=canonical_key,
+                        agent_id=target_agent_id,
+                        thread_binding=thread_binding,
+                        reason="spawn-failed",
+                    )
+                    attachments_disabled_response: dict[str, Any] = {
+                        "status": "forbidden",
+                        "error": (
+                            "attachments are disabled for sessions_spawn "
+                            "(enable tools.sessions_spawn.attachments.enabled)"
+                        ),
+                    }
+                    attachments_disabled_response.update(role_context)
+                    return attachments_disabled_response
                 workspace_dir = (
                     Path(spawned_workspace_dir).expanduser()
                     if spawned_workspace_dir is not None
                     else Path.cwd()
                 )
-                attachment_receipt, attachment_suffix = _materialize_sessions_spawn_attachments(
-                    workspace_dir=workspace_dir,
-                    attachments=payload.get("attachments"),
-                    mount_path_hint=mount_path_hint,
-                )
+                try:
+                    attachment_receipt, attachment_suffix = (
+                        _materialize_sessions_spawn_attachments(
+                            workspace_dir=workspace_dir,
+                            attachments=payload.get("attachments"),
+                            mount_path_hint=mount_path_hint,
+                            limits=_sessions_spawn_attachment_limits(self._config_service),
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - mirror OpenClaw error envelope.
+                    await self._cleanup_failed_thread_binding(
+                        session_key=canonical_key,
+                        agent_id=target_agent_id,
+                        thread_binding=thread_binding,
+                        reason="spawn-failed",
+                    )
+                    materialization_error_response: dict[str, Any] = {
+                        "status": "error",
+                        "error": str(exc).strip() or type(exc).__name__,
+                    }
+                    materialization_error_response.update(role_context)
+                    return materialization_error_response
                 rel_dir = _string_or_none(attachment_receipt.get("relDir"))
                 if rel_dir is not None:
                     attachment_dir = workspace_dir / rel_dir
+                    metadata["attachmentsDir"] = str(attachment_dir)
+                    metadata["attachmentsRootDir"] = str(attachment_dir.parent)
+                    metadata["retainAttachmentsOnKeep"] = (
+                        _sessions_spawn_retain_attachments_on_keep(self._config_service)
+                    )
                 metadata["attachments"] = attachment_receipt
-            await self._database.upsert_gateway_session_metadata(
-                session_key=canonical_key,
-                metadata=metadata,
-            )
-            pending_message_seq = (
-                await self._database.count_control_chat_messages(session_key=canonical_key)
-            ) + 1
-            entry = await self._sessions_service.build_session_payload_for_key(
-                session_key=canonical_key,
-                now_ms=timestamp_ms,
-            )
-            if entry is None:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message="sessions.spawn could not materialize the spawned session",
-                    status_code=503,
+            try:
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=canonical_key,
+                    metadata=metadata,
                 )
+                pending_message_seq = (
+                    await self._database.count_control_chat_messages(
+                        session_key=canonical_key
+                    )
+                ) + 1
+                entry = await self._sessions_service.build_session_payload_for_key(
+                    session_key=canonical_key,
+                    now_ms=timestamp_ms,
+                )
+                if entry is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message="sessions.spawn could not materialize the spawned session",
+                        status_code=503,
+                    )
+            except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
+                await self._cleanup_failed_thread_binding(
+                    session_key=canonical_key,
+                    agent_id=target_agent_id,
+                    thread_binding=thread_binding,
+                    reason="spawn-failed",
+                )
+                if attachment_dir is not None:
+                    shutil.rmtree(attachment_dir, ignore_errors=True)
+                await self._database.delete_control_chat_messages(session_key=canonical_key)
+                await self._database.delete_gateway_session_metadata(canonical_key)
+                self._forget_gateway_chat_run(canonical_key)
+                await self._publish_sessions_changed_event(
+                    session_key=canonical_key,
+                    reason="delete",
+                    now_ms=now_ms,
+                )
+                spawn_error_text = str(exc).strip() or type(exc).__name__
+                spawn_setup_exception_response: dict[str, Any] = {
+                    "status": "error",
+                    "error": spawn_error_text,
+                    "childSessionKey": canonical_key,
+                    "mode": tracked_mode,
+                    "cleanup": tracked_cleanup,
+                }
+                spawn_setup_exception_response.update(role_context)
+                return spawn_setup_exception_response
             try:
                 light_context_kwargs = (
                     {
@@ -12604,6 +12681,7 @@ class GatewayNodeMethodService:
         spawned_by = _string_or_none(metadata.get("spawnedBy")) or _string_or_none(
             metadata.get("parentSessionKey")
         )
+        _cleanup_sessions_spawn_attachment_dir(metadata, cleanup=cleanup)
         if cleanup != "delete" or spawn_mode == "session" or spawned_by is None:
             return
         await self._database.delete_control_chat_messages(session_key=session_key)
@@ -13765,6 +13843,143 @@ def _sessions_spawn_subagents_config(
     return subagents_config if isinstance(subagents_config, dict) else None
 
 
+def _sessions_spawn_attachments_config(
+    config_service: GatewayConfigService | None,
+) -> dict[str, Any] | None:
+    if config_service is None:
+        return None
+    raw_reader = getattr(config_service, "_read_raw_config_object", None)
+    if callable(raw_reader):
+        try:
+            raw_payload = raw_reader(label="sessions_spawn attachment config")
+        except Exception:  # noqa: BLE001 - raw config support is best-effort.
+            raw_payload = None
+        if isinstance(raw_payload, dict):
+            raw_config = _sessions_spawn_attachments_config_from_payload(raw_payload)
+            if raw_config is not None:
+                return raw_config
+    snapshot = config_service.build_snapshot()
+    return _sessions_spawn_attachments_config_from_payload(snapshot)
+
+
+def _sessions_spawn_attachments_config_from_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    tools_config = payload.get("tools")
+    if not isinstance(tools_config, dict):
+        return None
+    sessions_spawn_config = tools_config.get("sessions_spawn")
+    if not isinstance(sessions_spawn_config, dict):
+        return None
+    attachments_config = sessions_spawn_config.get("attachments")
+    return attachments_config if isinstance(attachments_config, dict) else None
+
+
+def _sessions_spawn_retain_attachments_on_keep(
+    config_service: GatewayConfigService | None,
+) -> bool:
+    attachments_config = _sessions_spawn_attachments_config(config_service)
+    return bool(
+        isinstance(attachments_config, dict)
+        and attachments_config.get("retainOnSessionKeep") is True
+    )
+
+
+def _sessions_spawn_attachments_disabled(
+    config_service: GatewayConfigService | None,
+) -> bool:
+    attachments_config = _sessions_spawn_attachments_config(config_service)
+    return bool(
+        isinstance(attachments_config, dict)
+        and attachments_config.get("enabled") is False
+    )
+
+
+def _sessions_spawn_attachment_limits(
+    config_service: GatewayConfigService | None,
+) -> _SessionsSpawnAttachmentLimits:
+    attachments_config = _sessions_spawn_attachments_config(config_service)
+    return _SessionsSpawnAttachmentLimits(
+        max_total_bytes=_sessions_spawn_attachment_limit_value(
+            attachments_config.get("maxTotalBytes") if attachments_config else None,
+            default=_SESSIONS_SPAWN_MAX_TOTAL_ATTACHMENT_BYTES,
+        ),
+        max_files=_sessions_spawn_attachment_limit_value(
+            attachments_config.get("maxFiles") if attachments_config else None,
+            default=_SESSIONS_SPAWN_MAX_ATTACHMENTS,
+        ),
+        max_file_bytes=_sessions_spawn_attachment_limit_value(
+            attachments_config.get("maxFileBytes") if attachments_config else None,
+            default=_SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES,
+        ),
+    )
+
+
+def _sessions_spawn_attachment_limit_value(value: object, *, default: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return default
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        return default
+    return max(0, math.floor(numeric_value))
+
+
+def _cleanup_sessions_spawn_attachment_dir(
+    metadata: Mapping[str, Any],
+    *,
+    cleanup: str,
+) -> None:
+    if cleanup != "delete" and _bool_or_none(metadata.get("retainAttachmentsOnKeep")) is True:
+        return
+    cleanup_paths = _sessions_spawn_attachment_cleanup_paths(metadata)
+    if cleanup_paths is None:
+        return
+    root_path, attachment_path = cleanup_paths
+    try:
+        root_resolved = root_path.expanduser().resolve()
+        attachment_resolved = attachment_path.expanduser().resolve()
+    except OSError:
+        return
+    if attachment_resolved == root_resolved:
+        return
+    try:
+        attachment_resolved.relative_to(root_resolved)
+    except ValueError:
+        return
+    shutil.rmtree(attachment_resolved, ignore_errors=True)
+
+
+def _sessions_spawn_attachment_cleanup_paths(
+    metadata: Mapping[str, Any],
+) -> tuple[Path, Path] | None:
+    raw_attachment_dir = _string_or_none(metadata.get("attachmentsDir"))
+    raw_attachment_root_dir = _string_or_none(metadata.get("attachmentsRootDir"))
+    if raw_attachment_dir is not None and raw_attachment_root_dir is not None:
+        return Path(raw_attachment_root_dir), Path(raw_attachment_dir)
+
+    receipt = metadata.get("attachments")
+    if not isinstance(receipt, Mapping):
+        return None
+    rel_dir = _string_or_none(receipt.get("relDir"))
+    workspace_dir = _string_or_none(metadata.get("spawnedWorkspaceDir")) or _string_or_none(
+        metadata.get("sandboxWorkspaceRoot")
+    )
+    if rel_dir is None or workspace_dir is None:
+        return None
+    rel_path = Path(rel_dir)
+    rel_parts = rel_path.parts
+    if (
+        rel_path.is_absolute()
+        or ".." in rel_parts
+        or len(rel_parts) < 3
+        or rel_parts[0] != ".openclaw"
+        or rel_parts[1] != "attachments"
+    ):
+        return None
+    workspace_path = Path(workspace_dir)
+    return workspace_path / ".openclaw" / "attachments", workspace_path / rel_path
+
+
 async def _sessions_spawn_requester_depth(
     database: Database,
     *,
@@ -13805,13 +14020,14 @@ def _materialize_sessions_spawn_attachments(
     workspace_dir: Path,
     attachments: object,
     mount_path_hint: str | None,
+    limits: _SessionsSpawnAttachmentLimits,
 ) -> tuple[dict[str, Any], str]:
     if not isinstance(attachments, list):
         raise ValueError("attachments must be an array")
-    if len(attachments) > _SESSIONS_SPAWN_MAX_ATTACHMENTS:
+    if len(attachments) > limits.max_files:
         raise ValueError(
             "attachments_file_count_exceeded "
-            f"(maxFiles={_SESSIONS_SPAWN_MAX_ATTACHMENTS})"
+            f"(maxFiles={limits.max_files})"
         )
     attachment_id = secrets.token_hex(16)
     rel_dir = f".openclaw/attachments/{attachment_id}"
@@ -13844,23 +14060,26 @@ def _materialize_sessions_spawn_attachments(
             if encoding not in {"utf8", "base64"}:
                 raise ValueError(f"attachments_invalid_encoding ({name})")
             content_bytes = (
-                _decode_sessions_spawn_base64_attachment(content)
+                _decode_sessions_spawn_base64_attachment(
+                    content,
+                    max_decoded_bytes=limits.max_file_bytes,
+                )
                 if encoding == "base64"
                 else content.encode("utf-8")
             )
             byte_count = len(content_bytes)
-            if byte_count > _SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES:
+            if byte_count > limits.max_file_bytes:
                 raise ValueError(
                     "attachments_file_bytes_exceeded "
                     f"(name={name} bytes={byte_count} "
-                    f"maxFileBytes={_SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES})"
+                    f"maxFileBytes={limits.max_file_bytes})"
                 )
             total_bytes += byte_count
-            if total_bytes > _SESSIONS_SPAWN_MAX_TOTAL_ATTACHMENT_BYTES:
+            if total_bytes > limits.max_total_bytes:
                 raise ValueError(
                     "attachments_total_bytes_exceeded "
                     f"(totalBytes={total_bytes} "
-                    f"maxTotalBytes={_SESSIONS_SPAWN_MAX_TOTAL_ATTACHMENT_BYTES})"
+                    f"maxTotalBytes={limits.max_total_bytes})"
                 )
             sha256 = hashlib.sha256(content_bytes).hexdigest()
             (attachment_dir / name).write_bytes(content_bytes)
@@ -13898,7 +14117,11 @@ def _is_safe_sessions_spawn_attachment_name(name: str) -> bool:
     return not any(ord(character) < 32 or ord(character) == 127 for character in name)
 
 
-def _decode_sessions_spawn_base64_attachment(content: str) -> bytes:
+def _decode_sessions_spawn_base64_attachment(
+    content: str,
+    *,
+    max_decoded_bytes: int,
+) -> bytes:
     normalized = re.sub(r"\s+", "", content)
     if not normalized or len(normalized) % 4 != 0:
         raise ValueError("attachments_invalid_base64_or_too_large")
@@ -13906,7 +14129,7 @@ def _decode_sessions_spawn_base64_attachment(content: str) -> bytes:
         decoded = base64.b64decode(normalized.encode("ascii"), validate=True)
     except Exception as exc:
         raise ValueError("attachments_invalid_base64_or_too_large") from exc
-    if len(decoded) > _SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES:
+    if len(decoded) > max_decoded_bytes:
         raise ValueError("attachments_invalid_base64_or_too_large")
     return decoded
 
@@ -14877,6 +15100,16 @@ def _project_sessions_history_messages(
         text = _chat_history_display_text(str(row.get("content") or ""))
         if role == "assistant" and text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
             continue
+        structured_content = _sessions_history_structured_content(text)
+        if structured_content is not None:
+            content_redacted = content_redacted or structured_content["redacted"]
+            messages.append(
+                {
+                    "role": role,
+                    "content": structured_content["content"],
+                }
+            )
+            continue
         sanitized = _sessions_history_sanitized_text(text)
         content_truncated = content_truncated or sanitized["truncated"]
         content_redacted = content_redacted or sanitized["redacted"]
@@ -14904,6 +15137,77 @@ def _sessions_history_display_role(role: str) -> str:
 
 def _sessions_history_is_tool_role(role: str) -> bool:
     return role in {"tool", "toolResult"}
+
+
+def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
+    if not text.lstrip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        return None
+    redacted = False
+    content: list[dict[str, Any]] = []
+    for item in parsed:
+        block, block_redacted = _sessions_history_sanitize_tool_call_block(item)
+        redacted = redacted or block_redacted
+        content.append(block)
+    return {"content": content, "redacted": redacted}
+
+
+def _sessions_history_sanitize_tool_call_block(
+    block: Mapping[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    next_block = dict(block)
+    block_type = _string_or_none(block.get("type"))
+    if block_type not in {"toolCall", "toolUse", "functionCall"}:
+        return next_block, False
+    name = _string_or_none(block.get("name"))
+    if name is not None and name != block.get("name"):
+        next_block["name"] = name
+    if str(name or "").lower() != "sessions_spawn":
+        return next_block, False
+
+    redacted = False
+    for key in ("arguments", "input"):
+        sanitized, field_redacted = _sessions_history_redact_sessions_spawn_args(
+            block.get(key)
+        )
+        if field_redacted:
+            next_block[key] = sanitized
+            redacted = True
+    return next_block, redacted
+
+
+def _sessions_history_redact_sessions_spawn_args(value: object) -> tuple[object, bool]:
+    if not isinstance(value, Mapping):
+        return value, False
+    raw_attachments = value.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return value, False
+    sanitized = dict(value)
+    sanitized["attachments"] = [
+        _sessions_history_redacted_sessions_spawn_attachment(attachment)
+        for attachment in raw_attachments
+    ]
+    return sanitized, True
+
+
+def _sessions_history_redacted_sessions_spawn_attachment(
+    attachment: object,
+) -> dict[str, Any]:
+    redacted: dict[str, Any] = {
+        "content": _SESSIONS_SPAWN_ATTACHMENT_REDACTED_CONTENT,
+    }
+    if not isinstance(attachment, Mapping):
+        return redacted
+    for key in _SESSIONS_SPAWN_ATTACHMENT_METADATA_KEYS:
+        value = _string_or_none(attachment.get(key))
+        if value is not None:
+            redacted[key] = value
+    return redacted
 
 
 def _sessions_history_sanitized_text(text: str) -> dict[str, Any]:
