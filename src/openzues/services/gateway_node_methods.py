@@ -2153,6 +2153,33 @@ class GatewayNodeMethodService:
                 return target
         return _sessions_send_announce_target_from_key(session_key)
 
+    async def _cleanup_failed_thread_binding(
+        self,
+        *,
+        session_key: str,
+        agent_id: str,
+        thread_binding: Mapping[str, object] | None,
+        reason: str,
+    ) -> None:
+        if thread_binding is None or self._subagent_thread_binder is None:
+            return
+        unbind = getattr(self._subagent_thread_binder, "unbind", None)
+        if not callable(unbind):
+            return
+        context: dict[str, object] = {"reason": reason}
+        for key in ("channel", "to", "accountId", "threadId"):
+            value = _string_or_none(thread_binding.get(key))
+            if value is not None:
+                context[key] = value
+        try:
+            await cast(Any, unbind)(
+                {"sessionKey": session_key, "agentId": agent_id},
+                context,
+            )
+        except Exception:
+            # Best-effort cleanup: preserve the actionable spawn failure.
+            return
+
     async def _invoke_gateway_tool(
         self,
         payload: dict[str, Any],
@@ -8069,6 +8096,12 @@ class GatewayNodeMethodService:
                     **sandbox_kwargs,
                 )
             except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
+                await self._cleanup_failed_thread_binding(
+                    session_key=canonical_key,
+                    agent_id=target_agent_id,
+                    thread_binding=thread_binding,
+                    reason="spawn-failed",
+                )
                 if attachment_dir is not None:
                     shutil.rmtree(attachment_dir, ignore_errors=True)
                 await self._database.delete_control_chat_messages(session_key=canonical_key)
@@ -8099,6 +8132,12 @@ class GatewayNodeMethodService:
                 else "error"
             )
             if status != "accepted":
+                await self._cleanup_failed_thread_binding(
+                    session_key=canonical_key,
+                    agent_id=target_agent_id,
+                    thread_binding=thread_binding,
+                    reason="spawn-failed",
+                )
                 if attachment_dir is not None:
                     shutil.rmtree(attachment_dir, ignore_errors=True)
                 await self._database.delete_control_chat_messages(session_key=canonical_key)

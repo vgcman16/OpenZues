@@ -122,6 +122,14 @@ starting as an unbound control-chat-only turn.
 Terminal `agent.wait` completion announcements now also use the saved
 `completionDelivery` route through the direct channel-send service and persist
 the provider delivery result/error on the child session metadata.
+Thread-bound subagent startup failures now also run best-effort binding cleanup
+after a binding has been prepared but before the child run is accepted: the
+fakeable binder protocol exposes `unbind`, the production route-backed binder
+returns a stateless no-op cleanup result, and the provisional child transcript
+and metadata are still deleted with the original actionable startup error.
+Remaining lifecycle parity is deeper persistent provider binding records,
+provider-native end-hook/farewell behavior on reset/delete, and ACP/session
+binding policy breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,

@@ -17393,6 +17393,96 @@ async def test_sessions_spawn_thread_mode_delivers_initial_child_run_to_bound_or
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_cleans_up_binding_when_runtime_start_fails(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-bound-start-failure.db")
+    await database.initialize()
+    cleanup_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("bound child failed to start")
+
+    class FakeThreadBinder:
+        async def __call__(
+            self,
+            parent: dict[str, object],
+            child: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del parent, child, context
+            return {
+                "status": "ok",
+                "threadBindingReady": True,
+                "channel": "slack",
+                "to": "channel:C123",
+                "accountId": "default",
+                "threadId": "1710000000.000300",
+            }
+
+        async def unbind(
+            self,
+            target: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            cleanup_calls.append(
+                {
+                    "target": dict(target),
+                    "context": dict(context),
+                }
+            )
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=FakeThreadBinder(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "This bound child will fail to start.",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:C123",
+            message_account_id="default",
+            message_thread_id="1710000000.000300",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    assert payload == {
+        "status": "error",
+        "error": "bound child failed to start",
+        "childSessionKey": child_session_key,
+        "mode": "session",
+        "cleanup": "keep",
+    }
+    assert cleanup_calls == [
+        {
+            "target": {
+                "sessionKey": child_session_key,
+                "agentId": "main",
+            },
+            "context": {
+                "reason": "spawn-failed",
+                "channel": "slack",
+                "to": "channel:C123",
+                "accountId": "default",
+                "threadId": "1710000000.000300",
+            },
+        }
+    ]
+    assert await database.get_gateway_session_metadata(child_session_key) is None
+    assert await database.count_control_chat_messages(session_key=child_session_key) == 0
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_preserves_no_hook_with_unresolved_registry(
     tmp_path,
 ) -> None:

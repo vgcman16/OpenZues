@@ -2724,6 +2724,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or telegram_topic or telegram_media_group or invalid_telegram_durations"`
   (`10 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Thread-bound `sessions.spawn` now mirrors OpenClaw's startup-failure cleanup
+  path after a binding has been prepared: the fakeable
+  `GatewaySubagentThreadBinder` protocol exposes `unbind`, route-backed
+  stateless binders report a no-op cleanup result, and runtime startup failures
+  invoke best-effort binding cleanup before deleting the provisional child
+  session metadata/transcript while preserving the original spawn error.
+- Verified the bound-thread failure cleanup seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_cleans_up_binding_when_runtime_start_fails -q`
+  (`1 passed`), adjacent thread-bound coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode"`
+  (`6 passed`), route-binder coverage `python -m pytest
+  tests\test_gateway_thread_binding.py -q` (`3 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_thread_binding.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_thread_binding.py`.
 
 ## References
 
