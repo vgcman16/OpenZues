@@ -7767,6 +7767,14 @@ class GatewayNodeMethodService:
                     requester_agent_id=requester_agent_id,
                     target_agent_id=acp_agent_id,
                 )
+                explicit_cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
+                acp_cwd, acp_cwd_error = await _sessions_spawn_resolve_acp_runtime_cwd(
+                    self._agents_service,
+                    target_agent_id=acp_agent_id,
+                    explicit_cwd=explicit_cwd,
+                )
+                if acp_cwd_error is not None:
+                    return {**acp_cwd_error, **role_context}
                 if thread:
                     requester_origin = _sessions_spawn_origin_with_channel_default_account(
                         self._config_service,
@@ -7790,7 +7798,7 @@ class GatewayNodeMethodService:
                         "label": _optional_session_label(payload.get("label"), label="label"),
                         "agentId": acp_agent_id,
                         "resumeSessionId": resume_session_id,
-                        "cwd": _optional_non_empty_string(payload.get("cwd"), label="cwd"),
+                        "cwd": acp_cwd,
                         "mode": mode,
                         "thread": thread,
                         "sandbox": sandbox,
@@ -7873,6 +7881,8 @@ class GatewayNodeMethodService:
                         acp_metadata["lastAccountId"] = requester_origin["accountId"]
                     if "threadId" in requester_origin:
                         acp_metadata["lastThreadId"] = requester_origin["threadId"]
+                if acp_cwd is not None:
+                    acp_metadata["spawnedWorkspaceDir"] = acp_cwd
                 raw_acp_thread_binding = acp_result.get("threadBinding")
                 acp_thread_binding: dict[str, Any] | None = None
                 if isinstance(raw_acp_thread_binding, Mapping):
@@ -13366,6 +13376,44 @@ def _sessions_spawn_acp_target_agent_id(
         _sessions_spawn_acp_config(config_service).get("defaultAgent")
     )
     return normalize_agent_id(configured_default) if configured_default is not None else None
+
+
+async def _sessions_spawn_resolve_acp_runtime_cwd(
+    agents_service: GatewayAgentsService,
+    *,
+    target_agent_id: str,
+    explicit_cwd: str | None,
+) -> tuple[str | None, dict[str, str] | None]:
+    if explicit_cwd is not None:
+        return explicit_cwd, None
+    agents_payload = await agents_service.list_agents()
+    agents = agents_payload.get("agents")
+    if not isinstance(agents, list):
+        return None, None
+    target_workspace: str | None = None
+    normalized_target = normalize_agent_id(target_agent_id)
+    for agent in agents:
+        if not isinstance(agent, Mapping):
+            continue
+        agent_id = _string_or_none(agent.get("id"))
+        if agent_id is None or normalize_agent_id(agent_id) != normalized_target:
+            continue
+        target_workspace = _string_or_none(agent.get("workspace"))
+        break
+    if target_workspace is None:
+        return None, None
+    workspace_path = Path(target_workspace).expanduser()
+    try:
+        workspace_path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None, None
+    except OSError as exc:
+        return None, {
+            "status": "error",
+            "errorCode": "cwd_resolution_failed",
+            "error": str(exc).strip() or type(exc).__name__,
+        }
+    return str(workspace_path), None
 
 
 def _sessions_spawn_acp_agent_policy_error(

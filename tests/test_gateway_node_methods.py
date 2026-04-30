@@ -17599,6 +17599,268 @@ async def test_sessions_spawn_acp_uses_configured_default_agent(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_inherits_target_agent_workspace_when_cwd_omitted(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-target-workspace.db")
+    await database.initialize()
+    agents_service = GatewayAgentsService(database=database)
+    target_workspace = tmp_path / "agents" / "claude-code"
+    await agents_service.create_agent(
+        name="Claude Code",
+        workspace=str(target_workspace),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["claude-code"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:claude-code:acp:thread-target-workspace",
+                "runId": "run-acp-target-workspace-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-target-workspace",
+                "runtimeSessionId": "thread-target-workspace",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        agents_service=agents_service,
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Inspect the target workspace.",
+            "runtime": "acp",
+            "agentId": "claude-code",
+            "mode": "run",
+        },
+        now_ms=10_000,
+    )
+
+    assert payload["status"] == "accepted"
+    assert calls[0]["params"]["cwd"] == str(target_workspace)
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:claude-code:acp:thread-target-workspace"
+    )
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["spawnedWorkspaceDir"] == str(target_workspace)
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_omits_missing_inherited_target_workspace(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-missing-target-workspace.db")
+    await database.initialize()
+    agents_service = GatewayAgentsService(database=database)
+    target_workspace = tmp_path / "agents" / "claude-code"
+    await agents_service.create_agent(
+        name="Claude Code",
+        workspace=str(target_workspace),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    shutil.rmtree(target_workspace)
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["claude-code"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:claude-code:acp:thread-missing-workspace",
+                "runId": "run-acp-missing-workspace-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-missing-workspace",
+                "runtimeSessionId": "thread-missing-workspace",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        agents_service=agents_service,
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Let the ACP backend choose its default cwd.",
+            "runtime": "acp",
+            "agentId": "claude-code",
+            "mode": "run",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert calls[0]["params"]["cwd"] is None
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:claude-code:acp:thread-missing-workspace"
+    )
+    assert metadata_row is not None
+    assert "spawnedWorkspaceDir" not in metadata_row["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_reports_inherited_workspace_access_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-workspace-access-failure.db")
+    await database.initialize()
+    agents_service = GatewayAgentsService(database=database)
+    target_workspace = tmp_path / "agents" / "claude-code"
+    await agents_service.create_agent(
+        name="Claude Code",
+        workspace=str(target_workspace),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    original_stat = Path.stat
+
+    def fake_stat(path: Path, *args: object, **kwargs: object) -> object:
+        if path == target_workspace:
+            raise PermissionError("permission denied")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    calls: list[dict[str, object]] = []
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["claude-code"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            raise AssertionError("workspace access failures should reject before ACP runtime")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        agents_service=agents_service,
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Inspect the target workspace.",
+            "runtime": "acp",
+            "agentId": "claude-code",
+            "mode": "run",
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "cwd_resolution_failed",
+        "error": "permission denied",
+        "role": "claude-code",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_rejects_agent_outside_acp_allowlist(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-acp-agent-allowlist.db")
     await database.initialize()

@@ -54,6 +54,11 @@ presentation prefix: when a child turn has `cwd`, the adapter sends
 `[Working directory: ...]` before the task text and redacts the user home to
 `~` while preserving Windows backslash separators. Remaining ACP presentation
 parity is deeper bridge server/client protocol metadata and replay behavior.
+ACP spawns that omit `cwd` now also inherit the target custom agent workspace
+before runtime dispatch, drop that inherited cwd when the workspace no longer
+exists so the backend can choose its default, and return
+`errorCode="cwd_resolution_failed"` for non-missing workspace access failures
+without starting the ACP runtime.
 RuntimeManager-backed ACP accepted responses now also include OpenClaw's
 mode-specific accepted notes for ordinary run spawns and persistent
 thread-bound session spawns. Remaining ACP presentation parity is deeper

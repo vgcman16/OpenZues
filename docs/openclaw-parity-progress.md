@@ -67,6 +67,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- Gateway ACP spawns now inherit the target custom agent workspace when `cwd`
+  is omitted, matching OpenClaw's cross-agent ACP workspace resolution. Missing
+  inherited workspaces fall back to the ACP backend default cwd, while
+  non-missing access failures return `errorCode="cwd_resolution_failed"` before
+  runtime dispatch.
+- Verified the ACP cwd inheritance seam with `python -m pytest
+  tests\test_gateway_node_methods.py -k "acp_inherits_target_agent_workspace
+  or acp_omits_missing_inherited_target_workspace or
+  acp_reports_inherited_workspace_access_failure" -q` (`3 passed`), adjacent
+  ACP gateway coverage `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_inherits_target_agent_workspace or
+  sessions_spawn_acp_omits_missing_inherited_target_workspace or
+  sessions_spawn_acp_reports_inherited_workspace_access_failure or
+  sessions_spawn_acp_uses_configured_default_agent or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run" -q` (`8 passed`),
+  `python -m pytest tests\test_gateway_acp_spawn.py -q` (`9 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Top-level `doctor` now reports OpenClaw-style session lock health for
   `agents/*/sessions/*.jsonl.lock` files in human and JSON output, including
   pid liveness, age labels, stale posture, and read-only guidance.
