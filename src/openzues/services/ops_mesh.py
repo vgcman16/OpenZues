@@ -7093,6 +7093,7 @@ class OpsMeshService:
             "edit",
             "list-pins",
             "pin",
+            "read",
             "react",
             "reactions",
             "unpin",
@@ -7145,6 +7146,13 @@ class OpsMeshService:
         if action == "list-pins":
             return await asyncio.to_thread(
                 self._dispatch_slack_list_pins_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "read":
+            return await asyncio.to_thread(
+                self._dispatch_slack_read_message_action,
                 route,
                 request,
                 secret_token,
@@ -7569,6 +7577,47 @@ class OpsMeshService:
             "ok": True,
             "channelId": channel_id,
             "pins": pins if isinstance(pins, list) else [],
+        }
+
+    def _dispatch_slack_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack read requires channelId.")
+        payload: dict[str, object] = {"channel": channel_id}
+        limit = _message_action_param_positive_int(request.params, "limit")
+        if limit is not None:
+            payload["limit"] = limit
+        before = _message_action_param_string(request.params, "before")
+        if before is not None:
+            payload["latest"] = before
+        after = _message_action_param_string(request.params, "after")
+        if after is not None:
+            payload["oldest"] = after
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "conversations.history"),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        messages = result.get("messages")
+        return {
+            "ok": True,
+            "channelId": channel_id,
+            "messages": messages if isinstance(messages, list) else [],
+            "hasMore": result.get("has_more") is True,
         }
 
     def _remove_own_slack_reactions(
