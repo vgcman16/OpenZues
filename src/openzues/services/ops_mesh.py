@@ -7092,6 +7092,7 @@ class OpsMeshService:
             "delete",
             "edit",
             "list-pins",
+            "member-info",
             "pin",
             "read",
             "react",
@@ -7153,6 +7154,13 @@ class OpsMeshService:
         if action == "read":
             return await asyncio.to_thread(
                 self._dispatch_slack_read_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "member-info":
+            return await asyncio.to_thread(
+                self._dispatch_slack_member_info_message_action,
                 route,
                 request,
                 secret_token,
@@ -7631,6 +7639,26 @@ class OpsMeshService:
             "messages": messages if isinstance(messages, list) else [],
             "hasMore": result.get("has_more") is True,
         }
+
+    def _dispatch_slack_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        user_id = _message_action_param_string(request.params, "userId", required=True)
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "users.info"),
+            {"user": user_id or ""},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {"ok": True, "info": result}
 
     def _remove_own_slack_reactions(
         self,
