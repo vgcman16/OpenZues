@@ -7,6 +7,7 @@ import logging
 import math
 import mimetypes
 import re
+import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1424,7 +1425,9 @@ def _telegram_media_ids(result: object) -> list[str]:
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_MAX_EMOJI_BYTES = 256 * 1024
+DISCORD_MAX_STICKER_BYTES = 512 * 1024
 DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
+DISCORD_STICKER_CONTENT_TYPES = {"image/png", "image/apng", "application/json"}
 DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
 DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
 DISCORD_CHANNEL_TYPE_GUILD_MEDIA = 16
@@ -7484,6 +7487,7 @@ class OpsMeshService:
             "search",
             "send",
             "sticker",
+            "sticker-upload",
             "thread-create",
             "thread-list",
             "thread-reply",
@@ -7729,6 +7733,13 @@ class OpsMeshService:
             if action == "sticker":
                 return await asyncio.to_thread(
                     self._dispatch_discord_sticker_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "sticker-upload":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_sticker_upload_message_action,
                     route,
                     request,
                     secret_token,
@@ -10359,6 +10370,56 @@ class OpsMeshService:
             raise RuntimeError(str(result.get("error")))
         return {"ok": True}
 
+    def _dispatch_discord_sticker_upload_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(request.params, "stickerName") or (
+            _message_action_param_string(request.params, "name", required=True) or ""
+        )
+        description = _message_action_param_string(request.params, "stickerDesc") or (
+            _message_action_param_string(request.params, "description", required=True) or ""
+        )
+        tags = _message_action_param_string(request.params, "stickerTags") or (
+            _message_action_param_string(request.params, "tags", required=True) or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "mediaUrl")
+            or ""
+        )
+        if not media_url:
+            raise RuntimeError("Discord sticker-upload requires media.")
+        media_bytes, content_type = self._load_discord_media(
+            media_url,
+            max_bytes=DISCORD_MAX_STICKER_BYTES,
+        )
+        normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+        if normalized_content_type not in DISCORD_STICKER_CONTENT_TYPES:
+            raise RuntimeError("Discord sticker uploads require a PNG, APNG, or Lottie JSON file.")
+        sticker = self._request_discord_sticker_upload(
+            guild_id=guild_id or "",
+            name=name.strip(),
+            description=description.strip(),
+            tags=tags.strip(),
+            media_bytes=media_bytes,
+            content_type=normalized_content_type,
+            secret_token=secret_token,
+        )
+        if not isinstance(sticker, dict):
+            raise RuntimeError("Discord API returned a non-JSON sticker response.")
+        if sticker.get("error"):
+            raise RuntimeError(str(sticker.get("error")))
+        return {"ok": True, "sticker": sticker}
+
     async def _post_provider_route_event(
         self,
         *,
@@ -12068,6 +12129,69 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_discord_sticker_upload(
+        self,
+        *,
+        guild_id: str,
+        name: str,
+        description: str,
+        tags: str,
+        media_bytes: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        boundary = f"OpenZuesDiscord{uuid.uuid4().hex}"
+        body = bytearray()
+
+        def add_field(field_name: str, value: str) -> None:
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'.encode("ascii")
+            )
+            body.extend(value.encode("utf-8"))
+            body.extend(b"\r\n")
+
+        for field_name, value in {
+            "name": name,
+            "description": description,
+            "tags": tags,
+        }.items():
+            add_field(field_name, value)
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b'Content-Disposition: form-data; name="file"; filename="sticker"\r\n')
+        body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("ascii"))
+        body.extend(media_bytes)
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            _discord_api_endpoint(f"guilds/{guild_id}/stickers"),
+            data=bytes(body),
+            headers={
+                "Authorization": _discord_bot_authorization(secret_token),
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    parsed = json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Discord API returned a non-JSON sticker response.")
+        return parsed
 
     def _post_json_webhook(
         self,

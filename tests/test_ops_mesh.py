@@ -7067,6 +7067,101 @@ async def test_ops_mesh_service_message_action_dispatches_discord_emoji_upload_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_sticker_upload_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-sticker-upload"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    sticker_uploads: list[
+        tuple[str, str, str, str, bytes, str, str | None]
+    ] = []
+
+    def fake_request_discord_sticker_upload(
+        self: OpsMeshService,
+        *,
+        guild_id: str,
+        name: str,
+        description: str,
+        tags: str,
+        media_bytes: bytes,
+        content_type: str,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        sticker_uploads.append(
+            (guild_id, name, description, tags, media_bytes, content_type, secret_token)
+        )
+        return {"id": "sticker-1", "name": "party_sticker"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_sticker_upload",
+        fake_request_discord_sticker_upload,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="sticker-upload",
+            params={
+                "guildId": "guild-1",
+                "stickerName": " party_sticker ",
+                "stickerDesc": " celebratory sticker ",
+                "stickerTags": " party ",
+                "media": "data:image/png;base64,aGVsbG8=",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-sticker-upload-action",
+        )
+    )
+
+    assert result == {"ok": True, "sticker": {"id": "sticker-1", "name": "party_sticker"}}
+    assert sticker_uploads == [
+        (
+            "guild-1",
+            "party_sticker",
+            "celebratory sticker",
+            "party",
+            b"hello",
+            "image/png",
+            "discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_channel_info_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
