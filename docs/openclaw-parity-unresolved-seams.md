@@ -142,6 +142,12 @@ OpenClaw's stale plugin config doctor helper is now covered by a native
 `plugins.allow` and `plugins.entries.<id>` against native/bundled plugin
 registry ids, `doctor --fix` removes stale allow/entry references, and repair
 pauses with the upstream warning when plugin manifest discovery has errors.
+OpenClaw's legacy plugin manifest contract-key doctor helper is now covered by
+a native `legacyPluginManifests` contribution: manifest load paths are scanned
+for top-level `speechProviders`, `mediaUnderstandingProviders`, and
+`imageGenerationProviders`, `doctor --json` reports the upstream migration
+lines, and `doctor --fix` moves/removes those keys under `contracts` before
+stale plugin cleanup runs.
 Open DM policy wildcard repair now also follows OpenClaw's
 `open-policy-allowfrom` helper: `doctor --json` reports the missing
 `allowFrom` wildcard changes, `doctor --fix` writes top-level or nested

@@ -2379,6 +2379,206 @@ def _with_doctor_bundled_plugin_load_paths_payload(
     return next_payload
 
 
+_LEGACY_PLUGIN_MANIFEST_CONTRACT_KEYS = (
+    "speechProviders",
+    "mediaUnderstandingProviders",
+    "imageGenerationProviders",
+)
+
+
+def _legacy_plugin_manifest_contract_migration(
+    manifest_path: Path,
+    raw: dict[str, object],
+) -> dict[str, object] | None:
+    next_raw: dict[str, object] = dict(raw)
+    raw_contracts = raw.get("contracts")
+    next_contracts: dict[str, object] = (
+        dict(raw_contracts) if isinstance(raw_contracts, dict) else {}
+    )
+    change_lines: list[str] = []
+    manifest_label = str(manifest_path)
+    for key in _LEGACY_PLUGIN_MANIFEST_CONTRACT_KEYS:
+        if key not in raw:
+            continue
+        legacy_values = _plugin_manifest_string_list(raw.get(key))
+        contract_values = _plugin_manifest_string_list(next_contracts.get(key))
+        if legacy_values and not contract_values:
+            next_contracts[key] = legacy_values
+            change_lines.append(
+                f"- {manifest_label}: moved {key} to contracts.{key}"
+            )
+        else:
+            change_lines.append(
+                f"- {manifest_label}: removed legacy {key} (kept contracts.{key})"
+            )
+        next_raw.pop(key, None)
+    if not change_lines:
+        return None
+    if next_contracts:
+        next_raw["contracts"] = next_contracts
+    else:
+        next_raw.pop("contracts", None)
+    return {
+        "manifestPath": str(manifest_path),
+        "pluginId": _optional_cli_string(raw.get("id")) or str(manifest_path),
+        "nextRaw": next_raw,
+        "changeLines": change_lines,
+    }
+
+
+def _collect_legacy_plugin_manifest_contract_migrations(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    migrations: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for load_path in _plugin_manifest_load_paths(plugins_config):
+        manifest_path = _plugin_manifest_path_for_load_path(load_path)
+        if manifest_path is None:
+            continue
+        manifest_key = str(manifest_path.resolve(strict=False))
+        if manifest_key in seen:
+            continue
+        seen.add(manifest_key)
+        raw = _read_cli_json_object(manifest_path)
+        if raw is None:
+            continue
+        migration = _legacy_plugin_manifest_contract_migration(manifest_path, raw)
+        if migration is not None:
+            migrations.append(migration)
+    return sorted(migrations, key=lambda item: str(item.get("manifestPath") or ""))
+
+
+def _doctor_legacy_plugin_manifest_warnings(
+    migrations: Sequence[object],
+) -> list[str]:
+    if not migrations:
+        return []
+    warnings = ["Legacy plugin manifest capability keys detected."]
+    for migration in migrations:
+        if not isinstance(migration, dict):
+            continue
+        for line in _object_list(migration.get("changeLines")):
+            text = str(line).strip()
+            if text:
+                warnings.append(text)
+    return warnings
+
+
+def _apply_legacy_plugin_manifest_contract_migrations(
+    migrations: Sequence[dict[str, object]],
+) -> tuple[list[str], list[dict[str, object]]]:
+    changes: list[str] = []
+    errors: list[dict[str, object]] = []
+    for migration in migrations:
+        manifest_path_text = _optional_cli_string(migration.get("manifestPath"))
+        next_raw = migration.get("nextRaw")
+        if manifest_path_text is None or not isinstance(next_raw, dict):
+            continue
+        try:
+            Path(manifest_path_text).write_text(
+                f"{json.dumps(next_raw, indent=2)}\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            errors.append(
+                {
+                    "manifestPath": manifest_path_text,
+                    "message": f"Failed to rewrite legacy plugin manifest: {exc}",
+                }
+            )
+            continue
+        changes.extend(str(line) for line in _object_list(migration.get("changeLines")))
+    return changes, errors
+
+
+def _build_doctor_legacy_plugin_manifests_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:legacy-plugin-manifests",
+        "repairRequested": should_repair,
+        "repairAvailable": True,
+        "migrations": [],
+        "warnings": [],
+    }
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for plugin manifest checks.",
+            "repairAvailable": False,
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Plugin manifest migration detection failed: {exc}",
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    migrations = _collect_legacy_plugin_manifest_contract_migrations(snapshot)
+    if should_repair:
+        changes, errors = _apply_legacy_plugin_manifest_contract_migrations(migrations)
+        remaining_migrations = migrations if errors else []
+        warnings = _doctor_legacy_plugin_manifest_warnings(remaining_migrations)
+        status = "error" if errors else ("ok" if changes or not migrations else "warn")
+        return {
+            **base_payload,
+            "status": status,
+            "summary": (
+                "Rewrote legacy plugin manifest capability keys into contracts."
+                if changes and not errors
+                else (
+                    "Legacy plugin manifest repair had errors."
+                    if errors
+                    else "No legacy plugin manifest capability keys found."
+                )
+            ),
+            "changed": bool(changes) and not errors,
+            "changes": changes,
+            "errors": errors,
+            "migrations": remaining_migrations,
+            "warnings": warnings,
+        }
+    warnings = _doctor_legacy_plugin_manifest_warnings(migrations)
+    return {
+        **base_payload,
+        "status": "warn" if migrations else "ok",
+        "summary": (
+            "Legacy plugin manifest capability keys found."
+            if migrations
+            else "No legacy plugin manifest capability keys found."
+        ),
+        "migrations": migrations,
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_legacy_plugin_manifests_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    manifest_payload = _build_doctor_legacy_plugin_manifests_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["legacyPluginManifests"] = manifest_payload
+    warnings = _object_list(manifest_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
 def _stale_plugin_registry_state(
     config_service: object | None,
 ) -> tuple[set[str], list[dict[str, object]]]:
@@ -3872,6 +4072,8 @@ def _build_doctor_gateway_config_payload(
         return None
     gateway = _dict_config(raw_gateway)
     if _optional_cli_string(gateway.get("mode")) is not None:
+        return None
+    if "bind" in gateway:
         return None
     warning = "\n".join(
         [
@@ -18266,6 +18468,11 @@ def doctor(
             should_repair=fix,
         )
         payload = _with_doctor_bundled_plugin_load_paths_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_legacy_plugin_manifests_payload(
             payload,
             services.gateway_config,
             should_repair=fix,

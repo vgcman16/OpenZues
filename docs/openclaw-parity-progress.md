@@ -3483,6 +3483,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.
+- Top-level `doctor --json` now includes OpenClaw's legacy plugin manifest
+  contract-key contribution. It detects top-level `speechProviders`,
+  `mediaUnderstandingProviders`, and `imageGenerationProviders` in
+  `openclaw.plugin.json` files discovered through `plugins.load.paths`, reports
+  OpenClaw-shaped migration lines, and rewrites those keys into
+  `contracts.<key>` during `doctor --fix` before stale plugin config cleanup.
+- Verified the legacy plugin manifest doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_plugin_manifest_contract_keys
+  tests\test_cli.py::test_doctor_fix_rewrites_legacy_plugin_manifest_contract_keys
+  -q` (`2 passed`), adjacent doctor/plugin coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_plugin_manifest_contract_keys or
+  legacy_bundled_plugin_load_paths or stale_plugin_config"` (`7 passed`),
+  broader doctor warning/repair coverage `python -m pytest tests\test_cli.py
+  -q -k "doctor_json_warns or doctor_fix_rewrites"` (`29 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now also includes OpenClaw's open-policy
   `allowFrom` repair contribution. It reports pending wildcard additions for
   `dmPolicy="open"`, writes top-level or nested `allowFrom=["*"]` according to

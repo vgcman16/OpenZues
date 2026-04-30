@@ -14021,6 +14021,7 @@ def _invoke_doctor_json_with_config_snapshot(
     snapshot: dict[str, object],
     *,
     settings: object | None = None,
+    args: list[str] | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -14054,7 +14055,7 @@ def _invoke_doctor_json_with_config_snapshot(
     monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
 
-    return runner.invoke(app, ["doctor", "--json"])
+    return runner.invoke(app, args or ["doctor", "--json"])
 
 
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
@@ -17678,6 +17679,98 @@ def test_doctor_fix_rewrites_legacy_bundled_plugin_load_paths_before_stale_scan(
     assert repaired["plugins"]["load"]["paths"] == [str(bundled_dir)]
     assert repaired["plugins"]["allow"] == ["feishu"]
     assert repaired["plugins"]["entries"] == {"feishu": {"enabled": True}}
+
+
+def test_doctor_json_warns_about_legacy_plugin_manifest_contract_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "openai"
+    plugin_dir.mkdir()
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    legacy_manifest = {
+        "id": "openai",
+        "providers": ["openai"],
+        "speechProviders": ["openai"],
+        "mediaUnderstandingProviders": ["openai"],
+        "imageGenerationProviders": ["dall-e"],
+        "contracts": {"imageGenerationProviders": ["gpt-image"]},
+        "configSchema": {"type": "object"},
+    }
+    manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"plugins": {"load": {"paths": [str(plugin_dir)]}}},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyPluginManifests"]
+    assert contribution["status"] == "warn"
+    assert contribution["openClawContribution"] == "doctor:legacy-plugin-manifests"
+    assert contribution["repairAvailable"] is True
+    assert contribution["migrations"][0]["pluginId"] == "openai"
+    assert contribution["migrations"][0]["manifestPath"] == str(manifest_path)
+    changes = contribution["migrations"][0]["changeLines"]
+    assert any("moved speechProviders to contracts.speechProviders" in line for line in changes)
+    assert any(
+        "moved mediaUnderstandingProviders to contracts.mediaUnderstandingProviders" in line
+        for line in changes
+    )
+    assert any(
+        "removed legacy imageGenerationProviders (kept contracts.imageGenerationProviders)" in line
+        for line in changes
+    )
+    assert contribution["warnings"][0] == "Legacy plugin manifest capability keys detected."
+    assert contribution["warnings"][0] in payload["warnings"]
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == legacy_manifest
+
+
+def test_doctor_fix_rewrites_legacy_plugin_manifest_contract_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "openai"
+    plugin_dir.mkdir()
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "providers": ["openai"],
+                "speechProviders": ["openai"],
+                "mediaUnderstandingProviders": ["openai"],
+                "contracts": {"webSearchProviders": ["gemini"]},
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"plugins": {"load": {"paths": [str(plugin_dir)]}}},
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyPluginManifests"]
+    assert contribution["status"] == "ok"
+    assert contribution["changed"] is True
+    assert any(
+        "moved speechProviders to contracts.speechProviders" in line
+        for line in contribution["changes"]
+    )
+    repaired = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "speechProviders" not in repaired
+    assert "mediaUnderstandingProviders" not in repaired
+    assert repaired["contracts"] == {
+        "speechProviders": ["openai"],
+        "mediaUnderstandingProviders": ["openai"],
+        "webSearchProviders": ["gemini"],
+    }
 
 
 def test_doctor_json_warns_about_stale_plugin_config(
