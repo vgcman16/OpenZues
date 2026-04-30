@@ -2747,6 +2747,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   startup_channel_maintenance or
   channels_status_json_calls_gateway_method_owner_with_probe"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the OpenCode provider override warning seam from OpenClaw
+  `doctor.warns-state-directory-is-missing.e2e.test.ts`: `doctor --json` now
+  reports `providerOverrides.opencode` and a top-level warning when legacy
+  `models.providers.opencode` or `models.providers.opencode-go` config shadows
+  bundled provider defaults. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_opencode_provider_overrides
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_warns_about_opencode_provider_overrides or
+  doctor_json_warns_when_state_directory_is_missing or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Closed the provider-native `gatewayClientScopes` seam from OpenClaw
   `gateway/server-methods/send.ts`: direct send and poll now pass normalized
   gateway client scopes into provider runtime requests, route-backed provider

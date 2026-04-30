@@ -92,6 +92,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections"` (`6 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now also mirrors OpenClaw's OpenCode legacy
+  provider override warning: configured `models.providers.opencode` and
+  `models.providers.opencode-go` entries produce a structured
+  `providerOverrides.opencode` payload plus a top-level warning.
+- Verified the OpenCode provider override doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_opencode_provider_overrides -q`
+  (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q
+  -k "doctor_json_warns_about_opencode_provider_overrides or
+  doctor_json_warns_when_state_directory_is_missing or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`7 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.

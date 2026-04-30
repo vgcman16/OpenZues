@@ -13948,6 +13948,74 @@ def test_doctor_json_warns_when_state_directory_is_missing(
     assert f"CRITICAL: state directory missing: {missing_dir}" in payload["warnings"]
 
 
+def test_doctor_json_warns_about_opencode_provider_overrides(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "models": {
+                    "providers": {
+                        "opencode": {
+                            "api": "openai-completions",
+                            "baseUrl": "https://opencode.ai/zen/v1",
+                        },
+                        "opencode-go": {
+                            "api": "openai-completions",
+                            "baseUrl": "https://opencode.ai/zen/go/v1",
+                        },
+                    }
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["providerOverrides"] == {
+        "opencode": {
+            "ok": False,
+            "paths": [
+                "models.providers.opencode",
+                "models.providers.opencode-go",
+            ],
+            "warnings": [
+                (
+                    "OpenCode provider overrides shadow bundled defaults: "
+                    "models.providers.opencode, models.providers.opencode-go"
+                )
+            ],
+        }
+    }
+    assert payload["providerOverrides"]["opencode"]["warnings"][0] in payload["warnings"]
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

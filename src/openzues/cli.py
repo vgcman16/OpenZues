@@ -3722,6 +3722,51 @@ def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
     return snapshot if isinstance(snapshot, dict) else {}
 
 
+def _build_doctor_provider_overrides_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    models = snapshot.get("models")
+    models_payload = models if isinstance(models, dict) else {}
+    providers = models_payload.get("providers")
+    provider_payload = providers if isinstance(providers, dict) else {}
+    opencode_paths = [
+        f"models.providers.{provider_id}"
+        for provider_id in ("opencode", "opencode-go")
+        if isinstance(provider_payload.get(provider_id), dict)
+    ]
+    payload: dict[str, object] = {}
+    if opencode_paths:
+        payload["opencode"] = {
+            "ok": False,
+            "paths": opencode_paths,
+            "warnings": [
+                (
+                    "OpenCode provider overrides shadow bundled defaults: "
+                    + ", ".join(opencode_paths)
+                )
+            ],
+        }
+    return payload
+
+
+def _with_doctor_provider_override_warnings(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    provider_overrides = _build_doctor_provider_overrides_payload(config_service)
+    if not provider_overrides:
+        return payload
+    next_payload = dict(payload)
+    next_payload["providerOverrides"] = provider_overrides
+    warnings: list[str] = []
+    for provider_payload in provider_overrides.values():
+        if not isinstance(provider_payload, dict):
+            continue
+        warnings.extend(str(warning) for warning in _object_list(provider_payload.get("warnings")))
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 async def _build_doctor_startup_channel_maintenance_payload(
     config_service: object | None,
     maintenance_adapter: object | None,
@@ -17725,6 +17770,10 @@ def doctor(
             should_repair=fix,
         )
         payload = _with_doctor_sandbox_warnings(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_provider_override_warnings(
             payload,
             services.gateway_config,
         )
