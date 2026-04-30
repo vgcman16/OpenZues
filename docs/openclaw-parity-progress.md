@@ -2799,6 +2799,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   session; omitted or `"rw"` access stays on the writable workspace sandbox
   path.
 - Verified the workspace-access mapping seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- `agent` follow-up launches into sandboxed spawned sessions now mirror
+  OpenClaw's spawned-workspace override: OpenZues resolves
+  `spawnedWorkspaceDir` / `sandboxWorkspaceRoot`, dispatches through the native
+  sandbox runtime with `sandbox="require"`, target `agentId`, and the saved
+  sandbox mode, persists returned runtime/policy metadata, and keeps the run
+  tracked for `agent.wait`.
+- Verified the sandboxed spawned-session `agent` follow-up seam with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_agent_launch_to_sandboxed_spawned_session_uses_child_workspace_runtime
+  -q` (`1 passed`), adjacent launch/sandbox coverage `python -m pytest
+  tests\test_gateway_node_methods.py::test_agent_launch_uses_resolved_custom_subagent_store_key
+  tests\test_gateway_node_methods.py::test_agent_launch_to_sandboxed_spawned_session_uses_child_workspace_runtime
+  tests\test_gateway_node_methods.py::test_agent_launch_defaults_custom_agent_to_scoped_main_session
+  tests\test_gateway_node_methods.py::test_sessions_spawn_required_sandbox_dispatches_when_runtime_wired
+  tests\test_gateway_node_methods.py::test_sessions_spawn_required_sandbox_persists_runtime_policy_metadata
+  -q` (`5 passed`), wider targeted coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "agent_launch or
+  sessions_spawn_required_sandbox or
+  sessions_spawn_inherit_dispatches_sandboxed_config_target or
+  sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"` (`25
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Sandboxed `sessions.spawn` calls that omit `cwd` now resolve the configured
   child sandbox `workspaceRoot` before staging inline attachments, persist that
   workspace as `spawnedWorkspaceDir`, pass it into the sandbox dispatch, and

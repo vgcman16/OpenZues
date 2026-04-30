@@ -23079,6 +23079,108 @@ async def test_agent_launch_uses_resolved_custom_subagent_store_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_launch_to_sandboxed_spawned_session_uses_child_workspace_runtime(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-launch-sandboxed-child.db")
+    await database.initialize()
+    await database.create_gateway_agent(
+        agent_id="builder-prime",
+        name="Builder Prime",
+        workspace=str(tmp_path / "agents" / "builder-prime"),
+        model="gpt-5.4-mini",
+        emoji="spark",
+        avatar="/static/builder-prime.png",
+    )
+    canonical_child_key = "agent:builder-prime:subagent:sandbox-child"
+    child_workspace = tmp_path / "sandbox-child-workspace"
+    await database.upsert_gateway_session_metadata(
+        session_key=canonical_child_key,
+        metadata={
+            "agentId": "builder-prime",
+            "spawnedBy": "agent:builder-prime:main",
+            "parentSessionKey": "agent:builder-prime:main",
+            "spawnDepth": 1,
+            "sandboxed": True,
+            "sandboxMode": "read-only",
+            "sandboxWorkspaceRoot": str(tmp_path / "sandbox-root"),
+            "spawnedWorkspaceDir": str(child_workspace),
+        },
+    )
+
+    async def fail_normal_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("normal chat runtime should not be used for sandboxed sessions")
+
+    sandbox_calls: list[dict[str, object]] = []
+
+    async def fake_sandbox_chat_send_service(**kwargs: object) -> dict[str, object]:
+        sandbox_calls.append(dict(kwargs))
+        return {
+            "runId": "agent-run-sandbox-followup-1",
+            "status": "ok",
+            "runtime": "codex-app-server",
+            "runtimeId": 9,
+            "runtimeThreadId": "thread-sandbox-followup-1",
+            "runtimeSessionId": "thread-sandbox-followup-1",
+            "sandboxed": True,
+            "sandboxMode": str(kwargs.get("sandbox_mode") or ""),
+            "sandboxPolicy": {"type": "readOnly"},
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fail_normal_chat_send_service,
+        sandbox_chat_send_service=fake_sandbox_chat_send_service,
+    )
+
+    payload = await service.call(
+        "agent",
+        {
+            "message": "Continue inside the sandboxed child workspace.",
+            "agentId": "builder-prime",
+            "sessionKey": "subagent:sandbox-child",
+            "thinking": "medium",
+            "timeout": 12,
+            "idempotencyKey": "agent-run-sandbox-followup-1",
+        },
+        now_ms=901,
+    )
+
+    assert payload == {
+        "runId": "agent-run-sandbox-followup-1",
+        "status": "accepted",
+        "acceptedAt": 901,
+    }
+    assert len(sandbox_calls) == 1
+    sandbox_call = sandbox_calls[0]
+    assert sandbox_call["session_key"] == canonical_child_key
+    assert sandbox_call["message"] == "Continue inside the sandboxed child workspace."
+    assert sandbox_call["idempotency_key"] == "agent-run-sandbox-followup-1"
+    assert sandbox_call["thinking"] == "medium"
+    assert sandbox_call["deliver"] is None
+    assert sandbox_call["timeout_ms"] == 12
+    assert sandbox_call["sandbox"] == "require"
+    assert sandbox_call["sandbox_mode"] == "read-only"
+    assert sandbox_call["agent_id"] == "builder-prime"
+    assert sandbox_call["cwd"] == str(child_workspace)
+
+    tracked_run = service._gateway_tracked_chat_runs_by_id["agent-run-sandbox-followup-1"]
+    assert tracked_run.session_key == canonical_child_key
+    metadata_row = await database.get_gateway_session_metadata(canonical_child_key)
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["runtime"] == "codex-app-server"
+    assert metadata["runtimeId"] == 9
+    assert metadata["runtimeThreadId"] == "thread-sandbox-followup-1"
+    assert metadata["runtimeSessionId"] == "thread-sandbox-followup-1"
+    assert metadata["sandboxed"] is True
+    assert metadata["sandboxMode"] == "read-only"
+    assert metadata["sandboxPolicy"] == {"type": "readOnly"}
+
+
+@pytest.mark.asyncio
 async def test_agent_launch_defaults_custom_agent_to_scoped_main_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-agent-launch-custom-main"
     shutil.rmtree(tmp_path, ignore_errors=True)

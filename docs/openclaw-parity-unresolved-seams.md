@@ -216,6 +216,12 @@ Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+Sandboxed spawned-session `agent` follow-up launches now also resolve the saved
+`spawnedWorkspaceDir` / `sandboxWorkspaceRoot`, dispatch through the native
+sandbox runtime with `sandbox="require"`, the persisted sandbox mode, and the
+target agent id, persist returned runtime/policy metadata, and keep the run
+tracked for `agent.wait` instead of leaking the follow-up through the host
+control-chat runtime.
 Sandboxed `chat.send` now also stages managed path-backed inbound attachments
 already persisted under `openzuesSavedPath`, copying them into the child
 workspace's `media/inbound` directory and rewriting runtime attachment metadata
