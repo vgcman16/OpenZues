@@ -349,6 +349,10 @@ provisional relay before dispatch, restarts the relay if the final Codex turn id
 differs from the provisional run id, notifies the accepted relay, and returns
 `streamLogPath` for gateway metadata persistence. App and CLI construction wire
 the file-backed relay into the ACP spawn service.
+Run-mode ACP spawns from canonical subagent requester sessions now also enable
+parent streaming implicitly when heartbeat delivery is session-local
+(`target="last"` with no explicit heartbeat route), the requester has a usable
+current delivery route, no thread context, and the spawn is not thread-bound.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

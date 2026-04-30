@@ -18854,6 +18854,129 @@ async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-implicit-parent-stream.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "maxSpawnDepth": 3,
+                            },
+                        },
+                    },
+                },
+                "agents": {
+                    "defaults": {
+                        "heartbeat": {
+                            "every": "30m",
+                            "target": "last",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    parent_session_key = "agent:main:subagent:parent"
+    await database.upsert_gateway_session_metadata(
+        session_key=parent_session_key,
+        metadata={
+            "spawnDepth": 1,
+            "deliveryContext": {
+                "channel": "discord",
+                "to": "channel:parent-channel",
+                "accountId": "default",
+            },
+            "lastChannel": "discord",
+            "lastTo": "channel:parent-channel",
+            "lastAccountId": "default",
+        },
+    )
+    calls: list[dict[str, object]] = []
+    stream_log_path = str(tmp_path / "agent-main-acp-stream.jsonl")
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-implicit-stream",
+                "runId": "run-acp-implicit-stream-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-implicit-stream",
+                "runtimeSessionId": "session-acp-implicit-stream",
+                "streamLogPath": stream_log_path,
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Investigate flaky tests.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "requesterSessionKey": parent_session_key,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="discord",
+            message_account_id="default",
+            message_to="channel:parent-channel",
+        ),
+        now_ms=20_000,
+    )
+
+    child_session_key = str(spawn_payload["childSessionKey"])
+    assert spawn_payload["status"] == "accepted"
+    assert spawn_payload["mode"] == "run"
+    assert spawn_payload["streamLogPath"] == stream_log_path
+    assert calls[0]["params"]["streamTo"] == "parent"
+    assert calls[0]["context"] == {
+        "requesterSessionKey": parent_session_key,
+        "requesterChannel": "discord",
+        "requesterAccountId": "default",
+        "requesterTo": "channel:parent-channel",
+        "requesterThreadId": None,
+    }
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["streamTo"] == "parent"
+    assert metadata["streamLogPath"] == stream_log_path
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     tmp_path,
 ) -> None:

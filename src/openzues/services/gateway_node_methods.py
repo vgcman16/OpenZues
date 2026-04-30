@@ -7769,6 +7769,17 @@ class GatewayNodeMethodService:
                     requester_agent_id=requester_agent_id,
                     target_agent_id=acp_agent_id,
                 )
+                effective_stream_to = stream_to
+                if _sessions_spawn_acp_should_implicitly_stream_to_parent(
+                    self._config_service,
+                    parent_session_key=spawn_parent_session_key,
+                    requester_origin=requester_origin,
+                    spawn_parent_payload=spawn_parent_payload,
+                    tracked_mode=tracked_mode,
+                    thread_requested=thread,
+                    explicit_stream_to=stream_to,
+                ):
+                    effective_stream_to = "parent"
                 explicit_cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
                 acp_cwd, acp_cwd_error = await _sessions_spawn_resolve_acp_runtime_cwd(
                     self._agents_service,
@@ -7830,7 +7841,7 @@ class GatewayNodeMethodService:
                         "mode": mode,
                         "thread": thread,
                         "sandbox": sandbox,
-                        "streamTo": stream_to,
+                        "streamTo": effective_stream_to,
                         "runTimeoutSeconds": run_timeout_seconds,
                     },
                     acp_context,
@@ -7868,7 +7879,7 @@ class GatewayNodeMethodService:
                     "runTimeoutSeconds": run_timeout_seconds,
                     "runtimeThreadId": _string_or_none(acp_result.get("runtimeThreadId")),
                     "runtimeSessionId": _string_or_none(acp_result.get("runtimeSessionId")),
-                    "streamTo": stream_to,
+                    "streamTo": effective_stream_to,
                     "streamLogPath": _string_or_none(acp_result.get("streamLogPath")),
                 }
                 acp_metadata = {
@@ -13494,6 +13505,193 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_acp_should_implicitly_stream_to_parent(
+    config_service: GatewayConfigService | None,
+    *,
+    parent_session_key: str,
+    requester_origin: Mapping[str, str] | None,
+    spawn_parent_payload: Mapping[str, object] | None,
+    tracked_mode: Literal["run", "session"],
+    thread_requested: bool,
+    explicit_stream_to: str | None,
+) -> bool:
+    if (
+        explicit_stream_to is not None
+        or tracked_mode != "run"
+        or thread_requested
+        or config_service is None
+    ):
+        return False
+    parsed_parent = parse_agent_session_key(parent_session_key)
+    if parsed_parent is None or not parsed_parent.rest.startswith("subagent:"):
+        return False
+    if requester_origin is None:
+        return False
+    if _string_or_none(requester_origin.get("threadId")) is not None:
+        return False
+    channel = _string_or_none(requester_origin.get("channel"))
+    to = _string_or_none(requester_origin.get("to"))
+    if channel is None or to is None:
+        return False
+    if _sessions_spawn_payload_has_active_subagent_binding(spawn_parent_payload):
+        return False
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return False
+    session_config = _mapping_or_none(snapshot.get("session"))
+    if (
+        session_config is not None
+        and _string_or_none(session_config.get("scope")) == "global"
+    ):
+        return False
+    requester_agent_id = normalize_agent_id(parsed_parent.agent_id)
+    heartbeat = _sessions_spawn_acp_heartbeat_config_for_agent(
+        snapshot,
+        agent_id=requester_agent_id,
+    )
+    if not _sessions_spawn_acp_heartbeat_enabled_for_agent(
+        snapshot,
+        agent_id=requester_agent_id,
+        heartbeat=heartbeat,
+    ):
+        return False
+    if heartbeat is None or _string_or_none(heartbeat.get("target")) != "last":
+        return False
+    if (
+        _string_or_none(heartbeat.get("to")) is not None
+        or _string_or_none(heartbeat.get("accountId")) is not None
+    ):
+        return False
+    return True
+
+
+def _sessions_spawn_payload_has_active_subagent_binding(
+    payload: Mapping[str, object] | None,
+) -> bool:
+    if payload is None:
+        return False
+    session_binding = payload.get("sessionBinding")
+    if isinstance(session_binding, Mapping):
+        status = _string_or_none(session_binding.get("status"))
+        target_kind = _string_or_none(session_binding.get("targetKind"))
+        if target_kind == "subagent" and status != "ended":
+            return True
+    thread_binding = payload.get("threadBinding")
+    return isinstance(thread_binding, Mapping)
+
+
+def _sessions_spawn_acp_heartbeat_config_for_agent(
+    snapshot: Mapping[str, object],
+    *,
+    agent_id: str,
+) -> dict[str, object] | None:
+    merged: dict[str, object] = {}
+    for agents_config in _sessions_spawn_agent_roots_from_snapshot(snapshot):
+        defaults = _mapping_or_none(agents_config.get("defaults"))
+        default_heartbeat = (
+            _mapping_or_none(defaults.get("heartbeat")) if defaults is not None else None
+        )
+        if default_heartbeat is not None:
+            merged.update(default_heartbeat)
+        agent_config = _sessions_spawn_agent_config_from_root(
+            dict(agents_config),
+            agent_id=agent_id,
+        )
+        agent_heartbeat = (
+            _mapping_or_none(agent_config.get("heartbeat"))
+            if agent_config is not None
+            else None
+        )
+        if agent_heartbeat is not None:
+            merged.update(agent_heartbeat)
+    return merged or None
+
+
+def _sessions_spawn_acp_heartbeat_enabled_for_agent(
+    snapshot: Mapping[str, object],
+    *,
+    agent_id: str,
+    heartbeat: Mapping[str, object] | None,
+) -> bool:
+    roots = _sessions_spawn_agent_roots_from_snapshot(snapshot)
+    explicit_heartbeat_agents: set[str] = set()
+    for agents_config in roots:
+        raw_list = agents_config.get("list")
+        if not isinstance(raw_list, list):
+            continue
+        for raw_agent in raw_list:
+            if not isinstance(raw_agent, Mapping) or not isinstance(
+                raw_agent.get("heartbeat"),
+                Mapping,
+            ):
+                continue
+            candidate_id = _string_or_none(raw_agent.get("id"))
+            if candidate_id is not None:
+                explicit_heartbeat_agents.add(normalize_agent_id(candidate_id))
+    if explicit_heartbeat_agents:
+        if normalize_agent_id(agent_id) not in explicit_heartbeat_agents:
+            return False
+    elif normalize_agent_id(agent_id) != _sessions_spawn_default_agent_id_from_snapshot(snapshot):
+        return False
+    if heartbeat is None:
+        return False
+    if "every" not in heartbeat:
+        return True
+    return _sessions_spawn_acp_heartbeat_every_is_positive(heartbeat.get("every"))
+
+
+def _sessions_spawn_acp_heartbeat_every_is_positive(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return math.isfinite(float(value)) and float(value) > 0
+    text = _string_or_none(value)
+    if text is None:
+        return False
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?", text.lower())
+    if match is None:
+        return False
+    amount = float(match.group(1))
+    return math.isfinite(amount) and amount > 0
+
+
+def _sessions_spawn_default_agent_id_from_snapshot(
+    snapshot: Mapping[str, object],
+) -> str:
+    for agents_config in _sessions_spawn_agent_roots_from_snapshot(snapshot):
+        raw_list = agents_config.get("list")
+        if not isinstance(raw_list, list):
+            continue
+        candidates = [agent for agent in raw_list if isinstance(agent, Mapping)]
+        if not candidates:
+            continue
+        for raw_agent in candidates:
+            if raw_agent.get("default") is True:
+                agent_id = _string_or_none(raw_agent.get("id"))
+                if agent_id is not None:
+                    return normalize_agent_id(agent_id)
+        agent_id = _string_or_none(candidates[0].get("id"))
+        if agent_id is not None:
+            return normalize_agent_id(agent_id)
+    return DEFAULT_AGENT_ID
+
+
+def _sessions_spawn_agent_roots_from_snapshot(
+    snapshot: Mapping[str, object],
+) -> tuple[dict[str, Any], ...]:
+    roots: list[dict[str, Any]] = []
+    gateway_config = snapshot.get("gateway")
+    if isinstance(gateway_config, dict):
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
 
 
 def _sessions_spawn_thread_policy_error(

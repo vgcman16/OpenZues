@@ -4824,6 +4824,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\app.py src\openzues\cli.py tests\test_gateway_acp_spawn.py`,
   and `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\app.py
   src\openzues\cli.py`.
+- ACP run-mode spawns from canonical subagent requester sessions now mirror the
+  upstream implicit parent-stream rule: when heartbeat delivery is
+  session-local (`target="last"` with no explicit heartbeat route), the
+  requester has a usable current delivery route, and the request is not
+  thread-bound or already carrying thread context, the gateway passes
+  `streamTo="parent"` into the ACP runtime and persists the returned stream log.
+- Verified the implicit ACP parent-stream seam with `python -m pytest
+  tests/test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent
+  -q` (`1 passed`), adjacent explicit-stream coverage `python -m pytest
+  tests/test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent
+  tests/test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_tracks_child_run
+  -q` (`2 passed`), ACP spawn gateway coverage `python -m pytest
+  tests/test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`17 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 
