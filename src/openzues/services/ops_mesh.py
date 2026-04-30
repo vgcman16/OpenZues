@@ -7418,6 +7418,7 @@ class OpsMeshService:
                 request,
             )
         if channel == "discord" and action in {
+            "category-create",
             "channel-create",
             "channel-delete",
             "channel-edit",
@@ -7554,6 +7555,13 @@ class OpsMeshService:
             if action == "channel-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "category-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_category_create_message_action,
                     route,
                     request,
                     secret_token,
@@ -9419,6 +9427,40 @@ class OpsMeshService:
         if channel.get("error"):
             raise RuntimeError(str(channel.get("error")))
         return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_category_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(
+            request.params,
+            "name",
+            required=True,
+        )
+        payload: dict[str, object] = {"name": name or "", "type": 4}
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        category = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(category, dict):
+            raise RuntimeError("Discord API returned a non-JSON category response.")
+        if category.get("error"):
+            raise RuntimeError(str(category.get("error")))
+        return {"ok": True, "category": category}
 
     def _dispatch_discord_channel_edit_message_action(
         self,

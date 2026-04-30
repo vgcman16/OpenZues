@@ -494,6 +494,9 @@ Discord guild-admin `channel-move` now dispatches through the same
 route-backed bot-token REST path, including the OpenClaw one-item guild
 channel positions body with parent clearing/assignment and integer position
 coercion.
+Discord guild-admin `category-create` now dispatches through the same
+route-backed bot-token REST path, creating a type `4` category and returning
+the upstream-shaped `{ok: true, category}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
