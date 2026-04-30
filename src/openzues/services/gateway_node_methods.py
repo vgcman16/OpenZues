@@ -6641,14 +6641,30 @@ class GatewayNodeMethodService:
                         status_code=503,
                     )
                 assert isinstance(attachments, list)
+                sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                    session_key
+                )
+                runtime_attachments = attachments
+                runtime_message = message
+                if sandbox_media_root is not None:
+                    runtime_attachments, sandbox_media_paths = (
+                        _stage_gateway_chat_sandbox_attachments(
+                            sandbox_root=sandbox_media_root,
+                            attachments=attachments,
+                        )
+                    )
+                    runtime_message = _format_gateway_chat_sandbox_media_paths(
+                        message,
+                        sandbox_media_paths,
+                    )
                 steer_result = await self._chat_attachment_send_service(
                     session_key=session_key,
-                    message=message,
+                    message=runtime_message,
                     idempotency_key=idempotency_key,
                     thinking=thinking,
                     deliver=None,
                     timeout_ms=timeout_ms,
-                    attachments=attachments,
+                    attachments=runtime_attachments,
                     channel=None,
                     to=None,
                     node_id=None,

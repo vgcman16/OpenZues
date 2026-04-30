@@ -1896,6 +1896,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Sandboxed `sessions.steer` attachment delivery now reuses the same
+  `media/inbound/...` workspace staging path for steered follow-up messages,
+  preserving interruption behavior while giving the runtime sandbox-relative
+  media paths instead of inline payload bytes.
+- Verified the sandboxed sessions-steer media staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_steer_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_steer_sandboxed_attachment_stages_media_in_session_workspace or
+  sessions_steer_uses_attachment_runtime_when_wired or
+  sessions_steer_effective_attachments_fail_as_unavailable_runtime or
+  sessions_steer_ignores_inert_attachments_without_effective_content or
+  sessions_send_sandboxed_attachment_stages_media_in_session_workspace or
+  chat_send_sandboxed_attachment_stages_media_in_session_workspace"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Telegram native `sendPoll` topic-qualified targets are now covered by the
   same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
