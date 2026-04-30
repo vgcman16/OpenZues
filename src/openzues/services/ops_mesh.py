@@ -7393,6 +7393,7 @@ class OpsMeshService:
             "react",
             "reactions",
             "send",
+            "sticker",
             "thread-create",
             "unpin",
         }:
@@ -7465,6 +7466,13 @@ class OpsMeshService:
             if action == "thread-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_thread_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "sticker":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_sticker_message_action,
                     route,
                     request,
                     secret_token,
@@ -9096,6 +9104,50 @@ class OpsMeshService:
             if isinstance(result, dict) and result.get("error"):
                 raise RuntimeError(str(result.get("error")))
         return {"ok": True, "thread": thread}
+
+    def _dispatch_discord_sticker_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord sticker requires channelId.")
+        sticker_ids = _message_action_param_string_array(
+            request.params,
+            "stickerId",
+        ) or _message_action_param_string_array(
+            request.params,
+            "stickerIds",
+            required=True,
+            label="sticker-id",
+        )
+        content = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        ) or _message_action_param_string(
+            request.params,
+            "content",
+            allow_empty=True,
+        )
+        payload: dict[str, object] = {"sticker_ids": sticker_ids or []}
+        if content:
+            payload["content"] = content
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     async def _post_provider_route_event(
         self,
