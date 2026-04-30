@@ -475,7 +475,9 @@ Top-level doctor output now also includes the upstream `doctor:security` and
 `doctor:shell-completion` contribution surfaces as stable native read models.
 `doctor:security` now covers OpenClaw's
 `approvals.exec.enabled=false` forwarding-only warning and fails soft when
-legacy config must be reported by earlier migrators first; shell completion
+legacy config must be reported by earlier migrators first. It also covers the
+implicit heartbeat direct-policy upgrade warning for configured default and
+per-agent heartbeat delivery whose `directPolicy` is unset. Shell completion
 remains partial until production repair adapters are wired.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes

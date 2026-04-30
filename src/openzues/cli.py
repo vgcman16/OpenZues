@@ -4026,6 +4026,58 @@ def _doctor_security_approvals_warnings(snapshot: dict[str, object]) -> list[str
     ]
 
 
+def _doctor_security_heartbeat_warning(
+    *,
+    label: str,
+    heartbeat: object,
+    path_hint: str,
+) -> str | None:
+    if not isinstance(heartbeat, dict):
+        return None
+    target = heartbeat.get("target")
+    if target is None or target == "none":
+        return None
+    if "directPolicy" in heartbeat:
+        return None
+    return "\n".join(
+        [
+            f"- {label}: heartbeat delivery is configured while {path_hint} is unset.",
+            '  Heartbeat now allows direct/DM targets by default. Set it explicitly to '
+            '"allow" or "block" to pin upgrade behavior.',
+        ]
+    )
+
+
+def _doctor_security_heartbeat_warnings(snapshot: dict[str, object]) -> list[str]:
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    warnings: list[str] = []
+    defaults = agents.get("defaults")
+    if isinstance(defaults, dict):
+        warning = _doctor_security_heartbeat_warning(
+            label="Heartbeat defaults",
+            heartbeat=defaults.get("heartbeat"),
+            path_hint="agents.defaults.heartbeat.directPolicy",
+        )
+        if warning is not None:
+            warnings.append(warning)
+    for agent in _object_list(agents.get("list")):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = _optional_cli_string(agent.get("id"))
+        if agent_id is None:
+            continue
+        warning = _doctor_security_heartbeat_warning(
+            label=f'Heartbeat agent "{agent_id}"',
+            heartbeat=agent.get("heartbeat"),
+            path_hint=f'heartbeat.directPolicy for agent "{agent_id}"',
+        )
+        if warning is not None:
+            warnings.append(warning)
+    return warnings
+
+
 def _build_doctor_security_payload(
     config_service: object | None = None,
 ) -> dict[str, object]:
@@ -4042,7 +4094,10 @@ def _build_doctor_security_payload(
             "repairAvailable": False,
             "warnings": [],
         }
-    warnings = _doctor_security_approvals_warnings(snapshot)
+    warnings = [
+        *_doctor_security_approvals_warnings(snapshot),
+        *_doctor_security_heartbeat_warnings(snapshot),
+    ]
     return {
         "status": "warning" if warnings else "ok",
         "summary": (

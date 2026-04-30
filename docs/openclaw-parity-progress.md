@@ -2825,6 +2825,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or doctor_json_warns or gateway_auth or gateway_mode_is_unset"` (`37
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `doctor:security` now also mirrors OpenClaw's implicit heartbeat
+  direct-policy upgrade warning for configured default or per-agent heartbeat
+  delivery whose `directPolicy` is unset, including the upstream
+  `allow`/`block` pinning guidance.
+- Verified the heartbeat direct-policy security slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_heartbeat_direct_policy_is_implicit
+  -q` (`1 passed`), adjacent security/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "heartbeat_direct_policy or approvals_exec_forwarding
+  or security_and_shell_completion_surfaces or doctor_json_warns or gateway_auth
+  or gateway_mode_is_unset"` (`38 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the

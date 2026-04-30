@@ -18975,6 +18975,41 @@ def test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_warns_when_heartbeat_direct_policy_is_implicit(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "agents": {
+                "defaults": {"heartbeat": {"target": "last"}},
+                "list": [
+                    {
+                        "id": "ops",
+                        "heartbeat": {"target": "last"},
+                    }
+                ],
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["security"]["warnings"]
+    assert payload["security"]["status"] == "warning"
+    assert any(
+        "Heartbeat defaults: heartbeat delivery is configured" in warning
+        and "agents.defaults.heartbeat.directPolicy is unset" in warning
+        and 'Set it explicitly to "allow" or "block"' in warning
+        for warning in warnings
+    )
+    assert any(
+        'Heartbeat agent "ops": heartbeat delivery is configured' in warning
+        and 'heartbeat.directPolicy for agent "ops" is unset' in warning
+        for warning in warnings
+    )
+
+
 def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(
     tmp_path,
     monkeypatch,
