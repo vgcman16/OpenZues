@@ -15911,6 +15911,83 @@ async def test_sessions_spawn_materializes_inline_attachments(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    class FailingMetadataDatabase(Database):
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            if session_key.startswith("launch:mode:workspace_affinity:thread:gateway-spawn-"):
+                raise RuntimeError("lineage patch failed")
+            await super().upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata=metadata,
+            )
+
+    database = FailingMetadataDatabase(
+        tmp_path / "gateway-sessions-spawn-attachments-patch-failure.db"
+    )
+    await database.initialize()
+    send_called = False
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        nonlocal send_called
+        send_called = True
+        return {"runId": "should-not-run", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Fail after attachments are staged.",
+            "cwd": str(workspace),
+            "attachments": [
+                {
+                    "name": "brief.md",
+                    "content": "# Brief\n\nClean this up if the spawn cannot be patched.\n",
+                    "encoding": "utf8",
+                }
+            ],
+        },
+        now_ms=893,
+    )
+
+    child_key = str(payload["childSessionKey"])
+    attachments_root = workspace / ".openclaw" / "attachments"
+    remaining_attachment_dirs = (
+        [path for path in attachments_root.iterdir() if path.name not in {".", ".."}]
+        if attachments_root.exists()
+        else []
+    )
+    assert payload == {
+        "status": "error",
+        "error": "lineage patch failed",
+        "childSessionKey": child_key,
+        "mode": "run",
+        "cleanup": "keep",
+    }
+    assert child_key.startswith("launch:mode:workspace_affinity:thread:gateway-spawn-")
+    assert send_called is False
+    assert remaining_attachment_dirs == []
+    assert await database.get_gateway_session_metadata(child_key) is None
+    assert await database.count_control_chat_messages(session_key=child_key) == 0
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted(
     tmp_path,
     monkeypatch,

@@ -8278,23 +8278,53 @@ class GatewayNodeMethodService:
                 if rel_dir is not None:
                     attachment_dir = workspace_dir / rel_dir
                 metadata["attachments"] = attachment_receipt
-            await self._database.upsert_gateway_session_metadata(
-                session_key=canonical_key,
-                metadata=metadata,
-            )
-            pending_message_seq = (
-                await self._database.count_control_chat_messages(session_key=canonical_key)
-            ) + 1
-            entry = await self._sessions_service.build_session_payload_for_key(
-                session_key=canonical_key,
-                now_ms=timestamp_ms,
-            )
-            if entry is None:
-                raise GatewayNodeMethodError(
-                    code="UNAVAILABLE",
-                    message="sessions.spawn could not materialize the spawned session",
-                    status_code=503,
+            try:
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=canonical_key,
+                    metadata=metadata,
                 )
+                pending_message_seq = (
+                    await self._database.count_control_chat_messages(
+                        session_key=canonical_key
+                    )
+                ) + 1
+                entry = await self._sessions_service.build_session_payload_for_key(
+                    session_key=canonical_key,
+                    now_ms=timestamp_ms,
+                )
+                if entry is None:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message="sessions.spawn could not materialize the spawned session",
+                        status_code=503,
+                    )
+            except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
+                await self._cleanup_failed_thread_binding(
+                    session_key=canonical_key,
+                    agent_id=target_agent_id,
+                    thread_binding=thread_binding,
+                    reason="spawn-failed",
+                )
+                if attachment_dir is not None:
+                    shutil.rmtree(attachment_dir, ignore_errors=True)
+                await self._database.delete_control_chat_messages(session_key=canonical_key)
+                await self._database.delete_gateway_session_metadata(canonical_key)
+                self._forget_gateway_chat_run(canonical_key)
+                await self._publish_sessions_changed_event(
+                    session_key=canonical_key,
+                    reason="delete",
+                    now_ms=now_ms,
+                )
+                spawn_error_text = str(exc).strip() or type(exc).__name__
+                spawn_setup_exception_response: dict[str, Any] = {
+                    "status": "error",
+                    "error": spawn_error_text,
+                    "childSessionKey": canonical_key,
+                    "mode": tracked_mode,
+                    "cleanup": tracked_cleanup,
+                }
+                spawn_setup_exception_response.update(role_context)
+                return spawn_setup_exception_response
             try:
                 light_context_kwargs = (
                     {

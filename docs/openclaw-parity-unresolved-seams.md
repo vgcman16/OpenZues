@@ -188,6 +188,10 @@ Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+If provisional child metadata/session materialization fails after inline
+attachment staging, OpenZues now removes the staged attachment directory,
+forgets provisional child state, and returns the spawn error envelope before
+dispatching the child runtime.
 Sandboxed `chat.send` attachment delivery now stages base64 media into the
 session workspace under `media/inbound/...`, strips inline payload bytes before
 runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
@@ -982,8 +986,10 @@ Current queue-head adjustment: `sessions.spawn` now materializes inline
 subagent attachments into `.openclaw/attachments/<id>` under the target
 workspace, writes a manifest, returns a receipt, persists the receipt in session
 metadata, and appends an untrusted-attachment prompt suffix to the child task.
-Remaining attachment parity is cleanup/retention policy and deeper config
-limits; remaining spawn parity also includes ACP and sandbox/depth guardrails.
+OpenClaw-style cleanup for failures after staging but before runtime dispatch is
+now closed as well. Remaining attachment parity is deeper retention policy and
+config limit breadth; remaining spawn parity also includes ACP protocol breadth
+and deeper sandbox lifecycle guardrails.
 
 Current queue-head adjustment: `sessions.spawn` now accepts internal
 `requesterSessionKey` context for native executor calls, resolves that requester

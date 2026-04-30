@@ -2106,6 +2106,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- `sessions.spawn` now also mirrors OpenClaw's materialized-attachment failure
+  cleanup: if provisional child metadata/session materialization fails after
+  inline attachments are staged but before runtime dispatch, OpenZues removes
+  the attachment directory, deletes provisional metadata/messages, cleans
+  thread binding state, and returns the spawn error envelope without starting
+  the child runtime.
+- Verified the attachment materialization failure cleanup seam with `python -m
+  pytest tests\test_gateway_node_methods.py -q -k
+  "removes_materialized_attachments_when_metadata_patch_fails"` (`1 passed`),
+  adjacent spawn coverage `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails
+  or sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails or
+  sessions_spawn_required_sandbox_dispatches_when_runtime_wired or
+  sessions_spawn_required_sandbox_persists_runtime_policy_metadata"` (`6
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Sandboxed `chat.send` attachment delivery now stages decoded base64 media
   inside the saved session workspace at `media/inbound/...`, strips inline
   payload bytes before attachment-runtime handoff, and carries sandbox-relative
