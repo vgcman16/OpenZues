@@ -14016,6 +14016,230 @@ def test_doctor_json_warns_about_opencode_provider_overrides(monkeypatch) -> Non
     assert payload["providerOverrides"]["opencode"]["warnings"][0] in payload["warnings"]
 
 
+def _invoke_doctor_json_with_config_snapshot(
+    monkeypatch,
+    snapshot: dict[str, object],
+    *,
+    settings: object | None = None,
+):
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return snapshot
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=settings or SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    return runner.invoke(app, ["doctor", "--json"])
+
+
+def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://api.openai.com/v1",
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                        "email": "user@example.com",
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["providerOverrides"]["openaiCodex"]["warnings"][0]
+    assert "models.providers.openai-codex contains a legacy transport override" in warning
+    assert "models.providers.openai-codex.api=openai-responses" in warning
+    assert "models.providers.openai-codex.baseUrl=https://api.openai.com/v1" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_codex_provider_override_shadows_stored_oauth(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    auth_store_path = tmp_path / "agents" / "main" / "agent" / "auth-profiles.json"
+    auth_store_path.parent.mkdir(parents=True)
+    auth_store_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "type": "oauth",
+                        "access": "access-token",
+                        "refresh": "refresh-token",
+                        "email": "user@example.com",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://api.openai.com/v1",
+                    }
+                }
+            }
+        },
+        settings=SimpleNamespace(data_dir=tmp_path),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["providerOverrides"]["openaiCodex"]["warnings"][0]
+    assert "models.providers.openai-codex contains a legacy transport override" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_codex_inline_model_keeps_legacy_openai_transport(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "models": [
+                            {
+                                "id": "gpt-5.4",
+                                "api": "openai-responses",
+                            }
+                        ]
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["providerOverrides"]["openaiCodex"]["warnings"][0]
+    assert "legacy transport override" in warning
+    assert "Older OpenAI transport settings can shadow" in warning
+
+
+def test_doctor_json_skips_codex_override_warning_for_custom_or_non_oauth_cases(
+    monkeypatch,
+) -> None:
+    custom_proxy = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://custom.example.com",
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                    }
+                }
+            },
+        },
+    )
+    header_only = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "baseUrl": "https://custom.example.com",
+                        "headers": {"X-Custom-Auth": "token-123"},
+                        "models": [{"id": "gpt-5.4"}],
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                    }
+                }
+            },
+        },
+    )
+    no_oauth = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://api.openai.com/v1",
+                    }
+                }
+            }
+        },
+    )
+
+    for result in (custom_proxy, header_only, no_oauth):
+        assert result.exit_code == 0, result.stdout
+        payload = json.loads(result.stdout)
+        assert "openaiCodex" not in payload.get("providerOverrides", {})
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

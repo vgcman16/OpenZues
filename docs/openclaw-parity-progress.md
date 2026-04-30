@@ -108,6 +108,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections"` (`7 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now mirrors OpenClaw's Codex OAuth provider
+  override warning: legacy `models.providers.openai-codex` OpenAI transport
+  settings warn only when configured or stored Codex OAuth exists, inline
+  legacy model transports are detected, and custom proxy/header-only/no-OAuth
+  cases stay quiet.
+- Verified the Codex OAuth provider override doctor slice with `python -m
+  pytest tests\test_cli.py -q -k "codex_provider_override or
+  codex_inline_model or codex_override_warning"` (`4 passed`), adjacent doctor
+  proof `python -m pytest tests\test_cli.py -q -k "codex_provider_override or
+  codex_inline_model or codex_override_warning or opencode_provider_overrides or
+  state_directory_is_missing or sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`11 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.

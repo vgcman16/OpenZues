@@ -2762,6 +2762,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_json_includes_gateway_health_contribution_and_channel_warnings or
   doctor_and_update_status_json_include_hermes_sections"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the Codex OAuth provider override warning seam from OpenClaw
+  `doctor-auth.ts` and
+  `doctor.warns-state-directory-is-missing.e2e.test.ts`: `doctor --json` now
+  reports `providerOverrides.openaiCodex` and a top-level warning when legacy
+  `models.providers.openai-codex` OpenAI transport settings shadow configured
+  or stored Codex OAuth profiles. Inline legacy model transport entries warn,
+  while custom proxy, header-only, and no-OAuth overrides stay quiet. Verified
+  with `python -m pytest tests\test_cli.py -q -k "codex_provider_override or
+  codex_inline_model or codex_override_warning"`, adjacent `python -m pytest
+  tests\test_cli.py -q -k "codex_provider_override or codex_inline_model or
+  codex_override_warning or opencode_provider_overrides or
+  state_directory_is_missing or sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Closed the provider-native `gatewayClientScopes` seam from OpenClaw
   `gateway/server-methods/send.ts`: direct send and poll now pass normalized
   gateway client scopes into provider runtime requests, route-backed provider

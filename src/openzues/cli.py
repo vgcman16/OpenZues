@@ -3722,8 +3722,146 @@ def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
     return snapshot if isinstance(snapshot, dict) else {}
 
 
+_OPENAI_CODEX_PROVIDER_ID = "openai-codex"
+_OPENAI_CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
+_OPENAI_CODEX_LEGACY_APIS = {"openai-responses", "openai-completions"}
+
+
+def _normalize_codex_override_base_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().rstrip("/")
+    return normalized or None
+
+
+def _is_legacy_codex_transport_shape(
+    value: object,
+    *,
+    inherited_base_url: object | None = None,
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    api = _optional_cli_string(value.get("api"))
+    if api not in _OPENAI_CODEX_LEGACY_APIS:
+        return False
+    base_url = _normalize_codex_override_base_url(
+        value.get("baseUrl", inherited_base_url)
+    )
+    return base_url is None or base_url == _OPENAI_CODEX_OPENAI_BASE_URL
+
+
+def _has_legacy_codex_transport_override(provider_override: object) -> bool:
+    if not isinstance(provider_override, dict):
+        return False
+    if _is_legacy_codex_transport_shape(provider_override):
+        return True
+    models = provider_override.get("models")
+    if not isinstance(models, list):
+        return False
+    inherited_base_url = provider_override.get("baseUrl")
+    return any(
+        _is_legacy_codex_transport_shape(model, inherited_base_url=inherited_base_url)
+        for model in models
+    )
+
+
+def _config_has_codex_oauth_profile(snapshot: dict[str, object]) -> bool:
+    auth = snapshot.get("auth")
+    auth_payload = auth if isinstance(auth, dict) else {}
+    raw_profiles = auth_payload.get("profiles")
+    if isinstance(raw_profiles, dict):
+        profiles: list[object] = list(raw_profiles.values())
+    elif isinstance(raw_profiles, list):
+        profiles = list(raw_profiles)
+    else:
+        profiles = []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("provider")) == _OPENAI_CODEX_PROVIDER_ID
+        and _optional_cli_string(profile.get("mode")) == "oauth"
+        for profile in profiles
+    )
+
+
+def _doctor_default_agent_auth_store_path(
+    snapshot: dict[str, object],
+    data_dir: Path,
+) -> Path:
+    agents = snapshot.get("agents")
+    agents_payload = agents if isinstance(agents, dict) else {}
+    raw_entries = agents_payload.get("list")
+    entries = [entry for entry in raw_entries if isinstance(entry, dict)] if isinstance(
+        raw_entries,
+        list,
+    ) else []
+    entry = next((item for item in entries if item.get("default") is True), None)
+    if entry is None and entries:
+        entry = entries[0]
+    if entry is None:
+        agent_id = "main"
+        raw_agent_dir: object = None
+    else:
+        agent_id = (_optional_cli_string(entry.get("id")) or "main").lower()
+        raw_agent_dir = entry.get("agentDir")
+    if isinstance(raw_agent_dir, str) and raw_agent_dir.strip():
+        agent_dir = Path(raw_agent_dir.strip()).expanduser()
+        if not agent_dir.is_absolute():
+            agent_dir = data_dir / agent_dir
+    else:
+        agent_dir = data_dir / "agents" / agent_id / "agent"
+    return agent_dir / "auth-profiles.json"
+
+
+def _stored_has_codex_oauth_profile(
+    snapshot: dict[str, object],
+    data_dir: Path | None,
+) -> bool:
+    if data_dir is None:
+        return False
+    store = _read_cli_json_object(_doctor_default_agent_auth_store_path(snapshot, data_dir)) or {}
+    raw_profiles = store.get("profiles")
+    profiles = raw_profiles.values() if isinstance(raw_profiles, dict) else []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("provider")) == _OPENAI_CODEX_PROVIDER_ID
+        and _optional_cli_string(profile.get("type")) == "oauth"
+        for profile in profiles
+    )
+
+
+def _build_codex_provider_override_warning(provider_override: object) -> str:
+    lines = [
+        (
+            f"- models.providers.{_OPENAI_CODEX_PROVIDER_ID} contains a legacy "
+            "transport override while Codex OAuth is configured."
+        ),
+        "- Older OpenAI transport settings can shadow the built-in Codex OAuth provider path.",
+    ]
+    if isinstance(provider_override, dict):
+        api = _optional_cli_string(provider_override.get("api"))
+        if api is not None:
+            lines.append(f"- models.providers.{_OPENAI_CODEX_PROVIDER_ID}.api={api}")
+        base_url = _optional_cli_string(provider_override.get("baseUrl"))
+        if base_url is not None:
+            lines.append(f"- models.providers.{_OPENAI_CODEX_PROVIDER_ID}.baseUrl={base_url}")
+    lines.extend(
+        [
+            (
+                "- Remove or rewrite the legacy transport override to restore the built-in "
+                "Codex OAuth provider path after recent fixes."
+            ),
+            (
+                "- Custom proxies and header-only overrides can stay; this warning only "
+                "targets old OpenAI transport settings."
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
     snapshot = _doctor_config_snapshot(config_service)
     models = snapshot.get("models")
@@ -3747,14 +3885,27 @@ def _build_doctor_provider_overrides_payload(
                 )
             ],
         }
+    codex_provider_override = provider_payload.get(_OPENAI_CODEX_PROVIDER_ID)
+    if _has_legacy_codex_transport_override(codex_provider_override) and (
+        _config_has_codex_oauth_profile(snapshot)
+        or _stored_has_codex_oauth_profile(snapshot, data_dir)
+    ):
+        payload["openaiCodex"] = {
+            "ok": False,
+            "paths": [f"models.providers.{_OPENAI_CODEX_PROVIDER_ID}"],
+            "warnings": [
+                _build_codex_provider_override_warning(codex_provider_override)
+            ],
+        }
     return payload
 
 
 def _with_doctor_provider_override_warnings(
     payload: dict[str, object],
     config_service: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
-    provider_overrides = _build_doctor_provider_overrides_payload(config_service)
+    provider_overrides = _build_doctor_provider_overrides_payload(config_service, data_dir)
     if not provider_overrides:
         return payload
     next_payload = dict(payload)
@@ -17773,12 +17924,13 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        data_dir = getattr(services.settings, "data_dir", None)
         payload = _with_doctor_provider_override_warnings(
             payload,
             services.gateway_config,
+            data_dir if isinstance(data_dir, Path) else None,
         )
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
-        data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
             payload = _with_doctor_state_directory_health(payload, data_dir)
             payload = _with_doctor_session_lock_health(payload, data_dir)
