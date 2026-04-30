@@ -17598,6 +17598,134 @@ async def test_sessions_spawn_acp_thread_mode_uses_target_agent_bound_account(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-session-binding.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnAcpSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-session-binding",
+                "runId": "run-acp-session-binding-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-session-binding",
+                "runtimeSessionId": "thread-session-binding",
+                "threadBinding": {
+                    "channel": "matrix",
+                    "accountId": "default",
+                    "to": "room:!room:example.org",
+                    "threadId": "$child-thread",
+                },
+                "sessionBinding": {
+                    "bindingId": "matrix-binding-1",
+                    "targetSessionKey": "agent:codex:acp:thread-session-binding",
+                    "targetKind": "session",
+                    "conversation": {
+                        "channel": "matrix",
+                        "accountId": "default",
+                        "conversationId": "$child-thread",
+                        "parentConversationId": "!room:example.org",
+                    },
+                    "status": "active",
+                    "boundAt": 123,
+                    "metadata": {
+                        "placement": "child",
+                        "agentId": "codex",
+                    },
+                },
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind this ACP session to a child Matrix thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_account_id="default",
+            message_to="room:!room:example.org",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-session-binding"
+    )
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example.org",
+        "threadId": "$child-thread",
+    }
+    assert metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example.org",
+        "threadId": "$child-thread",
+    }
+    assert metadata["sessionBinding"]["targetKind"] == "session"
+    assert metadata["sessionBinding"]["conversation"]["conversationId"] == "$child-thread"
+    assert metadata["deliveryContext"]["threadId"] == "$child-thread"
+    assert metadata["lastThreadId"] == "$child-thread"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:

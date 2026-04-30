@@ -248,9 +248,14 @@ Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses the same
 target-agent route-bound requester origin before thread-binding policy checks
 and RuntimeManager dispatch, so account-scoped ACP spawn policy and ACP
 requester context use the target agent account instead of the caller account.
+ACP accepted results that include a prepared thread binding now persist
+OpenClaw-shaped `threadBinding`, `sessionBinding targetKind="session"`,
+`completionDelivery`, and bound delivery context metadata on the child session,
+so downstream wait/reset/delete lifecycle paths can see the ACP session binding
+record instead of only requester-origin metadata.
 Remaining lifecycle parity is deeper provider-native binding record stores,
-provider-native child-thread creation, and ACP persistent session binding
-record breadth.
+provider-native child-thread creation, and production ACP provider binding
+creation breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,

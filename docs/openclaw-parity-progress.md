@@ -3406,6 +3406,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- ACP accepted results that carry a prepared thread binding now persist the
+  OpenClaw-shaped child metadata envelope: `threadBinding`, `sessionBinding`
+  with `targetKind="session"`, derived `completionDelivery`, and bound
+  delivery context / last-channel fields.
+- Verified the ACP session-binding metadata seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata
+  -q` (`1 passed`), adjacent ACP lifecycle coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run or
+  sessions_reset_closes_acp_runtime_before_resetting_metadata or
+  sessions_delete_closes_acp_runtime_before_metadata_delete"` (`6 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the

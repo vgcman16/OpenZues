@@ -7803,6 +7803,37 @@ class GatewayNodeMethodService:
                         acp_metadata["lastAccountId"] = requester_origin["accountId"]
                     if "threadId" in requester_origin:
                         acp_metadata["lastThreadId"] = requester_origin["threadId"]
+                raw_acp_thread_binding = acp_result.get("threadBinding")
+                acp_thread_binding: dict[str, Any] | None = None
+                if isinstance(raw_acp_thread_binding, Mapping):
+                    acp_thread_binding = json.loads(
+                        json.dumps(dict(raw_acp_thread_binding))
+                    )
+                    acp_metadata["threadBinding"] = acp_thread_binding
+                    raw_acp_session_binding = acp_result.get("sessionBinding")
+                    if isinstance(raw_acp_session_binding, Mapping):
+                        acp_metadata["sessionBinding"] = json.loads(
+                            json.dumps(dict(raw_acp_session_binding))
+                        )
+                    raw_completion_delivery = acp_result.get("completionDelivery")
+                    if isinstance(raw_completion_delivery, Mapping):
+                        acp_metadata["completionDelivery"] = json.loads(
+                            json.dumps(dict(raw_completion_delivery))
+                        )
+                    else:
+                        acp_metadata["completionDelivery"] = {
+                            "mode": "thread",
+                            **acp_thread_binding,
+                        }
+                    acp_metadata["deliveryContext"] = dict(acp_thread_binding)
+                    if "channel" in acp_thread_binding:
+                        acp_metadata["lastChannel"] = acp_thread_binding["channel"]
+                    if "to" in acp_thread_binding:
+                        acp_metadata["lastTo"] = acp_thread_binding["to"]
+                    if "accountId" in acp_thread_binding:
+                        acp_metadata["lastAccountId"] = acp_thread_binding["accountId"]
+                    if "threadId" in acp_thread_binding:
+                        acp_metadata["lastThreadId"] = acp_thread_binding["threadId"]
                 label = _optional_session_label(payload.get("label"), label="label")
                 if label is not None:
                     acp_metadata["label"] = label
