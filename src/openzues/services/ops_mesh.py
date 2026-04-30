@@ -7091,6 +7091,7 @@ class OpsMeshService:
         if channel != "slack" or action not in {
             "delete",
             "edit",
+            "emoji-list",
             "list-pins",
             "member-info",
             "pin",
@@ -7161,6 +7162,13 @@ class OpsMeshService:
         if action == "member-info":
             return await asyncio.to_thread(
                 self._dispatch_slack_member_info_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "emoji-list":
+            return await asyncio.to_thread(
+                self._dispatch_slack_emoji_list_message_action,
                 route,
                 request,
                 secret_token,
@@ -7659,6 +7667,31 @@ class OpsMeshService:
             error = str(result.get("error") or "unknown_error")
             raise RuntimeError(f"Slack API returned {error}.")
         return {"ok": True, "info": result}
+
+    def _dispatch_slack_emoji_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "emoji.list"),
+            {},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        emojis: dict[str, object] = dict(result)
+        limit = _message_action_param_positive_int(request.params, "limit")
+        raw_emoji = result.get("emoji")
+        if limit is not None and isinstance(raw_emoji, dict):
+            entries = sorted(raw_emoji.items(), key=lambda item: str(item[0]))
+            emojis["emoji"] = {str(key): value for key, value in entries[:limit]}
+        return {"ok": True, "emojis": emojis}
 
     def _remove_own_slack_reactions(
         self,

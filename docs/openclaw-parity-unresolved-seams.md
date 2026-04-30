@@ -416,7 +416,8 @@ through `pins.list` and returns provider-shaped pin items. Slack channel-history
 `limit`/`before`/`after` parameter mapping, while threaded reads dispatch
 through `conversations.replies` and filter out the parent message. Slack
 `member-info` now dispatches through `users.info` and returns the provider
-info envelope.
+info envelope. Slack `emoji-list` now dispatches through `emoji.list` and
+applies OpenClaw's sorted local result limit.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
