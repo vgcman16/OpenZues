@@ -3334,6 +3334,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.
+- Top-level `doctor --fix` now also covers OpenClaw's allowlist-policy
+  `allowFrom` recovery helper. It reads saved channel pairing stores, dedupes
+  stored senders, restores missing allowlists for `dmPolicy="allowlist"` or
+  nested `dm.policy="allowlist"`, and writes nested-only channel allowlists
+  where OpenClaw keeps them.
+- Verified the allowlist-policy allowFrom doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_recovers_allowlist_policy_allow_from_from_store
+  -q` (`1 passed`), adjacent doctor repair coverage `python -m pytest
+  tests\test_cli.py -q -k "allowlist_policy_allow_from or
+  open_policy_allow_from or bundled_plugin_load_paths or stale_plugin_config"`
+  (`8 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\gateway_config.py`.
 - Route-backed `sessions.spawn thread=true` now persists an OpenClaw-shaped
   current-conversation `sessionBinding` record on child session metadata in
   addition to `threadBinding` and `completionDelivery`. Records include

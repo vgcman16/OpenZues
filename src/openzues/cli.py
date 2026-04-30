@@ -1962,6 +1962,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "bundledPluginLoadPaths",
         "stalePluginConfig",
         "openPolicyAllowFrom",
+        "allowlistPolicyAllowFrom",
         "sandbox",
         "gatewayHealth",
         "memorySearch",
@@ -2717,6 +2718,121 @@ def _with_doctor_open_policy_allow_from_payload(
     )
     next_payload = dict(payload)
     next_payload["openPolicyAllowFrom"] = allow_from_payload
+    warnings = _object_list(allow_from_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _doctor_allowlist_policy_allow_from_warnings(changes: Sequence[object]) -> list[str]:
+    if not changes:
+        return []
+    warnings = [str(change) for change in changes if str(change).strip()]
+    if warnings:
+        warnings.append(
+            '- Run "openzues doctor --fix" to restore missing allowFrom lists.'
+        )
+    return warnings
+
+
+def _build_doctor_allowlist_policy_allow_from_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:allowlist-policy-allowfrom",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "changes": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for allowlist-policy allowFrom checks.",
+        }
+    if should_repair:
+        repair = getattr(config_service, "repair_allowlist_policy_allow_from", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Allowlist-policy allowFrom repair runtime is unavailable.",
+            }
+        try:
+            result = repair()
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Allowlist-policy allowFrom repair failed: {exc}",
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        changes = _object_list(result_payload.get("changes"))
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": (
+                "Restored allowlist DM allowFrom entries."
+                if changed
+                else "No allowlist DM allowFrom repairs needed."
+            ),
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": changes,
+            "warnings": [],
+            "path": result_payload.get("path") or _config_service_path_label(config_service),
+        }
+
+    detect = getattr(config_service, "detect_allowlist_policy_allow_from", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Allowlist-policy allowFrom detection runtime is unavailable.",
+        }
+    try:
+        result = detect()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Allowlist-policy allowFrom detection failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    changes = _object_list(result_payload.get("changes"))
+    warnings = _doctor_allowlist_policy_allow_from_warnings(changes)
+    return {
+        **base_payload,
+        "status": "warn" if changes else "ok",
+        "summary": (
+            "Allowlist DM policies can restore allowFrom from pairing store."
+            if changes
+            else "Allowlist DM allowFrom policy is current."
+        ),
+        "repairAvailable": True,
+        "changes": changes,
+        "warnings": warnings,
+        "path": result_payload.get("path") or _config_service_path_label(config_service),
+    }
+
+
+def _with_doctor_allowlist_policy_allow_from_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    allow_from_payload = _build_doctor_allowlist_policy_allow_from_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["allowlistPolicyAllowFrom"] = allow_from_payload
     warnings = _object_list(allow_from_payload.get("warnings"))
     if warnings:
         next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
@@ -17566,6 +17682,11 @@ def doctor(
             should_repair=fix,
         )
         payload = _with_doctor_open_policy_allow_from_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_allowlist_policy_allow_from_payload(
             payload,
             services.gateway_config,
             should_repair=fix,

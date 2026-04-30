@@ -147,6 +147,11 @@ Open DM policy wildcard repair now also follows OpenClaw's
 `allowFrom` wildcard changes, `doctor --fix` writes top-level or nested
 wildcards based on channel mode, and nested `dm.policy="open"` is
 canonicalized for channels that support top-level `dmPolicy`.
+Allowlist DM policy sender recovery now also follows OpenClaw's
+`allowlist-policy-repair` helper: `doctor --fix` restores missing
+`allowFrom` sender lists from the saved channel pairing store, dedupes and
+normalizes stored senders, and writes top-level or nested `allowFrom` based on
+the channel mode.
 The currently identified OpenClaw legacy-config doctor migrator files are now
 covered by native OpenZues repair paths. Future config work should come from a
 new upstream migration file or validation seam rather than this closed queue.

@@ -497,6 +497,58 @@ class GatewayConfigService:
             "hash": self._snapshot_hash(snapshot),
         }
 
+    def detect_allowlist_policy_allow_from(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            return {"ok": True, "path": str(config_path), "changes": []}
+        payload = self._read_raw_config_object(label="allowlist policy allowFrom detection")
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changes": _collect_allowlist_policy_allow_from_changes(
+                payload,
+                data_dir=self._data_dir,
+            ),
+        }
+
+    def repair_allowlist_policy_allow_from(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            snapshot = self._default_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        payload = self._read_raw_config_object(label="allowlist policy allowFrom repair")
+        changes = _repair_allowlist_policy_allow_from(payload, data_dir=self._data_dir)
+        if not changes:
+            snapshot = self.build_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        snapshot = self._validated_snapshot(payload)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changed": True,
+            "changes": changes,
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
     def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()
@@ -2076,6 +2128,199 @@ def _repair_open_policy_allow_from(payload: dict[str, Any]) -> list[str]:
 def _collect_open_policy_allow_from_changes(payload: dict[str, Any]) -> list[str]:
     candidate = copy.deepcopy(payload)
     return _repair_open_policy_allow_from(candidate)
+
+
+def _safe_allow_from_key(value: str) -> str:
+    raw = value.strip().lower()
+    safe = re.sub(r'[\\/:*?"<>|]', "_", raw).replace("..", "_")
+    return safe or "_"
+
+
+def _allow_from_store_dirs(data_dir: Path | None) -> list[Path]:
+    if data_dir is None:
+        return []
+    return [data_dir / "settings" / "oauth", data_dir / "oauth"]
+
+
+def _read_allow_from_store_file(path: Path) -> list[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    allow_from = payload.get("allowFrom")
+    return _normalize_allowlist_entries(allow_from)
+
+
+def _normalize_allowlist_entries(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values:
+        entry = str(value).strip()
+        if not entry or entry == "*" or entry in seen:
+            continue
+        seen.add(entry)
+        normalized.append(entry)
+    return normalized
+
+
+def _read_channel_allow_from_store(
+    channel_name: str,
+    *,
+    account_id: str | None,
+    data_dir: Path | None,
+) -> list[str]:
+    channel_key = _safe_allow_from_key(channel_name)
+    normalized_account = _safe_allow_from_key(account_id or "default")
+    paths: list[Path] = []
+    for store_dir in _allow_from_store_dirs(data_dir):
+        if account_id and normalized_account != "default":
+            paths.append(store_dir / f"{channel_key}-{normalized_account}-allowFrom.json")
+        else:
+            paths.append(store_dir / f"{channel_key}-default-allowFrom.json")
+            paths.append(store_dir / f"{channel_key}-allowFrom.json")
+    seen: set[str] = set()
+    entries: list[str] = []
+    for path in paths:
+        for entry in _read_allow_from_store_file(path):
+            if entry in seen:
+                continue
+            seen.add(entry)
+            entries.append(entry)
+    return entries
+
+
+def _has_allowlist_entries(values: object) -> bool:
+    return bool(_normalize_allowlist_entries(values))
+
+
+def _apply_recovered_allow_from(
+    account: dict[str, Any],
+    *,
+    allow_from: list[str],
+    mode: str,
+    prefix: str,
+    changes: list[str],
+) -> None:
+    count = len(allow_from)
+    noun = "entry" if count == 1 else "entries"
+    if mode == "nestedOnly":
+        dm_value = account.get("dm")
+        dm = dict(dm_value) if isinstance(dm_value, dict) else {}
+        dm["allowFrom"] = list(allow_from)
+        account["dm"] = dm
+        changes.append(
+            f"- {prefix}.dm.allowFrom: restored {count} sender {noun} "
+            'from pairing store (dmPolicy="allowlist").'
+        )
+        return
+    if mode == "topOrNested":
+        dm_value = account.get("dm")
+        nested_dm = dm_value if isinstance(dm_value, dict) else None
+        nested_allow_from = nested_dm.get("allowFrom") if nested_dm is not None else None
+        if nested_dm is not None and not isinstance(account.get("allowFrom"), list) and isinstance(
+            nested_allow_from,
+            list,
+        ):
+            nested_dm["allowFrom"] = list(allow_from)
+            changes.append(
+                f"- {prefix}.dm.allowFrom: restored {count} sender {noun} "
+                'from pairing store (dmPolicy="allowlist").'
+            )
+            return
+    account["allowFrom"] = list(allow_from)
+    changes.append(
+        f"- {prefix}.allowFrom: restored {count} sender {noun} "
+        'from pairing store (dmPolicy="allowlist").'
+    )
+
+
+def _recover_allowlist_policy_allow_from_for_account(
+    account: dict[str, Any],
+    *,
+    channel_name: str,
+    account_id: str | None,
+    data_dir: Path | None,
+    prefix: str,
+    changes: list[str],
+) -> None:
+    dm_value = account.get("dm")
+    dm = dm_value if isinstance(dm_value, dict) else None
+    dm_policy_value = account.get("dmPolicy")
+    dm_policy = dm_policy_value if isinstance(dm_policy_value, str) else None
+    if dm_policy is None and dm is not None:
+        nested_policy = dm.get("policy")
+        dm_policy = nested_policy if isinstance(nested_policy, str) else None
+    if dm_policy != "allowlist":
+        return
+    if _has_allowlist_entries(account.get("allowFrom")) or _has_allowlist_entries(
+        dm.get("allowFrom") if dm is not None else None
+    ):
+        return
+    recovered = _read_channel_allow_from_store(
+        channel_name,
+        account_id=account_id,
+        data_dir=data_dir,
+    )
+    if not recovered:
+        return
+    _apply_recovered_allow_from(
+        account,
+        allow_from=recovered,
+        mode=_open_policy_allow_from_mode(channel_name),
+        prefix=prefix,
+        changes=changes,
+    )
+
+
+def _repair_allowlist_policy_allow_from(
+    payload: dict[str, Any],
+    *,
+    data_dir: Path | None,
+) -> list[str]:
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return []
+    changes: list[str] = []
+    for channel_name, channel_config in channels.items():
+        if not isinstance(channel_config, dict):
+            continue
+        channel_key = str(channel_name)
+        _recover_allowlist_policy_allow_from_for_account(
+            channel_config,
+            channel_name=channel_key,
+            account_id=None,
+            data_dir=data_dir,
+            prefix=f"channels.{channel_key}",
+            changes=changes,
+        )
+        accounts = channel_config.get("accounts")
+        if not isinstance(accounts, dict):
+            continue
+        for account_id, account_config in accounts.items():
+            if not isinstance(account_config, dict):
+                continue
+            _recover_allowlist_policy_allow_from_for_account(
+                account_config,
+                channel_name=channel_key,
+                account_id=str(account_id),
+                data_dir=data_dir,
+                prefix=f"channels.{channel_key}.accounts.{account_id}",
+                changes=changes,
+            )
+    return changes
+
+
+def _collect_allowlist_policy_allow_from_changes(
+    payload: dict[str, Any],
+    *,
+    data_dir: Path | None,
+) -> list[str]:
+    candidate = copy.deepcopy(payload)
+    return _repair_allowlist_policy_allow_from(candidate, data_dir=data_dir)
 
 
 def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:
