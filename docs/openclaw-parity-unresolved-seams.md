@@ -257,6 +257,9 @@ ACP thread-bound spawns with a channel context but no explicit account id now
 mirror OpenClaw's `resolveAcpSpawnChannelAccountId`: the native gateway uses
 `channels.<channel>.defaultAccount` when present and otherwise falls back to
 `default` before account-scoped spawn policy checks and ACP runtime dispatch.
+Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
+boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
+response without selecting a target agent or dispatching RuntimeManager work.
 Remaining lifecycle parity is deeper provider-native binding record stores,
 provider-native child-thread creation, and production ACP provider binding
 creation breadth.

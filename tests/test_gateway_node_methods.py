@@ -17308,6 +17308,70 @@ async def test_sessions_spawn_acp_rejects_agent_outside_acp_allowlist(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_respects_disabled_policy(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-disabled.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": False,
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("disabled ACP policy should reject before runtime dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try ACP when policy disables it.",
+            "runtime": "acp",
+            "agentId": "codex",
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "acp_disabled",
+        "error": "ACP is disabled by policy (`acp.enabled=false`).",
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-acp-thread-policy.db")
     await database.initialize()

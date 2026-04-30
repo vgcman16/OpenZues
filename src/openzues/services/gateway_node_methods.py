@@ -7577,6 +7577,13 @@ class GatewayNodeMethodService:
                         ),
                         **role_context,
                     }
+                if _sessions_spawn_acp_disabled_by_policy(self._config_service):
+                    return {
+                        "status": "forbidden",
+                        "errorCode": "acp_disabled",
+                        "error": "ACP is disabled by policy (`acp.enabled=false`).",
+                        **role_context,
+                    }
                 if self._acp_spawn_service is None:
                     return {
                         "status": "error",
@@ -13196,6 +13203,12 @@ def _sessions_spawn_acp_config(
     snapshot = config_service.build_snapshot()
     acp_config = snapshot.get("acp")
     return acp_config if isinstance(acp_config, dict) else {}
+
+
+def _sessions_spawn_acp_disabled_by_policy(
+    config_service: GatewayConfigService | None,
+) -> bool:
+    return _bool_or_none(_sessions_spawn_acp_config(config_service).get("enabled")) is False
 
 
 def _sessions_spawn_acp_target_agent_id(

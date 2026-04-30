@@ -3440,6 +3440,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed`), `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Gateway ACP spawns now honor OpenClaw's `acp.enabled=false` runtime policy
+  before the service boundary, returning `errorCode="acp_disabled"` and
+  avoiding target/runtime dispatch.
+- Verified the ACP disabled-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_respects_disabled_policy
+  -q` (`1 passed`), adjacent ACP policy coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_respects_disabled_policy or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_uses_configured_default_agent or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_rejects_acp_required_sandbox_policy"` (`5 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the
