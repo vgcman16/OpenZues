@@ -140,6 +140,12 @@ Zalo media sends now use the upstream `sendPhoto` path, preserve caption text
 only on the first media item, iterate multiple media URLs, and persist
 `mediaIds` / `mediaUrls`. Remaining Zalo provider parity is limited to deeper
 provider-specific edge cases surfaced by future upstream contract checks.
+Gateway `message.action` now has a fakeable native action dispatcher that
+receives OpenClaw-shaped channel/action params, normalized routing metadata,
+trusted-owner posture, tool context, and idempotency key, returning the
+dispatcher payload instead of always reporting unsupported action. Remaining
+action parity is production provider action adapters, `supportsAction` breadth,
+and deeper trusted-sender requirements for provider-specific tool contexts.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels

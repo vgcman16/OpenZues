@@ -47,6 +47,10 @@ from openzues.services.gateway_logs import (
     GatewayLogsUnavailableError,
     _redact_sensitive_tokens,
 )
+from openzues.services.gateway_message_actions import (
+    GatewayMessageActionDispatcher,
+    GatewayMessageActionDispatchRequest,
+)
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
     TALK_SECRETS_GATEWAY_METHOD_SCOPE,
@@ -1341,6 +1345,7 @@ class GatewayNodeMethodService:
             Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
         plugin_runtime_service: GatewayPluginRuntimeService | None = None,
+        message_action_dispatcher: GatewayMessageActionDispatcher | None = None,
     ) -> None:
         self.registry = registry
         self._database = database
@@ -1450,6 +1455,7 @@ class GatewayNodeMethodService:
             executors=self._tools_invoke_executors,
             owner_only=self._tools_invoke_owner_only,
         )
+        self._message_action_dispatcher = message_action_dispatcher
         if tools_catalog_service is None:
             self._tools_catalog_service = GatewayToolsCatalogService(
                 plugin_runtime_service=self._plugin_runtime_service
@@ -5529,7 +5535,7 @@ class GatewayNodeMethodService:
                 reject_webchat_as_internal_only=True,
             )
             action = _require_non_empty_string(payload.get("action"), label="action")
-            _require_unknown_mapping(payload.get("params"), label="params")
+            action_params = _require_unknown_mapping(payload.get("params"), label="params")
             if "accountId" in payload and payload.get("accountId") is not None:
                 _require_string(payload.get("accountId"), label="accountId")
             if "requesterSenderId" in payload and payload.get("requesterSenderId") is not None:
@@ -5545,12 +5551,55 @@ class GatewayNodeMethodService:
                 _require_string(payload.get("sessionId"), label="sessionId")
             if "agentId" in payload and payload.get("agentId") is not None:
                 _require_string(payload.get("agentId"), label="agentId")
+            tool_context: dict[str, Any] | None = None
             if "toolContext" in payload and payload.get("toolContext") is not None:
                 _validate_message_action_tool_context(payload.get("toolContext"))
-            _require_non_empty_string(
+                tool_context = _require_unknown_mapping(
+                    payload.get("toolContext"),
+                    label="toolContext",
+                )
+            idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             )
+            if self._message_action_dispatcher is not None:
+                try:
+                    action_result = await self._message_action_dispatcher(
+                        GatewayMessageActionDispatchRequest(
+                            channel=resolved_channel,
+                            action=action,
+                            params=action_params,
+                            idempotency_key=idempotency_key,
+                            account_id=_string_or_none(payload.get("accountId")),
+                            requester_sender_id=_string_or_none(
+                                payload.get("requesterSenderId")
+                            ),
+                            sender_is_owner=(
+                                bool(payload.get("senderIsOwner"))
+                                and _tools_invoke_requester_is_owner(resolved_requester)
+                            ),
+                            session_key=_string_or_none(payload.get("sessionKey")),
+                            session_id=_string_or_none(payload.get("sessionId")),
+                            agent_id=_string_or_none(payload.get("agentId")),
+                            tool_context=tool_context,
+                        )
+                    )
+                except Exception as exc:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=str(exc),
+                        status_code=503,
+                    ) from exc
+                if action_result is not None:
+                    return dict(action_result)
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=(
+                        f"Message action {action} not supported for channel "
+                        f"{resolved_channel}."
+                    ),
+                    status_code=400,
+                )
             raise GatewayNodeMethodError(
                 code="INVALID_REQUEST",
                 message=f"Channel {resolved_channel} does not support action {action}.",

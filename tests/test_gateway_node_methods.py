@@ -42,6 +42,7 @@ from openzues.services.gateway_config import (
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_health import GatewayHealthService
 from openzues.services.gateway_identity import GatewayIdentityService
+from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
@@ -36419,6 +36420,85 @@ async def test_message_action_auto_picks_single_notification_route_channel_when_
 
     assert exc_info.value.code == "INVALID_REQUEST"
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_message_action_dispatches_registered_native_action_runtime() -> None:
+    calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "channel": "slack",
+            "action": "react",
+            "messageId": "1710000000.0001",
+            "reaction": "ok",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        message_action_dispatcher=fake_message_action_dispatcher,
+    )
+
+    result = await service.call(
+        "message.action",
+        {
+            "channel": "slack",
+            "action": "react",
+            "params": {
+                "channelId": "C123",
+                "messageId": "1710000000.0001",
+                "emoji": "ok",
+            },
+            "accountId": "workspace-bot",
+            "requesterSenderId": "U123",
+            "senderIsOwner": True,
+            "sessionKey": "agent:main:slack:channel:C123",
+            "sessionId": "session-123",
+            "agentId": "main",
+            "toolContext": {
+                "currentChannelId": "C123",
+                "currentChannelProvider": "slack",
+                "currentThreadTs": "1710000000.9999",
+                "currentMessageId": "1710000000.0001",
+            },
+            "idempotencyKey": "idem-message-action-dispatch",
+        },
+        requester=GatewayNodeMethodRequester(
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert result == {
+        "channel": "slack",
+        "action": "react",
+        "messageId": "1710000000.0001",
+        "reaction": "ok",
+    }
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.channel == "slack"
+    assert request.action == "react"
+    assert request.params == {
+        "channelId": "C123",
+        "messageId": "1710000000.0001",
+        "emoji": "ok",
+    }
+    assert request.account_id == "workspace-bot"
+    assert request.requester_sender_id == "U123"
+    assert request.sender_is_owner is True
+    assert request.session_key == "agent:main:slack:channel:C123"
+    assert request.session_id == "session-123"
+    assert request.agent_id == "main"
+    assert request.tool_context == {
+        "currentChannelId": "C123",
+        "currentChannelProvider": "slack",
+        "currentThreadTs": "1710000000.9999",
+        "currentMessageId": "1710000000.0001",
+    }
+    assert request.idempotency_key == "idem-message-action-dispatch"
 
 
 @pytest.mark.asyncio
