@@ -1635,6 +1635,17 @@ def _discord_apply_permission_overwrite(
     return (permissions & ~denied) | allowed
 
 
+def _discord_parent_id_param(params: dict[str, Any]) -> tuple[bool, str | None]:
+    if params.get("clearParent") is True:
+        return True, None
+    if "parentId" in params and params.get("parentId") is None:
+        return True, None
+    parent_id = _message_action_param_string(params, "parentId")
+    if parent_id is not None:
+        return True, parent_id
+    return False, None
+
+
 class GatewayDiscordPresenceRuntime(Protocol):
     def update_presence(
         self,
@@ -7408,6 +7419,7 @@ class OpsMeshService:
             )
         if channel == "discord" and action in {
             "channel-create",
+            "channel-edit",
             "channel-info",
             "channel-list",
             "delete",
@@ -7540,6 +7552,13 @@ class OpsMeshService:
             if action == "channel-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-edit":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_edit_message_action,
                     route,
                     request,
                     secret_token,
@@ -9375,6 +9394,69 @@ class OpsMeshService:
         channel = self._request_json_provider_url(
             _discord_api_endpoint(f"guilds/{guild_id}/channels"),
             method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_channel_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-edit requires channelId.")
+        payload: dict[str, object] = {}
+        name = _message_action_param_string(request.params, "name")
+        if name is not None:
+            payload["name"] = name
+        topic = _message_action_param_string(request.params, "topic")
+        if topic is not None:
+            payload["topic"] = topic
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        has_parent_id, parent_id = _discord_parent_id_param(request.params)
+        if has_parent_id:
+            payload["parent_id"] = parent_id
+        nsfw = request.params.get("nsfw")
+        if isinstance(nsfw, bool):
+            payload["nsfw"] = nsfw
+        rate_limit_per_user = _message_action_param_integer(
+            request.params,
+            "rateLimitPerUser",
+        )
+        if rate_limit_per_user is not None:
+            payload["rate_limit_per_user"] = rate_limit_per_user
+        archived = request.params.get("archived")
+        if isinstance(archived, bool):
+            payload["archived"] = archived
+        locked = request.params.get("locked")
+        if isinstance(locked, bool):
+            payload["locked"] = locked
+        auto_archive_duration = _message_action_param_integer(
+            request.params,
+            "autoArchiveDuration",
+        )
+        if auto_archive_duration is not None:
+            payload["auto_archive_duration"] = auto_archive_duration
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="PATCH",
             payload=payload,
             secret_header_name="Authorization",
             secret_token=_discord_bot_authorization(secret_token),
