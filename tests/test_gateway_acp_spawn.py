@@ -434,6 +434,52 @@ async def test_runtime_manager_acp_spawn_formats_matrix_top_level_delivery_targe
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_formats_discord_child_delivery_target() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Discord child thread tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:discord:channel:parent-channel",
+            "requesterChannel": "discord",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:parent-channel",
+            "requesterThreadId": "requester-thread",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "discord",
+        "accountId": "default",
+        "to": "channel:thread-acp-new",
+        "threadId": "thread-acp-new",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "discord",
+        "accountId": "default",
+        "to": "channel:thread-acp-new",
+        "threadId": "thread-acp-new",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "discord",
+        "accountId": "default",
+        "conversationId": "thread-acp-new",
+        "parentConversationId": "parent-channel",
+    }
+    assert session_binding["metadata"]["parentThreadId"] == "requester-thread"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

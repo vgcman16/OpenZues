@@ -203,10 +203,13 @@ def _child_thread_delivery_target(
     *,
     channel: str,
     to: str,
+    child_thread_id: str,
     parent_conversation_id: str | None,
 ) -> str:
     if channel == "matrix" and parent_conversation_id is not None:
         return f"room:{parent_conversation_id}"
+    if channel == "discord":
+        return f"channel:{child_thread_id}"
     return to
 
 
@@ -373,6 +376,7 @@ def _child_acp_thread_binding_metadata(
     delivery_to = _child_thread_delivery_target(
         channel=channel,
         to=to,
+        child_thread_id=child_thread_id,
         parent_conversation_id=parent_conversation_id,
     )
     thread_binding = {

@@ -86,8 +86,10 @@ and using the native ACP runtime thread id as OpenZues' local child-thread
 handle for `threadBinding`, `completionDelivery`, and
 `sessionBinding.metadata`. Matrix top-level `channel:<room>` requester targets
 now also format bound delivery as `room:<room>` the way OpenClaw's Matrix
-delivery resolver does. Remaining ACP binding parity is real provider-native
-child-thread creation/store breadth, unbind lifecycle breadth, and the
+delivery resolver does, and Discord child-placement delivery now targets
+`channel:<child-runtime-thread>` instead of the requester parent channel.
+Remaining ACP binding parity is real provider-native child-thread
+creation/store breadth, unbind lifecycle breadth, and the
 standalone ACP bridge server/client runtime.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
