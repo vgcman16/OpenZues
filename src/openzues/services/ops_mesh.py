@@ -7419,6 +7419,7 @@ class OpsMeshService:
             )
         if channel == "discord" and action in {
             "category-create",
+            "category-delete",
             "category-edit",
             "channel-create",
             "channel-delete",
@@ -7570,6 +7571,13 @@ class OpsMeshService:
             if action == "category-edit":
                 return await asyncio.to_thread(
                     self._dispatch_discord_category_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "category-delete":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_category_delete_message_action,
                     route,
                     request,
                     secret_token,
@@ -9505,6 +9513,32 @@ class OpsMeshService:
         if category.get("error"):
             raise RuntimeError(str(category.get("error")))
         return {"ok": True, "category": category}
+
+    def _dispatch_discord_category_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        category_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "categoryId",
+                required=True,
+            )
+        )
+        if category_id is None:
+            raise RuntimeError("Discord category-delete requires categoryId.")
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{category_id}"),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "channelId": category_id}
 
     def _dispatch_discord_channel_edit_message_action(
         self,

@@ -500,6 +500,9 @@ the upstream-shaped `{ok: true, category}` payload.
 Discord guild-admin `category-edit` now dispatches through the same
 route-backed bot-token REST path, PATCHing optional name and integer position
 fields onto the category channel and returning `{ok: true, category}`.
+Discord guild-admin `category-delete` now dispatches through the same
+route-backed bot-token REST path and returns the upstream-shaped
+`{ok: true, channelId}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
