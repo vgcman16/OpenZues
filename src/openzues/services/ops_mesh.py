@@ -7430,6 +7430,7 @@ class OpsMeshService:
             "delete",
             "edit",
             "emoji-list",
+            "event-list",
             "list-pins",
             "member-info",
             "permissions",
@@ -7558,6 +7559,13 @@ class OpsMeshService:
             if action == "voice-status":
                 return await asyncio.to_thread(
                     self._dispatch_discord_voice_status_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "event-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_event_list_message_action,
                     route,
                     request,
                     secret_token,
@@ -9434,6 +9442,30 @@ class OpsMeshService:
         if voice.get("error"):
             raise RuntimeError(str(voice.get("error")))
         return {"ok": True, "voice": voice}
+
+    def _dispatch_discord_event_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        events = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/scheduled-events"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(events, dict) and events.get("error"):
+            raise RuntimeError(str(events.get("error")))
+        if not isinstance(events, list):
+            raise RuntimeError("Discord API returned a non-JSON events response.")
+        return {"ok": True, "events": events}
 
     def _dispatch_discord_channel_create_message_action(
         self,
