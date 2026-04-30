@@ -219,6 +219,55 @@ async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_sess
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_binds_line_current_conversation() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:line:direct:U1234567890abcdef1234567890abcdef"
+            ),
+            "requesterChannel": "line",
+            "requesterAccountId": "default",
+            "requesterTo": "line:user:U1234567890abcdef1234567890abcdef",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:user:U1234567890abcdef1234567890abcdef",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:user:U1234567890abcdef1234567890abcdef",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["targetSessionKey"] == "agent:codex:acp:thread-acp-new"
+    assert session_binding["targetKind"] == "session"
+    assert session_binding["conversation"] == {
+        "channel": "line",
+        "accountId": "default",
+        "conversationId": "U1234567890abcdef1234567890abcdef",
+    }
+    assert session_binding["status"] == "active"
+    assert isinstance(session_binding["boundAt"], int)
+    assert session_binding["metadata"]["placement"] == "current"
+    assert session_binding["metadata"]["agentId"] == "codex"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

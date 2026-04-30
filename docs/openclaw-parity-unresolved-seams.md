@@ -68,9 +68,15 @@ RuntimeManager-backed ACP `thread=true` spawns now also match OpenClaw's
 provider-context preflight: persistent thread-bound ACP sessions require a
 requester channel context and return `errorCode="thread_binding_invalid"`
 before any RuntimeManager thread or turn is started when that context is
-missing. Remaining ACP binding parity is provider-adapter capability/placement
-policy, persistent session binding records, unbind lifecycle breadth, and the
-standalone ACP bridge server/client runtime.
+missing. RuntimeManager-backed current-placement ACP sessions now also synthesize
+OpenClaw-shaped current-conversation binding metadata from requester provider
+context: LINE-style targets normalize into a persistent `sessionBinding`
+(`targetKind="session"`, `placement="current"`), while `threadBinding` and
+`completionDelivery` keep the routable account/channel/target fields for
+wait-time completion delivery. Remaining ACP binding parity is child-thread
+creation for child-placement providers, provider-adapter capability/store
+breadth, unbind lifecycle breadth, and the standalone ACP bridge server/client
+runtime.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same
