@@ -1855,7 +1855,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ok`, native update result stats, restart scheduling metadata, and a restart
   sentinel payload/file carrying session delivery context, thread id, note, and
   the upstream 1000ms minimum timeout normalization.
+- `update.run` now also executes a native fakeable update runner before
+  restart projection: app/CLI construction wires
+  `RuntimeUpdateService.run_update`, successful git/install/build results
+  schedule restart payloads, and dirty worktrees return OpenClaw-shaped
+  `status="skipped"` / `reason="dirty"`.
 - Verified the update-run envelope/sentinel slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Verified the native update-runner seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_update_run_executes_native_update_runner_before_restart_scheduling
+  tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps
+  tests\test_runtime_updates.py::test_runtime_update_run_update_skips_dirty_worktree_before_fetch
+  -q` (`3 passed`), adjacent runtime proof `python -m pytest
+  tests\test_runtime_updates.py -q` (`4 passed`), endpoint proof `python -m
+  pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py
+  -q -k "update_run"` (`6 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py tests\test_runtime_updates.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py`.
 - `config.patch` and `config.apply` now return OpenClaw-shaped restart
   sentinel payloads/files with `config-patch` / `config-apply` kind, session
   delivery context, thread id, note, config path stats, and the existing honest

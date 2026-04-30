@@ -13884,6 +13884,76 @@ async def test_update_run_triggers_runtime_update_tick_and_returns_fresh_view() 
 
 
 @pytest.mark.asyncio
+async def test_update_run_executes_native_update_runner_before_restart_scheduling(
+    tmp_path,
+) -> None:
+    runner_calls: list[dict[str, object]] = []
+    runner_result: dict[str, object] = {
+        "status": "ok",
+        "mode": "git",
+        "root": "C:/workspace/OpenZues",
+        "before": {"sha": "rev-a", "version": "0.1.0"},
+        "after": {"sha": "rev-b", "version": "0.1.1"},
+        "steps": [
+            {
+                "name": "deps install",
+                "command": "python -m pip install -e .",
+                "cwd": "C:/workspace/OpenZues",
+                "durationMs": 25,
+                "log": {
+                    "stdoutTail": "installed",
+                    "stderrTail": None,
+                    "exitCode": 0,
+                },
+            }
+        ],
+        "durationMs": 42,
+    }
+
+    async def fake_update_runner(*, timeout_ms: int | None) -> dict[str, object]:
+        runner_calls.append({"timeout_ms": timeout_ms})
+        return dict(runner_result)
+
+    database = Database(tmp_path / "openzues.db")
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        runtime_update_runner=fake_update_runner,
+    )
+
+    payload = await service.call(
+        "update.run",
+        {
+            "timeoutMs": 1,
+            "restartDelayMs": 0,
+            "note": "Apply the native update.",
+        },
+    )
+
+    assert runner_calls == [{"timeout_ms": 1000}]
+    assert payload["ok"] is True
+    assert payload["result"] == {**runner_result, "timeoutMs": 1000}
+    assert payload["restart"] == {
+        "scheduled": True,
+        "delayMs": 0,
+        "reason": "update.run",
+        "coalesced": False,
+    }
+    sentinel = payload["sentinel"]
+    assert isinstance(sentinel, dict)
+    sentinel_payload = sentinel["payload"]
+    assert isinstance(sentinel_payload, dict)
+    assert sentinel_payload["kind"] == "update"
+    assert sentinel_payload["status"] == "ok"
+    assert sentinel_payload["message"] == "Apply the native update."
+    assert sentinel_payload["stats"]["mode"] == "git"
+    assert sentinel_payload["stats"]["root"] == "C:/workspace/OpenZues"
+    assert sentinel_payload["stats"]["before"] == {"sha": "rev-a", "version": "0.1.0"}
+    assert sentinel_payload["stats"]["after"] == {"sha": "rev-b", "version": "0.1.1"}
+    assert sentinel_payload["stats"]["steps"] == runner_result["steps"]
+
+
+@pytest.mark.asyncio
 async def test_update_run_accepts_upstream_optional_restart_request_params() -> None:
     payload: dict[str, object] = {
         "headline": "Runtime self-update is watching the repo",

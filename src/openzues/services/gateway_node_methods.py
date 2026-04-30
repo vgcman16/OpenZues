@@ -1351,6 +1351,7 @@ class GatewayNodeMethodService:
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
         runtime_update_tick: Callable[[], Awaitable[bool]] | None = None,
         runtime_update_view: Callable[[], Awaitable[dict[str, object]]] | None = None,
+        runtime_update_runner: Callable[..., Awaitable[dict[str, object]]] | None = None,
         wizard_service: GatewayWizardService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
         wake_service: GatewayWakeService | None = None,
@@ -1458,6 +1459,7 @@ class GatewayNodeMethodService:
         self._status_service = status_service
         self._runtime_update_tick = runtime_update_tick
         self._runtime_update_view = runtime_update_view
+        self._runtime_update_runner = runtime_update_runner
         self._wizard_service = wizard_service
         self._voicewake_service = voicewake_service
         self._wake_service = wake_service
@@ -4157,7 +4159,9 @@ class GatewayNodeMethodService:
                 payload,
                 include_timeout_ms=True,
             )
-            if self._runtime_update_tick is None or self._runtime_update_view is None:
+            if self._runtime_update_runner is None and (
+                self._runtime_update_tick is None or self._runtime_update_view is None
+            ):
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message=(
@@ -4173,15 +4177,27 @@ class GatewayNodeMethodService:
             )
             started_at = time.monotonic()
             try:
-                restarted = await self._runtime_update_tick()
-                update_view = await self._runtime_update_view()
-                duration_ms = int((time.monotonic() - started_at) * 1000)
-                update_result = _build_update_run_result(
-                    update_view,
-                    restarted=restarted,
-                    timeout_ms=timeout_ms,
-                    duration_ms=duration_ms,
-                )
+                if self._runtime_update_runner is not None:
+                    raw_update_result = await self._runtime_update_runner(
+                        timeout_ms=timeout_ms,
+                    )
+                    update_result = _normalize_update_run_runner_result(
+                        raw_update_result,
+                        timeout_ms=timeout_ms,
+                    )
+                    restarted = update_result.get("status") == "ok"
+                else:
+                    assert self._runtime_update_tick is not None
+                    assert self._runtime_update_view is not None
+                    restarted = await self._runtime_update_tick()
+                    update_view = await self._runtime_update_view()
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    update_result = _build_update_run_result(
+                        update_view,
+                        restarted=restarted,
+                        timeout_ms=timeout_ms,
+                        duration_ms=duration_ms,
+                    )
             except Exception as exc:
                 restarted = False
                 duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -14525,6 +14541,26 @@ def _build_update_run_result(
     if reason is not None:
         result["reason"] = reason
     return result
+
+
+def _normalize_update_run_runner_result(
+    result: dict[str, object],
+    *,
+    timeout_ms: int | None,
+) -> dict[str, object]:
+    normalized = dict(result)
+    if "steps" not in normalized or not isinstance(normalized.get("steps"), list):
+        normalized["steps"] = []
+    if "durationMs" not in normalized:
+        normalized["durationMs"] = 0
+    if "status" not in normalized:
+        normalized["status"] = "error"
+        normalized.setdefault("reason", "missing-status")
+    if "mode" not in normalized:
+        normalized["mode"] = "unknown"
+    if timeout_ms is not None:
+        normalized["timeoutMs"] = timeout_ms
+    return normalized
 
 
 def _build_update_run_error_result(

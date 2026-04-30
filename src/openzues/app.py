@@ -2293,6 +2293,12 @@ def create_app(
     async def load_runtime_update_view() -> dict[str, object]:
         return (await active_hermes_platform_service.get_update_view()).model_dump(mode="json")
 
+    async def run_runtime_update(
+        *,
+        timeout_ms: int | None = None,
+    ) -> dict[str, object]:
+        return await active_runtime_update_service.run_update(timeout_ms=timeout_ms)
+
     async def load_setup_wizard_session() -> dict[str, object]:
         return dict(await active_setup_service.load_wizard_session_payload())
 
@@ -2351,6 +2357,7 @@ def create_app(
             status_service=load_gateway_status,
             runtime_update_tick=active_runtime_update_service.tick,
             runtime_update_view=load_runtime_update_view,
+            runtime_update_runner=run_runtime_update,
             wizard_service=active_gateway_wizard_service,
             talk_mode_service=active_gateway_talk_mode_service,
             tts_service=active_gateway_tts_service,

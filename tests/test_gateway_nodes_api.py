@@ -9566,6 +9566,25 @@ def test_gateway_node_method_call_endpoint_supports_update_run(tmp_path) -> None
         runtime_updates._snapshot.last_error = None
         runtime_updates._snapshot.auto_restart = True
 
+        async def fake_run_update(*, timeout_ms: int | None = None) -> dict[str, object]:
+            assert timeout_ms is None
+            await runtime_updates.tick()
+            update_view = (
+                await client.app.state.hermes_platform_service.get_update_view()
+            ).model_dump(mode="json")
+            return {
+                "status": "ok",
+                "mode": "openzues-runtime",
+                "root": update_view["repo_root"],
+                "before": update_view["startup_revision"],
+                "after": update_view["current_revision"],
+                "steps": [],
+                "durationMs": 0,
+                "snapshot": update_view,
+            }
+
+        runtime_updates.run_update = fake_run_update
+
         response = client.post(
             "/api/gateway/node-methods/call",
             json={"method": "update.run", "params": {}},
@@ -9575,7 +9594,12 @@ def test_gateway_node_method_call_endpoint_supports_update_run(tmp_path) -> None
     payload = response.json()
     snapshot = payload["result"]["snapshot"]
     assert payload["ok"] is True
-    assert payload["restart"] is None
+    assert payload["restart"] == {
+        "scheduled": True,
+        "delayMs": None,
+        "reason": "update.run",
+        "coalesced": False,
+    }
     assert snapshot["headline"] == "A newer repo revision is waiting for a safe boundary"
     assert snapshot["pending_restart"] is True
     assert snapshot["pending_revision"] == "rev-b"
@@ -9625,6 +9649,25 @@ def test_gateway_node_method_call_endpoint_update_run_accepts_optional_restart_r
         runtime_updates._snapshot.last_error = None
         runtime_updates._snapshot.auto_restart = True
 
+        async def fake_run_update(*, timeout_ms: int | None = None) -> dict[str, object]:
+            assert timeout_ms == 5_000
+            await runtime_updates.tick()
+            update_view = (
+                await client.app.state.hermes_platform_service.get_update_view()
+            ).model_dump(mode="json")
+            return {
+                "status": "ok",
+                "mode": "openzues-runtime",
+                "root": update_view["repo_root"],
+                "before": update_view["startup_revision"],
+                "after": update_view["current_revision"],
+                "steps": [],
+                "durationMs": 0,
+                "snapshot": update_view,
+            }
+
+        runtime_updates.run_update = fake_run_update
+
         response = client.post(
             "/api/gateway/node-methods/call",
             json={
@@ -9648,7 +9691,12 @@ def test_gateway_node_method_call_endpoint_update_run_accepts_optional_restart_r
     payload = response.json()
     snapshot = payload["result"]["snapshot"]
     assert payload["ok"] is True
-    assert payload["restart"] is None
+    assert payload["restart"] == {
+        "scheduled": True,
+        "delayMs": 0,
+        "reason": "update.run",
+        "coalesced": False,
+    }
     assert payload["result"]["timeoutMs"] == 5_000
     assert snapshot["headline"] == "A newer repo revision is waiting for a safe boundary"
     assert snapshot["pending_restart"] is True
