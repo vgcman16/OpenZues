@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, NoReturn, cast
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -5693,12 +5693,6 @@ class GatewayNodeMethodService:
                 if "mediaUrls" in payload and payload.get("mediaUrls") is not None
                 else []
             )
-            normalized_media_urls = _normalize_gateway_send_media_urls(
-                media_url=media_url,
-                media_urls=media_urls,
-            )
-            if not message.strip() and not normalized_media_urls:
-                raise ValueError("invalid send params: text or media is required")
             gif_playback = (
                 _optional_bool(payload.get("gifPlayback"), label="gifPlayback")
                 if "gifPlayback" in payload
@@ -5753,6 +5747,16 @@ class GatewayNodeMethodService:
                 source_session_key,
                 now_ms=now_ms,
             )
+            sandbox_media_root = await self._gateway_send_sandbox_media_root(
+                source_session_key
+            )
+            normalized_media_urls = _normalize_gateway_send_media_urls(
+                media_url=media_url,
+                media_urls=media_urls,
+                sandbox_root=sandbox_media_root,
+            )
+            if not message.strip() and not normalized_media_urls:
+                raise ValueError("invalid send params: text or media is required")
             idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
@@ -11702,6 +11706,20 @@ class GatewayNodeMethodService:
             return session_key
         return str(existing_entry.get("key") or session_key)
 
+    async def _gateway_send_sandbox_media_root(
+        self,
+        session_key: str | None,
+    ) -> str | None:
+        if session_key is None or self._database is None:
+            return None
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("sandboxed") is not True:
+            return None
+        return _string_or_none(metadata.get("sandboxWorkspaceRoot")) or _string_or_none(
+            metadata.get("spawnedWorkspaceDir")
+        )
+
     async def _resolve_unique_session_id_alias_key(
         self,
         session_key: str,
@@ -16669,6 +16687,7 @@ def _normalize_gateway_send_media_urls(
     *,
     media_url: str | None = None,
     media_urls: list[str] | None = None,
+    sandbox_root: str | None = None,
 ) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -16679,11 +16698,58 @@ def _normalize_gateway_send_media_urls(
         candidates.extend(media_urls)
     for candidate in candidates:
         trimmed = str(candidate).strip()
-        if not trimmed or trimmed in seen:
+        if not trimmed:
             continue
-        seen.add(trimmed)
-        normalized.append(trimmed)
+        resolved = _normalize_gateway_sandbox_media_source(
+            trimmed,
+            sandbox_root=sandbox_root,
+        )
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized.append(resolved)
     return normalized
+
+
+def _normalize_gateway_sandbox_media_source(
+    media_source: str,
+    *,
+    sandbox_root: str | None,
+) -> str:
+    if sandbox_root is None:
+        return media_source
+    root = _string_or_none(sandbox_root)
+    if root is None:
+        return media_source
+    if re.match(r"^data:", media_source, flags=re.IGNORECASE):
+        raise ValueError("data: URLs are not supported for sandbox media")
+    candidate = media_source
+    if re.match(r"^file://", candidate, flags=re.IGNORECASE):
+        parsed = urlsplit(candidate)
+        host = parsed.netloc.strip().lower()
+        if host and host != "localhost":
+            raise ValueError("remote hosts are not allowed for sandbox media file URLs")
+        lower_path = parsed.path.lower()
+        if "%2f" in lower_path or "%5c" in lower_path:
+            raise ValueError("file:// URLs cannot encode path separators")
+        try:
+            candidate = unquote(parsed.path)
+        except Exception as exc:
+            raise ValueError("Invalid file:// URL for sandbox media") from exc
+    normalized_candidate = candidate.replace("\\", "/")
+    if normalized_candidate == "/workspace":
+        return str(Path(root).expanduser())
+    workspace_prefix = "/workspace/"
+    if not normalized_candidate.startswith(workspace_prefix):
+        return media_source
+    relative_parts = [
+        part
+        for part in normalized_candidate[len(workspace_prefix) :].split("/")
+        if part not in {"", "."}
+    ]
+    if any(part == ".." for part in relative_parts):
+        raise ValueError("sandbox media path escapes sandbox root")
+    return str(Path(root).expanduser().joinpath(*relative_parts))
 
 
 def _normalize_gateway_chat_channel_id(raw: str) -> str | None:

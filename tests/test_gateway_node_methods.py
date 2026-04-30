@@ -37288,6 +37288,102 @@ async def test_send_uses_channel_message_runtime_for_media_payloads() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metadata(
+    tmp_path,
+) -> None:
+    sandbox_root = tmp_path / "sandbox-workspace"
+    sandbox_root.mkdir()
+    database = Database(tmp_path / "gateway-send-sandbox-media.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:sandbox-media"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "sandboxed": True,
+            "sandboxWorkspaceRoot": str(sandbox_root),
+        },
+    )
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        media_urls: list[str] | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "media_urls": media_urls,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "78",
+            "sessionKey": session_key or "agent:main:subagent:sandbox-media",
+            "deliveryId": 10,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " channel:C123 ",
+            "mediaUrl": " file:///workspace/assets/photo.png ",
+            "mediaUrls": [
+                "/workspace/assets/photo.png",
+                "https://example.com/remote.png",
+            ],
+            "channel": "slack",
+            "sessionKey": session_key,
+            "idempotencyKey": "idem-send-sandbox-media",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "slack",
+            "to": "channel:C123",
+            "message": "",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": None,
+            "session_key": session_key,
+            "idempotency_key": "idem-send-sandbox-media",
+            "media_urls": [
+                str(sandbox_root / "assets" / "photo.png"),
+                "https://example.com/remote.png",
+            ],
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "78",
+        "sessionKey": session_key,
+        "deliveryId": 10,
+    }
+
+
+@pytest.mark.asyncio
 async def test_send_preserves_provider_native_reply_thread_and_document_options() -> None:
     calls: list[dict[str, object | None]] = []
 

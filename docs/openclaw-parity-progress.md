@@ -1865,6 +1865,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
   carries Bot API `message_thread_id`.
 - Verified the Telegram topic poll proof with `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_poll_parses_telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram_native_route or send_direct_channel_poll_parses_telegram_topic_target"`, and `ruff check tests\test_ops_mesh.py`.
+- Provider-backed `gateway.send` now resolves sandbox container media paths
+  from source-session metadata before runtime dispatch: `/workspace/...` and
+  `file:///workspace/...` are mapped to the saved sandbox workspace root,
+  equivalent aliases dedupe after mapping, and remote media URLs stay intact.
+- Verified the sandbox outbound-media normalization seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_normalizes_sandbox_workspace_media_paths_from_session_metadata
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "send_normalizes_sandbox_workspace_media_paths_from_session_metadata or
+  send_uses_channel_message_runtime_for_media_payloads or
+  send_preserves_provider_native_reply_thread_and_document_options"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `update.run` now returns the OpenClaw-shaped runtime update envelope with
   `ok`, native update result stats, restart scheduling metadata, and a restart
   sentinel payload/file carrying session delivery context, thread id, note, and

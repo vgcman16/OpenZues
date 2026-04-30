@@ -131,7 +131,10 @@ including reply/thread/media/silent/document/idempotency options. Direct
 provider-backed `gateway.send` calls with an explicit `sessionKey` now
 canonicalize and pass that key as the runtime/mirror session while keeping the
 saved delivery row attached to the channel-derived target session for history
-and replay. Remaining
+and replay. Provider-backed `gateway.send` calls from sandboxed source sessions
+now normalize `/workspace/...` and `file:///workspace/...` media references
+through the saved sandbox workspace root before dispatch, deduping equivalent
+container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
