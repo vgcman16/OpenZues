@@ -109,6 +109,7 @@ from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import (
+    DEFAULT_ACCOUNT_ID,
     DEFAULT_AGENT_ID,
     DEFAULT_MAIN_KEY,
     build_agent_main_session_key,
@@ -7574,6 +7575,18 @@ class GatewayNodeMethodService:
                     else _sessions_spawn_default_run_timeout_seconds(self._config_service)
                 )
                 requester_origin = _requester_route_context(resolved_requester)
+                if thread:
+                    acp_thread_policy_error = _sessions_spawn_acp_thread_policy_error(
+                        self._config_service,
+                        requester_origin=requester_origin,
+                    )
+                    if acp_thread_policy_error is not None:
+                        return {
+                            "status": "error",
+                            "errorCode": "thread_binding_invalid",
+                            "error": acp_thread_policy_error,
+                            **role_context,
+                        }
                 acp_result = await self._acp_spawn_service.spawn(
                     {
                         "task": task,
@@ -13020,6 +13033,111 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_acp_thread_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str] | None,
+) -> str | None:
+    channel = (
+        _string_or_none(requester_origin.get("channel"))
+        if requester_origin is not None
+        else None
+    )
+    if channel is None:
+        return "thread=true for ACP sessions requires a channel context."
+    channel = channel.lower()
+    account_id = (
+        _string_or_none(requester_origin.get("accountId"))
+        if requester_origin is not None
+        else None
+    ) or DEFAULT_ACCOUNT_ID
+    snapshot = config_service.build_snapshot() if config_service is not None else {}
+    session_thread_bindings = _thread_binding_config(
+        _mapping_or_none(snapshot.get("session")),
+    )
+    channel_config = _channel_config_for_thread_binding(snapshot, channel)
+    root_thread_bindings = _thread_binding_config(channel_config)
+    account_thread_bindings = _thread_binding_account_config(
+        channel_config,
+        account_id=account_id,
+    )
+    enabled = (
+        _bool_or_none(account_thread_bindings.get("enabled"))
+        if account_thread_bindings is not None
+        else None
+    )
+    if enabled is None and root_thread_bindings is not None:
+        enabled = _bool_or_none(root_thread_bindings.get("enabled"))
+    if enabled is None and session_thread_bindings is not None:
+        enabled = _bool_or_none(session_thread_bindings.get("enabled"))
+    if enabled is False:
+        return (
+            f"Thread bindings are disabled for {channel} "
+            f"(set channels.{channel}.threadBindings.enabled=true to override "
+            "for this account, or session.threadBindings.enabled=true globally)."
+        )
+    spawn_enabled = (
+        _bool_or_none(account_thread_bindings.get("spawnAcpSessions"))
+        if account_thread_bindings is not None
+        else None
+    )
+    if spawn_enabled is None and root_thread_bindings is not None:
+        spawn_enabled = _bool_or_none(root_thread_bindings.get("spawnAcpSessions"))
+    if spawn_enabled is False:
+        return (
+            f"Thread-bound acp spawns are disabled for {channel} "
+            f"(set channels.{channel}.threadBindings.spawnAcpSessions=true to enable)."
+        )
+    return None
+
+
+def _mapping_or_none(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _thread_binding_config(
+    container: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if container is None:
+        return None
+    return _mapping_or_none(container.get("threadBindings"))
+
+
+def _channel_config_for_thread_binding(
+    snapshot: Mapping[str, object],
+    channel: str,
+) -> Mapping[str, object] | None:
+    channels = _mapping_or_none(snapshot.get("channels"))
+    if channels is None:
+        return None
+    exact = _mapping_or_none(channels.get(channel))
+    if exact is not None:
+        return exact
+    for key, value in channels.items():
+        if isinstance(key, str) and key.strip().lower() == channel:
+            return _mapping_or_none(value)
+    return None
+
+
+def _thread_binding_account_config(
+    channel_config: Mapping[str, object] | None,
+    *,
+    account_id: str,
+) -> Mapping[str, object] | None:
+    if channel_config is None:
+        return None
+    accounts = _mapping_or_none(channel_config.get("accounts"))
+    if accounts is None:
+        return None
+    exact = _mapping_or_none(accounts.get(account_id))
+    if exact is None:
+        for key, value in accounts.items():
+            if isinstance(key, str) and key.strip().lower() == account_id.lower():
+                exact = _mapping_or_none(value)
+                break
+    return _thread_binding_config(exact)
 
 
 def _sessions_spawn_sandbox_runtime_status(

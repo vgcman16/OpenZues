@@ -66,6 +66,12 @@ before any RuntimeManager thread or turn is started when that context is
 missing. Remaining ACP binding parity is provider-adapter capability/placement
 policy, persistent session binding records, unbind lifecycle breadth, and the
 standalone ACP bridge server/client runtime.
+Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
+thread-binding spawn policy for explicit
+`channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same
+`thread_binding_invalid` error before runtime dispatch. Remaining ACP binding
+parity is provider-adapter capability/placement defaults, persistent session
+binding records, and unbind lifecycle breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

@@ -2756,6 +2756,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- Gateway-level ACP `thread=true` spawns now honor OpenClaw's explicit channel
+  spawn policy before runtime dispatch: when
+  `channels.<channel>.threadBindings.spawnAcpSessions=false`, `sessions.spawn`
+  returns `errorCode="thread_binding_invalid"` and the native ACP spawn service
+  is not called.
+- Verified the ACP channel spawn-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy -q`
+  (`1 passed`), adjacent ACP gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`6 passed`),
+  ACP adapter coverage `python -m pytest tests\test_gateway_acp_spawn.py -q`
+  (`9 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_acp_spawn.py`.
 
 ## References
 

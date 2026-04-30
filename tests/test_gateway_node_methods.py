@@ -16905,6 +16905,92 @@ async def test_sessions_spawn_acp_rejects_agent_outside_acp_allowlist(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-thread-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnAcpSessions": False,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:thread-should-not-run",
+                "runId": "run-should-not-run",
+                "mode": "session",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through a thread-bound ACP session.",
+            "runtime": "acp",
+            "agentId": "main",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_account_id="default",
+            message_to="channel:C123",
+            message_thread_id="1710000000.000500",
+        ),
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "thread_binding_invalid",
+        "error": (
+            "Thread-bound acp spawns are disabled for slack "
+            "(set channels.slack.threadBindings.spawnAcpSessions=true to enable)."
+        ),
+        "role": "main",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:
