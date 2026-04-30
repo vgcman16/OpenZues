@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Updated: 2026-04-29.
+- Updated: 2026-04-30.
 - Estimated repo-wide parity: ~45% overall, with a reasonable band of ~40-50%.
 - Estimated active gateway/session/tool-contract family parity: ~97% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
@@ -2781,6 +2781,549 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`1 passed`), adjacent gateway coverage `python -m pytest
   tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or
   sessions_spawn_acp"` (`13 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
+- Gateway ACP and subagent `thread=true` spawn policy now also mirrors
+  OpenClaw's child-placement default from channel plugins: Discord and Matrix
+  require explicit `spawnAcpSessions=true` / `spawnSubagentSessions=true` when
+  the spawn flag is unset, so top-level child-thread creation does not silently
+  run on channels whose upstream placement policy requires an opt-in.
+- Verified the child-placement spawn-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement -q`
+  (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement -q`
+  (`1 passed`), adjacent gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or
+  sessions_spawn_acp"` (`15 passed`), ACP adapter coverage `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`9 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
+- Matrix existing-thread route contexts are now first-class thread-bound
+  subagent targets: notification routes admit `kind="matrix"`, requester
+  route normalization preserves Matrix channel context, and the route-backed
+  binder accepts Matrix routes so `sessions.spawn thread=true` can persist
+  Matrix thread binding/completion delivery metadata after the explicit
+  `spawnSubagentSessions=true` opt-in required by child-placement policy.
+- Verified the Matrix route-backed thread-binding seam with `python -m pytest
+  tests\test_gateway_thread_binding.py::test_thread_binder_registry_resolves_matrix_provider_thread -q`
+  (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder -q`
+  (`1 passed`), adjacent coverage `python -m pytest
+  tests\test_gateway_thread_binding.py -q` (`4 passed`) and `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode"` (`9
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Telegram native poll route sends now mirror OpenClaw's Bot API
+  multi-select payload flag: `maxSelections > 1` sends
+  `allows_multiple_answers=true`, default single-choice sends `false`, and the
+  existing anonymous, duration, silent, result metadata, and topic-thread
+  behavior remains intact.
+- Verified the Telegram poll multi-select seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_route -q`
+  (`1 passed`), topic/default coverage `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_parses_telegram_topic_target -q`
+  (`1 passed`), adjacent provider coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_native_route or telegram_topic or
+  invalid_telegram_durations or poll_rejects_max_selections or
+  provider_option_caps"` (`11 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Provider-native poll delivery now preserves OpenClaw-style reply context:
+  gateway `poll` accepts `replyToId` / `replyToMessageId`, OpsMesh persists
+  and replays the field, shared outbound runtime poll requests carry
+  `reply_to_id`, CLI `routes poll --reply-to` forwards it, and Telegram native
+  poll sends emit Bot API `reply_to_message_id`.
+- Verified the poll reply-context seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_poll_uses_channel_poll_runtime -q`
+  (`1 passed`), `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtime -q`
+  (`1 passed`), `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_route -q`
+  (`1 passed`), `python -m pytest
+  tests\test_cli.py::test_routes_poll_human_output_calls_native_direct_poll_runtime -q`
+  (`1 passed`), adjacent gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "poll_uses_channel_poll_runtime or
+  poll_allows_thread_id or poll_rejects"` (`14 passed`), adjacent OpsMesh
+  coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_prefers_provider_runtime or telegram_native_route
+  or telegram_topic or replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_provider_runtime"`
+  (`7 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py src\openzues\cli.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py tests\test_cli.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py src\openzues\cli.py`.
+- `/tools/invoke` plugin executor specs now preserve runtime `parameters`
+  schema metadata, and top-level `action` is merged into plugin args only when
+  that schema declares `properties.action`; explicit `args.action` wins, and
+  schemas without `action` continue to receive the original args.
+- Verified the plugin action-merge seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_tools_invoke_merges_top_level_action_for_plugin_schema
+  -q` (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_tools_invoke_keeps_explicit_plugin_args_action
+  -q` (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_tools_invoke_does_not_merge_top_level_action_without_plugin_schema
+  -q` (`1 passed`), adjacent plugin coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "tools_invoke and plugin"` (`13
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_plugin_runtime.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_plugin_runtime.py`.
+- Native config writes now preserve OpenClaw's canonical
+  `session.threadBindings.enabled`, `idleHours`, and `maxAgeHours` keys and
+  reject legacy `threadBindings.ttlHours` at the session, channel, and
+  channel-account paths before snapshot validation.
+- Verified the thread-binding config-key seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_config_set_rejects_legacy_thread_binding_ttl_hours
+  tests\test_gateway_node_methods.py::test_config_set_preserves_session_thread_binding_idle_hours
+  -q` (`4 passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "config_write_methods or
+  config_patch_noop or config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or
+  config_get_returns_control_ui_bootstrap_snapshot or config_open_file"` (`14
+  passed`), adjacent thread-binding spawn policy coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_rejects_omitted_spawn_policy_for_child_placement_channel
+  or
+  sessions_spawn_acp_thread_mode_rejects_omitted_spawn_policy_for_child_placement_channel"`
+  (`2 passed`), adjacent doctor coverage `python -m pytest tests\test_cli.py
+  -q -k "doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`4
+  passed`), `ruff check src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- `doctor --json` now includes a native OpenClaw-shaped `legacyConfig`
+  contribution for persisted `threadBindings.ttlHours` config keys, warning
+  operators to run `openzues doctor --fix`; repair mode rewrites session,
+  channel, and channel-account `ttlHours` to `idleHours` before the rest of
+  doctor reads the validated config snapshot.
+- Verified the legacy thread-binding doctor repair seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_thread_binding_ttl_hours
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_thread_binding_ttl_hours
+  -q` (`2 passed`), adjacent doctor coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_warns_about_legacy_thread_binding_ttl_hours or
+  doctor_fix_migrates_legacy_thread_binding_ttl_hours or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`8
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` doctor contribution now also covers OpenClaw's
+  nested channel allow-alias migration: Slack channel entries, Slack account
+  channel entries, Google Chat groups, and Discord guild channels warn in
+  `doctor --json` and rewrite `allow` to `enabled` in `doctor --fix`, preserving
+  existing `enabled` values when both keys are present.
+- Verified the channel allow-alias migration seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_channel_allow_aliases
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_channel_allow_aliases -q`
+  (`2 passed`), regression coverage for the previous thread-binding legacy
+  doctor seam `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_thread_binding_ttl_hours
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_thread_binding_ttl_hours
+  -q` (`2 passed`), adjacent doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or doctor_fix_runs_startup_channel_maintenance_adapter
+  or doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`10
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` doctor contribution now migrates the OpenClaw
+  `tools.web.x_search.apiKey` legacy provider auth key into
+  `plugins.entries.xai.config.webSearch.apiKey`, preserving non-auth
+  `tools.web.x_search` knobs and keeping explicit plugin-owned auth when it is
+  already configured.
+- Verified the x-search legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_x_search_api_key
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_x_search_api_key -q` (`2
+  passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`9
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` doctor contribution now normalizes Telegram
+  streaming aliases into nested streaming config: `streamMode`, scalar/boolean
+  `streaming`, `chunkMode`, `blockStreaming`, `draftChunk`, and
+  `blockStreamingCoalesce` are migrated for both the root Telegram config and
+  account-scoped entries, with `progress` mapped to OpenClaw's Telegram
+  `partial` preview mode.
+- Verified the Telegram streaming-key migration seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_telegram_streaming_keys
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_telegram_streaming_keys
+  -q` (`2 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or doctor_fix_runs_startup_channel_maintenance_adapter
+  or doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`11
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` doctor contribution now also normalizes Slack
+  streaming aliases into nested streaming config: `streamMode`, scalar/boolean
+  `streaming`, `chunkMode`, `blockStreaming`, `blockStreamingCoalesce`, and
+  `nativeStreaming` are migrated for both root Slack config and account-scoped
+  entries, including OpenClaw's `nativeTransport` preservation.
+- Verified the Slack streaming-key migration seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_slack_streaming_keys
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_slack_streaming_keys -q`
+  (`2 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`13
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` doctor contribution now also removes OpenClaw's
+  unused Google Chat `streamMode` keys from root Google Chat config and
+  account-scoped entries while preserving neighboring group/account settings.
+- Verified the Google Chat streamMode removal seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_googlechat_stream_mode
+  tests\test_cli.py::test_doctor_fix_removes_legacy_googlechat_stream_mode -q`
+  (`2 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`15
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` repair path now covers OpenClaw's runtime gateway
+  config migrations: `doctor --fix` seeds
+  `gateway.controlUi.allowedOrigins` for existing non-loopback bind modes with
+  no configured origins, preserves gateway runtime fields through config
+  validation, and normalizes legacy `gateway.bind` host aliases such as
+  `0.0.0.0` / `localhost` to bind modes.
+- Verified the runtime gateway legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_gateway_bind_host_alias
+  tests\test_cli.py::test_doctor_fix_normalizes_legacy_gateway_bind_host_alias
+  tests\test_cli.py::test_doctor_fix_seeds_gateway_control_ui_origins_for_non_loopback_bind
+  -q` (`3 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or legacy_gateway_bind_host_alias or
+  gateway_control_ui_origins or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`18
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` repair path now migrates OpenClaw's legacy
+  `audio.transcription` config into `tools.media.audio.models`, mapping safe
+  CLI commands with args/timeouts, preserving existing model lists by removing
+  only the legacy key, and dropping invalid/unsafe commands with the
+  OpenClaw-shaped repair note.
+- Verified the audio transcription legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_audio_transcription
+  tests\test_cli.py::test_doctor_fix_removes_legacy_audio_transcription_when_models_exist
+  tests\test_cli.py::test_doctor_fix_removes_invalid_legacy_audio_transcription
+  -q` (`3 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or legacy_gateway_bind_host_alias or
+  gateway_control_ui_origins or legacy_audio_transcription or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`21
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` doctor contribution now migrates OpenClaw's
+  `agents.defaults.sandbox.perSession` and
+  `agents.list[].sandbox.perSession` aliases into `sandbox.scope`, mapping
+  `true` to `session`, `false` to `shared`, and removing the legacy key when
+  `scope` is already explicit.
+- Verified the sandbox perSession legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_sandbox_per_session
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_sandbox_per_session -q`
+  (`2 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or legacy_gateway_bind_host_alias or
+  gateway_control_ui_origins or legacy_audio_transcription or
+  legacy_sandbox_per_session or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`23
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` doctor contribution now migrates OpenClaw's
+  top-level `memorySearch` config into `agents.defaults.memorySearch`,
+  including recursive merge-missing behavior that preserves explicit
+  `agents.defaults` values.
+- Verified the memorySearch legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_memory_search
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_memory_search
+  tests\test_cli.py::test_doctor_fix_merges_legacy_memory_search_into_defaults
+  -q` (`3 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or legacy_gateway_bind_host_alias or
+  gateway_control_ui_origins or legacy_audio_transcription or
+  legacy_sandbox_per_session or legacy_memory_search or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`26
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` doctor contribution now migrates OpenClaw's
+  top-level `heartbeat` config into `agents.defaults.heartbeat` and
+  `channels.defaults.heartbeat`, splitting visibility keys from agent cadence
+  settings, recursively filling only missing default fields, and removing empty
+  legacy heartbeat blocks.
+- Verified the heartbeat legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_heartbeat
+  tests\test_cli.py::test_doctor_fix_splits_legacy_heartbeat_into_defaults
+  tests\test_cli.py::test_doctor_fix_merges_legacy_heartbeat_into_defaults
+  tests\test_cli.py::test_doctor_fix_removes_empty_legacy_heartbeat -q` (`4
+  passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or legacy_gateway_bind_host_alias or
+  gateway_control_ui_origins or legacy_audio_transcription or
+  legacy_sandbox_per_session or legacy_memory_search or legacy_heartbeat or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`30
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` doctor contribution now normalizes OpenClaw's
+  legacy TTS provider config for `messages.tts` and the bundled `voice-call`
+  plugin, moving `openai`, `elevenlabs`, `microsoft`, and `edge` provider keys
+  into `tts.providers` and mapping `edge` to `microsoft` while preserving
+  explicit provider fields.
+- Verified the TTS provider legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_tts_provider_config
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_tts_provider_config -q`
+  (`2 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_telegram_streaming_keys or legacy_slack_streaming_keys or
+  legacy_googlechat_stream_mode or legacy_gateway_bind_host_alias or
+  gateway_control_ui_origins or legacy_audio_transcription or
+  legacy_sandbox_per_session or legacy_memory_search or legacy_heartbeat or
+  legacy_tts_provider_config or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`32
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The native `legacyConfig` doctor contribution now covers OpenClaw's
+  `tools.web.search` provider-owned config migration. Global legacy
+  `tools.web.search.apiKey` moves to `plugins.entries.brave.config.webSearch`;
+  scoped provider records such as `grok` and `kimi` move through bundled
+  provider ownership to `xai` and `moonshot`; existing plugin-owned config
+  fields win; and modern `openaiCodex` search config stays on
+  `tools.web.search`.
+- Verified the web-search provider legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_web_search_provider_config
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_web_search_provider_config
+  -q` (`2 passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  legacy_web_search_provider_config or legacy_telegram_streaming_keys or
+  legacy_slack_streaming_keys or legacy_googlechat_stream_mode or
+  legacy_gateway_bind_host_alias or gateway_control_ui_origins or
+  legacy_audio_transcription or legacy_sandbox_per_session or
+  legacy_memory_search or legacy_heartbeat or legacy_tts_provider_config or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`34
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop or config_get_returns_control_ui_bootstrap_snapshot"`
+  (`10 passed`), adjacent doctor contribution coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- Route-backed `sessions.spawn thread=true` now persists an OpenClaw-shaped
+  current-conversation `sessionBinding` record on child session metadata in
+  addition to `threadBinding` and `completionDelivery`. Records include
+  `bindingId`, `targetSessionKey`, `targetKind`, normalized `conversation`,
+  `status`, `boundAt`, and `metadata.lastActivityAt` for Slack/Telegram/
+  Discord/WhatsApp/Matrix route-backed binders.
+- Verified the session-binding record seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_route_backed_thread_binder
+  -q` (`1 passed`), adjacent binder coverage `python -m pytest
+  tests\test_gateway_thread_binding.py
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_route_backed_thread_binder
+  -q` (`5 passed`), adjacent thread-spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_thread_mode_uses_route_backed_thread_binder or
+  sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder or
+  sessions_spawn_thread_mode_requires_thread_binding_hook or
+  sessions_spawn_thread_mode_uses_thread_binding_hook or
+  sessions_spawn_thread_mode_cleans_up_binding_when_child_registration_fails or
+  sessions_spawn_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement"` (`6
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_thread_binding.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py`.
+- Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
+  lifecycle cleanup for thread-bound child sessions using the saved
+  `sessionBinding` and `threadBinding` metadata before mutating or deleting the
+  local session. Reset also clears stale binding/completion metadata so a reset
+  session does not continue advertising a bound conversation that has been
+  unbound.
+- Verified the route-backed unbind lifecycle seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_reset_delete_unbinds_thread_bound_sessions
+  -q` (`2 passed`), adjacent reset/delete/thread-binding coverage `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "sessions_reset or
+  sessions_delete or thread_binding"` (`20 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
 

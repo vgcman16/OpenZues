@@ -147,7 +147,14 @@ _SESSION_PATCH_SPAWN_LINEAGE_FIELDS = {
 }
 _INPUT_PROVENANCE_KIND_VALUES = {"external_user", "inter_session", "internal_system"}
 _DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp", "zalo")
+_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = (
+    "discord",
+    "slack",
+    "telegram",
+    "whatsapp",
+    "zalo",
+    "matrix",
+)
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
 _NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -968,6 +975,20 @@ def _tools_invoke_plugin_executor_allowed(
         return False
     plugin_token = _tools_invoke_policy_token(resolution.plugin_id)
     return bool(plugin_token and plugin_token in allow_tokens) or "group:plugins" in allow_tokens
+
+
+def _tools_invoke_merge_action_into_args_if_supported(
+    args: dict[str, Any],
+    *,
+    action: str | None,
+    parameters: Mapping[str, object] | None,
+) -> dict[str, Any]:
+    if action is None or "action" in args:
+        return args
+    properties = parameters.get("properties") if parameters is not None else None
+    if not isinstance(properties, Mapping) or "action" not in properties:
+        return args
+    return {**args, "action": action}
 
 
 def _tools_invoke_allow_policy_from_mapping(value: object) -> set[str]:
@@ -2181,6 +2202,46 @@ class GatewayNodeMethodService:
             # Best-effort cleanup: preserve the actionable spawn failure.
             return
 
+    async def _unbind_thread_binding_before_session_mutation(
+        self,
+        *,
+        session_key: str,
+        metadata: Mapping[str, object],
+        reason: Literal["session-delete", "session-reset"],
+    ) -> None:
+        if self._subagent_thread_binder is None:
+            return
+        unbind = getattr(self._subagent_thread_binder, "unbind", None)
+        if not callable(unbind):
+            return
+        session_binding = metadata.get("sessionBinding")
+        thread_binding = metadata.get("threadBinding")
+        if not isinstance(session_binding, Mapping) and not isinstance(
+            thread_binding,
+            Mapping,
+        ):
+            return
+        target: dict[str, object] = {
+            "targetSessionKey": session_key,
+            "reason": reason,
+        }
+        context: dict[str, object] = {
+            "reason": reason,
+            "targetSessionKey": session_key,
+        }
+        if isinstance(session_binding, Mapping):
+            target["sessionBinding"] = json.loads(json.dumps(dict(session_binding)))
+            binding_id = _string_or_none(session_binding.get("bindingId"))
+            if binding_id is not None:
+                context["bindingId"] = binding_id
+        if isinstance(thread_binding, Mapping):
+            target["threadBinding"] = json.loads(json.dumps(dict(thread_binding)))
+            for key in ("channel", "to", "accountId", "threadId"):
+                value = _string_or_none(thread_binding.get(key))
+                if value is not None:
+                    context[key] = value
+        await cast(Any, unbind)(target, context)
+
     async def _invoke_gateway_tool(
         self,
         payload: dict[str, Any],
@@ -2234,6 +2295,11 @@ class GatewayNodeMethodService:
             )
             if not _tools_invoke_plugin_executor_allowed(plugin_resolution, scoped_allow_tools):
                 _raise_tools_invoke_not_found(tool_key)
+            tool_args = _tools_invoke_merge_action_into_args_if_supported(
+                tool_args,
+                action=_string_or_none(payload.get("action")),
+                parameters=plugin_resolution.parameters,
+            )
             plugin_executor = plugin_resolution.executor
 
         if (
@@ -5844,6 +5910,8 @@ class GatewayNodeMethodService:
                     "isAnonymous",
                     "channel",
                     "accountId",
+                    "replyToId",
+                    "replyToMessageId",
                     "threadId",
                     "idempotencyKey",
                 ),
@@ -5882,6 +5950,10 @@ class GatewayNodeMethodService:
             )
             silent = _optional_bool(payload.get("silent"), label="silent")
             is_anonymous = _optional_bool(payload.get("isAnonymous"), label="isAnonymous")
+            reply_to_id = _optional_normalized_string(
+                payload.get("replyToId") or payload.get("replyToMessageId"),
+                label="replyToId",
+            )
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
@@ -5934,6 +6006,7 @@ class GatewayNodeMethodService:
                 silent=silent,
                 is_anonymous=is_anonymous,
                 account_id=account_id,
+                reply_to_id=reply_to_id,
                 thread_id=thread_id,
                 idempotency_key=idempotency_key,
             )
@@ -6815,6 +6888,11 @@ class GatewayNodeMethodService:
                     metadata=restored_metadata,
                     reason="session-reset",
                 )
+                await self._unbind_thread_binding_before_session_mutation(
+                    session_key=canonical_key,
+                    metadata=restored_metadata,
+                    reason="session-reset",
+                )
             restored_metadata = _reset_session_metadata(restored_metadata)
             await self._database.delete_control_chat_messages(session_key=canonical_key)
             await self._database.upsert_gateway_session_metadata(
@@ -6893,6 +6971,11 @@ class GatewayNodeMethodService:
             )
             if isinstance(metadata_value, dict):
                 await self._cleanup_acp_runtime_session_before_mutation(
+                    session_key=canonical_key,
+                    metadata=metadata_value,
+                    reason="session-delete",
+                )
+                await self._unbind_thread_binding_before_session_mutation(
                     session_key=canonical_key,
                     metadata=metadata_value,
                     reason="session-delete",
@@ -7995,6 +8078,11 @@ class GatewayNodeMethodService:
                     return thread_binding_response
                 assert thread_binding is not None
                 metadata["threadBinding"] = thread_binding
+                raw_session_binding = raw_thread_binding.get("sessionBinding")
+                if isinstance(raw_session_binding, Mapping):
+                    metadata["sessionBinding"] = json.loads(
+                        json.dumps(dict(raw_session_binding))
+                    )
                 metadata["completionDelivery"] = {
                     "mode": "thread",
                     **thread_binding,
@@ -12624,6 +12712,16 @@ def _provider_model_override(value: object) -> tuple[str, str] | None:
 
 def _reset_session_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(metadata)
+    for key in (
+        "sessionBinding",
+        "threadBinding",
+        "completionDelivery",
+        "completionDeliveryResult",
+        "completionDeliveryError",
+        "completionAnnouncedRunId",
+        "completionAnnouncedAtMs",
+    ):
+        normalized.pop(key, None)
     has_provider_model_override = (
         _string_or_none(normalized.get("providerOverride")) is not None
         and _string_or_none(normalized.get("modelOverride")) is not None
@@ -13103,6 +13201,8 @@ def _sessions_spawn_thread_policy_error(
         spawn_enabled = _bool_or_none(
             root_thread_bindings.get(_thread_binding_spawn_flag_key(kind))
         )
+    if spawn_enabled is None:
+        spawn_enabled = _thread_binding_default_top_level_placement(channel) != "child"
     if spawn_enabled is False:
         spawn_flag_key = _thread_binding_spawn_flag_key(kind)
         return (
@@ -13114,6 +13214,14 @@ def _sessions_spawn_thread_policy_error(
 
 def _thread_binding_spawn_flag_key(kind: Literal["acp", "subagent"]) -> str:
     return "spawnAcpSessions" if kind == "acp" else "spawnSubagentSessions"
+
+
+def _thread_binding_default_top_level_placement(
+    channel: str,
+) -> Literal["current", "child"]:
+    # OpenClaw channel plugins declare Discord and Matrix room-level spawns as
+    # child-thread placement by default; those require explicit spawn flags.
+    return "child" if channel in {"discord", "matrix"} else "current"
 
 
 def _mapping_or_none(value: object) -> Mapping[str, object] | None:

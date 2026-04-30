@@ -11097,6 +11097,8 @@ def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) 
             "--anonymous",
             "--account",
             "ops",
+            "--reply-to",
+            "122",
             "--thread",
             "123",
             "--idempotency-key",
@@ -11121,6 +11123,7 @@ def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) 
             "silent": True,
             "is_anonymous": True,
             "account_id": "ops",
+            "reply_to_id": "122",
             "thread_id": "123",
             "idempotency_key": "cli-poll-1",
         }
@@ -14292,6 +14295,2694 @@ def test_doctor_skips_startup_channel_maintenance_without_fix(monkeypatch) -> No
         "repairRequested": False,
         "trigger": "doctor-fix",
         "logPrefix": "doctor",
+    }
+
+
+def test_doctor_json_warns_about_legacy_thread_binding_ttl_hours(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "session": {"threadBindings": {"ttlHours": 24}},
+                "channels": {
+                    "discord": {
+                        "threadBindings": {"ttlHours": 12},
+                        "accounts": {
+                            "alpha": {
+                                "threadBindings": {"ttlHours": 6},
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert payload["legacyConfig"]["repairAvailable"] is True
+    assert payload["legacyConfig"]["issues"] == [
+        {
+            "path": "session.threadBindings.ttlHours",
+            "replacement": "session.threadBindings.idleHours",
+            "message": (
+                "session.threadBindings.ttlHours is legacy; use "
+                "session.threadBindings.idleHours."
+            ),
+        },
+        {
+            "path": "channels.discord.threadBindings.ttlHours",
+            "replacement": "channels.discord.threadBindings.idleHours",
+            "message": (
+                "channels.discord.threadBindings.ttlHours is legacy; use "
+                "channels.discord.threadBindings.idleHours."
+            ),
+        },
+        {
+            "path": "channels.discord.accounts.alpha.threadBindings.ttlHours",
+            "replacement": "channels.discord.accounts.alpha.threadBindings.idleHours",
+            "message": (
+                "channels.discord.accounts.alpha.threadBindings.ttlHours is legacy; use "
+                "channels.discord.accounts.alpha.threadBindings.idleHours."
+            ),
+        },
+    ]
+    assert payload["warnings"] == [
+        "Legacy thread binding config uses ttlHours; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_thread_binding_ttl_hours(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "session": {"threadBindings": {"ttlHours": 24}},
+                "channels": {
+                    "discord": {
+                        "threadBindings": {"ttlHours": 12},
+                        "accounts": {
+                            "alpha": {
+                                "threadBindings": {"ttlHours": 6},
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changed"] is True
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved session.threadBindings.ttlHours to idleHours.",
+        "Moved channels.discord.threadBindings.ttlHours to idleHours.",
+        "Moved channels.discord.accounts.alpha.threadBindings.ttlHours to idleHours.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["session"]["threadBindings"] == {
+        "enabled": None,
+        "idleHours": 24.0,
+        "maxAgeHours": None,
+    }
+    assert repaired["channels"]["discord"]["threadBindings"] == {"idleHours": 12}
+    assert repaired["channels"]["discord"]["accounts"]["alpha"]["threadBindings"] == {
+        "idleHours": 6
+    }
+
+
+def test_doctor_json_warns_about_legacy_channel_allow_aliases(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "channels": {"deploy": {"allow": True}},
+                        "accounts": {
+                            "workspace": {
+                                "channels": {"ops": {"allow": False, "enabled": True}},
+                            },
+                        },
+                    },
+                    "googlechat": {
+                        "groups": {"space": {"allow": True}},
+                    },
+                    "discord": {
+                        "guilds": {
+                            "guild": {
+                                "channels": {"general": {"allow": True}},
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "channels.slack.channels.deploy.allow",
+        "channels.slack.accounts.workspace.channels.ops.allow",
+        "channels.googlechat.groups.space.allow",
+        "channels.discord.guilds.guild.channels.general.allow",
+    ]
+    assert payload["warnings"] == [
+        "Legacy channel config uses allow aliases; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_channel_allow_aliases(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "channels": {"deploy": {"allow": True}},
+                        "accounts": {
+                            "workspace": {
+                                "channels": {"ops": {"allow": False, "enabled": True}},
+                            },
+                        },
+                    },
+                    "googlechat": {
+                        "groups": {"space": {"allow": True}},
+                    },
+                    "discord": {
+                        "guilds": {
+                            "guild": {
+                                "channels": {"general": {"allow": True}},
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved channels.slack.channels.deploy.allow to enabled.",
+        "Removed channels.slack.accounts.workspace.channels.ops.allow "
+        "(channels.slack.accounts.workspace.channels.ops.enabled already set).",
+        "Moved channels.googlechat.groups.space.allow to enabled.",
+        "Moved channels.discord.guilds.guild.channels.general.allow to enabled.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["channels"]["slack"]["channels"]["deploy"] == {"enabled": True}
+    assert repaired["channels"]["slack"]["accounts"]["workspace"]["channels"]["ops"] == {
+        "enabled": True
+    }
+    assert repaired["channels"]["googlechat"]["groups"]["space"] == {"enabled": True}
+    assert repaired["channels"]["discord"]["guilds"]["guild"]["channels"]["general"] == {
+        "enabled": True
+    }
+
+
+def test_doctor_json_warns_about_legacy_x_search_api_key(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "web": {
+                        "x_search": {
+                            "apiKey": "xai-legacy-key",
+                            "enabled": True,
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert payload["legacyConfig"]["issues"] == [
+        {
+            "path": "tools.web.x_search.apiKey",
+            "replacement": "plugins.entries.xai.config.webSearch.apiKey",
+            "message": (
+                "tools.web.x_search.apiKey is legacy; use "
+                "plugins.entries.xai.config.webSearch.apiKey."
+            ),
+        }
+    ]
+    assert payload["warnings"] == [
+        "Legacy x_search config uses apiKey; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_x_search_api_key(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "web": {
+                        "x_search": {
+                            "apiKey": "xai-legacy-key",
+                            "enabled": True,
+                            "model": "grok-4-1-fast",
+                        },
+                    },
+                },
+                "plugins": {
+                    "entries": {
+                        "xai": {
+                            "enabled": True,
+                            "config": {
+                                "webSearch": {"apiKey": "plugin-key"},
+                                "xSearch": {"model": "plugin-model"},
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Removed tools.web.x_search.apiKey "
+        "(plugins.entries.xai.config.webSearch.apiKey already set).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["tools"]["web"]["x_search"] == {
+        "enabled": True,
+        "model": "grok-4-1-fast",
+    }
+    assert repaired["plugins"]["entries"]["xai"]["config"] == {
+        "webSearch": {"apiKey": "plugin-key"},
+        "xSearch": {"model": "plugin-model"},
+    }
+
+
+def test_doctor_json_warns_about_legacy_web_search_provider_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "web": {
+                        "search": {
+                            "provider": "grok",
+                            "apiKey": "brave-legacy-key",
+                            "grok": {"apiKey": "xai-legacy-key"},
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert payload["legacyConfig"]["issues"] == [
+        {
+            "path": "tools.web.search",
+            "replacement": "plugins.entries.<plugin>.config.webSearch",
+            "message": (
+                "tools.web.search provider-owned config moved to "
+                "plugins.entries.<plugin>.config.webSearch."
+            ),
+        }
+    ]
+    assert payload["warnings"] == [
+        (
+            "Legacy web search provider config moved to plugin entries; "
+            "run openzues doctor --fix."
+        )
+    ]
+
+
+def test_doctor_fix_migrates_legacy_web_search_provider_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "web": {
+                        "search": {
+                            "provider": "grok",
+                            "apiKey": "brave-legacy-key",
+                            "grok": {
+                                "apiKey": "xai-legacy-key",
+                                "model": "grok-4-search",
+                            },
+                            "kimi": {
+                                "apiKey": "kimi-legacy-key",
+                                "model": "kimi-k2.5",
+                            },
+                            "openaiCodex": {"maxResults": 5},
+                        },
+                    },
+                },
+                "plugins": {
+                    "entries": {
+                        "xai": {
+                            "enabled": True,
+                            "config": {
+                                "webSearch": {
+                                    "apiKey": "plugin-xai-key",
+                                    "region": "us",
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        (
+            "Moved tools.web.search.apiKey to "
+            "plugins.entries.brave.config.webSearch.apiKey."
+        ),
+        (
+            "Merged tools.web.search.grok to "
+            "plugins.entries.xai.config.webSearch "
+            "(filled missing fields from legacy; kept explicit plugin config values)."
+        ),
+        (
+            "Moved tools.web.search.kimi to "
+            "plugins.entries.moonshot.config.webSearch."
+        ),
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["tools"]["web"]["search"] == {
+        "provider": "grok",
+        "openaiCodex": {"maxResults": 5},
+    }
+    entries = repaired["plugins"]["entries"]
+    assert entries["brave"] == {
+        "enabled": True,
+        "config": {"webSearch": {"apiKey": "brave-legacy-key"}},
+    }
+    assert entries["xai"] == {
+        "enabled": True,
+        "config": {
+            "webSearch": {
+                "apiKey": "plugin-xai-key",
+                "region": "us",
+                "model": "grok-4-search",
+            },
+        },
+    }
+    assert entries["moonshot"] == {
+        "enabled": True,
+        "config": {
+            "webSearch": {
+                "apiKey": "kimi-legacy-key",
+                "model": "kimi-k2.5",
+            },
+        },
+    }
+
+
+def test_doctor_json_warns_about_legacy_telegram_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "telegram": {
+                        "streamMode": "block",
+                        "accounts": {
+                            "ops": {
+                                "streaming": False,
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "channels.telegram",
+        "channels.telegram.accounts.ops",
+    ]
+    assert payload["warnings"] == [
+        "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_telegram_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "telegram": {
+                        "streamMode": "progress",
+                        "chunkMode": "sentence",
+                        "blockStreaming": True,
+                        "draftChunk": 80,
+                        "blockStreamingCoalesce": 250,
+                        "accounts": {
+                            "ops": {
+                                "streaming": False,
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved channels.telegram.streamMode to channels.telegram.streaming.mode (partial).",
+        "Moved channels.telegram.chunkMode to channels.telegram.streaming.chunkMode.",
+        "Moved channels.telegram.blockStreaming to channels.telegram.streaming.block.enabled.",
+        "Moved channels.telegram.draftChunk to channels.telegram.streaming.preview.chunk.",
+        "Moved channels.telegram.blockStreamingCoalesce to "
+        "channels.telegram.streaming.block.coalesce.",
+        "Moved channels.telegram.accounts.ops.streaming (boolean) to "
+        "channels.telegram.accounts.ops.streaming.mode (off).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    telegram = repaired["channels"]["telegram"]
+    assert telegram["streaming"] == {
+        "mode": "partial",
+        "chunkMode": "sentence",
+        "block": {"enabled": True, "coalesce": 250},
+        "preview": {"chunk": 80},
+    }
+    assert telegram["accounts"]["ops"]["streaming"] == {"mode": "off"}
+    assert "streamMode" not in telegram
+    assert "chunkMode" not in telegram
+    assert "blockStreaming" not in telegram
+    assert "draftChunk" not in telegram
+    assert "blockStreamingCoalesce" not in telegram
+
+
+def test_doctor_json_warns_about_legacy_slack_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "streaming": True,
+                        "accounts": {
+                            "workspace": {
+                                "streamMode": "append",
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "channels.slack",
+        "channels.slack.accounts.workspace",
+    ]
+    assert payload["warnings"] == [
+        "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_slack_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "streamMode": "status_final",
+                        "chunkMode": "word",
+                        "blockStreaming": False,
+                        "blockStreamingCoalesce": 10,
+                        "nativeStreaming": False,
+                        "accounts": {
+                            "workspace": {
+                                "streaming": True,
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved channels.slack.streamMode to channels.slack.streaming.mode (progress).",
+        "Moved channels.slack.chunkMode to channels.slack.streaming.chunkMode.",
+        "Moved channels.slack.blockStreaming to channels.slack.streaming.block.enabled.",
+        "Moved channels.slack.blockStreamingCoalesce to channels.slack.streaming.block.coalesce.",
+        "Moved channels.slack.nativeStreaming to channels.slack.streaming.nativeTransport.",
+        "Moved channels.slack.accounts.workspace.streaming (boolean) to "
+        "channels.slack.accounts.workspace.streaming.mode (partial).",
+        "Moved channels.slack.accounts.workspace.streaming (boolean) to "
+        "channels.slack.accounts.workspace.streaming.nativeTransport.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    slack = repaired["channels"]["slack"]
+    assert slack["streaming"] == {
+        "mode": "progress",
+        "chunkMode": "word",
+        "block": {"enabled": False, "coalesce": 10},
+        "nativeTransport": False,
+    }
+    assert slack["accounts"]["workspace"]["streaming"] == {
+        "mode": "partial",
+        "nativeTransport": True,
+    }
+    assert "streamMode" not in slack
+    assert "chunkMode" not in slack
+    assert "blockStreaming" not in slack
+    assert "blockStreamingCoalesce" not in slack
+    assert "nativeStreaming" not in slack
+
+
+def test_doctor_json_warns_about_legacy_googlechat_stream_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "googlechat": {
+                        "streamMode": "append",
+                        "accounts": {
+                            "workspace": {
+                                "streamMode": "replace",
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "channels.googlechat",
+        "channels.googlechat.accounts.workspace",
+    ]
+    assert payload["warnings"] == [
+        "Legacy Google Chat streamMode config is unused; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_removes_legacy_googlechat_stream_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "googlechat": {
+                        "streamMode": "append",
+                        "groups": {"eng": {"enabled": True}},
+                        "accounts": {
+                            "workspace": {
+                                "streamMode": "replace",
+                                "groups": {"ops": {"enabled": False}},
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Removed channels.googlechat.streamMode (legacy key no longer used).",
+        "Removed channels.googlechat.accounts.workspace.streamMode "
+        "(legacy key no longer used).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    googlechat = repaired["channels"]["googlechat"]
+    assert "streamMode" not in googlechat
+    assert googlechat["groups"] == {"eng": {"enabled": True}}
+    assert "streamMode" not in googlechat["accounts"]["workspace"]
+    assert googlechat["accounts"]["workspace"]["groups"] == {"ops": {"enabled": False}}
+
+
+def test_doctor_json_warns_about_legacy_gateway_bind_host_alias(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {"bind": "0.0.0.0"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "gateway.bind",
+    ]
+    assert payload["warnings"] == [
+        "Legacy gateway bind host aliases use bind modes; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_normalizes_legacy_gateway_bind_host_alias(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {"bind": "localhost", "port": 19999},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        'Normalized gateway.bind "localhost" to "loopback".',
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["gateway"]["bind"] == "loopback"
+    assert repaired["gateway"]["port"] == 19999
+
+
+def test_doctor_fix_seeds_gateway_control_ui_origins_for_non_loopback_bind(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "bind": "custom",
+                    "customBindHost": "devbox.local",
+                    "port": 19999,
+                    "controlUi": {"enabled": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        'Seeded gateway.controlUi.allowedOrigins ["http://localhost:19999", '
+        '"http://127.0.0.1:19999", "http://devbox.local:19999"] for bind=custom. '
+        "Required since v2026.2.26. Add other machine origins to "
+        "gateway.controlUi.allowedOrigins if needed.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["gateway"]["bind"] == "custom"
+    assert repaired["gateway"]["customBindHost"] == "devbox.local"
+    assert repaired["gateway"]["port"] == 19999
+    assert repaired["gateway"]["controlUi"] == {
+        "allowedOrigins": [
+            "http://localhost:19999",
+            "http://127.0.0.1:19999",
+            "http://devbox.local:19999",
+        ],
+        "enabled": True,
+    }
+
+
+def test_doctor_fix_migrates_legacy_audio_transcription(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "audio": {
+                    "transcription": {
+                        "command": ["whisper-cli", "--json"],
+                        "timeoutSeconds": 45,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved audio.transcription to tools.media.audio.models.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "audio" not in repaired
+    assert repaired["tools"]["media"]["audio"] == {
+        "enabled": True,
+        "models": [
+            {
+                "args": ["--json"],
+                "command": "whisper-cli",
+                "timeoutSeconds": 45,
+                "type": "cli",
+            }
+        ],
+    }
+
+
+def test_doctor_fix_removes_legacy_audio_transcription_when_models_exist(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "audio": {"transcription": {"command": ["legacy-transcribe"]}},
+                "tools": {
+                    "media": {
+                        "audio": {
+                            "models": [{"command": "existing", "type": "cli"}],
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Removed audio.transcription (tools.media.audio.models already set).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "audio" not in repaired
+    assert repaired["tools"]["media"]["audio"]["models"] == [
+        {"command": "existing", "type": "cli"}
+    ]
+
+
+def test_doctor_fix_removes_invalid_legacy_audio_transcription(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "audio": {"transcription": {"command": ["bad;cmd"]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Removed audio.transcription (invalid or empty command).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "audio" not in repaired
+    assert "tools" not in repaired
+
+
+def test_doctor_json_warns_about_legacy_sandbox_per_session(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {"sandbox": {"perSession": True}},
+                    "list": [
+                        {"id": "worker", "sandbox": {"perSession": False}},
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "agents.defaults.sandbox.perSession",
+        "agents.list.0.sandbox.perSession",
+    ]
+    assert payload["warnings"] == [
+        "Legacy sandbox perSession config uses scope; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_sandbox_per_session(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "agents": {
+                    "defaults": {"sandbox": {"perSession": True}},
+                    "list": [
+                        {"id": "worker", "sandbox": {"perSession": False}},
+                        {
+                            "id": "keeper",
+                            "sandbox": {"perSession": True, "scope": "agent"},
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved agents.defaults.sandbox.perSession to "
+        "agents.defaults.sandbox.scope (session).",
+        "Moved agents.list.0.sandbox.perSession to "
+        "agents.list.0.sandbox.scope (shared).",
+        "Removed agents.list.1.sandbox.perSession "
+        "(agents.list.1.sandbox.scope already set).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["agents"]["defaults"]["sandbox"]["scope"] == "session"
+    assert "perSession" not in repaired["agents"]["defaults"]["sandbox"]
+    assert repaired["agents"]["list"][0]["sandbox"]["scope"] == "shared"
+    assert "perSession" not in repaired["agents"]["list"][0]["sandbox"]
+    assert repaired["agents"]["list"][1]["sandbox"]["scope"] == "agent"
+    assert "perSession" not in repaired["agents"]["list"][1]["sandbox"]
+
+
+def test_doctor_json_warns_about_legacy_memory_search(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "memorySearch": {"enabled": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "memorySearch",
+    ]
+    assert payload["warnings"] == [
+        "Legacy memorySearch config moved to agents.defaults.memorySearch; "
+        "run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_memory_search(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "memorySearch": {"enabled": True, "limit": 8},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved memorySearch to agents.defaults.memorySearch.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "memorySearch" not in repaired
+    assert repaired["agents"]["defaults"]["memorySearch"] == {"enabled": True, "limit": 8}
+
+
+def test_doctor_fix_merges_legacy_memory_search_into_defaults(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "memorySearch": {
+                    "enabled": True,
+                    "provider": {"limit": 10, "timeoutSeconds": 30},
+                },
+                "agents": {
+                    "defaults": {
+                        "memorySearch": {
+                            "enabled": False,
+                            "provider": {"limit": 5},
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Merged memorySearch to agents.defaults.memorySearch "
+        "(filled missing fields from legacy; kept explicit agents.defaults values).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "memorySearch" not in repaired
+    assert repaired["agents"]["defaults"]["memorySearch"] == {
+        "enabled": False,
+        "provider": {"limit": 5, "timeoutSeconds": 30},
+    }
+
+
+def test_doctor_json_warns_about_legacy_heartbeat(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "heartbeat": {"every": "15m"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == ["heartbeat"]
+    assert payload["warnings"] == [
+        "Legacy heartbeat config moved to defaults; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_splits_legacy_heartbeat_into_defaults(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "heartbeat": {
+                    "every": "5m",
+                    "model": "gpt-test",
+                    "custom": "kept-with-agent",
+                    "showOk": False,
+                    "useIndicator": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved heartbeat to agents.defaults.heartbeat.",
+        "Moved heartbeat visibility to channels.defaults.heartbeat.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "heartbeat" not in repaired
+    assert repaired["agents"]["defaults"]["heartbeat"] == {
+        "custom": "kept-with-agent",
+        "every": "5m",
+        "model": "gpt-test",
+    }
+    assert repaired["channels"]["defaults"]["heartbeat"] == {
+        "showOk": False,
+        "useIndicator": True,
+    }
+
+
+def test_doctor_fix_merges_legacy_heartbeat_into_defaults(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "heartbeat": {"every": "5m", "showAlerts": True},
+                "agents": {"defaults": {"heartbeat": {"every": "1h"}}},
+                "channels": {"defaults": {"heartbeat": {"showAlerts": False}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Merged heartbeat to agents.defaults.heartbeat "
+        "(filled missing fields from legacy; kept explicit agents.defaults values).",
+        "Merged heartbeat visibility to channels.defaults.heartbeat "
+        "(filled missing fields from legacy; kept explicit channels.defaults values).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "heartbeat" not in repaired
+    assert repaired["agents"]["defaults"]["heartbeat"] == {"every": "1h"}
+    assert repaired["channels"]["defaults"]["heartbeat"] == {"showAlerts": False}
+
+
+def test_doctor_fix_removes_empty_legacy_heartbeat(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "heartbeat": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == ["Removed empty top-level heartbeat."]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "heartbeat" not in repaired
+    assert "agents" not in repaired
+    assert "channels" not in repaired
+
+
+def test_doctor_json_warns_about_legacy_tts_provider_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "messages": {"tts": {"openai": {"voice": "alloy"}}},
+                "plugins": {
+                    "entries": {
+                        "voice-call": {
+                            "config": {"tts": {"elevenlabs": {"voice": "Rachel"}}},
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "messages.tts",
+        "plugins.entries.voice-call.config.tts",
+    ]
+    assert payload["warnings"] == [
+        "Legacy TTS provider config uses providers; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_tts_provider_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "messages": {
+                    "tts": {
+                        "openai": {"voice": "alloy"},
+                        "edge": {"voice": "Aria"},
+                        "providers": {"openai": {"model": "tts-1"}},
+                    },
+                },
+                "plugins": {
+                    "entries": {
+                        "voice-call": {
+                            "config": {
+                                "tts": {
+                                    "elevenlabs": {"voice": "Rachel"},
+                                    "microsoft": {"voice": "Jenny"},
+                                    "providers": {
+                                        "microsoft": {"region": "westus"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved messages.tts.openai to messages.tts.providers.openai.",
+        "Moved messages.tts.edge to messages.tts.providers.microsoft.",
+        "Moved plugins.entries.voice-call.config.tts.elevenlabs to "
+        "plugins.entries.voice-call.config.tts.providers.elevenlabs.",
+        "Moved plugins.entries.voice-call.config.tts.microsoft to "
+        "plugins.entries.voice-call.config.tts.providers.microsoft.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    messages_tts = repaired["messages"]["tts"]
+    assert "openai" not in messages_tts
+    assert "edge" not in messages_tts
+    assert messages_tts["providers"] == {
+        "openai": {"model": "tts-1", "voice": "alloy"},
+        "microsoft": {"voice": "Aria"},
+    }
+    plugin_tts = repaired["plugins"]["entries"]["voice-call"]["config"]["tts"]
+    assert "elevenlabs" not in plugin_tts
+    assert "microsoft" not in plugin_tts
+    assert plugin_tts["providers"] == {
+        "elevenlabs": {"voice": "Rachel"},
+        "microsoft": {"region": "westus", "voice": "Jenny"},
     }
 
 

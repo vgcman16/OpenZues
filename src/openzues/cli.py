@@ -1939,6 +1939,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "delivery",
         "security",
         "shellCompletion",
+        "legacyConfig",
         "sandbox",
         "gatewayHealth",
         "memorySearch",
@@ -2004,7 +2005,11 @@ def _doctor_sandbox_warning_from_config(
 ) -> str | None:
     if config_service is None:
         return None
-    sandbox_config = _doctor_sandbox_config_from_snapshot(config_service.build_snapshot())
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return None
+    sandbox_config = _doctor_sandbox_config_from_snapshot(snapshot)
     if sandbox_config is None:
         return None
     mode = _doctor_sandbox_mode(sandbox_config.get("mode"))
@@ -2023,7 +2028,289 @@ def _doctor_sandbox_scope_warnings_from_config(
 ) -> list[str]:
     if config_service is None:
         return []
-    return _doctor_sandbox_scope_warnings_from_snapshot(config_service.build_snapshot())
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return []
+    return _doctor_sandbox_scope_warnings_from_snapshot(snapshot)
+
+
+def _build_doctor_legacy_config_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:legacy-config",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "issues": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for legacy config checks.",
+        }
+    if should_repair:
+        repair = getattr(config_service, "repair_legacy_config", None)
+        if not callable(repair):
+            repair = getattr(config_service, "repair_legacy_thread_binding_ttl_hours", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Legacy config repair runtime is unavailable.",
+            }
+        try:
+            result = repair()
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Legacy config repair failed: {exc}",
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changes = _object_list(result_payload.get("changes"))
+        changed = result_payload.get("changed") is True
+        summary = (
+            "Migrated legacy config."
+            if changed
+            else "No legacy config keys found."
+        )
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": summary,
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": changes,
+            "path": result_payload.get("path"),
+        }
+
+    detect = getattr(config_service, "detect_legacy_config_issues", None)
+    if not callable(detect):
+        detect = getattr(config_service, "detect_legacy_thread_binding_ttl_hours", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Legacy config detection runtime is unavailable.",
+        }
+    try:
+        result = detect()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Legacy config detection failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    issues = _object_list(result_payload.get("issues"))
+    warning = _doctor_legacy_config_warning(issues)
+    return {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": _doctor_legacy_config_summary(issues),
+        "repairAvailable": True,
+        "issues": issues,
+        "warnings": [warning] if warning else [],
+        "path": result_payload.get("path"),
+    }
+
+
+def _with_doctor_legacy_config_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    legacy_payload = _build_doctor_legacy_config_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["legacyConfig"] = legacy_payload
+    warnings = _object_list(legacy_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _with_doctor_added_warnings(
+    payload: dict[str, object],
+    warnings_to_add: list[str],
+) -> dict[str, object]:
+    if not warnings_to_add:
+        return payload
+    next_payload = dict(payload)
+    existing = next_payload.get("warnings")
+    if isinstance(existing, list):
+        warnings = list(existing)
+    elif existing is None:
+        warnings = []
+    else:
+        warnings = [existing]
+    existing_warnings = {str(item) for item in warnings}
+    for warning in warnings_to_add:
+        if warning in existing_warnings:
+            continue
+        warnings.append(warning)
+        existing_warnings.add(warning)
+    next_payload["warnings"] = warnings
+    return next_payload
+
+
+def _object_list(value: object) -> list[object]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _doctor_legacy_config_summary(issues: list[object]) -> str:
+    if not issues:
+        return "No legacy config keys found."
+    if _legacy_config_issues_all_match(issues, ".threadBindings.ttlHours"):
+        return "Legacy thread binding config uses ttlHours."
+    if _legacy_config_issues_all_match(issues, ".allow"):
+        return "Legacy channel config uses allow aliases."
+    if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
+        return "Legacy x_search config uses apiKey."
+    if _legacy_config_issues_all_web_search_provider_config(issues):
+        return "Legacy web search provider config moved to plugin entries."
+    if _legacy_config_issues_all_telegram_streaming(issues):
+        return "Legacy Telegram streaming config uses scalar aliases."
+    if _legacy_config_issues_all_slack_streaming(issues):
+        return "Legacy Slack streaming config uses scalar aliases."
+    if _legacy_config_issues_all_googlechat_stream_mode(issues):
+        return "Legacy Google Chat streamMode config is unused."
+    if _legacy_config_issues_all_sandbox_per_session(issues):
+        return "Legacy sandbox perSession config uses scope."
+    if _legacy_config_issues_all_match(issues, "memorySearch"):
+        return "Legacy memorySearch config moved to agents.defaults.memorySearch."
+    if _legacy_config_issues_all_match(issues, "heartbeat"):
+        return "Legacy heartbeat config moved to defaults."
+    if _legacy_config_issues_all_tts_provider_config(issues):
+        return "Legacy TTS provider config uses providers."
+    if _legacy_config_issues_all_match(issues, "gateway.bind"):
+        return "Legacy gateway bind host aliases use bind modes."
+    return "Legacy config contains migratable keys."
+
+
+def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
+    if not issues:
+        return None
+    if _legacy_config_issues_all_match(issues, ".threadBindings.ttlHours"):
+        return "Legacy thread binding config uses ttlHours; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, ".allow"):
+        return "Legacy channel config uses allow aliases; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
+        return "Legacy x_search config uses apiKey; run openzues doctor --fix."
+    if _legacy_config_issues_all_web_search_provider_config(issues):
+        return (
+            "Legacy web search provider config moved to plugin entries; "
+            "run openzues doctor --fix."
+        )
+    if _legacy_config_issues_all_telegram_streaming(issues):
+        return "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
+    if _legacy_config_issues_all_slack_streaming(issues):
+        return "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
+    if _legacy_config_issues_all_googlechat_stream_mode(issues):
+        return "Legacy Google Chat streamMode config is unused; run openzues doctor --fix."
+    if _legacy_config_issues_all_sandbox_per_session(issues):
+        return "Legacy sandbox perSession config uses scope; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, "memorySearch"):
+        return (
+            "Legacy memorySearch config moved to agents.defaults.memorySearch; "
+            "run openzues doctor --fix."
+        )
+    if _legacy_config_issues_all_match(issues, "heartbeat"):
+        return "Legacy heartbeat config moved to defaults; run openzues doctor --fix."
+    if _legacy_config_issues_all_tts_provider_config(issues):
+        return "Legacy TTS provider config uses providers; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, "gateway.bind"):
+        return "Legacy gateway bind host aliases use bind modes; run openzues doctor --fix."
+    return "Legacy config contains migratable keys; run openzues doctor --fix."
+
+
+def _legacy_config_issues_all_match(issues: list[object], suffix: str) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and issue["path"].endswith(suffix)
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_telegram_streaming(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "channels.telegram"
+            or issue["path"].startswith("channels.telegram.accounts.")
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_slack_streaming(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "channels.slack"
+            or issue["path"].startswith("channels.slack.accounts.")
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_googlechat_stream_mode(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "channels.googlechat"
+            or issue["path"].startswith("channels.googlechat.accounts.")
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_sandbox_per_session(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "agents.defaults.sandbox.perSession"
+            or (
+                issue["path"].startswith("agents.list.")
+                and issue["path"].endswith(".sandbox.perSession")
+            )
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_tts_provider_config(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "messages.tts"
+            or issue["path"] == "plugins.entries.voice-call.config.tts"
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_web_search_provider_config(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and issue.get("path") == "tools.web.search"
+        for issue in issues
+    )
 
 
 def _doctor_sandbox_scope_warnings_from_snapshot(snapshot: dict[str, Any]) -> list[str]:
@@ -16337,6 +16624,11 @@ def routes_poll_command(
         help="Request anonymous or named poll behavior when supported.",
     ),
     account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
+    reply_to_id: str | None = typer.Option(
+        None,
+        "--reply-to",
+        help="Provider message id to reply to.",
+    ),
     thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
     idempotency_key: str | None = typer.Option(
         None,
@@ -16361,6 +16653,7 @@ def routes_poll_command(
             silent=True if silent else None,
             is_anonymous=is_anonymous,
             account_id=account_id,
+            reply_to_id=reply_to_id,
             thread_id=thread_id,
             idempotency_key=idempotency_key,
         )
@@ -16673,8 +16966,13 @@ def doctor(
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_doctor_view()
-        payload = _with_doctor_sandbox_warnings(
+        payload = _with_doctor_legacy_config_payload(
             view.model_dump(mode="json"),
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_sandbox_warnings(
+            payload,
             services.gateway_config,
         )
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)

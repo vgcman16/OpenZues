@@ -76,9 +76,66 @@ Gateway-level subagent `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnSubagentSessions=false`, returning the
 same no-dispatch policy error before route binding or child runtime dispatch.
-Remaining thread-binding parity is provider-adapter capability/placement
-defaults, persistent session binding records, and unbind/end-hook lifecycle
-breadth.
+OpenClaw's child-placement channel default is now also mirrored for gateway
+ACP and subagent thread spawns: Discord and Matrix require explicit
+`spawnAcpSessions=true` / `spawnSubagentSessions=true` when the spawn flag is
+unset, while current-placement channels keep the permissive default. Remaining
+thread-binding parity is provider-adapter capability breadth and
+unbind/end-hook lifecycle breadth.
+OpenClaw's canonical `session.threadBindings` config keys now survive native
+config writes for `enabled`, `idleHours`, and `maxAgeHours`, while legacy
+`threadBindings.ttlHours` is rejected at session, channel, and channel-account
+paths before snapshot validation. The doctor surface now also reports a native
+`legacyConfig` contribution for already-persisted `ttlHours` keys and
+`doctor --fix` rewrites them to `idleHours` before the rest of doctor reads the
+validated snapshot. The same native `legacyConfig` contribution now also covers
+OpenClaw's nested Slack, Google Chat, and Discord `allow` -> `enabled` channel
+alias migration, including account-scoped channel/group/guild-channel entries.
+It also migrates `tools.web.x_search.apiKey` into
+`plugins.entries.xai.config.webSearch.apiKey`, preserving non-auth legacy
+`x_search` knobs and existing plugin-owned auth.
+Telegram legacy streaming aliases now also flow through the same doctor
+contribution: `streamMode`, scalar/boolean `streaming`, `chunkMode`,
+`blockStreaming`, `draftChunk`, and `blockStreamingCoalesce` migrate into
+nested `channels.telegram.streaming` / account-scoped streaming config.
+Slack legacy streaming aliases now also normalize through `doctor --json` /
+`doctor --fix`: `streamMode`, scalar/boolean `streaming`, `chunkMode`,
+`blockStreaming`, `blockStreamingCoalesce`, and `nativeStreaming` migrate into
+nested `channels.slack.streaming` / account-scoped streaming config, including
+`nativeStreaming` -> `nativeTransport`.
+Google Chat legacy `streamMode` keys are now removed through the same native
+doctor contribution for root and account-scoped channel config.
+Runtime gateway legacy config now also follows OpenClaw's compatibility
+migrator for non-loopback Control UI safety: `doctor --fix` seeds
+`gateway.controlUi.allowedOrigins` for existing `lan` / `tailnet` / `custom` /
+`auto` binds when no explicit origins are configured, and legacy
+`gateway.bind` host aliases normalize to bind modes.
+Legacy `audio.transcription` now migrates into
+`tools.media.audio.models` through `doctor --fix`, including safe executable
+mapping, existing-model preservation, invalid-command removal, and `tools.media`
+config retention.
+Agent sandbox `perSession` aliases now migrate to `sandbox.scope` for
+`agents.defaults.sandbox` and `agents.list[].sandbox`, including explicit-scope
+preservation.
+Top-level `memorySearch` now migrates into
+`agents.defaults.memorySearch`, merging only missing nested fields when defaults
+already exist.
+Top-level `heartbeat` now splits into `agents.defaults.heartbeat` and
+`channels.defaults.heartbeat`, with existing defaults receiving only missing
+fields and empty legacy heartbeat blocks removed.
+TTS provider config now normalizes legacy `messages.tts.<provider>` and
+`plugins.entries.voice-call.config.tts.<provider>` keys into nested
+`tts.providers`, including `edge` -> `microsoft`.
+`tools.web.search` provider-owned config now also migrates into bundled plugin
+entry `webSearch` config: global `apiKey` maps to Brave, provider-scoped
+records such as `grok` and `kimi` map through the OpenClaw manifest ownership
+table to `xai` and `moonshot`, existing plugin config wins, and modern
+`openaiCodex` search config stays under `tools.web.search`.
+The currently identified OpenClaw legacy-config doctor migrator files are now
+covered by native OpenZues repair paths. Future config work should come from a
+new upstream migration file or validation seam rather than this closed queue.
+The repo-level queue now returns to the runtime lifecycle head: persistent
+thread-bound provider binding records and unbind/end-hook lifecycle breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
@@ -128,8 +185,8 @@ are projected even before a sandbox runtime has been spawned.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
-construction. Supported Slack, Telegram, Discord, and WhatsApp route contexts
-create persistent child sessions, force cleanup to `keep`, store
+construction. Supported Slack, Telegram, Discord, WhatsApp, and Matrix route
+contexts create persistent child sessions, force cleanup to `keep`, store
 thread/account/channel binding metadata, and route completion delivery through
 the bound thread. Binder results must now report both `status="ok"` and
 `threadBindingReady=true`; unsupported, unconfigured, or not-ready channels
@@ -147,9 +204,19 @@ after a binding has been prepared but before the child run is accepted: the
 fakeable binder protocol exposes `unbind`, the production route-backed binder
 returns a stateless no-op cleanup result, and the provisional child transcript
 and metadata are still deleted with the original actionable startup error.
-Remaining lifecycle parity is deeper persistent provider binding records,
-provider-native end-hook/farewell behavior on reset/delete, and ACP/session
-binding policy breadth.
+Route-backed thread-bound subagent spawns now persist an OpenClaw-shaped
+current-conversation `sessionBinding` record on the child session metadata,
+including `bindingId`, `targetSessionKey`, `targetKind`, `conversation`,
+`status`, `boundAt`, and `metadata.lastActivityAt` alongside the existing
+delivery metadata.
+Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
+`unbind` hook with the saved `sessionBinding` / `threadBinding` record before
+mutating or deleting metadata, and reset strips stale binding/completion fields
+from the preserved session entry.
+Remaining lifecycle parity is deeper provider-native binding record stores,
+provider-native child-thread creation, target-agent bound-account selection,
+end-hook/farewell behavior on reset/delete, and ACP/session binding policy
+breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
@@ -173,6 +240,13 @@ through the saved sandbox workspace root before dispatch, deduping equivalent
 container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+Telegram native poll route sends now also forward OpenClaw's multi-select
+intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
+multi-select and default single-choice behavior alongside anonymous, duration,
+silent, and topic-thread options.
+Telegram poll delivery now also carries OpenClaw-style reply context through
+gateway `poll`, the shared outbound runtime, direct route sends, replay, CLI
+`routes poll --reply-to`, and native Bot API `reply_to_message_id` payloads.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery
@@ -570,7 +644,12 @@ collisions, and honors `includePlugins=false` for core-only catalog reads.
 empty groups from plugin-only sessions. Optional plugin runtime executors now
 preserve OpenClaw's `optional` tool metadata and can be enabled by exact tool
 name, plugin id, or `group:plugins` allowlist entries before dispatching
-through `tools.invoke`. Remaining tool parity is future
+through `tools.invoke`. Registry/config executor specs now also preserve
+OpenClaw-style `parameters` / schema metadata so `/tools/invoke` merges a
+top-level `action` into plugin args only when the declared schema exposes an
+`action` property; explicit `args.action` remains authoritative and non-action
+schemas stay untouched before before-call hooks and executor dispatch. Remaining
+tool parity is future
 production runtime activation/import metadata beyond the native manifest
 snapshot adapter and deeper marketplace install/update/uninstall flows.
 

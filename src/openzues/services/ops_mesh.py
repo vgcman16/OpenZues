@@ -2044,6 +2044,7 @@ def _format_direct_channel_poll_message(
     duration_hours: int | None,
     silent: bool | None,
     is_anonymous: bool | None,
+    reply_to_id: str | None = None,
 ) -> str:
     lines = [f"Poll: {question}"]
     lines.extend(f"{index}. {option}" for index, option in enumerate(options, start=1))
@@ -2058,6 +2059,8 @@ def _format_direct_channel_poll_message(
         settings.append(f"silent={str(silent).lower()}")
     if is_anonymous is not None:
         settings.append(f"isAnonymous={str(is_anonymous).lower()}")
+    if reply_to_id is not None:
+        settings.append(f"replyToId={reply_to_id}")
     if settings:
         lines.extend(("", "Settings: " + ", ".join(settings)))
     return "\n".join(lines)
@@ -4821,6 +4824,10 @@ class OpsMeshService:
                         or (conversation_target or {}).get("account_id")
                         or route_scope.get("resolved_account_id")
                         or ""
+                    ).strip()
+                    or None,
+                    reply_to_id=str(
+                        payload.get("replyToId") or route_scope.get("reply_to_id") or ""
                     ).strip()
                     or None,
                     thread_id=str(
@@ -7797,6 +7804,8 @@ class OpsMeshService:
             payload["isAnonymous"] = request.is_anonymous
         if request.account_id is not None:
             payload["accountId"] = request.account_id
+        if request.reply_to_id is not None:
+            payload["replyToId"] = request.reply_to_id
         if request.thread_id is not None:
             payload["threadId"] = request.thread_id
         if request.session_key is not None:
@@ -8043,6 +8052,7 @@ class OpsMeshService:
                     silent=_optional_bool_payload_value(payload, "silent"),
                     is_anonymous=_optional_bool_payload_value(payload, "isAnonymous"),
                     account_id=resolved_target.account_id,
+                    reply_to_id=str(payload.get("replyToId") or "").strip() or None,
                     thread_id=normalized_thread_id,
                     gateway_client_scopes=gateway_client_scopes,
                 )
@@ -8298,6 +8308,7 @@ class OpsMeshService:
         silent: bool | None = None,
         is_anonymous: bool | None = None,
         account_id: str | None = None,
+        reply_to_id: str | None = None,
         thread_id: str | int | None = None,
         gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
         idempotency_key: str | None = None,
@@ -8344,6 +8355,9 @@ class OpsMeshService:
         }
         if account_id is not None:
             payload["accountId"] = account_id
+        normalized_reply_to_id = str(reply_to_id or "").strip() or None
+        if normalized_reply_to_id is not None:
+            payload["replyToId"] = normalized_reply_to_id
         payload["maxSelections"] = resolved_max_selections
         if duration_seconds is not None:
             payload["durationSeconds"] = duration_seconds
@@ -8367,6 +8381,7 @@ class OpsMeshService:
                 duration_hours=duration_hours,
                 silent=silent,
                 is_anonymous=is_anonymous,
+                reply_to_id=normalized_reply_to_id,
             ),
             route_scope_extra={
                 "source": "gateway.poll",
@@ -9635,9 +9650,10 @@ class OpsMeshService:
             options = [option for option in options if option]
             _validate_direct_channel_poll_shape(question, options)
             _validate_direct_channel_poll_option_count("telegram", options)
+            max_selections = _optional_int_payload_value(event, "maxSelections")
             _validate_direct_channel_poll_max_selections(
                 options,
-                _optional_int_payload_value(event, "maxSelections"),
+                max_selections,
             )
             duration_seconds = _optional_int_payload_value(event, "durationSeconds")
             duration_hours = _optional_int_payload_value(event, "durationHours")
@@ -9653,6 +9669,7 @@ class OpsMeshService:
                 "chat_id": chat_id,
                 "question": question,
                 "options": options,
+                "allows_multiple_answers": (max_selections or 1) > 1,
             }
             if _optional_bool_payload_value(event, "isAnonymous") is not None:
                 payload["is_anonymous"] = _optional_bool_payload_value(
@@ -9663,6 +9680,8 @@ class OpsMeshService:
                 payload["open_period"] = duration_seconds
             if silent is not None:
                 payload["disable_notification"] = silent
+            if reply_to_id:
+                payload["reply_to_message_id"] = reply_to_id
             if thread_id:
                 payload["message_thread_id"] = thread_id
             result = self._post_json_webhook(

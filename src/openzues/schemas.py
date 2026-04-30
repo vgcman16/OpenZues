@@ -18,9 +18,25 @@ ScopeDriftLevel = Literal["aligned", "watch", "drifting", "critical"]
 DreamStatus = Literal["forming", "ready", "fresh"]
 EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
-NotificationRouteKind = Literal["webhook", "slack", "telegram", "discord", "whatsapp", "zalo"]
+NotificationRouteKind = Literal[
+    "webhook",
+    "slack",
+    "telegram",
+    "discord",
+    "whatsapp",
+    "zalo",
+    "matrix",
+]
 NotificationRouteViewKind = Literal[
-    "webhook", "slack", "telegram", "discord", "whatsapp", "zalo", "session", "announce"
+    "webhook",
+    "slack",
+    "telegram",
+    "discord",
+    "whatsapp",
+    "zalo",
+    "matrix",
+    "session",
+    "announce",
 ]
 GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
 GatewayRouteBindingMode = Literal["saved_lane", "workspace_affinity"]
@@ -1728,6 +1744,8 @@ class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     models: dict[str, dict[str, Any]] | None = None
     model: dict[str, Any] | str | None = None
     image_model: dict[str, Any] | str | None = Field(default=None, alias="imageModel")
+    memory_search: dict[str, Any] | None = Field(default=None, alias="memorySearch")
+    heartbeat: dict[str, Any] | None = None
 
 
 class ControlUiGatewayAgentConfigView(BaseModel):
@@ -1760,6 +1778,10 @@ class ControlUiGatewayToolsConfigView(ControlUiToolAllowDenyConfigView):
 class ControlUiGatewayConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    bind: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65_535)
+    custom_bind_host: str | None = Field(default=None, alias="customBindHost")
+    control_ui: dict[str, Any] | None = Field(default=None, alias="controlUi")
     webchat: ControlUiGatewayWebchatConfigView | None = None
     agents: ControlUiGatewayAgentsConfigView | None = None
     tools: ControlUiGatewayToolsConfigView | None = None
@@ -1776,12 +1798,24 @@ class ControlUiSessionAgentToAgentConfigView(BaseModel):
     )
 
 
+class ControlUiSessionThreadBindingsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool | None = None
+    idle_hours: float | None = Field(default=None, alias="idleHours", ge=0)
+    max_age_hours: float | None = Field(default=None, alias="maxAgeHours", ge=0)
+
+
 class ControlUiSessionConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     agent_to_agent: ControlUiSessionAgentToAgentConfigView | None = Field(
         default=None,
         alias="agentToAgent",
+    )
+    thread_bindings: ControlUiSessionThreadBindingsConfigView | None = Field(
+        default=None,
+        alias="threadBindings",
     )
 
 
@@ -1806,6 +1840,8 @@ class ControlUiToolsConfigView(BaseModel):
         alias="agentToAgent",
     )
     sessions: ControlUiToolsSessionsConfigView | None = None
+    web: dict[str, Any] | None = None
+    media: dict[str, Any] | None = None
 
 
 class ControlUiBootstrapConfigView(BaseModel):
@@ -1832,6 +1868,7 @@ class ControlUiBootstrapConfigView(BaseModel):
     acp: dict[str, Any] | None = None
     plugins: dict[str, Any] | None = None
     channels: dict[str, Any] | None = None
+    messages: dict[str, Any] | None = None
 
 
 class SetupFootprintResourceView(BaseModel):

@@ -19,6 +19,7 @@ class GatewayPluginRuntimeExecutorSpec:
     plugin_id: str | None = None
     plugin_name: str | None = None
     description: str | None = None
+    parameters: Mapping[str, object] | None = None
     source: str = "plugin"
 
 
@@ -40,6 +41,7 @@ class GatewayPluginRuntimeExecutorResolution:
     optional: bool = False
     plugin_id: str | None = None
     plugin_name: str | None = None
+    parameters: Mapping[str, object] | None = None
     source: str = "plugin"
 
 
@@ -105,6 +107,7 @@ class GatewayPluginRuntimeService:
                 optional=spec.optional,
                 plugin_id=spec.plugin_id,
                 plugin_name=spec.plugin_name,
+                parameters=spec.parameters,
                 source=spec.source,
             )
         return None
@@ -171,6 +174,7 @@ def _normalize_executor_spec(
             plugin_id=_optional_string(entry.plugin_id),
             plugin_name=_optional_string(entry.plugin_name),
             description=_optional_string(entry.description),
+            parameters=_optional_mapping(entry.parameters),
             source=str(entry.source or "plugin").strip() or "plugin",
         )
     if isinstance(entry, tuple):
@@ -200,6 +204,9 @@ def _normalize_executor_spec(
         plugin_id=_optional_string(entry.get("plugin_id", entry.get("pluginId"))),
         plugin_name=_optional_string(entry.get("plugin_name", entry.get("pluginName"))),
         description=_optional_string(entry.get("description")),
+        parameters=_optional_mapping(
+            entry.get("parameters", entry.get("schema")),
+        ),
         source=str(entry.get("source") or "plugin").strip() or "plugin",
     )
 
@@ -211,6 +218,10 @@ def _optional_string(value: object) -> str | None:
     if not text:
         return None
     return text
+
+
+def _optional_mapping(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
 
 
 def _plugin_requester_is_owner(requester: object) -> bool:

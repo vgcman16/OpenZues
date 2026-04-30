@@ -5550,6 +5550,192 @@ async def test_tools_invoke_runs_configured_plugin_executor(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-action.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["plugin_action_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[dict[str, object]] = []
+
+    async def execute_tool(_tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append(dict(args))
+        return {"ok": True, "action": args.get("action")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=[
+                {
+                    "tool": "plugin_action_tool",
+                    "executor": execute_tool,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string"},
+                            "mode": {"type": "string"},
+                        },
+                    },
+                }
+            ],
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "plugin_action_tool",
+            "action": "json",
+            "args": {"mode": "ok"},
+        },
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "action": "json"}}
+    assert observed_calls == [{"mode": "ok", "action": "json"}]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_keeps_explicit_plugin_args_action(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-action-explicit.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["plugin_action_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[dict[str, object]] = []
+
+    async def execute_tool(_tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append(dict(args))
+        return {"ok": True, "action": args.get("action")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=[
+                {
+                    "tool": "plugin_action_tool",
+                    "executor": execute_tool,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"action": {"type": "string"}},
+                    },
+                }
+            ],
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "plugin_action_tool",
+            "action": "json",
+            "args": {"action": "explicit"},
+        },
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "action": "explicit"}}
+    assert observed_calls == [{"action": "explicit"}]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_does_not_merge_top_level_action_without_plugin_schema(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-action-no-schema.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["plugin_action_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[dict[str, object]] = []
+
+    async def execute_tool(_tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append(dict(args))
+        return {"ok": True, "hasAction": "action" in args}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=[
+                {
+                    "tool": "plugin_action_tool",
+                    "executor": execute_tool,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"mode": {"type": "string"}},
+                    },
+                }
+            ],
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "plugin_action_tool",
+            "action": "json",
+            "args": {"mode": "ok"},
+        },
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "hasAction": False}}
+    assert observed_calls == [{"mode": "ok"}]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_runs_plugin_executor_from_agent_tool_allowlist(
     tmp_path,
 ) -> None:
@@ -12360,6 +12546,117 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "reason"),
+    [
+        ("sessions.reset", "session-reset"),
+        ("sessions.delete", "session-delete"),
+    ],
+)
+async def test_sessions_reset_delete_unbinds_thread_bound_sessions(
+    tmp_path: Path,
+    method: str,
+    reason: str,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-thread-unbind.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    session_binding = {
+        "bindingId": "generic:slack\u241fdefault\u241f\u241fchannel:C123",
+        "targetSessionKey": session_key,
+        "targetKind": "subagent",
+        "conversation": {
+            "channel": "slack",
+            "accountId": "default",
+            "conversationId": "channel:C123",
+        },
+        "status": "active",
+        "boundAt": 1770000000000,
+        "metadata": {
+            "placement": "current",
+            "threadId": "1710000000.000100",
+            "lastActivityAt": 1770000000000,
+        },
+    }
+    thread_binding = {
+        "channel": "slack",
+        "accountId": "default",
+        "to": "channel:C123",
+        "threadId": "1710000000.000100",
+    }
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "label": "Bound child",
+            "sessionBinding": session_binding,
+            "threadBinding": thread_binding,
+            "completionDelivery": {"mode": "thread", **thread_binding},
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This bound session exists before mutation.",
+        session_key=session_key,
+    )
+    unbind_calls: list[dict[str, object]] = []
+
+    class FakeThreadBinder:
+        async def __call__(
+            self,
+            parent: dict[str, object],
+            child: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            raise AssertionError("reset/delete should not prepare a new binding")
+
+        async def unbind(
+            self,
+            target: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            unbind_calls.append({"target": dict(target), "context": dict(context)})
+            return {"status": "ok", "unbound": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        subagent_thread_binder=FakeThreadBinder(),
+    )
+
+    payload = await service.call(method, {"key": "subagent:child"}, now_ms=999)
+
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert unbind_calls == [
+        {
+            "target": {
+                "targetSessionKey": session_key,
+                "reason": reason,
+                "sessionBinding": session_binding,
+                "threadBinding": thread_binding,
+            },
+            "context": {
+                "reason": reason,
+                "targetSessionKey": session_key,
+                "bindingId": session_binding["bindingId"],
+                **thread_binding,
+            },
+        }
+    ]
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    if method == "sessions.delete":
+        assert metadata_row is None
+    else:
+        assert metadata_row is not None
+        metadata = metadata_row["metadata"]
+        assert metadata["label"] == "Bound child"
+        assert "sessionBinding" not in metadata
+        assert "threadBinding" not in metadata
+        assert "completionDelivery" not in metadata
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_closes_acp_runtime_before_metadata_delete(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-delete-acp-cleanup.db")
     await database.initialize()
@@ -16991,6 +17288,92 @@ async def test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-thread-child-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "discord": {
+                        "threadBindings": {
+                            "enabled": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:main:acp:discord-thread-should-not-run",
+                "runId": "run-discord-should-not-run",
+                "mode": "session",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Run this through a Discord thread-bound ACP session.",
+            "runtime": "acp",
+            "agentId": "main",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="discord",
+            message_account_id="default",
+            message_to="channel:parent-channel",
+        ),
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "thread_binding_invalid",
+        "error": (
+            "Thread-bound acp spawns are disabled for discord "
+            "(set channels.discord.threadBindings.spawnAcpSessions=true to enable)."
+        ),
+        "role": "main",
+    }
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:
@@ -17515,6 +17898,98 @@ async def test_sessions_spawn_thread_mode_honors_channel_spawn_policy(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-child-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "discord": {
+                        "threadBindings": {
+                            "enabled": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    binder_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("thread spawn policy should reject before child dispatch")
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        binder_calls.append(
+            {
+                "parent": dict(parent),
+                "child": dict(child),
+                "context": dict(context),
+            }
+        )
+        return {
+            "status": "ok",
+            "threadBindingReady": True,
+            "channel": "discord",
+            "to": "channel:parent-channel",
+            "accountId": "default",
+            "threadId": "child-thread-1",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in a Discord child thread.",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="discord",
+            message_to="channel:parent-channel",
+            message_account_id="default",
+        ),
+    )
+
+    assert payload == {
+        "status": "error",
+        "error": (
+            "Thread-bound subagent spawns are disabled for discord "
+            "(set channels.discord.threadBindings.spawnSubagentSessions=true to enable)."
+        ),
+    }
+    assert binder_calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_delivers_initial_child_run_to_bound_origin(
     tmp_path,
 ) -> None:
@@ -17785,6 +18260,143 @@ async def test_sessions_spawn_thread_mode_uses_route_backed_thread_binder(
         "to": "channel:C123",
         "accountId": "default",
         "threadId": "1710000000.000100",
+    }
+    session_binding = metadata["sessionBinding"]
+    record_separator = "\u241f"
+    assert session_binding["bindingId"] == (
+        f"generic:slack{record_separator}default"
+        f"{record_separator}{record_separator}channel:C123"
+    )
+    assert session_binding["targetSessionKey"] == child_session_key
+    assert session_binding["targetKind"] == "subagent"
+    assert session_binding["conversation"] == {
+        "channel": "slack",
+        "accountId": "default",
+        "conversationId": "channel:C123",
+    }
+    assert session_binding["status"] == "active"
+    assert isinstance(session_binding["boundAt"], int)
+    assert session_binding["metadata"]["placement"] == "current"
+    assert session_binding["metadata"]["lastActivityAt"] == session_binding["boundAt"]
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder(
+    tmp_path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from openzues.schemas import ConversationTargetView, NotificationRouteView
+    from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-matrix-registry.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-matrix-thread-bound-child-1", "status": "ok"}
+
+    async def list_routes() -> list[NotificationRouteView]:
+        now = datetime.now(UTC)
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Matrix room route",
+                kind="matrix",
+                target="native://route",
+                events=["gateway/send"],
+                conversation_target=ConversationTargetView(
+                    channel="matrix",
+                    account_id="bot-alpha",
+                    peer_kind="channel",
+                    peer_id="!room:example.org",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=list_routes,
+        ),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in this Matrix thread.",
+            "thread": True,
+            "cleanup": "delete",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_to="room:!room:example.org",
+            message_account_id="bot-alpha",
+            message_thread_id="$thread-root",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert payload["mode"] == "session"
+    assert payload["cleanup"] == "keep"
+    assert send_calls[0]["deliver"] is True
+    assert send_calls[0]["channel"] == "matrix"
+    assert send_calls[0]["to"] == "room:!room:example.org"
+    assert send_calls[0]["account_id"] == "bot-alpha"
+    assert send_calls[0]["thread_id"] == "$thread-root"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$thread-root",
+    }
+    assert metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$thread-root",
     }
 
 
@@ -32740,6 +33352,129 @@ async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("legacy_config", "expected_path"),
+    [
+        (
+            {
+                "session": {
+                    "threadBindings": {
+                        "ttlHours": 24,
+                    },
+                },
+            },
+            "session.threadBindings.ttlHours",
+        ),
+        (
+            {
+                "channels": {
+                    "discord": {
+                        "threadBindings": {
+                            "ttlHours": 12,
+                        },
+                    },
+                },
+            },
+            "channels.discord.threadBindings.ttlHours",
+        ),
+        (
+            {
+                "channels": {
+                    "discord": {
+                        "accounts": {
+                            "alpha": {
+                                "threadBindings": {
+                                    "ttlHours": 6,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            "channels.discord.accounts.alpha.threadBindings.ttlHours",
+        ),
+    ],
+)
+async def test_config_set_rejects_legacy_thread_binding_ttl_hours(
+    tmp_path,
+    legacy_config: dict[str, object],
+    expected_path: str,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+            **legacy_config,
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await service.call("config.set", {"raw": raw_snapshot})
+
+    message = str(exc_info.value)
+    assert expected_path in message
+    assert "ttlHours" in message
+    assert "idleHours" in message
+
+
+@pytest.mark.asyncio
+async def test_config_set_preserves_session_thread_binding_idle_hours(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+            "session": {
+                "threadBindings": {
+                    "enabled": True,
+                    "idleHours": 24,
+                    "maxAgeHours": 168,
+                },
+            },
+        }
+    )
+
+    payload = await service.call("config.set", {"raw": raw_snapshot})
+
+    assert payload["config"]["session"]["threadBindings"] == {
+        "enabled": True,
+        "idleHours": 24.0,
+        "maxAgeHours": 168.0,
+    }
+
+
+@pytest.mark.asyncio
 async def test_channels_status_returns_notification_route_inventory() -> None:
     async def fake_list_notification_route_views() -> list[NotificationRouteView]:
         return [
@@ -38386,6 +39121,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
         silent: bool | None,
         is_anonymous: bool | None,
         account_id: str | None,
+        reply_to_id: str | None,
         thread_id: str | None,
         idempotency_key: str,
     ) -> dict[str, object]:
@@ -38401,6 +39137,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
                 "silent": silent,
                 "is_anonymous": is_anonymous,
                 "account_id": account_id,
+                "reply_to_id": reply_to_id,
                 "thread_id": thread_id,
                 "idempotency_key": idempotency_key,
             }
@@ -38428,6 +39165,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "isAnonymous": False,
             "channel": "telegram",
             "accountId": " default ",
+            "replyToId": " 41 ",
             "threadId": " 1710000000.9999 ",
             "idempotencyKey": "idem-poll-runtime",
         },
@@ -38445,6 +39183,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "silent": True,
             "is_anonymous": False,
             "account_id": "default",
+            "reply_to_id": "41",
             "thread_id": "1710000000.9999",
             "idempotency_key": "idem-poll-runtime",
         }
