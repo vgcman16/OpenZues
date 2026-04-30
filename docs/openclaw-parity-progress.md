@@ -281,6 +281,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py -q -k "device_pairing or pending_device_pairing or
   gateway_memory_probe or gateway_health_contribution"` (`4 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- CLI service construction now wires the native `GatewayNodePairingService`
+  into `GatewayNodeMethodService`, matching the app-server graph so
+  `device.pair.list` / `node.pair.*` are available to real `doctor` runs and
+  device commands instead of only injected test fakes.
+- Verified the CLI device-pairing runtime wiring with `python -m pytest
+  tests\test_cli.py::test_cli_services_wire_device_pairing_runtime_for_doctor
+  -q` (`1 passed`), adjacent CLI/device doctor proof `python -m pytest
+  tests\test_cli.py -q -k "cli_services_wire_device_pairing_runtime_for_doctor
+  or device_pairing or pending_device_pairing or gateway_memory_probe or
+  gateway_health_contribution"` (`5 passed`), adjacent gateway pairing proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair or
+  device_token"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and

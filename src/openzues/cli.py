@@ -72,6 +72,7 @@ from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavai
 from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
+from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
 from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
@@ -976,6 +977,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
     gateway_agents = GatewayAgentsService(database=database)
     gateway_commands = GatewayCommandsService()
+    gateway_node_pairing = GatewayNodePairingService(database)
     gateway_config = GatewayConfigService(
         assistant_name=app_settings.app_name,
         assistant_avatar="/static/favicon.svg",
@@ -1095,6 +1097,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         database=database,
         hub=hub,
         agents_service=gateway_agents,
+        pairing_service=gateway_node_pairing,
         channels_service=gateway_channels,
         commands_service=gateway_commands,
         config_service=gateway_config,

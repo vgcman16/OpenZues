@@ -14709,6 +14709,45 @@ def test_doctor_json_classifies_device_pairing_repairs_and_token_gaps(
     assert warnings[1] in payload["warnings"]
 
 
+def test_cli_services_wire_device_pairing_runtime_for_doctor(tmp_path) -> None:
+    async def run() -> dict[str, object]:
+        data_dir = tmp_path / "data"
+        services = await cli_module._build_services(
+            Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+        )
+        try:
+            created = await services.gateway_node_methods.call(
+                "node.pair.request",
+                {
+                    "nodeId": "cli-device-1",
+                    "displayName": "CLI Device",
+                },
+                now_ms=1_000,
+            )
+            listed = await services.gateway_node_methods.call("device.pair.list", {})
+            return {
+                "requestId": created["request"]["requestId"],
+                "listed": listed,
+            }
+        finally:
+            await _close_services(services)
+
+    result = asyncio.run(run())
+
+    assert result["listed"] == {
+        "pending": [
+            {
+                "requestId": result["requestId"],
+                "deviceId": "cli-device-1",
+                "displayName": "CLI Device",
+                "ts": 1_000,
+                "requiredApproveScopes": ["operator.pairing"],
+            }
+        ],
+        "paired": [],
+    }
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,
