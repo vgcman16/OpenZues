@@ -5363,6 +5363,77 @@ def _with_doctor_bootstrap_size_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+def _doctor_workspace_plugin_summary(
+    records: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    loaded = [record for record in records if record.get("status") == "loaded"]
+    imported = [record for record in records if record.get("imported") is True]
+    disabled = [record for record in records if record.get("status") == "disabled"]
+    errored = [record for record in records if record.get("status") == "error"]
+    bundle_plugins = [
+        record
+        for record in loaded
+        if record.get("format") == "bundle" and _object_list(record.get("bundleCapabilities"))
+    ]
+    return {
+        "loaded": len(loaded),
+        "imported": len(imported),
+        "disabled": len(disabled),
+        "errors": len(errored),
+        "bundlePlugins": len(bundle_plugins),
+        "records": [
+            {
+                "id": str(record.get("id") or ""),
+                "status": str(record.get("status") or "unknown"),
+                "format": str(record.get("format") or "unknown"),
+                "imported": record.get("imported") is True,
+            }
+            for record in records
+            if str(record.get("id") or "")
+        ],
+    }
+
+
+def _build_doctor_workspace_status_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    records = _plugin_records_from_config_snapshot(snapshot)
+    plugin_summary = _doctor_workspace_plugin_summary(records)
+    errors = _doctor_int_record_value(plugin_summary, "errors")
+    return {
+        "status": "warning" if errors else "ok",
+        "summary": (
+            "Workspace plugin status has errors."
+            if errors
+            else "Workspace plugin status is available."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:workspace-status",
+        "workspaceDir": (
+            str(workspace_dir)
+            if (workspace_dir := _doctor_bootstrap_workspace_dir(snapshot)) is not None
+            else None
+        ),
+        "skills": {
+            "eligible": 0,
+            "missingRequirements": 0,
+            "blockedByAllowlist": 0,
+        },
+        "plugins": plugin_summary,
+        "warnings": [],
+    }
+
+
+def _with_doctor_workspace_status_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["workspaceStatus"] = _build_doctor_workspace_status_payload(config_service)
+    return next_payload
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
     data_dir: Path | None = None,
@@ -19459,6 +19530,10 @@ def doctor(
             services.gateway_config,
         )
         payload = _with_doctor_bootstrap_size_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_workspace_status_payload(
             payload,
             services.gateway_config,
         )

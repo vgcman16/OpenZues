@@ -243,6 +243,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_warns or doctor_fix_rewrites or
   doctor_fix_normalizes_legacy_cron_store"` (`34 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes the first OpenClaw
+  `doctor:workspace-status` native read model. It summarizes manifest-backed
+  plugin registry records into loaded/imported/disabled/error/bundle counts,
+  matching the upstream workspace-status plugin note surface while leaving
+  deeper skill/task-flow recovery hints as separate seams.
+- Verified the workspace-status plugin-summary slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_workspace_status_plugin_counts
+  -q` (`1 passed`), adjacent workspace/plugin doctor proof `python -m pytest
+  tests\test_cli.py -q -k "workspace_status_plugin_counts or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  bootstrap_file_exceeds_limits or doctor_json_warns"` (`33 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and

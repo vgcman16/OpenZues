@@ -14543,6 +14543,46 @@ def test_doctor_json_warns_when_bootstrap_file_exceeds_limits(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_includes_workspace_status_plugin_counts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "plugins" / "native-search"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="native-search")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "plugins": {
+                "load": {
+                    "paths": [str(plugin_dir)],
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    workspace_status = payload["workspaceStatus"]
+    assert workspace_status["status"] == "ok"
+    assert workspace_status["openClawContribution"] == "doctor:workspace-status"
+    assert workspace_status["plugins"] == {
+        "loaded": 1,
+        "imported": 0,
+        "disabled": 0,
+        "errors": 0,
+        "bundlePlugins": 0,
+        "records": [
+            {
+                "id": "native-search",
+                "status": "loaded",
+                "format": "openclaw",
+                "imported": False,
+            }
+        ],
+    }
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,
