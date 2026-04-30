@@ -480,6 +480,11 @@ contribution for configured Codex OAuth profiles: the native preflight probes
 the OpenAI auth endpoint through a fakeable boundary, classifies TLS
 certificate trust failures, and reports the upstream CA-certificate remediation
 guidance without importing the TypeScript runtime.
+Top-level doctor output now also includes OpenClaw's `doctor:hooks-model`
+contribution for configured Gmail hook model overrides: it resolves aliases and
+model refs from native config, warns for `agents.defaults.models` allowlist
+drift, and warns when the hook model is missing from the configured model
+catalog.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining

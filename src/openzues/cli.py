@@ -4988,6 +4988,163 @@ def _with_doctor_oauth_tls_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+def _doctor_hooks_gmail_model(snapshot: dict[str, object]) -> str | None:
+    hooks = _dict_config(snapshot.get("hooks"))
+    gmail = _dict_config(hooks.get("gmail"))
+    return _optional_cli_string(gmail.get("model"))
+
+
+def _doctor_model_key_from_parts(provider: str | None, model: str | None) -> str | None:
+    normalized_model = _optional_cli_string(model)
+    if normalized_model is None:
+        return None
+    if "/" in normalized_model:
+        return normalized_model
+    normalized_provider = _optional_cli_string(provider) or "openai"
+    return f"{normalized_provider}/{normalized_model}"
+
+
+def _doctor_model_key_from_entry(
+    entry: object,
+    *,
+    default_provider: str = "openai",
+) -> str | None:
+    if isinstance(entry, str):
+        return _doctor_model_key_from_parts(default_provider, entry)
+    if not isinstance(entry, dict):
+        return None
+    raw_id = (
+        _optional_cli_string(entry.get("id"))
+        or _optional_cli_string(entry.get("model"))
+        or _optional_cli_string(entry.get("name"))
+    )
+    raw_provider = _optional_cli_string(entry.get("provider")) or default_provider
+    return _doctor_model_key_from_parts(raw_provider, raw_id)
+
+
+def _doctor_default_model_entries(snapshot: dict[str, object]) -> list[object]:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    models = defaults.get("models")
+    if isinstance(models, list):
+        return list(models)
+    if isinstance(models, dict):
+        return list(models.values())
+    return []
+
+
+def _doctor_hooks_model_alias_index(snapshot: dict[str, object]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for entry in _doctor_default_model_entries(snapshot):
+        if not isinstance(entry, dict):
+            continue
+        alias = _optional_cli_string(entry.get("alias"))
+        key = _doctor_model_key_from_entry(entry)
+        if alias is not None and key is not None:
+            aliases[alias] = key
+    return aliases
+
+
+def _doctor_resolve_hooks_model_key(
+    snapshot: dict[str, object],
+    raw_model: str,
+) -> str | None:
+    alias_key = _doctor_hooks_model_alias_index(snapshot).get(raw_model)
+    if alias_key is not None:
+        return alias_key
+    return _doctor_model_key_from_parts("openai", raw_model)
+
+
+def _doctor_allowed_model_keys(snapshot: dict[str, object]) -> set[str]:
+    keys: set[str] = set()
+    for entry in _doctor_default_model_entries(snapshot):
+        key = _doctor_model_key_from_entry(entry)
+        if key is not None:
+            keys.add(key)
+    return keys
+
+
+def _doctor_catalog_model_keys(snapshot: dict[str, object]) -> set[str]:
+    models = _dict_config(snapshot.get("models"))
+    providers = _dict_config(models.get("providers"))
+    keys: set[str] = set()
+    for provider_id, provider_payload in providers.items():
+        provider = _optional_cli_string(str(provider_id))
+        if provider is None or not isinstance(provider_payload, dict):
+            continue
+        raw_models = provider_payload.get("models")
+        model_entries = raw_models if isinstance(raw_models, list) else []
+        for entry in model_entries:
+            key = _doctor_model_key_from_entry(entry, default_provider=provider)
+            if key is not None:
+                keys.add(key)
+    return keys
+
+
+def _build_doctor_hooks_model_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    raw_model = _doctor_hooks_gmail_model(snapshot)
+    if raw_model is None:
+        return None
+    model_key = _doctor_resolve_hooks_model_key(snapshot, raw_model)
+    if model_key is None:
+        warning = f'- hooks.gmail.model "{raw_model}" could not be resolved'
+        return {
+            "status": "warning",
+            "summary": "hooks.gmail.model could not be resolved.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:hooks-model",
+            "model": raw_model,
+            "warnings": [warning],
+        }
+    allowed_keys = _doctor_allowed_model_keys(snapshot)
+    catalog_keys = _doctor_catalog_model_keys(snapshot)
+    warnings: list[str] = []
+    if allowed_keys and model_key not in allowed_keys:
+        warnings.append(
+            f'- hooks.gmail.model "{model_key}" not in agents.defaults.models '
+            "allowlist (will use primary instead)"
+        )
+    if catalog_keys and model_key not in catalog_keys:
+        warnings.append(
+            f'- hooks.gmail.model "{model_key}" not in the model catalog '
+            "(may fail at runtime)"
+        )
+    return {
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "hooks.gmail.model has warnings."
+            if warnings
+            else "hooks.gmail.model resolves to an allowed catalog model."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:hooks-model",
+        "model": raw_model,
+        "modelKey": model_key,
+        "allowed": not allowed_keys or model_key in allowed_keys,
+        "inCatalog": not catalog_keys or model_key in catalog_keys,
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_hooks_model_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    hooks_model = _build_doctor_hooks_model_payload(config_service)
+    if hooks_model is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["hooksModel"] = hooks_model
+    warnings = [
+        str(warning)
+        for warning in _object_list(hooks_model.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
     data_dir: Path | None = None,
@@ -19076,6 +19233,10 @@ def doctor(
             getattr(services, "browser_doctor", None),
         )
         payload = _with_doctor_oauth_tls_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_hooks_model_payload(
             payload,
             services.gateway_config,
         )

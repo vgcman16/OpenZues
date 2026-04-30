@@ -216,6 +216,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_fix_rewrites or doctor_fix_normalizes_legacy_cron_store"` (`32
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:hooks-model`
+  contribution when `hooks.gmail.model` is configured. It resolves raw model
+  ids and aliases against `agents.defaults.models`, reports allowlist drift,
+  and warns when the resolved hook model is absent from the configured model
+  catalog.
+- Verified the hooks-model doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_hooks_gmail_model_is_not_allowed_or_cataloged
+  -q` (`1 passed`), adjacent model/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "hooks_gmail_model or models_aliases or
+  models_list_json or models_status"` (`9 passed`), broader doctor
+  warning/repair proof `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_warns or doctor_fix_rewrites or
+  doctor_fix_normalizes_legacy_cron_store"` (`33 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and

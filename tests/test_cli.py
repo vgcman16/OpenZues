@@ -14458,6 +14458,58 @@ def test_doctor_json_warns_when_openai_codex_oauth_tls_preflight_fails(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_warns_when_hooks_gmail_model_is_not_allowed_or_cataloged(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "hooks": {
+                "gmail": {
+                    "model": "openai/gpt-missing",
+                }
+            },
+            "agents": {
+                "defaults": {
+                    "models": [
+                        {
+                            "provider": "openai",
+                            "id": "gpt-5.4",
+                        }
+                    ]
+                }
+            },
+            "models": {
+                "providers": {
+                    "openai": {
+                        "models": [
+                            {
+                                "id": "gpt-5.4",
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["hooksModel"]["warnings"]
+    assert payload["hooksModel"]["status"] == "warning"
+    assert payload["hooksModel"]["openClawContribution"] == "doctor:hooks-model"
+    assert payload["hooksModel"]["modelKey"] == "openai/gpt-missing"
+    assert (
+        '- hooks.gmail.model "openai/gpt-missing" not in agents.defaults.models allowlist '
+        "(will use primary instead)"
+    ) in warnings
+    assert (
+        '- hooks.gmail.model "openai/gpt-missing" not in the model catalog '
+        "(may fail at runtime)"
+    ) in warnings
+    assert warnings[0] in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,
