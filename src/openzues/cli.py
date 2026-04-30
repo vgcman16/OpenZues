@@ -4957,7 +4957,7 @@ def _build_doctor_shell_completion_payload(
         repair_changes: list[str] = []
         repair_errors: list[str] = []
         if should_repair and (
-            uses_slow_pattern or (profile_installed and not cache_exists)
+            uses_slow_pattern or not profile_installed or not cache_exists
         ):
             cache_generated = cache_exists or _doctor_completion_generate_cache(cache_path)
             if cache_generated and not cache_exists:
@@ -4966,7 +4966,7 @@ def _build_doctor_shell_completion_payload(
                 repair_errors.append(
                     f"Failed to generate completion cache at {cache_path}."
                 )
-            if cache_generated and uses_slow_pattern:
+            if cache_generated and (uses_slow_pattern or not profile_installed):
                 try:
                     profile_changed = _doctor_completion_update_profile(
                         shell=shell,
@@ -4978,7 +4978,12 @@ def _build_doctor_shell_completion_payload(
                     profile_changed = False
                     repair_errors.append(f"Failed to update {shell} profile: {exc}")
                 if profile_changed:
-                    repair_changes.append(f"Updated {shell} profile at {profile_path}.")
+                    if profile_installed:
+                        repair_changes.append(f"Updated {shell} profile at {profile_path}.")
+                    else:
+                        repair_changes.append(
+                            f"Installed {shell} completion in {profile_path}."
+                        )
             cache_exists = cache_path.exists()
             profile_lines = _doctor_completion_profile_lines(profile_path)
             profile_installed = any(

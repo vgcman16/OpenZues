@@ -19025,6 +19025,40 @@ def test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile
     assert any("Updated zsh profile" in item for item in shell_completion["changes"])
 
 
+def test_doctor_fix_installs_shell_completion_when_profile_is_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    profile_path = home / ".zshrc"
+    cache_path = tmp_path / "completions" / "openzues.zsh"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        settings=SimpleNamespace(data_dir=tmp_path),
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    shell_completion = payload["shellCompletion"]
+    profile = profile_path.read_text(encoding="utf-8")
+    assert shell_completion["status"] == "ok"
+    assert shell_completion["repairRequested"] is True
+    assert shell_completion["changed"] is True
+    assert shell_completion["profileInstalled"] is True
+    assert shell_completion["cacheExists"] is True
+    assert cache_path.exists()
+    assert "# OpenZues Completion" in profile
+    assert str(cache_path) in profile
+    assert any("Generated completion cache" in item for item in shell_completion["changes"])
+    assert any("Installed zsh completion" in item for item in shell_completion["changes"])
+
+
 def test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled(
     monkeypatch,
 ) -> None:
