@@ -405,9 +405,10 @@ trusted-owner posture, tool context, and idempotency key, returning the
 dispatcher payload instead of always reporting unsupported action. Remaining
 route-backed Slack action parity now includes `react` add/remove dispatch via
 Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
-`reactions.get full=true` using the saved native route token. Empty-emoji
-`react` now also resolves the bot user through `auth.test`, removes only the
-bot-owned reactions, and returns the removed names.
+`reactions.get full=true` and `edit` dispatch via Slack `chat.update` using
+the saved native route token. Empty-emoji `react` now also resolves the bot
+user through `auth.test`, removes only the bot-owned reactions, and returns
+the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
 dispatch via Bot API `setMessageReaction`, including the upstream empty
 reaction-array remove shape and soft missing-message-id result.
