@@ -94,6 +94,7 @@ from openzues.services.gateway_skill_clawhub import (
 from openzues.services.gateway_skill_config import GatewaySkillConfigService
 from openzues.services.gateway_skill_install import GatewaySkillInstallService
 from openzues.services.gateway_skill_status import GatewaySkillStatusService
+from openzues.services.gateway_subagent_lifecycle import GatewaySubagentLifecycleService
 from openzues.services.gateway_system_presence import GatewaySystemPresenceService
 from openzues.services.gateway_talk_config import GatewayTalkConfigService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
@@ -1377,6 +1378,7 @@ class GatewayNodeMethodService:
             ]
             | None
         ) = None,
+        subagent_lifecycle_service: GatewaySubagentLifecycleService | None = None,
         sessions_yield_service: Callable[[str], Awaitable[None]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
@@ -1477,6 +1479,7 @@ class GatewayNodeMethodService:
         self._sandbox_chat_send_service = sandbox_chat_send_service
         self._chat_abort_service = chat_abort_service
         self._subagent_thread_binder = subagent_thread_binder
+        self._subagent_lifecycle_service = subagent_lifecycle_service
         self._sessions_yield_service = sessions_yield_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
@@ -2241,6 +2244,30 @@ class GatewayNodeMethodService:
                 if value is not None:
                     context[key] = value
         await cast(Any, unbind)(target, context)
+
+    async def _emit_subagent_ended_after_session_mutation(
+        self,
+        *,
+        session_key: str,
+        reason: Literal["session-delete", "session-reset"],
+        emit_hooks: bool = True,
+    ) -> None:
+        if not emit_hooks or self._subagent_lifecycle_service is None:
+            return
+        event: dict[str, object] = {
+            "targetSessionKey": session_key,
+            "targetKind": "subagent" if is_subagent_session_key(session_key) else "acp",
+            "reason": reason,
+            "sendFarewell": True,
+            "outcome": "reset" if reason == "session-reset" else "deleted",
+        }
+        context: dict[str, object] = {
+            "childSessionKey": session_key,
+        }
+        try:
+            await self._subagent_lifecycle_service.emit_subagent_ended(event, context)
+        except Exception:
+            return
 
     async def _invoke_gateway_tool(
         self,
@@ -6905,6 +6932,10 @@ class GatewayNodeMethodService:
                 now_ms=_timestamp_ms(now_ms),
             )
             assert entry is not None
+            await self._emit_subagent_ended_after_session_mutation(
+                session_key=canonical_key,
+                reason="session-reset",
+            )
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
                 reason=reset_reason,
@@ -6992,6 +7023,11 @@ class GatewayNodeMethodService:
             if metadata_row is not None:
                 await self._database.delete_gateway_session_metadata(canonical_key)
             self._forget_gateway_chat_run(canonical_key)
+            await self._emit_subagent_ended_after_session_mutation(
+                session_key=canonical_key,
+                reason="session-delete",
+                emit_hooks=payload.get("emitLifecycleHooks") is not False,
+            )
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
                 reason="delete",

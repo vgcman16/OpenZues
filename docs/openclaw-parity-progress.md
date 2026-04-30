@@ -3326,6 +3326,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   sessions_delete or thread_binding"` (`20 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Route-backed `sessions.reset` and `sessions.delete` now also emit
+  OpenClaw-shaped `subagent_ended` lifecycle events through a fakeable native
+  service after session mutation, with `targetKind`, `sendFarewell=true`, and
+  `outcome=reset/deleted`; `sessions.delete emitLifecycleHooks=false` skips
+  only that hook.
+- Verified the reset/delete subagent-ended lifecycle seam with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_reset_delete_emit_subagent_ended_lifecycle_hook
+  tests\test_gateway_node_methods.py::test_sessions_delete_emit_lifecycle_hooks_false_skips_subagent_ended_hook
+  -q` (`3 passed`) and adjacent reset/delete/thread-binding coverage `python
+  -m pytest tests\test_gateway_node_methods.py -q -k "sessions_reset or
+  sessions_delete or thread_binding"` (`23 passed`).
 
 ## References
 

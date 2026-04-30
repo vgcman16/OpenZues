@@ -12657,6 +12657,112 @@ async def test_sessions_reset_delete_unbinds_thread_bound_sessions(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "reason", "outcome"),
+    [
+        ("sessions.reset", {"key": "subagent:child"}, "session-reset", "reset"),
+        ("sessions.delete", {"key": "subagent:child"}, "session-delete", "deleted"),
+    ],
+)
+async def test_sessions_reset_delete_emit_subagent_ended_lifecycle_hook(
+    tmp_path: Path,
+    method: str,
+    params: dict[str, object],
+    reason: str,
+    outcome: str,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-subagent-ended.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Lifecycle child"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This child is active before mutation.",
+        session_key=session_key,
+    )
+    lifecycle_calls: list[dict[str, object]] = []
+
+    class FakeSubagentLifecycleService:
+        async def emit_subagent_ended(
+            self,
+            event: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            lifecycle_calls.append({"event": dict(event), "context": dict(context)})
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        subagent_lifecycle_service=FakeSubagentLifecycleService(),
+    )
+
+    payload = await service.call(method, params, now_ms=1111)
+
+    assert payload["ok"] is True
+    assert lifecycle_calls == [
+        {
+            "event": {
+                "targetSessionKey": session_key,
+                "targetKind": "subagent",
+                "reason": reason,
+                "sendFarewell": True,
+                "outcome": outcome,
+            },
+            "context": {
+                "childSessionKey": session_key,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_emit_lifecycle_hooks_false_skips_subagent_ended_hook(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-subagent-ended-skip.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Lifecycle child"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This child is active before deletion.",
+        session_key=session_key,
+    )
+
+    class FakeSubagentLifecycleService:
+        async def emit_subagent_ended(
+            self,
+            event: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            raise AssertionError("emitLifecycleHooks=false should skip subagent_ended")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        subagent_lifecycle_service=FakeSubagentLifecycleService(),
+    )
+
+    payload = await service.call(
+        "sessions.delete",
+        {"key": "subagent:child", "emitLifecycleHooks": False},
+        now_ms=1111,
+    )
+
+    assert payload["ok"] is True
+    assert payload["deleted"] is True
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_closes_acp_runtime_before_metadata_delete(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-delete-acp-cleanup.db")
     await database.initialize()

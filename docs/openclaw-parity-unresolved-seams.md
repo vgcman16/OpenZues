@@ -213,10 +213,14 @@ Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
 from the preserved session entry.
+Reset/delete lifecycle now also emits the OpenClaw-shaped `subagent_ended`
+event through a fakeable native lifecycle service after session mutation,
+including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;
+`sessions.delete emitLifecycleHooks=false` still skips only that hook while the
+delete/unbind path proceeds.
 Remaining lifecycle parity is deeper provider-native binding record stores,
 provider-native child-thread creation, target-agent bound-account selection,
-end-hook/farewell behavior on reset/delete, and ACP/session binding policy
-breadth.
+and ACP/session binding policy breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
