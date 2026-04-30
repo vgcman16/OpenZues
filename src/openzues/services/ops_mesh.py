@@ -10078,8 +10078,29 @@ class OpsMeshService:
             "guildId",
             required=True,
         )
+        target = _discord_api_endpoint(f"guilds/{guild_id}/threads/active")
+        if request.params.get("includeArchived") is True:
+            channel_id = _discord_action_channel_id(
+                _message_action_param_string(
+                    request.params,
+                    "channelId",
+                    required=True,
+                )
+            )
+            if channel_id is None:
+                raise RuntimeError("Discord thread-list archived requires channelId.")
+            query: dict[str, str] = {}
+            before = _message_action_param_string(request.params, "before")
+            if before is not None:
+                query["before"] = before
+            limit = _message_action_param_integer(request.params, "limit")
+            if limit is not None:
+                query["limit"] = str(limit)
+            target = _discord_api_endpoint(f"channels/{channel_id}/threads/archived/public")
+            if query:
+                target = f"{target}?{urlencode(query)}"
         threads = self._request_json_provider_url(
-            _discord_api_endpoint(f"guilds/{guild_id}/threads/active"),
+            target,
             method="GET",
             secret_header_name="Authorization",
             secret_token=_discord_bot_authorization(secret_token),
