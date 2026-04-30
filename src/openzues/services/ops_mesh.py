@@ -7091,6 +7091,7 @@ class OpsMeshService:
         if channel != "slack" or action not in {
             "delete",
             "edit",
+            "list-pins",
             "pin",
             "react",
             "reactions",
@@ -7137,6 +7138,13 @@ class OpsMeshService:
         if action == "unpin":
             return await asyncio.to_thread(
                 self._dispatch_slack_unpin_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "list-pins":
+            return await asyncio.to_thread(
+                self._dispatch_slack_list_pins_message_action,
                 route,
                 request,
                 secret_token,
@@ -7531,6 +7539,36 @@ class OpsMeshService:
             "unpinned": True,
             "channelId": channel_id,
             "messageId": message_id or "",
+        }
+
+    def _dispatch_slack_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack list-pins requires channelId.")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "pins.list"),
+            {"channel": channel_id},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        pins = result.get("items")
+        return {
+            "ok": True,
+            "channelId": channel_id,
+            "pins": pins if isinstance(pins, list) else [],
         }
 
     def _remove_own_slack_reactions(

@@ -3081,6 +3081,90 @@ async def test_ops_mesh_service_message_action_dispatches_slack_unpin_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_list_pins_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-list-pins"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    pins = [
+        {
+            "type": "message",
+            "message": {"ts": "1710000000.0005", "text": "Pinned build note"},
+        }
+    ]
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True, "items": pins}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="list-pins",
+            params={"to": "channel:C123"},
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-list-pins-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channelId": "C123",
+        "pins": pins,
+    }
+    assert slack_posts == [
+        (
+            "https://slack.test/api/pins.list",
+            {"channel": "C123"},
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
