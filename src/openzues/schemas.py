@@ -1744,6 +1744,7 @@ class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     models: dict[str, dict[str, Any]] | None = None
     model: dict[str, Any] | str | None = None
     image_model: dict[str, Any] | str | None = Field(default=None, alias="imageModel")
+    memory_search: dict[str, Any] | None = Field(default=None, alias="memorySearch")
 
 
 class ControlUiGatewayAgentConfigView(BaseModel):

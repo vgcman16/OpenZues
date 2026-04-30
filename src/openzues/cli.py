@@ -2184,6 +2184,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy Google Chat streamMode config is unused."
     if _legacy_config_issues_all_sandbox_per_session(issues):
         return "Legacy sandbox perSession config uses scope."
+    if _legacy_config_issues_all_match(issues, "memorySearch"):
+        return "Legacy memorySearch config moved to agents.defaults.memorySearch."
     if _legacy_config_issues_all_match(issues, "gateway.bind"):
         return "Legacy gateway bind host aliases use bind modes."
     return "Legacy config contains migratable keys."
@@ -2206,6 +2208,11 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy Google Chat streamMode config is unused; run openzues doctor --fix."
     if _legacy_config_issues_all_sandbox_per_session(issues):
         return "Legacy sandbox perSession config uses scope; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, "memorySearch"):
+        return (
+            "Legacy memorySearch config moved to agents.defaults.memorySearch; "
+            "run openzues doctor --fix."
+        )
     if _legacy_config_issues_all_match(issues, "gateway.bind"):
         return "Legacy gateway bind host aliases use bind modes; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."

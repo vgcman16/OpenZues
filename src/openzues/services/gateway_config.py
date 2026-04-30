@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -258,6 +259,7 @@ class GatewayConfigService:
             *_migrate_legacy_googlechat_stream_mode(payload),
             *_migrate_legacy_audio_transcription(payload),
             *_migrate_legacy_sandbox_per_session(payload),
+            *_migrate_legacy_memory_search(payload),
             *_migrate_gateway_control_ui_allowed_origins(payload),
             *_migrate_legacy_gateway_bind_alias(payload),
         ]
@@ -1723,6 +1725,14 @@ def _legacy_sandbox_per_session_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_memory_search_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": "agents.defaults.memorySearch",
+        "message": "top-level memorySearch is legacy; use agents.defaults.memorySearch.",
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1752,6 +1762,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_sandbox_per_session_issue(path)
             for path in _iter_legacy_sandbox_per_session_paths(payload)
+        ],
+        *[
+            _legacy_memory_search_issue(path)
+            for path in _iter_legacy_memory_search_paths(payload)
         ],
         *[
             _legacy_gateway_bind_alias_issue(path)
@@ -2189,6 +2203,10 @@ def _iter_legacy_sandbox_per_session_paths(payload: dict[str, Any]) -> list[str]
     return paths
 
 
+def _iter_legacy_memory_search_paths(payload: dict[str, Any]) -> list[str]:
+    return ["memorySearch"] if "memorySearch" in payload else []
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2510,6 +2528,38 @@ def _migrate_sandbox_per_session_at(
     else:
         changes.append(f"Removed {path_label}.perSession ({path_label}.scope already set).")
     del sandbox["perSession"]
+
+
+def _migrate_legacy_memory_search(payload: dict[str, Any]) -> list[str]:
+    legacy_memory_search = payload.get("memorySearch")
+    if not isinstance(legacy_memory_search, dict):
+        return []
+    agents = _ensure_config_record(payload, "agents")
+    defaults = _ensure_config_record(agents, "defaults")
+    existing = defaults.get("memorySearch")
+    if not isinstance(existing, dict):
+        defaults["memorySearch"] = legacy_memory_search
+        changes = ["Moved memorySearch to agents.defaults.memorySearch."]
+    else:
+        merged = copy.deepcopy(existing)
+        _merge_missing_config_values(merged, legacy_memory_search)
+        defaults["memorySearch"] = merged
+        changes = [
+            "Merged memorySearch to agents.defaults.memorySearch "
+            "(filled missing fields from legacy; kept explicit agents.defaults values)."
+        ]
+    del payload["memorySearch"]
+    return changes
+
+
+def _merge_missing_config_values(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if key not in target:
+            target[key] = copy.deepcopy(value)
+            continue
+        existing = target[key]
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _merge_missing_config_values(existing, value)
 
 
 def _migrate_gateway_control_ui_allowed_origins(payload: dict[str, Any]) -> list[str]:
