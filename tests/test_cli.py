@@ -13948,6 +13948,875 @@ def test_doctor_json_warns_when_state_directory_is_missing(
     assert f"CRITICAL: state directory missing: {missing_dir}" in payload["warnings"]
 
 
+def test_doctor_json_warns_about_opencode_provider_overrides(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "models": {
+                    "providers": {
+                        "opencode": {
+                            "api": "openai-completions",
+                            "baseUrl": "https://opencode.ai/zen/v1",
+                        },
+                        "opencode-go": {
+                            "api": "openai-completions",
+                            "baseUrl": "https://opencode.ai/zen/go/v1",
+                        },
+                    }
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["providerOverrides"] == {
+        "opencode": {
+            "ok": False,
+            "paths": [
+                "models.providers.opencode",
+                "models.providers.opencode-go",
+            ],
+            "warnings": [
+                (
+                    "OpenCode provider overrides shadow bundled defaults: "
+                    "models.providers.opencode, models.providers.opencode-go"
+                )
+            ],
+        }
+    }
+    assert payload["providerOverrides"]["opencode"]["warnings"][0] in payload["warnings"]
+
+
+def _invoke_doctor_json_with_config_snapshot(
+    monkeypatch,
+    snapshot: dict[str, object],
+    *,
+    settings: object | None = None,
+    args: list[str] | None = None,
+    gateway_node_methods: object | None = None,
+):
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return snapshot
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=settings or SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=gateway_node_methods,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    return runner.invoke(app, args or ["doctor", "--json"])
+
+
+def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://api.openai.com/v1",
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                        "email": "user@example.com",
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["providerOverrides"]["openaiCodex"]["warnings"][0]
+    assert "models.providers.openai-codex contains a legacy transport override" in warning
+    assert "models.providers.openai-codex.api=openai-responses" in warning
+    assert "models.providers.openai-codex.baseUrl=https://api.openai.com/v1" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_codex_provider_override_shadows_stored_oauth(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    auth_store_path = tmp_path / "agents" / "main" / "agent" / "auth-profiles.json"
+    auth_store_path.parent.mkdir(parents=True)
+    auth_store_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "type": "oauth",
+                        "access": "access-token",
+                        "refresh": "refresh-token",
+                        "email": "user@example.com",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://api.openai.com/v1",
+                    }
+                }
+            }
+        },
+        settings=SimpleNamespace(data_dir=tmp_path),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["providerOverrides"]["openaiCodex"]["warnings"][0]
+    assert "models.providers.openai-codex contains a legacy transport override" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_codex_inline_model_keeps_legacy_openai_transport(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "models": [
+                            {
+                                "id": "gpt-5.4",
+                                "api": "openai-responses",
+                            }
+                        ]
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["providerOverrides"]["openaiCodex"]["warnings"][0]
+    assert "legacy transport override" in warning
+    assert "Older OpenAI transport settings can shadow" in warning
+
+
+def test_doctor_json_skips_codex_override_warning_for_custom_or_non_oauth_cases(
+    monkeypatch,
+) -> None:
+    custom_proxy = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://custom.example.com",
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                    }
+                }
+            },
+        },
+    )
+    header_only = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "baseUrl": "https://custom.example.com",
+                        "headers": {"X-Custom-Auth": "token-123"},
+                        "models": [{"id": "gpt-5.4"}],
+                    }
+                }
+            },
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                    }
+                }
+            },
+        },
+    )
+    no_oauth = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "models": {
+                "providers": {
+                    "openai-codex": {
+                        "api": "openai-responses",
+                        "baseUrl": "https://api.openai.com/v1",
+                    }
+                }
+            }
+        },
+    )
+
+    for result in (custom_proxy, header_only, no_oauth):
+        assert result.exit_code == 0, result.stdout
+        payload = json.loads(result.stdout)
+        assert "openaiCodex" not in payload.get("providerOverrides", {})
+
+
+def test_doctor_json_warns_when_gateway_auth_missing_local_token(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = (
+        "Gateway auth is off or missing a token. Token auth is now the recommended "
+        "default (including loopback)."
+    )
+    assert payload["gatewayAuth"]["reason"] == "missing_token"
+    assert payload["gatewayAuth"]["warnings"] == [warning]
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_skips_gateway_auth_warning_when_env_token_is_set(monkeypatch) -> None:
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "env-token-1234567890")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert not any("Gateway auth is off or missing a token" in item for item in payload["warnings"])
+    assert "gatewayAuth" not in payload
+
+
+def test_doctor_json_warns_when_gateway_auth_mode_is_ambiguous(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+                "auth": {
+                    "token": "token-value",
+                    "password": "password-value",
+                },
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["gatewayAuth"]["warnings"][0]
+    assert payload["gatewayAuth"]["reason"] == "ambiguous_mode"
+    assert "gateway.auth.mode is unset" in warning
+    assert "openclaw config set gateway.auth.mode token" in warning
+    assert "openclaw config set gateway.auth.mode password" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_keeps_secretref_gateway_token_read_only_when_unresolved(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+                "auth": {
+                    "mode": "token",
+                    "token": {
+                        "source": "env",
+                        "provider": "default",
+                        "id": "OPENCLAW_GATEWAY_TOKEN",
+                    },
+                },
+            },
+            "secrets": {
+                "providers": {
+                    "default": {"source": "env"},
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["gatewayAuth"]["warnings"][0]
+    assert payload["gatewayAuth"]["reason"] == "secret_ref_unresolved"
+    assert "Gateway token is managed via SecretRef and is currently unavailable." in warning
+    assert "Doctor will not overwrite gateway.auth.token with a plaintext value." in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_reports_browser_health_unavailable_when_facade_missing(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "browser": {
+                "defaultProfile": "user",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["browser"]["warnings"][0]
+    assert payload["browser"]["status"] == "unavailable"
+    assert "Browser health check is unavailable" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_gateway_mode_is_unset(monkeypatch) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {},
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["gatewayConfig"]["warnings"][0]
+    assert payload["gatewayConfig"]["reason"] == "missing_gateway_mode"
+    assert "gateway.mode is unset; gateway start will be blocked." in warning
+    assert "openclaw configure" in warning
+    assert "openclaw config set gateway.mode local" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_claude_cli_model_is_configured_but_unavailable(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "primary": "claude-cli/claude-sonnet-4-6",
+                    },
+                    "cliBackends": {
+                        "claude-cli": {
+                            "command": "__missing_claude_cli__",
+                        }
+                    },
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["claudeCli"]["warnings"][0]
+    assert payload["claudeCli"]["status"] == "warning"
+    assert 'Binary: command "__missing_claude_cli__" was not found on PATH.' in warning
+    assert "Headless Claude auth: unavailable without interactive prompting." in warning
+    assert "OpenClaw auth profile: missing (anthropic:claude-cli)" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_openai_codex_oauth_tls_preflight_fails(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    def fake_preflight(*, timeout_seconds: float = 4.0) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        assert timeout_seconds == 4.0
+        return {
+            "ok": False,
+            "kind": "tls-cert",
+            "code": "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+            "message": "unable to get local issuer certificate",
+        }
+
+    monkeypatch.setattr(cli_module, "_run_openai_oauth_tls_preflight", fake_preflight)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                        "email": "user@example.com",
+                    }
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["oauthTls"]["warnings"][0]
+    assert calls == 1
+    assert payload["oauthTls"]["status"] == "warning"
+    assert payload["oauthTls"]["openClawContribution"] == "doctor:oauth-tls"
+    assert "OpenAI OAuth prerequisites check failed" in warning
+    assert "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" in warning
+    assert "brew postinstall ca-certificates" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_warns_when_hooks_gmail_model_is_not_allowed_or_cataloged(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "hooks": {
+                "gmail": {
+                    "model": "openai/gpt-missing",
+                }
+            },
+            "agents": {
+                "defaults": {
+                    "models": [
+                        {
+                            "provider": "openai",
+                            "id": "gpt-5.4",
+                        }
+                    ]
+                }
+            },
+            "models": {
+                "providers": {
+                    "openai": {
+                        "models": [
+                            {
+                                "id": "gpt-5.4",
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["hooksModel"]["warnings"]
+    assert payload["hooksModel"]["status"] == "warning"
+    assert payload["hooksModel"]["openClawContribution"] == "doctor:hooks-model"
+    assert payload["hooksModel"]["modelKey"] == "openai/gpt-missing"
+    assert (
+        '- hooks.gmail.model "openai/gpt-missing" not in agents.defaults.models allowlist '
+        "(will use primary instead)"
+    ) in warnings
+    assert (
+        '- hooks.gmail.model "openai/gpt-missing" not in the model catalog '
+        "(may fail at runtime)"
+    ) in warnings
+    assert warnings[0] in payload["warnings"]
+
+
+def test_doctor_json_warns_when_bootstrap_file_exceeds_limits(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "AGENTS.md").write_text("a" * 25_000, encoding="utf-8")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "agents": {
+                "defaults": {
+                    "workspaceDir": str(workspace),
+                    "bootstrapMaxChars": 20_000,
+                    "bootstrapTotalMaxChars": 150_000,
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["bootstrapSize"]["warnings"][0]
+    assert payload["bootstrapSize"]["status"] == "warning"
+    assert payload["bootstrapSize"]["openClawContribution"] == "doctor:bootstrap-size"
+    assert payload["bootstrapSize"]["truncatedFiles"][0]["name"] == "AGENTS.md"
+    assert "Workspace bootstrap files exceed limits and will be truncated" in warning
+    assert "AGENTS.md" in warning
+    assert "max/file" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_includes_workspace_status_plugin_counts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "plugins" / "native-search"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="native-search")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "plugins": {
+                "load": {
+                    "paths": [str(plugin_dir)],
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    workspace_status = payload["workspaceStatus"]
+    assert workspace_status["status"] == "ok"
+    assert workspace_status["openClawContribution"] == "doctor:workspace-status"
+    assert workspace_status["plugins"] == {
+        "loaded": 1,
+        "imported": 0,
+        "disabled": 0,
+        "errors": 0,
+        "bundlePlugins": 0,
+        "records": [
+            {
+                "id": "native-search",
+                "status": "loaded",
+                "format": "openclaw",
+                "imported": False,
+            }
+        ],
+    }
+
+
+def test_doctor_json_warns_about_pending_device_pairing_from_gateway(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "device.pair.list":
+                return {
+                    "pending": [
+                        {
+                            "requestId": "req-gateway-1",
+                            "deviceId": "device-gateway-1",
+                            "publicKey": "pubkey",
+                            "role": "operator",
+                            "roles": ["operator"],
+                            "scopes": ["operator.admin"],
+                            "clientId": "control-ui",
+                            "clientMode": "webchat",
+                            "displayName": "Dashboard",
+                            "ts": 1,
+                            "isRepair": False,
+                        }
+                    ],
+                    "paired": [],
+                }
+            raise AssertionError(method)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "remote"}},
+        gateway_node_methods=FakeGatewayNodeMethods(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["devicePairing"]["warnings"][0]
+    assert ("device.pair.list", {}) in calls
+    assert payload["devicePairing"]["status"] == "warning"
+    assert payload["devicePairing"]["openClawContribution"] == "doctor:device-pairing"
+    assert "Pending device pairing request req-gateway-1" in warning
+    assert "Dashboard (device-gateway-1)" in warning
+    assert "openclaw devices approve req-gateway-1" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_classifies_device_pairing_repairs_and_token_gaps(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            if method == "device.pair.list":
+                return {
+                    "pending": [
+                        {
+                            "requestId": "req-repair-1",
+                            "deviceId": "device; echo pwn",
+                            "publicKey": "pending-pubkey",
+                            "role": "operator",
+                            "roles": ["operator"],
+                            "scopes": ["operator.admin"],
+                            "clientId": "control-ui",
+                            "clientMode": "webchat",
+                            "displayName": "Dashboard",
+                            "ts": 1,
+                            "isRepair": True,
+                        }
+                    ],
+                    "paired": [
+                        {
+                            "deviceId": "device; echo pwn",
+                            "publicKey": "paired-pubkey",
+                            "displayName": "Dashboard",
+                            "clientId": "control-ui",
+                            "clientMode": "webchat",
+                            "role": "operator; touch /tmp/pwn",
+                            "roles": ["operator; touch /tmp/pwn"],
+                            "scopes": [],
+                            "approvedScopes": [],
+                            "tokens": [],
+                            "createdAtMs": 1,
+                            "approvedAtMs": 1,
+                        }
+                    ],
+                }
+            raise AssertionError(method)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "remote"}},
+        gateway_node_methods=FakeGatewayNodeMethods(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["devicePairing"]["warnings"]
+    assert any(
+        "Pending device repair req-repair-1" in warning
+        and "current device identity no longer matches" in warning
+        and "openclaw devices remove 'device; echo pwn'" in warning
+        for warning in warnings
+    )
+    assert any(
+        "has no active operator; touch /tmp/pwn device token" in warning
+        and (
+            "openclaw devices rotate --device 'device; echo pwn' "
+            "--role 'operator; touch /tmp/pwn'"
+        )
+        in warning
+        for warning in warnings
+    )
+    assert warnings[0] in payload["warnings"]
+    assert warnings[1] in payload["warnings"]
+
+
+def test_doctor_json_warns_about_legacy_cron_store(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    store_path.parent.mkdir()
+    legacy_store = {
+        "version": 1,
+        "jobs": [
+            {
+                "jobId": "legacy-job",
+                "name": "Legacy job",
+                "notify": True,
+                "createdAtMs": 1_770_000_000_000,
+                "updatedAtMs": 1_770_000_000_000,
+                "schedule": {"kind": "cron", "cron": "0 7 * * *", "tz": "UTC"},
+                "payload": {"kind": "systemEvent", "text": "Morning brief"},
+                "state": {},
+            }
+        ],
+    }
+    store_path.write_text(json.dumps(legacy_store), encoding="utf-8")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "cron": {
+                "store": str(store_path),
+                "webhook": "https://example.invalid/cron-finished",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyCron"]
+    assert contribution["status"] == "warn"
+    assert contribution["openClawContribution"] == "doctor:legacy-cron"
+    assert contribution["repairAvailable"] is True
+    assert any("Legacy cron job storage detected" in line for line in contribution["warnings"])
+    assert contribution["issues"]["jobId"] == 1
+    assert contribution["issues"]["legacyScheduleCron"] == 1
+    assert contribution["issues"]["legacyNotify"] == 1
+    assert json.loads(store_path.read_text(encoding="utf-8")) == legacy_store
+
+
+def test_doctor_fix_normalizes_legacy_cron_store(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    store_path.parent.mkdir()
+    store_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "jobs": [
+                    {
+                        "jobId": "legacy-job",
+                        "name": "Legacy job",
+                        "notify": True,
+                        "createdAtMs": 1_770_000_000_000,
+                        "updatedAtMs": 1_770_000_000_000,
+                        "schedule": {"kind": "cron", "cron": "0 7 * * *", "tz": "UTC"},
+                        "message": "Morning brief",
+                        "model": "openai/gpt-5.4",
+                        "state": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "cron": {
+                "store": str(store_path),
+                "webhook": "https://example.invalid/cron-finished",
+            }
+        },
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyCron"]
+    assert contribution["status"] == "ok"
+    assert contribution["changed"] is True
+    assert any("Cron store normalized" in line for line in contribution["changes"])
+    repaired = json.loads(store_path.read_text(encoding="utf-8"))
+    job = repaired["jobs"][0]
+    assert job["id"] == "legacy-job"
+    assert "jobId" not in job
+    assert job["schedule"] == {"kind": "cron", "tz": "UTC", "expr": "0 7 * * *"}
+    assert job["payload"] == {
+        "kind": "agentTurn",
+        "message": "Morning brief",
+        "model": "openai/gpt-5.4",
+    }
+    assert job["delivery"] == {
+        "mode": "webhook",
+        "to": "https://example.invalid/cron-finished",
+    }
+    assert "notify" not in job
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -14042,14 +14911,18 @@ def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> 
     class FakeGatewayNodeMethods:
         async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
             calls.append((method, params))
-            return {
-                "agentId": "main",
-                "embedding": {
-                    "ok": False,
-                    "provider": "local",
-                    "error": "node-llama-cpp not installed",
-                },
-            }
+            if method == "doctor.memory.status":
+                return {
+                    "agentId": "main",
+                    "embedding": {
+                        "ok": False,
+                        "provider": "local",
+                        "error": "node-llama-cpp not installed",
+                    },
+                }
+            if method == "device.pair.list":
+                return {"pending": [], "paired": []}
+            raise AssertionError(method)
 
     async def fake_live_view(_settings: object) -> None:
         return None
@@ -14071,7 +14944,10 @@ def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> 
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
-    assert calls == [("doctor.memory.status", {})]
+    assert calls == [
+        ("doctor.memory.status", {}),
+        ("device.pair.list", {}),
+    ]
     assert payload["memorySearch"] == {
         "status": "warn",
         "summary": (
@@ -14154,6 +15030,8 @@ def test_doctor_json_includes_gateway_health_contribution_and_channel_warnings(
                 }
             if method == "doctor.memory.status":
                 return {"embedding": {"ok": True, "provider": "local"}}
+            if method == "device.pair.list":
+                return {"pending": [], "paired": []}
             raise AssertionError(method)
 
     async def fake_live_view(_settings: object) -> None:
@@ -14194,6 +15072,7 @@ def test_doctor_json_includes_gateway_health_contribution_and_channel_warnings(
     assert gateway_calls == [
         ("channels.status", {"probe": True, "timeoutMs": 5000}),
         ("doctor.memory.status", {}),
+        ("device.pair.list", {}),
     ]
     assert payload["gatewayHealth"]["openClawContribution"] == "doctor:gateway-health"
     assert payload["gatewayHealth"]["status"] == "warn"
@@ -17214,6 +18093,98 @@ def test_doctor_fix_rewrites_legacy_bundled_plugin_load_paths_before_stale_scan(
     assert repaired["plugins"]["load"]["paths"] == [str(bundled_dir)]
     assert repaired["plugins"]["allow"] == ["feishu"]
     assert repaired["plugins"]["entries"] == {"feishu": {"enabled": True}}
+
+
+def test_doctor_json_warns_about_legacy_plugin_manifest_contract_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "openai"
+    plugin_dir.mkdir()
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    legacy_manifest = {
+        "id": "openai",
+        "providers": ["openai"],
+        "speechProviders": ["openai"],
+        "mediaUnderstandingProviders": ["openai"],
+        "imageGenerationProviders": ["dall-e"],
+        "contracts": {"imageGenerationProviders": ["gpt-image"]},
+        "configSchema": {"type": "object"},
+    }
+    manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"plugins": {"load": {"paths": [str(plugin_dir)]}}},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyPluginManifests"]
+    assert contribution["status"] == "warn"
+    assert contribution["openClawContribution"] == "doctor:legacy-plugin-manifests"
+    assert contribution["repairAvailable"] is True
+    assert contribution["migrations"][0]["pluginId"] == "openai"
+    assert contribution["migrations"][0]["manifestPath"] == str(manifest_path)
+    changes = contribution["migrations"][0]["changeLines"]
+    assert any("moved speechProviders to contracts.speechProviders" in line for line in changes)
+    assert any(
+        "moved mediaUnderstandingProviders to contracts.mediaUnderstandingProviders" in line
+        for line in changes
+    )
+    assert any(
+        "removed legacy imageGenerationProviders (kept contracts.imageGenerationProviders)" in line
+        for line in changes
+    )
+    assert contribution["warnings"][0] == "Legacy plugin manifest capability keys detected."
+    assert contribution["warnings"][0] in payload["warnings"]
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == legacy_manifest
+
+
+def test_doctor_fix_rewrites_legacy_plugin_manifest_contract_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "openai"
+    plugin_dir.mkdir()
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "providers": ["openai"],
+                "speechProviders": ["openai"],
+                "mediaUnderstandingProviders": ["openai"],
+                "contracts": {"webSearchProviders": ["gemini"]},
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"plugins": {"load": {"paths": [str(plugin_dir)]}}},
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyPluginManifests"]
+    assert contribution["status"] == "ok"
+    assert contribution["changed"] is True
+    assert any(
+        "moved speechProviders to contracts.speechProviders" in line
+        for line in contribution["changes"]
+    )
+    repaired = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "speechProviders" not in repaired
+    assert "mediaUnderstandingProviders" not in repaired
+    assert repaired["contracts"] == {
+        "speechProviders": ["openai"],
+        "mediaUnderstandingProviders": ["openai"],
+        "webSearchProviders": ["gemini"],
+    }
 
 
 def test_doctor_json_warns_about_stale_plugin_config(

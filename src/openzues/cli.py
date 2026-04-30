@@ -2379,6 +2379,206 @@ def _with_doctor_bundled_plugin_load_paths_payload(
     return next_payload
 
 
+_LEGACY_PLUGIN_MANIFEST_CONTRACT_KEYS = (
+    "speechProviders",
+    "mediaUnderstandingProviders",
+    "imageGenerationProviders",
+)
+
+
+def _legacy_plugin_manifest_contract_migration(
+    manifest_path: Path,
+    raw: dict[str, object],
+) -> dict[str, object] | None:
+    next_raw: dict[str, object] = dict(raw)
+    raw_contracts = raw.get("contracts")
+    next_contracts: dict[str, object] = (
+        dict(raw_contracts) if isinstance(raw_contracts, dict) else {}
+    )
+    change_lines: list[str] = []
+    manifest_label = str(manifest_path)
+    for key in _LEGACY_PLUGIN_MANIFEST_CONTRACT_KEYS:
+        if key not in raw:
+            continue
+        legacy_values = _plugin_manifest_string_list(raw.get(key))
+        contract_values = _plugin_manifest_string_list(next_contracts.get(key))
+        if legacy_values and not contract_values:
+            next_contracts[key] = legacy_values
+            change_lines.append(
+                f"- {manifest_label}: moved {key} to contracts.{key}"
+            )
+        else:
+            change_lines.append(
+                f"- {manifest_label}: removed legacy {key} (kept contracts.{key})"
+            )
+        next_raw.pop(key, None)
+    if not change_lines:
+        return None
+    if next_contracts:
+        next_raw["contracts"] = next_contracts
+    else:
+        next_raw.pop("contracts", None)
+    return {
+        "manifestPath": str(manifest_path),
+        "pluginId": _optional_cli_string(raw.get("id")) or str(manifest_path),
+        "nextRaw": next_raw,
+        "changeLines": change_lines,
+    }
+
+
+def _collect_legacy_plugin_manifest_contract_migrations(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    migrations: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for load_path in _plugin_manifest_load_paths(plugins_config):
+        manifest_path = _plugin_manifest_path_for_load_path(load_path)
+        if manifest_path is None:
+            continue
+        manifest_key = str(manifest_path.resolve(strict=False))
+        if manifest_key in seen:
+            continue
+        seen.add(manifest_key)
+        raw = _read_cli_json_object(manifest_path)
+        if raw is None:
+            continue
+        migration = _legacy_plugin_manifest_contract_migration(manifest_path, raw)
+        if migration is not None:
+            migrations.append(migration)
+    return sorted(migrations, key=lambda item: str(item.get("manifestPath") or ""))
+
+
+def _doctor_legacy_plugin_manifest_warnings(
+    migrations: Sequence[object],
+) -> list[str]:
+    if not migrations:
+        return []
+    warnings = ["Legacy plugin manifest capability keys detected."]
+    for migration in migrations:
+        if not isinstance(migration, dict):
+            continue
+        for line in _object_list(migration.get("changeLines")):
+            text = str(line).strip()
+            if text:
+                warnings.append(text)
+    return warnings
+
+
+def _apply_legacy_plugin_manifest_contract_migrations(
+    migrations: Sequence[dict[str, object]],
+) -> tuple[list[str], list[dict[str, object]]]:
+    changes: list[str] = []
+    errors: list[dict[str, object]] = []
+    for migration in migrations:
+        manifest_path_text = _optional_cli_string(migration.get("manifestPath"))
+        next_raw = migration.get("nextRaw")
+        if manifest_path_text is None or not isinstance(next_raw, dict):
+            continue
+        try:
+            Path(manifest_path_text).write_text(
+                f"{json.dumps(next_raw, indent=2)}\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            errors.append(
+                {
+                    "manifestPath": manifest_path_text,
+                    "message": f"Failed to rewrite legacy plugin manifest: {exc}",
+                }
+            )
+            continue
+        changes.extend(str(line) for line in _object_list(migration.get("changeLines")))
+    return changes, errors
+
+
+def _build_doctor_legacy_plugin_manifests_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:legacy-plugin-manifests",
+        "repairRequested": should_repair,
+        "repairAvailable": True,
+        "migrations": [],
+        "warnings": [],
+    }
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for plugin manifest checks.",
+            "repairAvailable": False,
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Plugin manifest migration detection failed: {exc}",
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    migrations = _collect_legacy_plugin_manifest_contract_migrations(snapshot)
+    if should_repair:
+        changes, errors = _apply_legacy_plugin_manifest_contract_migrations(migrations)
+        remaining_migrations = migrations if errors else []
+        warnings = _doctor_legacy_plugin_manifest_warnings(remaining_migrations)
+        status = "error" if errors else ("ok" if changes or not migrations else "warn")
+        return {
+            **base_payload,
+            "status": status,
+            "summary": (
+                "Rewrote legacy plugin manifest capability keys into contracts."
+                if changes and not errors
+                else (
+                    "Legacy plugin manifest repair had errors."
+                    if errors
+                    else "No legacy plugin manifest capability keys found."
+                )
+            ),
+            "changed": bool(changes) and not errors,
+            "changes": changes,
+            "errors": errors,
+            "migrations": remaining_migrations,
+            "warnings": warnings,
+        }
+    warnings = _doctor_legacy_plugin_manifest_warnings(migrations)
+    return {
+        **base_payload,
+        "status": "warn" if migrations else "ok",
+        "summary": (
+            "Legacy plugin manifest capability keys found."
+            if migrations
+            else "No legacy plugin manifest capability keys found."
+        ),
+        "migrations": migrations,
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_legacy_plugin_manifests_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    manifest_payload = _build_doctor_legacy_plugin_manifests_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["legacyPluginManifests"] = manifest_payload
+    warnings = _object_list(manifest_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
 def _stale_plugin_registry_state(
     config_service: object | None,
 ) -> tuple[set[str], list[dict[str, object]]]:
@@ -3372,6 +3572,426 @@ def _with_doctor_session_lock_health(
     return next_payload
 
 
+_LEGACY_CRON_ISSUE_LABELS: dict[str, str] = {
+    "jobId": "still uses legacy `jobId`",
+    "legacyScheduleString": "stores schedule as a bare string",
+    "legacyScheduleCron": "still uses `schedule.cron`",
+    "legacyPayloadKind": "needs payload kind normalization",
+    "legacyPayloadProvider": "still uses payload `provider` as a delivery alias",
+    "legacyTopLevelPayloadFields": "still uses top-level payload fields",
+    "legacyTopLevelDeliveryFields": "still uses top-level delivery fields",
+    "legacyDeliveryMode": "still uses delivery mode `deliver`",
+    "legacyNotify": "still uses legacy `notify: true` webhook fallback",
+}
+
+
+def _doctor_cron_store_path(snapshot: dict[str, object]) -> Path | None:
+    cron = _dict_config(snapshot.get("cron"))
+    store_path = _optional_cli_string(cron.get("store"))
+    if store_path is None:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(store_path))
+    try:
+        return Path(expanded).resolve(strict=False)
+    except OSError:
+        return Path(expanded)
+
+
+def _doctor_cron_webhook(snapshot: dict[str, object]) -> str | None:
+    cron = _dict_config(snapshot.get("cron"))
+    return _optional_cli_string(cron.get("webhook")) or _optional_cli_string(
+        cron.get("webhookUrl")
+    )
+
+
+def _legacy_cron_increment(issues: dict[str, int], key: str) -> None:
+    issues[key] = issues.get(key, 0) + 1
+
+
+def _legacy_cron_track_issue(
+    issues: dict[str, int],
+    seen: set[str],
+    key: str,
+) -> None:
+    if key in seen:
+        return
+    seen.add(key)
+    _legacy_cron_increment(issues, key)
+
+
+def _legacy_cron_plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _doctor_legacy_cron_payload_record(job: dict[str, object]) -> dict[str, object] | None:
+    payload = job.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def _doctor_legacy_cron_delivery_record(job: dict[str, object]) -> dict[str, object] | None:
+    delivery = job.get("delivery")
+    return delivery if isinstance(delivery, dict) else None
+
+
+def _doctor_legacy_cron_set_payload_from_top_level(job: dict[str, object]) -> bool:
+    if isinstance(job.get("payload"), dict):
+        return False
+    message = _optional_cli_string(job.get("message"))
+    if message is not None:
+        job["payload"] = {"kind": "agentTurn", "message": message}
+        return True
+    text = _optional_cli_string(job.get("text"))
+    if text is not None:
+        job["payload"] = {"kind": "systemEvent", "text": text}
+        return True
+    command = _optional_cli_string(job.get("command"))
+    if command is not None:
+        job["payload"] = {"kind": "systemEvent", "text": command}
+        return True
+    return False
+
+
+def _doctor_legacy_cron_normalize_payload_kind(payload: dict[str, object]) -> bool:
+    kind = _optional_cli_string(payload.get("kind"))
+    normalized = (kind or "").replace(" ", "").lower()
+    if normalized == "agentturn" and payload.get("kind") != "agentTurn":
+        payload["kind"] = "agentTurn"
+        return True
+    if normalized == "systemevent" and payload.get("kind") != "systemEvent":
+        payload["kind"] = "systemEvent"
+        return True
+    if not kind:
+        if _optional_cli_string(payload.get("message")) is not None:
+            payload["kind"] = "agentTurn"
+            return True
+        if _optional_cli_string(payload.get("text")) is not None:
+            payload["kind"] = "systemEvent"
+            return True
+    return False
+
+
+def _doctor_legacy_cron_copy_payload_fields(
+    job: dict[str, object],
+    payload: dict[str, object],
+) -> bool:
+    changed = False
+    for field in ("model", "thinking"):
+        value = _optional_cli_string(job.get(field))
+        if value is not None and _optional_cli_string(payload.get(field)) is None:
+            payload[field] = value
+            changed = True
+    timeout = job.get("timeoutSeconds")
+    if (
+        isinstance(timeout, int | float)
+        and not isinstance(timeout, bool)
+        and "timeoutSeconds" not in payload
+    ):
+        payload["timeoutSeconds"] = max(0, int(timeout))
+        changed = True
+    return changed
+
+
+def _doctor_legacy_cron_strip_fields(job: dict[str, object], fields: Sequence[str]) -> None:
+    for field in fields:
+        job.pop(field, None)
+
+
+def _doctor_legacy_cron_delivery_from_top_level(
+    job: dict[str, object],
+) -> dict[str, object] | None:
+    deliver = job.get("deliver")
+    channel = _optional_cli_string(job.get("channel")) or _optional_cli_string(
+        job.get("provider")
+    )
+    to = _optional_cli_string(job.get("to"))
+    thread_id = _optional_cli_string(job.get("threadId"))
+    best_effort = job.get("bestEffortDeliver")
+    if deliver is not True and channel is None and to is None and thread_id is None:
+        return None
+    delivery: dict[str, object] = {"mode": "announce"}
+    if channel is not None:
+        delivery["channel"] = channel.lower()
+    if to is not None:
+        delivery["to"] = to
+    if thread_id is not None:
+        delivery["threadId"] = thread_id
+    if isinstance(best_effort, bool):
+        delivery["bestEffort"] = best_effort
+    return delivery
+
+
+def _doctor_legacy_cron_migrate_notify(
+    job: dict[str, object],
+    *,
+    legacy_webhook: str | None,
+) -> tuple[bool, list[str]]:
+    if "notify" not in job:
+        return False, []
+    changed = False
+    warnings: list[str] = []
+    job_name = _optional_cli_string(job.get("name")) or _optional_cli_string(job.get("id")) or (
+        "<unnamed>"
+    )
+    if job.get("notify") is not True:
+        job.pop("notify", None)
+        return True, warnings
+    delivery = _doctor_legacy_cron_delivery_record(job)
+    mode = _optional_cli_string(delivery.get("mode") if delivery else None)
+    to = _optional_cli_string(delivery.get("to") if delivery else None)
+    normalized_mode = mode.lower() if mode is not None else None
+    if normalized_mode == "webhook" and to is not None:
+        job.pop("notify", None)
+        return True, warnings
+    if normalized_mode in {None, "none", "webhook"} and legacy_webhook is not None:
+        next_delivery = dict(delivery or {})
+        next_delivery["mode"] = "webhook"
+        next_delivery["to"] = (
+            legacy_webhook if normalized_mode == "none" else (to or legacy_webhook)
+        )
+        job["delivery"] = next_delivery
+        job.pop("notify", None)
+        return True, warnings
+    if legacy_webhook is None:
+        warnings.append(
+            f'Cron job "{job_name}" still uses legacy notify fallback, but cron.webhook '
+            "is unset so doctor cannot migrate it automatically."
+        )
+        return changed, warnings
+    warnings.append(
+        f'Cron job "{job_name}" uses legacy notify fallback alongside delivery mode '
+        f'"{normalized_mode}". Migrate it manually so webhook delivery does not replace '
+        "existing announce behavior."
+    )
+    return changed, warnings
+
+
+def _doctor_legacy_cron_normalize_jobs(
+    jobs: Sequence[object],
+    *,
+    legacy_webhook: str | None,
+) -> tuple[bool, dict[str, int], list[str]]:
+    changed = False
+    issues: dict[str, int] = {}
+    warnings: list[str] = []
+    for item in jobs:
+        if not isinstance(item, dict):
+            continue
+        job = cast("dict[str, object]", item)
+        job_issue_keys: set[str] = set()
+
+        legacy_id = _optional_cli_string(job.get("jobId"))
+        if legacy_id is not None:
+            if _optional_cli_string(job.get("id")) is None:
+                job["id"] = legacy_id
+            job.pop("jobId", None)
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "jobId")
+
+        if not isinstance(job.get("state"), dict):
+            job["state"] = {}
+            changed = True
+
+        schedule = job.get("schedule")
+        if isinstance(schedule, str):
+            job["schedule"] = {"kind": "cron", "expr": schedule.strip()}
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyScheduleString")
+            schedule = job.get("schedule")
+        if isinstance(schedule, dict):
+            sched = cast("dict[str, object]", schedule)
+            legacy_cron = _optional_cli_string(sched.get("cron"))
+            if legacy_cron is not None:
+                if _optional_cli_string(sched.get("expr")) is None:
+                    sched["expr"] = legacy_cron
+                sched.pop("cron", None)
+                changed = True
+                _legacy_cron_track_issue(issues, job_issue_keys, "legacyScheduleCron")
+
+        if _doctor_legacy_cron_set_payload_from_top_level(job):
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyTopLevelPayloadFields")
+        payload = _doctor_legacy_cron_payload_record(job)
+        if payload is not None:
+            if _doctor_legacy_cron_normalize_payload_kind(payload):
+                changed = True
+                _legacy_cron_track_issue(issues, job_issue_keys, "legacyPayloadKind")
+            if _doctor_legacy_cron_copy_payload_fields(job, payload):
+                changed = True
+
+            payload_provider = _optional_cli_string(payload.get("provider"))
+            if payload_provider is not None:
+                job["delivery"] = {"mode": "announce", "channel": payload_provider.lower()}
+                payload.pop("provider", None)
+                changed = True
+                _legacy_cron_track_issue(issues, job_issue_keys, "legacyPayloadProvider")
+
+        top_level_payload_fields = (
+            "model",
+            "thinking",
+            "timeoutSeconds",
+            "allowUnsafeExternalContent",
+            "message",
+            "text",
+            "command",
+            "timeout",
+        )
+        if any(field in job for field in top_level_payload_fields):
+            _doctor_legacy_cron_strip_fields(job, top_level_payload_fields)
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyTopLevelPayloadFields")
+
+        top_level_delivery_fields = (
+            "deliver",
+            "channel",
+            "to",
+            "threadId",
+            "bestEffortDeliver",
+            "provider",
+        )
+        delivery = _doctor_legacy_cron_delivery_from_top_level(job)
+        if delivery is not None:
+            job["delivery"] = delivery
+            changed = True
+        if any(field in job for field in top_level_delivery_fields):
+            _doctor_legacy_cron_strip_fields(job, top_level_delivery_fields)
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyTopLevelDeliveryFields")
+
+        if job.get("notify") is True:
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyNotify")
+        notify_changed, notify_warnings = _doctor_legacy_cron_migrate_notify(
+            job,
+            legacy_webhook=legacy_webhook,
+        )
+        changed = changed or notify_changed
+        warnings.extend(notify_warnings)
+    return changed, issues, warnings
+
+
+def _doctor_legacy_cron_preview_lines(
+    store_path: Path,
+    issues: dict[str, int],
+) -> list[str]:
+    if not issues:
+        return []
+    lines = [f"Legacy cron job storage detected at {store_path}."]
+    for key, label in _LEGACY_CRON_ISSUE_LABELS.items():
+        count = issues.get(key)
+        if not count:
+            continue
+        lines.append(f"- {_legacy_cron_plural(count, 'job')} {label}")
+    lines.append('Repair with "openzues doctor --fix" to normalize the store.')
+    return lines
+
+
+def _build_doctor_legacy_cron_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:legacy-cron",
+        "repairRequested": should_repair,
+        "repairAvailable": True,
+        "issues": {},
+        "warnings": [],
+    }
+    snapshot = _doctor_config_snapshot(config_service)
+    store_path = _doctor_cron_store_path(snapshot)
+    if store_path is None:
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "No legacy cron store configured.",
+            "repairAvailable": False,
+        }
+    raw_store = _read_cli_json_object(store_path)
+    if raw_store is None:
+        return {
+            **base_payload,
+            "status": "ok" if not store_path.exists() else "error",
+            "summary": (
+                "No legacy cron store found."
+                if not store_path.exists()
+                else f"Legacy cron store could not be read: {store_path}"
+            ),
+            "storePath": str(store_path),
+        }
+    jobs = _object_list(raw_store.get("jobs"))
+    changed, issues, migration_warnings = _doctor_legacy_cron_normalize_jobs(
+        jobs,
+        legacy_webhook=_doctor_cron_webhook(snapshot),
+    )
+    preview_lines = _doctor_legacy_cron_preview_lines(store_path, issues)
+    if should_repair:
+        changes: list[str] = []
+        errors: list[str] = []
+        if changed:
+            try:
+                store_path.parent.mkdir(parents=True, exist_ok=True)
+                next_store = {"version": raw_store.get("version", 1), "jobs": jobs}
+                store_path.write_text(
+                    f"{json.dumps(next_store, indent=2)}\n",
+                    encoding="utf-8",
+                )
+                changes.append(f"Cron store normalized at {store_path}.")
+            except OSError as exc:
+                errors.append(f"Failed to normalize legacy cron store at {store_path}: {exc}")
+        warnings = migration_warnings if errors else migration_warnings
+        return {
+            **base_payload,
+            "status": "error" if errors else ("ok" if changed or not issues else "warn"),
+            "summary": (
+                "Cron store normalized."
+                if changed and not errors
+                else (
+                    "Legacy cron store repair had errors."
+                    if errors
+                    else (
+                        "Legacy cron store still needs manual migration."
+                        if issues
+                        else "No legacy cron store issues found."
+                    )
+                )
+            ),
+            "changed": changed and not errors,
+            "changes": changes,
+            "errors": errors,
+            "issues": issues,
+            "warnings": warnings,
+            "storePath": str(store_path),
+        }
+    return {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Legacy cron job storage found." if issues else "No legacy cron store issues found."
+        ),
+        "issues": issues,
+        "warnings": [*preview_lines, *migration_warnings],
+        "storePath": str(store_path),
+    }
+
+
+def _with_doctor_legacy_cron_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    cron_payload = _build_doctor_legacy_cron_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["legacyCron"] = cron_payload
+    warnings = _object_list(cron_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
 def _build_doctor_security_payload() -> dict[str, object]:
     return {
         "status": "unavailable",
@@ -3711,6 +4331,365 @@ async def _with_doctor_memory_search_payload(
     return next_payload
 
 
+def _doctor_safe_device_text(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    return (
+        text.replace("\x1b", "")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", " ")
+    )
+
+
+def _doctor_quote_cli_arg(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_/:=.,@%+-]+", value):
+        return value
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _doctor_format_cli_args(args: Sequence[str]) -> str:
+    return " ".join(_doctor_quote_cli_arg(arg) for arg in args)
+
+
+def _doctor_unique_strings(*items: object) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, str):
+            candidates: Sequence[object] = [item]
+        elif isinstance(item, (list, tuple)):
+            candidates = item
+        else:
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            trimmed = candidate.strip()
+            if not trimmed or trimmed in seen:
+                continue
+            seen.add(trimmed)
+            values.append(trimmed)
+    return values
+
+
+def _doctor_device_label(pending: dict[str, object]) -> str:
+    device_id = _doctor_safe_device_text(pending.get("deviceId")) or "unknown-device"
+    label = _doctor_safe_device_text(pending.get("displayName")) or _doctor_safe_device_text(
+        pending.get("clientId")
+    )
+    return f"{label} ({device_id})" if label else device_id
+
+
+def _doctor_paired_device_label(paired: dict[str, object]) -> str:
+    device_id = _doctor_safe_device_text(paired.get("deviceId")) or "unknown-device"
+    label = _doctor_safe_device_text(paired.get("displayName")) or _doctor_safe_device_text(
+        paired.get("clientId")
+    )
+    return f"{label} ({device_id})" if label else device_id
+
+
+def _doctor_format_roles(roles: Sequence[str]) -> str:
+    return ", ".join(roles) if roles else "none"
+
+
+def _doctor_format_scopes(scopes: Sequence[str]) -> str:
+    return ", ".join(scopes) if scopes else "none"
+
+
+def _doctor_approved_roles(paired: dict[str, object]) -> list[str]:
+    return _doctor_unique_strings(paired.get("roles"), paired.get("role"))
+
+
+def _doctor_normalize_device_scopes(value: object) -> list[str]:
+    scopes = _doctor_unique_strings(value)
+    out = set(scopes)
+    if "operator.admin" in out:
+        out.add("operator.read")
+        out.add("operator.write")
+    elif "operator.write" in out:
+        out.add("operator.read")
+    return sorted(out)
+
+
+def _doctor_approved_scopes(paired: dict[str, object]) -> list[str]:
+    approved = _doctor_normalize_device_scopes(paired.get("approvedScopes"))
+    if approved:
+        return approved
+    return _doctor_normalize_device_scopes(paired.get("scopes"))
+
+
+def _doctor_role_scopes_allow(
+    *,
+    role: str,
+    requested_scopes: Sequence[str],
+    allowed_scopes: Sequence[str],
+) -> bool:
+    requested = _doctor_unique_strings(list(requested_scopes))
+    if not requested:
+        return True
+    allowed = _doctor_unique_strings(list(allowed_scopes))
+    if not allowed:
+        return False
+    allowed_set = set(allowed)
+    normalized_role = role.strip()
+    if normalized_role != "operator":
+        prefix = f"{normalized_role}."
+        return all(scope.startswith(prefix) and scope in allowed_set for scope in requested)
+    if "operator.admin" in allowed_set:
+        return all(scope.startswith("operator.") for scope in requested)
+    for scope in requested:
+        if not scope.startswith("operator."):
+            return False
+        if scope == "operator.read":
+            if "operator.read" in allowed_set or "operator.write" in allowed_set:
+                continue
+            return False
+        if scope == "operator.write":
+            if "operator.write" in allowed_set:
+                continue
+            return False
+        if scope not in allowed_set:
+            return False
+    return True
+
+
+def _doctor_has_pending_scope_upgrade(
+    *,
+    requested_roles: Sequence[str],
+    pending_scopes: Sequence[str],
+    approved_roles: Sequence[str],
+    approved_scopes: Sequence[str],
+) -> bool:
+    for role in requested_roles:
+        if role not in approved_roles:
+            continue
+        requested_for_role = [
+            scope
+            for scope in pending_scopes
+            if (
+                (role == "operator" and scope.startswith("operator."))
+                or (role != "operator" and not scope.startswith("operator."))
+            )
+        ]
+        if requested_for_role and not _doctor_role_scopes_allow(
+            role=role,
+            requested_scopes=requested_for_role,
+            allowed_scopes=approved_scopes,
+        ):
+            return True
+    return False
+
+
+def _doctor_pending_pairing_warning(
+    pending: dict[str, object],
+    paired: dict[str, object] | None = None,
+) -> str | None:
+    request_id = _doctor_safe_device_text(pending.get("requestId"))
+    if request_id is None:
+        return None
+    device_label = _doctor_device_label(pending)
+    inspect_command = _doctor_format_cli_args(["openclaw", "devices", "list"])
+    approve_command = _doctor_format_cli_args(
+        ["openclaw", "devices", "approve", request_id]
+    )
+    if paired is not None:
+        pending_public_key = _optional_cli_string(pending.get("publicKey"))
+        paired_public_key = _optional_cli_string(paired.get("publicKey"))
+        if (
+            pending_public_key is not None
+            and paired_public_key is not None
+            and pending_public_key != paired_public_key
+        ):
+            device_id = _doctor_safe_device_text(pending.get("deviceId")) or "unknown-device"
+            remove_command = _doctor_format_cli_args(
+                ["openclaw", "devices", "remove", device_id]
+            )
+            return (
+                f"- Pending device repair {request_id} for {device_label}: the current "
+                "device identity no longer matches the approved pairing record. This "
+                "commonly loops on pairing-required for an already paired device. "
+                f"Remove the stale record with {remove_command}, then rerun "
+                f"{inspect_command} and approve with {approve_command}."
+            )
+        requested_roles = _doctor_unique_strings(pending.get("roles"), pending.get("role"))
+        approved_roles = _doctor_approved_roles(paired)
+        if any(role not in approved_roles for role in requested_roles):
+            return (
+                f"- Pending role upgrade {request_id} for {device_label}: approved roles "
+                f"[{_doctor_format_roles(approved_roles)}], requested roles "
+                f"[{_doctor_format_roles(requested_roles)}]. Review with "
+                f"{inspect_command}, then approve with {approve_command}."
+            )
+        approved_scopes = _doctor_approved_scopes(paired)
+        requested_scopes = _doctor_normalize_device_scopes(pending.get("scopes"))
+        if _doctor_has_pending_scope_upgrade(
+            requested_roles=requested_roles,
+            pending_scopes=requested_scopes,
+            approved_roles=approved_roles,
+            approved_scopes=approved_scopes,
+        ):
+            return (
+                f"- Pending scope upgrade {request_id} for {device_label}: approved scopes "
+                f"[{_doctor_format_scopes(approved_scopes)}], requested scopes "
+                f"[{_doctor_format_scopes(requested_scopes)}]. Review with "
+                f"{inspect_command}, then approve with {approve_command}."
+            )
+        return (
+            f"- Pending device repair {request_id} for {device_label}: the device is already "
+            "paired, but a new approval is still required before the requested auth can be "
+            f"used. Review with {inspect_command}, then approve with {approve_command}."
+        )
+    return (
+        f"- Pending device pairing request {request_id} for {device_label}. "
+        f"Review with {inspect_command}, then approve with {approve_command}."
+    )
+
+
+def _doctor_token_summaries(paired: dict[str, object]) -> list[dict[str, object]]:
+    tokens = paired.get("tokens")
+    if isinstance(tokens, list):
+        return [item for item in tokens if isinstance(item, dict)]
+    if isinstance(tokens, dict):
+        return [item for item in tokens.values() if isinstance(item, dict)]
+    return []
+
+
+def _doctor_find_active_token(
+    paired: dict[str, object],
+    role: str,
+) -> dict[str, object] | None:
+    for token in _doctor_token_summaries(paired):
+        token_role = _optional_cli_string(token.get("role"))
+        if token_role != role:
+            continue
+        if token.get("revokedAtMs") is not None:
+            continue
+        return token
+    return None
+
+
+def _doctor_paired_record_warnings(paired: dict[str, object]) -> list[str]:
+    device_id = _doctor_safe_device_text(paired.get("deviceId")) or "unknown-device"
+    device_label = _doctor_paired_device_label(paired)
+    approved_roles = _doctor_approved_roles(paired)
+    approved_scopes = _doctor_approved_scopes(paired)
+    warnings: list[str] = []
+    if "operator" in approved_roles and not approved_scopes:
+        warnings.append(
+            f"- Paired device {device_label} is missing its approved operator scope "
+            "baseline. Scope upgrades can get stuck in pairing-required until the "
+            "device repairs or is re-approved."
+        )
+    for role in approved_roles:
+        rotate_command = _doctor_format_cli_args(
+            ["openclaw", "devices", "rotate", "--device", device_id, "--role", role]
+        )
+        token = _doctor_find_active_token(paired, role)
+        if token is None:
+            warnings.append(
+                f"- Paired device {device_label} has no active {role} device token even "
+                "though the role is approved. This commonly ends in pairing-required or "
+                f"device-token-mismatch. Rotate a fresh token with {rotate_command}."
+            )
+            continue
+        token_scopes = _doctor_normalize_device_scopes(token.get("scopes"))
+        if token_scopes and not _doctor_role_scopes_allow(
+            role=role,
+            requested_scopes=token_scopes,
+            allowed_scopes=approved_scopes,
+        ):
+            warnings.append(
+                f"- Paired device {device_label} has a {role} token outside the approved "
+                f"scope baseline [{_doctor_format_scopes(approved_scopes)}]. Rotate it "
+                f"with {rotate_command}."
+            )
+    return warnings
+
+
+async def _build_doctor_device_pairing_payload(
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:device-pairing",
+        "repairAvailable": False,
+        "warnings": [],
+    }
+    call = getattr(gateway_node_methods, "call", None)
+    if not callable(call):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Device pairing health is unavailable.",
+            "checked": False,
+        }
+    try:
+        result = await call("device.pair.list", {})
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": f"Device pairing health is unavailable: {exc}",
+            "checked": False,
+        }
+    result_payload = result if isinstance(result, dict) else {}
+    pending = [
+        item for item in _object_list(result_payload.get("pending")) if isinstance(item, dict)
+    ]
+    paired = [
+        item for item in _object_list(result_payload.get("paired")) if isinstance(item, dict)
+    ]
+    paired_by_device_id = {
+        device_id: paired_device
+        for paired_device in paired
+        if (device_id := _optional_cli_string(paired_device.get("deviceId"))) is not None
+    }
+    warnings = [
+        warning
+        for pending_request in pending
+        if (
+            warning := _doctor_pending_pairing_warning(
+                pending_request,
+                paired_by_device_id.get(
+                    _optional_cli_string(pending_request.get("deviceId")) or ""
+                ),
+            )
+        )
+        is not None
+    ]
+    for paired_device in paired:
+        warnings.extend(_doctor_paired_record_warnings(paired_device))
+    return {
+        **base_payload,
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "Device pairing has pending requests."
+            if warnings
+            else "Device pairing has no pending requests."
+        ),
+        "checked": True,
+        "pendingCount": len(pending),
+        "pairedCount": len(paired),
+        "warnings": warnings,
+    }
+
+
+async def _with_doctor_device_pairing_payload(
+    payload: dict[str, object],
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    device_pairing = await _build_doctor_device_pairing_payload(gateway_node_methods)
+    next_payload = dict(payload)
+    next_payload["devicePairing"] = device_pairing
+    warnings = [
+        str(warning)
+        for warning in _object_list(device_pairing.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
     build_snapshot = getattr(config_service, "build_snapshot", None)
     if not callable(build_snapshot):
@@ -3720,6 +4699,1157 @@ def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
     except Exception:
         return {}
     return snapshot if isinstance(snapshot, dict) else {}
+
+
+_OPENAI_CODEX_PROVIDER_ID = "openai-codex"
+_OPENAI_CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
+_OPENAI_CODEX_LEGACY_APIS = {"openai-responses", "openai-completions"}
+
+
+def _normalize_codex_override_base_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().rstrip("/")
+    return normalized or None
+
+
+def _is_legacy_codex_transport_shape(
+    value: object,
+    *,
+    inherited_base_url: object | None = None,
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    api = _optional_cli_string(value.get("api"))
+    if api not in _OPENAI_CODEX_LEGACY_APIS:
+        return False
+    base_url = _normalize_codex_override_base_url(
+        value.get("baseUrl", inherited_base_url)
+    )
+    return base_url is None or base_url == _OPENAI_CODEX_OPENAI_BASE_URL
+
+
+def _has_legacy_codex_transport_override(provider_override: object) -> bool:
+    if not isinstance(provider_override, dict):
+        return False
+    if _is_legacy_codex_transport_shape(provider_override):
+        return True
+    models = provider_override.get("models")
+    if not isinstance(models, list):
+        return False
+    inherited_base_url = provider_override.get("baseUrl")
+    return any(
+        _is_legacy_codex_transport_shape(model, inherited_base_url=inherited_base_url)
+        for model in models
+    )
+
+
+def _config_has_codex_oauth_profile(snapshot: dict[str, object]) -> bool:
+    auth = snapshot.get("auth")
+    auth_payload = auth if isinstance(auth, dict) else {}
+    raw_profiles = auth_payload.get("profiles")
+    if isinstance(raw_profiles, dict):
+        profiles: list[object] = list(raw_profiles.values())
+    elif isinstance(raw_profiles, list):
+        profiles = list(raw_profiles)
+    else:
+        profiles = []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("provider")) == _OPENAI_CODEX_PROVIDER_ID
+        and _optional_cli_string(profile.get("mode")) == "oauth"
+        for profile in profiles
+    )
+
+
+def _doctor_default_agent_auth_store_path(
+    snapshot: dict[str, object],
+    data_dir: Path,
+) -> Path:
+    agents = snapshot.get("agents")
+    agents_payload = agents if isinstance(agents, dict) else {}
+    raw_entries = agents_payload.get("list")
+    entries = [entry for entry in raw_entries if isinstance(entry, dict)] if isinstance(
+        raw_entries,
+        list,
+    ) else []
+    entry = next((item for item in entries if item.get("default") is True), None)
+    if entry is None and entries:
+        entry = entries[0]
+    if entry is None:
+        agent_id = "main"
+        raw_agent_dir: object = None
+    else:
+        agent_id = (_optional_cli_string(entry.get("id")) or "main").lower()
+        raw_agent_dir = entry.get("agentDir")
+    if isinstance(raw_agent_dir, str) and raw_agent_dir.strip():
+        agent_dir = Path(raw_agent_dir.strip()).expanduser()
+        if not agent_dir.is_absolute():
+            agent_dir = data_dir / agent_dir
+    else:
+        agent_dir = data_dir / "agents" / agent_id / "agent"
+    return agent_dir / "auth-profiles.json"
+
+
+def _stored_has_codex_oauth_profile(
+    snapshot: dict[str, object],
+    data_dir: Path | None,
+) -> bool:
+    if data_dir is None:
+        return False
+    store = _read_cli_json_object(_doctor_default_agent_auth_store_path(snapshot, data_dir)) or {}
+    raw_profiles = store.get("profiles")
+    profiles = raw_profiles.values() if isinstance(raw_profiles, dict) else []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("provider")) == _OPENAI_CODEX_PROVIDER_ID
+        and _optional_cli_string(profile.get("type")) == "oauth"
+        for profile in profiles
+    )
+
+
+def _build_codex_provider_override_warning(provider_override: object) -> str:
+    lines = [
+        (
+            f"- models.providers.{_OPENAI_CODEX_PROVIDER_ID} contains a legacy "
+            "transport override while Codex OAuth is configured."
+        ),
+        "- Older OpenAI transport settings can shadow the built-in Codex OAuth provider path.",
+    ]
+    if isinstance(provider_override, dict):
+        api = _optional_cli_string(provider_override.get("api"))
+        if api is not None:
+            lines.append(f"- models.providers.{_OPENAI_CODEX_PROVIDER_ID}.api={api}")
+        base_url = _optional_cli_string(provider_override.get("baseUrl"))
+        if base_url is not None:
+            lines.append(f"- models.providers.{_OPENAI_CODEX_PROVIDER_ID}.baseUrl={base_url}")
+    lines.extend(
+        [
+            (
+                "- Remove or rewrite the legacy transport override to restore the built-in "
+                "Codex OAuth provider path after recent fixes."
+            ),
+            (
+                "- Custom proxies and header-only overrides can stay; this warning only "
+                "targets old OpenAI transport settings."
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _dict_config(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _build_doctor_gateway_config_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    raw_gateway = snapshot.get("gateway")
+    if not isinstance(raw_gateway, dict):
+        return None
+    gateway = _dict_config(raw_gateway)
+    if _optional_cli_string(gateway.get("mode")) is not None:
+        return None
+    if "bind" in gateway:
+        return None
+    warning = "\n".join(
+        [
+            "gateway.mode is unset; gateway start will be blocked.",
+            "Fix: run openclaw configure and set Gateway mode (local/remote).",
+            "Or set directly: openclaw config set gateway.mode local",
+        ]
+    )
+    return {
+        "status": "warning",
+        "summary": "gateway.mode is unset; gateway start will be blocked.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-config",
+        "reason": "missing_gateway_mode",
+        "warnings": [warning],
+    }
+
+
+def _with_doctor_gateway_config_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    gateway_config = _build_doctor_gateway_config_payload(config_service)
+    if gateway_config is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["gatewayConfig"] = gateway_config
+    warnings = [
+        str(warning)
+        for warning in _object_list(gateway_config.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+_CLAUDE_CLI_PROVIDER_ID = "claude-cli"
+_CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli"
+
+
+def _doctor_claude_cli_command(snapshot: dict[str, object]) -> str:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    cli_backends = _dict_config(defaults.get("cliBackends"))
+    claude_backend = _dict_config(cli_backends.get(_CLAUDE_CLI_PROVIDER_ID))
+    return _optional_cli_string(claude_backend.get("command")) or "claude"
+
+
+def _doctor_model_primary(snapshot: dict[str, object]) -> str | None:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    model = defaults.get("model")
+    if isinstance(model, str):
+        return _optional_cli_string(model)
+    if isinstance(model, dict):
+        return _optional_cli_string(model.get("primary"))
+    return None
+
+
+def _doctor_claude_cli_configured(snapshot: dict[str, object]) -> bool:
+    primary = _doctor_model_primary(snapshot)
+    if primary is not None and primary.lower().startswith(f"{_CLAUDE_CLI_PROVIDER_ID}/"):
+        return True
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    raw_models = defaults.get("models")
+    if isinstance(raw_models, dict) and any(
+        str(key).lower().startswith(f"{_CLAUDE_CLI_PROVIDER_ID}/")
+        for key in raw_models
+    ):
+        return True
+    cli_backends = _dict_config(defaults.get("cliBackends"))
+    if any(str(key).lower() == _CLAUDE_CLI_PROVIDER_ID for key in cli_backends):
+        return True
+    auth = _dict_config(snapshot.get("auth"))
+    raw_profiles = auth.get("profiles")
+    profiles = raw_profiles.values() if isinstance(raw_profiles, dict) else []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("provider")) == _CLAUDE_CLI_PROVIDER_ID
+        for profile in profiles
+    )
+
+
+def _config_has_claude_cli_profile(snapshot: dict[str, object]) -> bool:
+    auth = _dict_config(snapshot.get("auth"))
+    raw_profiles = auth.get("profiles")
+    if not isinstance(raw_profiles, dict):
+        return False
+    profile = raw_profiles.get(_CLAUDE_CLI_PROFILE_ID)
+    if isinstance(profile, dict):
+        return True
+    return any(
+        isinstance(item, dict)
+        and _optional_cli_string(item.get("provider")) == _CLAUDE_CLI_PROVIDER_ID
+        for item in raw_profiles.values()
+    )
+
+
+def _build_doctor_claude_cli_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    if not _doctor_claude_cli_configured(snapshot):
+        return None
+    command = _doctor_claude_cli_command(snapshot)
+    command_path = shutil.which(command)
+    lines: list[str] = []
+    fix_hints: list[str] = []
+    if command_path:
+        lines.append(f"- Binary: {command_path}.")
+    else:
+        lines.append(f'- Binary: command "{command}" was not found on PATH.')
+        fix_hints.append(
+            "- Fix: install Claude CLI or set agents.defaults.cliBackends.claude-cli.command "
+            "to the real binary path."
+        )
+    lines.append("- Headless Claude auth: unavailable without interactive prompting.")
+    fix_hints.append(
+        "- Fix: run claude auth login, then openclaw models auth login --provider "
+        "anthropic --method cli --set-default."
+    )
+    if _config_has_claude_cli_profile(snapshot):
+        lines.append(
+            f"- OpenClaw auth profile: {_CLAUDE_CLI_PROFILE_ID} "
+            f"(provider {_CLAUDE_CLI_PROVIDER_ID})."
+        )
+    else:
+        lines.append(f"- OpenClaw auth profile: missing ({_CLAUDE_CLI_PROFILE_ID}).")
+        fix_hints.append(
+            "- Fix: run openclaw models auth login --provider anthropic --method cli "
+            "--set-default."
+        )
+    warning = "\n".join([*lines, *fix_hints])
+    return {
+        "status": "warning",
+        "summary": "Claude CLI health needs attention.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:claude-cli",
+        "provider": _CLAUDE_CLI_PROVIDER_ID,
+        "command": command,
+        "commandPath": command_path,
+        "profileId": _CLAUDE_CLI_PROFILE_ID,
+        "warnings": [warning],
+    }
+
+
+def _with_doctor_claude_cli_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    claude_cli = _build_doctor_claude_cli_payload(config_service)
+    if claude_cli is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["claudeCli"] = claude_cli
+    warnings = [
+        str(warning)
+        for warning in _object_list(claude_cli.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _is_secret_ref(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and _optional_cli_string(value.get("source")) is not None
+        and _optional_cli_string(value.get("id")) is not None
+    )
+
+
+def _has_configured_secret_input(value: object) -> bool:
+    if _is_secret_ref(value):
+        return True
+    return _optional_cli_string(value) is not None
+
+
+def _gateway_auth_plaintext_secret(value: object) -> str | None:
+    return None if _is_secret_ref(value) else _optional_cli_string(value)
+
+
+def _build_doctor_gateway_auth_payload(
+    config_service: object | None,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    gateway = _dict_config(snapshot.get("gateway"))
+    if _optional_cli_string(gateway.get("mode")) != "local":
+        return None
+    auth = _dict_config(gateway.get("auth"))
+    token_value = auth.get("token")
+    password_value = auth.get("password")
+    explicit_mode = _optional_cli_string(auth.get("mode"))
+    token_configured = _has_configured_secret_input(token_value)
+    password_configured = _has_configured_secret_input(password_value)
+    if explicit_mode is None and token_configured and password_configured:
+        warning = "\n".join(
+            [
+                (
+                    "gateway.auth.token and gateway.auth.password are both configured while "
+                    "gateway.auth.mode is unset."
+                ),
+                (
+                    "Set an explicit mode to avoid ambiguous auth selection and "
+                    "startup/runtime failures."
+                ),
+                "Set token mode: openclaw config set gateway.auth.mode token",
+                "Set password mode: openclaw config set gateway.auth.mode password",
+            ]
+        )
+        return {
+            "status": "warning",
+            "summary": "gateway.auth.mode is unset for token/password auth.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:gateway-auth",
+            "reason": "ambiguous_mode",
+            "warnings": [warning],
+        }
+
+    env_payload = env if env is not None else os.environ
+    env_token = _optional_cli_string(env_payload.get("OPENCLAW_GATEWAY_TOKEN"))
+    token = _gateway_auth_plaintext_secret(token_value) or env_token
+    password = _gateway_auth_plaintext_secret(password_value)
+    if explicit_mode is not None:
+        mode = explicit_mode
+        mode_source = "config"
+    elif password is not None:
+        mode = "password"
+        mode_source = "password"
+    elif token is not None:
+        mode = "token"
+        mode_source = "token"
+    else:
+        mode = "token"
+        mode_source = "default"
+    needs_token = mode != "password" and (mode != "token" or token is None)
+    if not needs_token:
+        return None
+    if _is_secret_ref(token_value):
+        warning = "\n".join(
+            [
+                "Gateway token is managed via SecretRef and is currently unavailable.",
+                "Doctor will not overwrite gateway.auth.token with a plaintext value.",
+                "Resolve/rotate the external secret source, then rerun doctor.",
+            ]
+        )
+        return {
+            "status": "warning",
+            "summary": "Gateway token SecretRef is currently unavailable.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:gateway-auth",
+            "reason": "secret_ref_unresolved",
+            "mode": mode,
+            "modeSource": mode_source,
+            "warnings": [warning],
+        }
+    warning = (
+        "Gateway auth is off or missing a token. Token auth is now the recommended "
+        "default (including loopback)."
+    )
+    return {
+        "status": "warning",
+        "summary": warning,
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-auth",
+        "reason": "missing_token",
+        "mode": mode,
+        "modeSource": mode_source,
+        "warnings": [warning],
+    }
+
+
+def _with_doctor_gateway_auth_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    gateway_auth = _build_doctor_gateway_auth_payload(config_service)
+    if gateway_auth is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["gatewayAuth"] = gateway_auth
+    warnings = [
+        str(warning)
+        for warning in _object_list(gateway_auth.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _doctor_browser_health_configured(snapshot: dict[str, object]) -> bool:
+    browser = _dict_config(snapshot.get("browser"))
+    if _optional_cli_string(browser.get("defaultProfile")) is not None:
+        return True
+    profiles = browser.get("profiles")
+    profile_values = profiles.values() if isinstance(profiles, dict) else []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("driver")) == "existing-session"
+        for profile in profile_values
+    )
+
+
+def _doctor_browser_unavailable_payload(message: str) -> dict[str, object]:
+    warning = f"- Browser health check is unavailable: {message}"
+    return {
+        "status": "unavailable",
+        "summary": "Browser health check is unavailable.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:browser",
+        "warnings": [warning],
+    }
+
+
+async def _build_doctor_browser_payload(
+    config_service: object | None,
+    browser_doctor_adapter: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    if not _doctor_browser_health_configured(snapshot):
+        return None
+    check = getattr(browser_doctor_adapter, "check", None)
+    if not callable(check):
+        check = getattr(browser_doctor_adapter, "note_chrome_mcp_browser_readiness", None)
+    if not callable(check):
+        return _doctor_browser_unavailable_payload("browser doctor facade is unavailable.")
+    try:
+        result = check(snapshot)
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return _doctor_browser_unavailable_payload(str(exc))
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    result_payload.setdefault("source", "openzues-native")
+    result_payload.setdefault("openClawContribution", "doctor:browser")
+    return result_payload
+
+
+async def _with_doctor_browser_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    browser_doctor_adapter: object | None,
+) -> dict[str, object]:
+    browser_payload = await _build_doctor_browser_payload(config_service, browser_doctor_adapter)
+    if browser_payload is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["browser"] = browser_payload
+    warnings = [
+        str(warning)
+        for warning in _object_list(browser_payload.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+_OPENAI_AUTH_PROBE_URL = (
+    "https://auth.openai.com/oauth/authorize?response_type=code"
+    "&client_id=openclaw-preflight"
+    "&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+    "&scope=openid+profile+email"
+)
+_OAUTH_TLS_CERT_ERROR_CODES = {
+    "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+}
+_OAUTH_TLS_CERT_ERROR_PATTERNS = (
+    "unable to get local issuer certificate",
+    "unable to verify the first certificate",
+    "self-signed certificate",
+    "self signed certificate",
+    "certificate has expired",
+    "certificate verify failed",
+)
+
+
+def _classify_openai_oauth_tls_error(error: BaseException) -> dict[str, object]:
+    reason = getattr(error, "reason", None)
+    root = reason if reason is not None else error
+    raw_code = getattr(root, "code", None)
+    code = str(raw_code).strip() if raw_code is not None else None
+    message = str(root or error)
+    message_lower = message.lower()
+    is_tls_cert = (
+        code in _OAUTH_TLS_CERT_ERROR_CODES
+        if code is not None
+        else False
+    ) or any(pattern in message_lower for pattern in _OAUTH_TLS_CERT_ERROR_PATTERNS)
+    return {
+        "ok": False,
+        "kind": "tls-cert" if is_tls_cert else "network",
+        "code": code,
+        "message": message,
+    }
+
+
+def _run_openai_oauth_tls_preflight(
+    *,
+    timeout_seconds: float = 4.0,
+) -> dict[str, object]:
+    request = Request(_OPENAI_AUTH_PROBE_URL, method="GET")
+    try:
+        with urlopen(request, timeout=timeout_seconds):
+            return {"ok": True}
+    except HTTPError:
+        return {"ok": True}
+    except URLError as exc:
+        return _classify_openai_oauth_tls_error(exc)
+    except OSError as exc:
+        return _classify_openai_oauth_tls_error(exc)
+
+
+def _format_openai_oauth_tls_preflight_fix(result: dict[str, object]) -> str:
+    message = _optional_cli_string(result.get("message")) or "unknown TLS failure"
+    code = _optional_cli_string(result.get("code"))
+    if _optional_cli_string(result.get("kind")) != "tls-cert":
+        return "\n".join(
+            [
+                (
+                    "OpenAI OAuth prerequisites check failed due to a network "
+                    "error before the browser flow."
+                ),
+                f"Cause: {message}",
+                "Verify DNS/firewall/proxy access to auth.openai.com and retry.",
+            ]
+        )
+    cause = f"{code} ({message})" if code is not None else message
+    return "\n".join(
+        [
+            (
+                "OpenAI OAuth prerequisites check failed: Node/OpenSSL cannot "
+                "validate TLS certificates."
+            ),
+            f"Cause: {cause}",
+            "",
+            "Fix (Homebrew Node/OpenSSL):",
+            "- brew postinstall ca-certificates",
+            "- brew postinstall openssl@3",
+            "- Retry the OAuth login flow.",
+        ]
+    )
+
+
+def _build_doctor_oauth_tls_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:oauth-tls",
+        "repairAvailable": False,
+        "warnings": [],
+    }
+    snapshot = _doctor_config_snapshot(config_service)
+    if not _config_has_codex_oauth_profile(snapshot):
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "OpenAI Codex OAuth TLS preflight skipped.",
+            "checked": False,
+        }
+    result = _run_openai_oauth_tls_preflight(timeout_seconds=4.0)
+    warning = (
+        _format_openai_oauth_tls_preflight_fix(result)
+        if result.get("ok") is not True and result.get("kind") == "tls-cert"
+        else None
+    )
+    return {
+        **base_payload,
+        "status": "warning" if warning else "ok",
+        "summary": (
+            "OpenAI OAuth TLS prerequisites need attention."
+            if warning
+            else "OpenAI OAuth TLS prerequisites passed or had no certificate warning."
+        ),
+        "checked": True,
+        "result": result,
+        "warnings": [warning] if warning else [],
+    }
+
+
+def _with_doctor_oauth_tls_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    oauth_tls = _build_doctor_oauth_tls_payload(config_service)
+    next_payload = dict(payload)
+    next_payload["oauthTls"] = oauth_tls
+    warnings = [
+        str(warning)
+        for warning in _object_list(oauth_tls.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _doctor_hooks_gmail_model(snapshot: dict[str, object]) -> str | None:
+    hooks = _dict_config(snapshot.get("hooks"))
+    gmail = _dict_config(hooks.get("gmail"))
+    return _optional_cli_string(gmail.get("model"))
+
+
+def _doctor_model_key_from_parts(provider: str | None, model: str | None) -> str | None:
+    normalized_model = _optional_cli_string(model)
+    if normalized_model is None:
+        return None
+    if "/" in normalized_model:
+        return normalized_model
+    normalized_provider = _optional_cli_string(provider) or "openai"
+    return f"{normalized_provider}/{normalized_model}"
+
+
+def _doctor_model_key_from_entry(
+    entry: object,
+    *,
+    default_provider: str = "openai",
+) -> str | None:
+    if isinstance(entry, str):
+        return _doctor_model_key_from_parts(default_provider, entry)
+    if not isinstance(entry, dict):
+        return None
+    raw_id = (
+        _optional_cli_string(entry.get("id"))
+        or _optional_cli_string(entry.get("model"))
+        or _optional_cli_string(entry.get("name"))
+    )
+    raw_provider = _optional_cli_string(entry.get("provider")) or default_provider
+    return _doctor_model_key_from_parts(raw_provider, raw_id)
+
+
+def _doctor_default_model_entries(snapshot: dict[str, object]) -> list[object]:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    models = defaults.get("models")
+    if isinstance(models, list):
+        return list(models)
+    if isinstance(models, dict):
+        return list(models.values())
+    return []
+
+
+def _doctor_hooks_model_alias_index(snapshot: dict[str, object]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for entry in _doctor_default_model_entries(snapshot):
+        if not isinstance(entry, dict):
+            continue
+        alias = _optional_cli_string(entry.get("alias"))
+        key = _doctor_model_key_from_entry(entry)
+        if alias is not None and key is not None:
+            aliases[alias] = key
+    return aliases
+
+
+def _doctor_resolve_hooks_model_key(
+    snapshot: dict[str, object],
+    raw_model: str,
+) -> str | None:
+    alias_key = _doctor_hooks_model_alias_index(snapshot).get(raw_model)
+    if alias_key is not None:
+        return alias_key
+    return _doctor_model_key_from_parts("openai", raw_model)
+
+
+def _doctor_allowed_model_keys(snapshot: dict[str, object]) -> set[str]:
+    keys: set[str] = set()
+    for entry in _doctor_default_model_entries(snapshot):
+        key = _doctor_model_key_from_entry(entry)
+        if key is not None:
+            keys.add(key)
+    return keys
+
+
+def _doctor_catalog_model_keys(snapshot: dict[str, object]) -> set[str]:
+    models = _dict_config(snapshot.get("models"))
+    providers = _dict_config(models.get("providers"))
+    keys: set[str] = set()
+    for provider_id, provider_payload in providers.items():
+        provider = _optional_cli_string(str(provider_id))
+        if provider is None or not isinstance(provider_payload, dict):
+            continue
+        raw_models = provider_payload.get("models")
+        model_entries = raw_models if isinstance(raw_models, list) else []
+        for entry in model_entries:
+            key = _doctor_model_key_from_entry(entry, default_provider=provider)
+            if key is not None:
+                keys.add(key)
+    return keys
+
+
+def _build_doctor_hooks_model_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    raw_model = _doctor_hooks_gmail_model(snapshot)
+    if raw_model is None:
+        return None
+    model_key = _doctor_resolve_hooks_model_key(snapshot, raw_model)
+    if model_key is None:
+        warning = f'- hooks.gmail.model "{raw_model}" could not be resolved'
+        return {
+            "status": "warning",
+            "summary": "hooks.gmail.model could not be resolved.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:hooks-model",
+            "model": raw_model,
+            "warnings": [warning],
+        }
+    allowed_keys = _doctor_allowed_model_keys(snapshot)
+    catalog_keys = _doctor_catalog_model_keys(snapshot)
+    warnings: list[str] = []
+    if allowed_keys and model_key not in allowed_keys:
+        warnings.append(
+            f'- hooks.gmail.model "{model_key}" not in agents.defaults.models '
+            "allowlist (will use primary instead)"
+        )
+    if catalog_keys and model_key not in catalog_keys:
+        warnings.append(
+            f'- hooks.gmail.model "{model_key}" not in the model catalog '
+            "(may fail at runtime)"
+        )
+    return {
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "hooks.gmail.model has warnings."
+            if warnings
+            else "hooks.gmail.model resolves to an allowed catalog model."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:hooks-model",
+        "model": raw_model,
+        "modelKey": model_key,
+        "allowed": not allowed_keys or model_key in allowed_keys,
+        "inCatalog": not catalog_keys or model_key in catalog_keys,
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_hooks_model_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    hooks_model = _build_doctor_hooks_model_payload(config_service)
+    if hooks_model is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["hooksModel"] = hooks_model
+    warnings = [
+        str(warning)
+        for warning in _object_list(hooks_model.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _doctor_bootstrap_workspace_dir(snapshot: dict[str, object]) -> Path | None:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    raw_workspace = (
+        _optional_cli_string(defaults.get("workspaceDir"))
+        or _optional_cli_string(agents.get("workspaceDir"))
+        or _optional_cli_string(snapshot.get("workspaceDir"))
+    )
+    if raw_workspace is None:
+        workspace = _dict_config(snapshot.get("workspace"))
+        raw_workspace = _optional_cli_string(workspace.get("dir"))
+    if raw_workspace is None:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(raw_workspace))
+    try:
+        return Path(expanded).resolve(strict=False)
+    except OSError:
+        return Path(expanded)
+
+
+def _doctor_bootstrap_limit(snapshot: dict[str, object], key: str, default: int) -> int:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    value = defaults.get(key)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return default
+
+
+def _doctor_format_int(value: int) -> str:
+    return f"{max(0, int(value)):,}"
+
+
+def _doctor_format_percent(numerator: int, denominator: int) -> str:
+    if denominator <= 0:
+        return "0%"
+    pct = min(100, max(0, round((numerator / denominator) * 100)))
+    return f"{pct}%"
+
+
+def _doctor_int_record_value(record: dict[str, object], key: str) -> int:
+    value = record.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return 0
+
+
+def _doctor_bootstrap_file_record(
+    path: Path,
+    *,
+    max_chars: int,
+) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    raw_chars = len(content)
+    injected_chars = min(raw_chars, max_chars)
+    truncated = raw_chars > injected_chars
+    near_limit = not truncated and raw_chars >= int(max_chars * 0.9)
+    causes = ["per-file-limit"] if truncated else []
+    return {
+        "name": path.name,
+        "path": str(path),
+        "rawChars": raw_chars,
+        "injectedChars": injected_chars,
+        "truncated": truncated,
+        "nearLimit": near_limit,
+        "causes": causes,
+    }
+
+
+def _doctor_bootstrap_warning(
+    *,
+    truncated_files: list[dict[str, object]],
+    near_limit_files: list[dict[str, object]],
+    injected_total: int,
+    raw_total: int,
+    max_chars: int,
+    total_max_chars: int,
+    total_near_limit: bool,
+) -> str | None:
+    if not truncated_files and not near_limit_files and not total_near_limit:
+        return None
+    lines: list[str] = []
+    if truncated_files:
+        lines.append("Workspace bootstrap files exceed limits and will be truncated:")
+        for file in truncated_files:
+            raw_chars = _doctor_int_record_value(file, "rawChars")
+            injected_chars = _doctor_int_record_value(file, "injectedChars")
+            truncated_chars = max(0, raw_chars - injected_chars)
+            lines.append(
+                f"- {file.get('name')}: {_doctor_format_int(raw_chars)} raw / "
+                f"{_doctor_format_int(injected_chars)} injected "
+                f"({_doctor_format_percent(truncated_chars, raw_chars)} truncated; max/file)"
+            )
+    else:
+        lines.append("Workspace bootstrap files are near configured limits:")
+    for file in near_limit_files:
+        raw_chars = _doctor_int_record_value(file, "rawChars")
+        lines.append(
+            f"- {file.get('name')}: {_doctor_format_int(raw_chars)} chars "
+            f"({_doctor_format_percent(raw_chars, max_chars)} of max/file "
+            f"{_doctor_format_int(max_chars)})"
+        )
+    lines.append(
+        f"Total bootstrap injected chars: {_doctor_format_int(injected_total)} "
+        f"({_doctor_format_percent(injected_total, total_max_chars)} of max/total "
+        f"{_doctor_format_int(total_max_chars)})."
+    )
+    lines.append(
+        f"Total bootstrap raw chars (before truncation): {_doctor_format_int(raw_total)}."
+    )
+    lines.append("")
+    if truncated_files or near_limit_files:
+        lines.append("- Tip: tune `agents.defaults.bootstrapMaxChars` for per-file limits.")
+    if total_near_limit:
+        lines.append(
+            "- Tip: tune `agents.defaults.bootstrapTotalMaxChars` for total-budget limits."
+        )
+    return "\n".join(lines)
+
+
+def _build_doctor_bootstrap_size_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bootstrap-size",
+        "repairAvailable": False,
+        "warnings": [],
+    }
+    snapshot = _doctor_config_snapshot(config_service)
+    workspace_dir = _doctor_bootstrap_workspace_dir(snapshot)
+    if workspace_dir is None:
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "No workspace directory configured for bootstrap size checks.",
+            "checked": False,
+        }
+    max_chars = _doctor_bootstrap_limit(snapshot, "bootstrapMaxChars", 20_000)
+    total_max_chars = _doctor_bootstrap_limit(
+        snapshot,
+        "bootstrapTotalMaxChars",
+        150_000,
+    )
+    files = [
+        record
+        for filename in ("AGENTS.md",)
+        if (
+            record := _doctor_bootstrap_file_record(
+                workspace_dir / filename,
+                max_chars=max_chars,
+            )
+        )
+        is not None
+    ]
+    raw_total = sum(_doctor_int_record_value(file, "rawChars") for file in files)
+    injected_total = min(
+        sum(_doctor_int_record_value(file, "injectedChars") for file in files),
+        total_max_chars,
+    )
+    truncated_files = [file for file in files if file.get("truncated") is True]
+    near_limit_files = [file for file in files if file.get("nearLimit") is True]
+    total_near_limit = injected_total >= int(total_max_chars * 0.9)
+    warning = _doctor_bootstrap_warning(
+        truncated_files=truncated_files,
+        near_limit_files=near_limit_files,
+        injected_total=injected_total,
+        raw_total=raw_total,
+        max_chars=max_chars,
+        total_max_chars=total_max_chars,
+        total_near_limit=total_near_limit,
+    )
+    return {
+        **base_payload,
+        "status": "warning" if warning else "ok",
+        "summary": (
+            "Workspace bootstrap files exceed or approach configured limits."
+            if warning
+            else "Workspace bootstrap files are within configured limits."
+        ),
+        "checked": True,
+        "workspaceDir": str(workspace_dir),
+        "maxChars": max_chars,
+        "totalMaxChars": total_max_chars,
+        "files": files,
+        "truncatedFiles": truncated_files,
+        "nearLimitFiles": near_limit_files,
+        "totals": {
+            "rawChars": raw_total,
+            "injectedChars": injected_total,
+        },
+        "warnings": [warning] if warning else [],
+    }
+
+
+def _with_doctor_bootstrap_size_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    bootstrap_size = _build_doctor_bootstrap_size_payload(config_service)
+    next_payload = dict(payload)
+    next_payload["bootstrapSize"] = bootstrap_size
+    warnings = [
+        str(warning)
+        for warning in _object_list(bootstrap_size.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+def _doctor_workspace_plugin_summary(
+    records: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    loaded = [record for record in records if record.get("status") == "loaded"]
+    imported = [record for record in records if record.get("imported") is True]
+    disabled = [record for record in records if record.get("status") == "disabled"]
+    errored = [record for record in records if record.get("status") == "error"]
+    bundle_plugins = [
+        record
+        for record in loaded
+        if record.get("format") == "bundle" and _object_list(record.get("bundleCapabilities"))
+    ]
+    return {
+        "loaded": len(loaded),
+        "imported": len(imported),
+        "disabled": len(disabled),
+        "errors": len(errored),
+        "bundlePlugins": len(bundle_plugins),
+        "records": [
+            {
+                "id": str(record.get("id") or ""),
+                "status": str(record.get("status") or "unknown"),
+                "format": str(record.get("format") or "unknown"),
+                "imported": record.get("imported") is True,
+            }
+            for record in records
+            if str(record.get("id") or "")
+        ],
+    }
+
+
+def _build_doctor_workspace_status_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    records = _plugin_records_from_config_snapshot(snapshot)
+    plugin_summary = _doctor_workspace_plugin_summary(records)
+    errors = _doctor_int_record_value(plugin_summary, "errors")
+    return {
+        "status": "warning" if errors else "ok",
+        "summary": (
+            "Workspace plugin status has errors."
+            if errors
+            else "Workspace plugin status is available."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:workspace-status",
+        "workspaceDir": (
+            str(workspace_dir)
+            if (workspace_dir := _doctor_bootstrap_workspace_dir(snapshot)) is not None
+            else None
+        ),
+        "skills": {
+            "eligible": 0,
+            "missingRequirements": 0,
+            "blockedByAllowlist": 0,
+        },
+        "plugins": plugin_summary,
+        "warnings": [],
+    }
+
+
+def _with_doctor_workspace_status_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["workspaceStatus"] = _build_doctor_workspace_status_payload(config_service)
+    return next_payload
+
+
+def _build_doctor_provider_overrides_payload(
+    config_service: object | None,
+    data_dir: Path | None = None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    models = snapshot.get("models")
+    models_payload = models if isinstance(models, dict) else {}
+    providers = models_payload.get("providers")
+    provider_payload = providers if isinstance(providers, dict) else {}
+    opencode_paths = [
+        f"models.providers.{provider_id}"
+        for provider_id in ("opencode", "opencode-go")
+        if isinstance(provider_payload.get(provider_id), dict)
+    ]
+    payload: dict[str, object] = {}
+    if opencode_paths:
+        payload["opencode"] = {
+            "ok": False,
+            "paths": opencode_paths,
+            "warnings": [
+                (
+                    "OpenCode provider overrides shadow bundled defaults: "
+                    + ", ".join(opencode_paths)
+                )
+            ],
+        }
+    codex_provider_override = provider_payload.get(_OPENAI_CODEX_PROVIDER_ID)
+    if _has_legacy_codex_transport_override(codex_provider_override) and (
+        _config_has_codex_oauth_profile(snapshot)
+        or _stored_has_codex_oauth_profile(snapshot, data_dir)
+    ):
+        payload["openaiCodex"] = {
+            "ok": False,
+            "paths": [f"models.providers.{_OPENAI_CODEX_PROVIDER_ID}"],
+            "warnings": [
+                _build_codex_provider_override_warning(codex_provider_override)
+            ],
+        }
+    return payload
+
+
+def _with_doctor_provider_override_warnings(
+    payload: dict[str, object],
+    config_service: object | None,
+    data_dir: Path | None = None,
+) -> dict[str, object]:
+    provider_overrides = _build_doctor_provider_overrides_payload(config_service, data_dir)
+    if not provider_overrides:
+        return payload
+    next_payload = dict(payload)
+    next_payload["providerOverrides"] = provider_overrides
+    warnings: list[str] = []
+    for provider_payload in provider_overrides.values():
+        if not isinstance(provider_payload, dict):
+            continue
+        warnings.extend(str(warning) for warning in _object_list(provider_payload.get("warnings")))
+    return _with_doctor_added_warnings(next_payload, warnings)
 
 
 async def _build_doctor_startup_channel_maintenance_payload(
@@ -17709,6 +19839,11 @@ def doctor(
             services.gateway_config,
             should_repair=fix,
         )
+        payload = _with_doctor_legacy_plugin_manifests_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
         payload = _with_doctor_stale_plugin_config_payload(
             payload,
             services.gateway_config,
@@ -17728,17 +19863,64 @@ def doctor(
             payload,
             services.gateway_config,
         )
-        payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
+        payload = _with_doctor_gateway_config_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_claude_cli_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_gateway_auth_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = await _with_doctor_browser_payload(
+            payload,
+            services.gateway_config,
+            getattr(services, "browser_doctor", None),
+        )
+        payload = _with_doctor_oauth_tls_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_hooks_model_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_bootstrap_size_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_workspace_status_payload(
+            payload,
+            services.gateway_config,
+        )
         data_dir = getattr(services.settings, "data_dir", None)
+        payload = _with_doctor_provider_override_warnings(
+            payload,
+            services.gateway_config,
+            data_dir if isinstance(data_dir, Path) else None,
+        )
+        payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
         if isinstance(data_dir, Path):
             payload = _with_doctor_state_directory_health(payload, data_dir)
             payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = _with_doctor_legacy_cron_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
         payload = await _with_doctor_gateway_health_payload(
             payload,
             services.settings,
             getattr(services, "gateway_node_methods", None),
         )
         payload = await _with_doctor_memory_search_payload(
+            payload,
+            getattr(services, "gateway_node_methods", None),
+        )
+        payload = await _with_doctor_device_pairing_payload(
             payload,
             getattr(services, "gateway_node_methods", None),
         )

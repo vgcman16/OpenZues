@@ -92,6 +92,210 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections"` (`6 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now also mirrors OpenClaw's OpenCode legacy
+  provider override warning: configured `models.providers.opencode` and
+  `models.providers.opencode-go` entries produce a structured
+  `providerOverrides.opencode` payload plus a top-level warning.
+- Verified the OpenCode provider override doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_opencode_provider_overrides -q`
+  (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q
+  -k "doctor_json_warns_about_opencode_provider_overrides or
+  doctor_json_warns_when_state_directory_is_missing or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`7 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now mirrors OpenClaw's Codex OAuth provider
+  override warning: legacy `models.providers.openai-codex` OpenAI transport
+  settings warn only when configured or stored Codex OAuth exists, inline
+  legacy model transports are detected, and custom proxy/header-only/no-OAuth
+  cases stay quiet.
+- Verified the Codex OAuth provider override doctor slice with `python -m
+  pytest tests\test_cli.py -q -k "codex_provider_override or
+  codex_inline_model or codex_override_warning"` (`4 passed`), adjacent doctor
+  proof `python -m pytest tests\test_cli.py -q -k "codex_provider_override or
+  codex_inline_model or codex_override_warning or opencode_provider_overrides or
+  state_directory_is_missing or sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`11 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's local gateway-auth warning
+  contribution: explicit local gateway config warns for missing token auth,
+  ambiguous token/password config without `gateway.auth.mode`, and unresolved
+  SecretRef-managed tokens, while `OPENCLAW_GATEWAY_TOKEN` suppresses the
+  missing-token warning.
+- Verified the gateway-auth doctor slice with `python -m pytest tests\test_cli.py
+  -q -k "gateway_auth_missing_local_token or gateway_auth_warning_when_env_token
+  or gateway_auth_mode_is_ambiguous or secretref_gateway_token"` (`4 passed`),
+  adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
+  "gateway_auth_missing_local_token or gateway_auth_warning_when_env_token or
+  gateway_auth_mode_is_ambiguous or secretref_gateway_token or
+  codex_provider_override or codex_inline_model or codex_override_warning or
+  opencode_provider_overrides or state_directory_is_missing or
+  sandbox_enabled_without_docker or doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`15 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now routes configured browser-health checks through
+  a native `doctor:browser` contribution boundary: configured default profiles
+  or `existing-session` browser profiles produce a structured unavailable
+  fallback when no browser doctor facade/adapter is registered, matching
+  OpenClaw's graceful browser facade failure path.
+- Verified the browser doctor facade fallback slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_browser_health_unavailable_when_facade_missing
+  -q` (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py
+  -q -k "browser_health_unavailable or gateway_auth_missing_local_token or
+  gateway_auth_warning_when_env_token or gateway_auth_mode_is_ambiguous or
+  secretref_gateway_token or codex_provider_override or codex_inline_model or
+  codex_override_warning or opencode_provider_overrides or
+  state_directory_is_missing or sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`16 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:gateway-config`
+  missing-mode warning for explicit gateway config without `gateway.mode`,
+  including configure/setup-style fix guidance and a structured
+  `gatewayConfig` warning payload.
+- Verified the gateway-config missing-mode slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_gateway_mode_is_unset -q` (`1
+  passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
+  "gateway_mode_is_unset or browser_health_unavailable or
+  gateway_auth_missing_local_token or gateway_auth_warning_when_env_token or
+  gateway_auth_mode_is_ambiguous or secretref_gateway_token or
+  codex_provider_override or codex_inline_model or codex_override_warning or
+  opencode_provider_overrides or state_directory_is_missing or
+  sandbox_enabled_without_docker or doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`17 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now includes an OpenClaw-shaped
+  `doctor:claude-cli` contribution when Claude CLI models or backends are
+  configured, reporting binary availability, headless-auth posture, missing
+  `anthropic:claude-cli` auth profile guidance, and fix hints without requiring
+  an interactive Claude credential prompt.
+- Verified the Claude CLI doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_claude_cli_model_is_configured_but_unavailable
+  -q` (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py
+  -q -k "claude_cli_model_is_configured or gateway_mode_is_unset or
+  browser_health_unavailable or gateway_auth_missing_local_token or
+  gateway_auth_warning_when_env_token or gateway_auth_mode_is_ambiguous or
+  secretref_gateway_token or codex_provider_override or codex_inline_model or
+  codex_override_warning or opencode_provider_overrides or
+  state_directory_is_missing or sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`18 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:oauth-tls`
+  contribution for configured `openai-codex` OAuth profiles. The native
+  fakeable preflight probes the OpenAI auth endpoint, classifies TLS
+  certificate-chain failures, and returns the upstream Homebrew CA remediation
+  guidance as a structured `oauthTls` warning.
+- Verified the OAuth TLS doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_openai_codex_oauth_tls_preflight_fails
+  -q` (`1 passed`), adjacent Codex/auth proof `python -m pytest
+  tests\test_cli.py -q -k "openai_codex_oauth_tls or codex_provider_override
+  or codex_inline_model or codex_override_warning or
+  claude_cli_model_is_configured"` (`6 passed`), broader doctor warning/repair
+  proof `python -m pytest tests\test_cli.py -q -k "doctor_json_warns or
+  doctor_fix_rewrites or doctor_fix_normalizes_legacy_cron_store"` (`32
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:hooks-model`
+  contribution when `hooks.gmail.model` is configured. It resolves raw model
+  ids and aliases against `agents.defaults.models`, reports allowlist drift,
+  and warns when the resolved hook model is absent from the configured model
+  catalog.
+- Verified the hooks-model doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_hooks_gmail_model_is_not_allowed_or_cataloged
+  -q` (`1 passed`), adjacent model/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "hooks_gmail_model or models_aliases or
+  models_list_json or models_status"` (`9 passed`), broader doctor
+  warning/repair proof `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_warns or doctor_fix_rewrites or
+  doctor_fix_normalizes_legacy_cron_store"` (`33 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:bootstrap-size`
+  contribution for configured workspace directories. It scans `AGENTS.md`
+  against `agents.defaults.bootstrapMaxChars` /
+  `bootstrapTotalMaxChars`, reports truncation/near-limit statistics, and
+  emits the upstream max/file and max/total tuning hints without mutating
+  workspace files.
+- Verified the bootstrap-size doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_bootstrap_file_exceeds_limits
+  -q` (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py
+  -q -k "bootstrap_file_exceeds_limits or hooks_gmail_model or
+  doctor_json_warns or doctor_fix_rewrites or
+  doctor_fix_normalizes_legacy_cron_store"` (`34 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes the first OpenClaw
+  `doctor:workspace-status` native read model. It summarizes manifest-backed
+  plugin registry records into loaded/imported/disabled/error/bundle counts,
+  matching the upstream workspace-status plugin note surface while leaving
+  deeper skill/task-flow recovery hints as separate seams.
+- Verified the workspace-status plugin-summary slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_workspace_status_plugin_counts
+  -q` (`1 passed`), adjacent workspace/plugin doctor proof `python -m pytest
+  tests\test_cli.py -q -k "workspace_status_plugin_counts or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  bootstrap_file_exceeds_limits or doctor_json_warns"` (`33 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's
+  `doctor:device-pairing` gateway-backed pending request warning. It calls
+  `device.pair.list` through the native gateway method owner, summarizes
+  pending/paired counts, sanitizes request/device labels, and projects the
+  upstream `openclaw devices list` / `openclaw devices approve <requestId>`
+  guidance into the structured doctor warnings.
+- Verified the device-pairing doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_pending_device_pairing_from_gateway
+  -q` (`1 passed`), adjacent gateway doctor proof `python -m pytest
+  tests\test_cli.py -q -k "pending_device_pairing or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_json_includes_gateway_memory_probe_contribution or doctor_json_warns"`
+  (`34 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- The same native `doctor:device-pairing` contribution now classifies
+  OpenClaw's paired-device follow-up states from the gateway snapshot:
+  public-key repair, role upgrade, scope upgrade, already-paired repair, missing
+  approved-role token, missing operator scope baseline, and token scopes outside
+  the approved baseline. Suggested `openclaw devices ...` repair commands quote
+  untrusted request/device/role arguments before they enter doctor output.
+- Verified the device-pairing classification slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_classifies_device_pairing_repairs_and_token_gaps
+  -q` (`1 passed`), adjacent device/gateway doctor proof `python -m pytest
+  tests\test_cli.py -q -k "device_pairing or pending_device_pairing or
+  gateway_memory_probe or gateway_health_contribution"` (`4 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
+  contribution for configured file-backed `cron.store` paths. It reports
+  legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and
+  `notify: true` fallback issues, and `doctor --fix` normalizes the store while
+  migrating notify-only jobs to `cron.webhook` delivery.
+- Verified the legacy-cron doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_cron_store
+  tests\test_cli.py::test_doctor_fix_normalizes_legacy_cron_store -q` (`2
+  passed`), adjacent cron/CLI proof `python -m pytest tests\test_cli.py -q -k
+  "legacy_cron_store or cron_add_payload_extra_flags or
+  cron_edit_payload_extra_flags or cron_add_at_timezone"` (`7 passed`), broader
+  doctor warning/repair proof `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_warns or doctor_fix_rewrites or
+  doctor_fix_normalizes_legacy_cron_store"` (`31 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.
@@ -3374,6 +3578,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.
+- Top-level `doctor --json` now includes OpenClaw's legacy plugin manifest
+  contract-key contribution. It detects top-level `speechProviders`,
+  `mediaUnderstandingProviders`, and `imageGenerationProviders` in
+  `openclaw.plugin.json` files discovered through `plugins.load.paths`, reports
+  OpenClaw-shaped migration lines, and rewrites those keys into
+  `contracts.<key>` during `doctor --fix` before stale plugin config cleanup.
+- Verified the legacy plugin manifest doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_plugin_manifest_contract_keys
+  tests\test_cli.py::test_doctor_fix_rewrites_legacy_plugin_manifest_contract_keys
+  -q` (`2 passed`), adjacent doctor/plugin coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_plugin_manifest_contract_keys or
+  legacy_bundled_plugin_load_paths or stale_plugin_config"` (`7 passed`),
+  broader doctor warning/repair coverage `python -m pytest tests\test_cli.py
+  -q -k "doctor_json_warns or doctor_fix_rewrites"` (`29 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now also includes OpenClaw's open-policy
   `allowFrom` repair contribution. It reports pending wildcard additions for
   `dmPolicy="open"`, writes top-level or nested `allowFrom=["*"]` according to
