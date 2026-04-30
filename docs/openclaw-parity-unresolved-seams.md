@@ -216,6 +216,12 @@ Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+Sandboxed spawned-session `agent` follow-up launches now also resolve the saved
+`spawnedWorkspaceDir` / `sandboxWorkspaceRoot`, dispatch through the native
+sandbox runtime with `sandbox="require"`, the persisted sandbox mode, and the
+target agent id, persist returned runtime/policy metadata, and keep the run
+tracked for `agent.wait` instead of leaking the follow-up through the host
+control-chat runtime.
 Sandboxed `chat.send` now also stages managed path-backed inbound attachments
 already persisted under `openzuesSavedPath`, copying them into the child
 workspace's `media/inbound` directory and rewriting runtime attachment metadata
@@ -332,6 +338,11 @@ ACP thread-bound spawns with a channel context but no explicit account id now
 mirror OpenClaw's `resolveAcpSpawnChannelAccountId`: the native gateway uses
 `channels.<channel>.defaultAccount` when present and otherwise falls back to
 `default` before account-scoped spawn policy checks and ACP runtime dispatch.
+ACP Telegram `thread=true` current-conversation bindings now also preserve
+forum-topic conversations whether the requester supplies a topic-qualified
+`to` target or a group plus `threadId`; persisted `sessionBinding`
+conversation ids use OpenClaw's `chatId:topic:threadId` shape without a
+self-parent conversation record.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.
@@ -451,6 +462,11 @@ mutations and normalized pinned-message timestamps for `list-pins`.
 Discord `read` now dispatches through the same route-backed bot-token REST
 path, including upstream-style `limit` integer parsing, 1-100 clamping,
 `before` / `after` / `around` query params, and normalized message timestamps.
+Discord `fetch-message` now dispatches through the same route-backed bot-token
+REST path, including OpenClaw `messageLink` parsing, direct
+`guildId`/`channelId`/`messageId` params, normalized timestamp metadata, and
+the upstream-shaped `{ok: true, message, guildId, channelId, messageId}`
+payload.
 Discord `permissions` now dispatches through the same route-backed bot-token
 REST path, fetching channel, bot identity, guild, and member records before
 applying OpenClaw's guild/role/member overwrite order into a permission
@@ -462,6 +478,11 @@ created thread.
 Discord `sticker` now dispatches through the same route-backed bot-token REST
 path, mapping upstream `stickerId` / `stickerIds` params into Discord
 `sticker_ids` channel-message sends with optional message content.
+Discord `poll` now dispatches through the same route-backed bot-token REST
+path, mapping OpenClaw `to`, `content`, `question`, `answers`,
+`allowMultiselect`, and `durationHours` params into a Discord poll message
+body with `layout_type=1` and returning the upstream-shaped `{ok: true}`
+payload.
 Discord `set-presence` now follows OpenClaw's gateway-backed runtime shape
 through a fakeable native adapter, including status/activity validation,
 projected presence payloads, and the honest gateway-not-available error when
@@ -486,7 +507,8 @@ route-backed bot-token REST path, mapping OpenClaw's channel creation fields
 into the Discord channel body and returning `{ok: true, channel}`.
 Discord guild-admin `channel-edit` now dispatches through the same
 route-backed bot-token REST path, including OpenClaw's `clearParent` nulling
-and channel/thread edit body mapping.
+and channel/thread edit body mapping plus forum/media `availableTags`
+projection to Discord `available_tags`.
 Discord guild-admin `channel-delete` now dispatches through the same
 route-backed bot-token REST path and returns the upstream-shaped
 `{ok: true, channelId}` payload.
@@ -494,6 +516,11 @@ Discord guild-admin `channel-move` now dispatches through the same
 route-backed bot-token REST path, including the OpenClaw one-item guild
 channel positions body with parent clearing/assignment and integer position
 coercion.
+Discord guild-admin `channel-permission-set` and
+`channel-permission-remove` now dispatch through the same route-backed
+bot-token REST path, mapping role/member target types to Discord permission
+overwrite types, preserving optional `allow`/`deny`, normalizing channel ids,
+and returning the upstream-shaped `{ok: true}` payload.
 Discord guild-admin `category-create` now dispatches through the same
 route-backed bot-token REST path, creating a type `4` category and returning
 the upstream-shaped `{ok: true, category}` payload.
@@ -509,15 +536,39 @@ returning the upstream-shaped `{ok: true, voice}` payload.
 Discord guild-admin `event-list` now dispatches through the same route-backed
 bot-token REST path, reading guild scheduled events and returning the
 upstream-shaped `{ok: true, events}` payload.
-Discord guild-admin `event-create` now dispatches its core no-cover-image
-scheduled-event payload through the same route-backed bot-token REST path,
-including entity type, timing, channel, description, location, and privacy
-mapping; OpenClaw-style cover image URL/path resolution remains queued as a
-separate media seam.
-Discord moderation `timeout` now dispatches explicit-until and
-`durationMin`/`durationMinutes` paths through the same route-backed bot-token
-REST path and returns the upstream-shaped `{ok: true, member}` payload;
-audit-log reason headers remain queued.
+Discord guild-admin `event-create` now dispatches its scheduled-event payload
+through the same route-backed bot-token REST path, including entity type,
+timing, channel, description, location, privacy mapping, and OpenClaw-style
+cover image URL/path/data-URI resolution with PNG/JPG/GIF validation.
+Discord moderation `timeout` now dispatches explicit-until,
+`durationMin`/`durationMinutes`, and encoded audit-log reason paths through the
+same route-backed bot-token REST path and returns the upstream-shaped
+`{ok: true, member}` payload.
+Discord moderation `kick` now dispatches through the same route-backed
+bot-token REST path, including encoded audit-log reason headers and the
+upstream-shaped `{ok: true}` payload.
+Discord moderation `ban` now dispatches through the same route-backed bot-token
+REST path, including clamped `delete_message_days`, encoded audit-log reason
+headers, and the upstream-shaped `{ok: true}` payload.
+Discord `thread-list` now dispatches active guild and archived channel
+thread-list paths through the same route-backed bot-token REST path, including
+archived `before`/`limit` query parameters, and returns the upstream-shaped
+`{ok: true, threads}` payload.
+Discord `thread-reply` now dispatches through the same route-backed bot-token
+REST path, including `message_reference` mapping, OpenClaw-style `mediaUrl`
+uploads through Discord multipart `payload_json` + `files[0]`, and the
+upstream-shaped `{ok: true, result}` payload.
+Discord `search` now dispatches through the same route-backed bot-token REST
+path, including content, repeated channel/author filters, clamped limit, and
+the upstream-shaped `{ok: true, results}` payload.
+Discord guild-admin `emoji-upload` now dispatches through the same
+route-backed bot-token REST path, including data URL/local/canvas/HTTP media
+loading, PNG/JPG/GIF validation, role filtering, and the upstream-shaped
+`{ok: true, emoji}` payload.
+Discord guild-admin `sticker-upload` now dispatches through the same
+route-backed bot-token REST path, including data URL/local/canvas/HTTP media
+loading, PNG/APNG/Lottie JSON validation, multipart sticker creation, and the
+upstream-shaped `{ok: true, sticker}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

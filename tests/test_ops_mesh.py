@@ -6260,6 +6260,99 @@ async def test_ops_mesh_service_message_action_dispatches_discord_read_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_fetch_message_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-fetch"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "789", "timestamp": "2026-01-15T11:00:00.000Z"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="fetch-message",
+            params={"messageLink": "https://discord.com/channels/123/456/789"},
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-fetch-message-action",
+        )
+    )
+
+    expected_ms = 1768474800000
+    assert result == {
+        "ok": True,
+        "message": {
+            "id": "789",
+            "timestamp": "2026-01-15T11:00:00.000Z",
+            "timestampMs": expected_ms,
+            "timestampUtc": "2026-01-15T11:00:00.000Z",
+        },
+        "guildId": "123",
+        "channelId": "456",
+        "messageId": "789",
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/456/messages/789",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_permissions_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6589,6 +6682,106 @@ async def test_ops_mesh_service_message_action_dispatches_discord_sticker_route(
             {
                 "content": "Sticker drop",
                 "sticker_ids": ["sticker-1", "sticker-2"],
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_poll_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-poll"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "poll-message-1", "channel_id": "987654321"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="poll",
+            params={
+                "to": "channel:987654321",
+                "content": "Vote now.",
+                "question": "Lunch?",
+                "answers": ["Pizza", "Sushi"],
+                "allowMultiselect": "true",
+                "durationHours": "24.9",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-poll-action",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert discord_requests == [
+        (
+            "POST",
+            "https://discord.com/api/v10/channels/987654321/messages",
+            {
+                "content": "Vote now.",
+                "poll": {
+                    "question": {"text": "Lunch?"},
+                    "answers": [
+                        {"poll_media": {"text": "Pizza"}},
+                        {"poll_media": {"text": "Sushi"}},
+                    ],
+                    "duration": 24,
+                    "allow_multiselect": True,
+                    "layout_type": 1,
+                },
             },
             "Authorization",
             "Bot discord-bot-token",
@@ -6972,6 +7165,191 @@ async def test_ops_mesh_service_message_action_dispatches_discord_emoji_list_rou
             None,
             "Authorization",
             "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_emoji_upload_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-emoji-upload"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "emoji-1", "name": "party"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="emoji-upload",
+            params={
+                "guildId": "guild-1",
+                "emojiName": " party ",
+                "media": "data:image/png;base64,aGVsbG8=",
+                "roleIds": [" role-1 ", "", "role-2"],
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-emoji-upload-action",
+        )
+    )
+
+    assert result == {"ok": True, "emoji": {"id": "emoji-1", "name": "party"}}
+    assert discord_requests == [
+        (
+            "POST",
+            "https://discord.com/api/v10/guilds/guild-1/emojis",
+            {
+                "name": "party",
+                "image": "data:image/png;base64,aGVsbG8=",
+                "roles": ["role-1", "role-2"],
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_sticker_upload_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-sticker-upload"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    sticker_uploads: list[
+        tuple[str, str, str, str, bytes, str, str | None]
+    ] = []
+
+    def fake_request_discord_sticker_upload(
+        self: OpsMeshService,
+        *,
+        guild_id: str,
+        name: str,
+        description: str,
+        tags: str,
+        media_bytes: bytes,
+        content_type: str,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        sticker_uploads.append(
+            (guild_id, name, description, tags, media_bytes, content_type, secret_token)
+        )
+        return {"id": "sticker-1", "name": "party_sticker"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_sticker_upload",
+        fake_request_discord_sticker_upload,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="sticker-upload",
+            params={
+                "guildId": "guild-1",
+                "stickerName": " party_sticker ",
+                "stickerDesc": " celebratory sticker ",
+                "stickerTags": " party ",
+                "media": "data:image/png;base64,aGVsbG8=",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-sticker-upload-action",
+        )
+    )
+
+    assert result == {"ok": True, "sticker": {"id": "sticker-1", "name": "party_sticker"}}
+    assert sticker_uploads == [
+        (
+            "guild-1",
+            "party_sticker",
+            "celebratory sticker",
+            "party",
+            b"hello",
+            "image/png",
+            "discord-bot-token",
         )
     ]
 
@@ -7407,6 +7785,104 @@ async def test_ops_mesh_service_message_action_dispatches_discord_event_create_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_event_create_cover_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-event-cover"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "event-1", "name": "Planning", "image": "cover-hash"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="event-create",
+            params={
+                "guildId": "guild-1",
+                "name": "Planning",
+                "startTime": "2026-05-01T12:00:00.000Z",
+                "channelId": "stage-1",
+                "entityType": "stage",
+                "image": "data:image/png;base64,aGVsbG8=",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-event-create-cover-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "event": {"id": "event-1", "name": "Planning", "image": "cover-hash"},
+    }
+    assert discord_requests == [
+        (
+            "POST",
+            "https://discord.com/api/v10/guilds/guild-1/scheduled-events",
+            {
+                "name": "Planning",
+                "scheduled_start_time": "2026-05-01T12:00:00.000Z",
+                "entity_type": 1,
+                "privacy_level": 2,
+                "channel_id": "stage-1",
+                "image": "data:image/png;base64,aGVsbG8=",
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_timeout_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7591,6 +8067,785 @@ async def test_ops_mesh_service_message_action_dispatches_discord_timeout_durati
             "PATCH",
             "https://discord.com/api/v10/guilds/guild-1/members/user-1",
             {"communication_disabled_until": "2026-05-01T12:30:00.000Z"},
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_timeout_reason_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-timeout-reason"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[
+        tuple[str, str, object | None, str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> object:
+        del self
+        discord_requests.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {
+            "user": {"id": "user-1"},
+            "communication_disabled_until": "2026-05-01T12:30:00.000Z",
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="timeout",
+            params={
+                "guildId": "guild-1",
+                "userId": "user-1",
+                "until": "2026-05-01T12:30:00.000Z",
+                "reason": "Needs a pause",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-timeout-reason-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "member": {
+            "user": {"id": "user-1"},
+            "communication_disabled_until": "2026-05-01T12:30:00.000Z",
+        },
+    }
+    assert discord_requests == [
+        (
+            "PATCH",
+            "https://discord.com/api/v10/guilds/guild-1/members/user-1",
+            {"communication_disabled_until": "2026-05-01T12:30:00.000Z"},
+            "Authorization",
+            "Bot discord-bot-token",
+            {"X-Audit-Log-Reason": "Needs%20a%20pause"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_kick_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-kick"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[
+        tuple[str, str, object | None, str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> object:
+        del self
+        discord_requests.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {"status": 204}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="kick",
+            params={"guildId": "guild-1", "userId": "user-1", "reason": "Rule 7"},
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-kick-action",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert discord_requests == [
+        (
+            "DELETE",
+            "https://discord.com/api/v10/guilds/guild-1/members/user-1",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+            {"X-Audit-Log-Reason": "Rule%207"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_ban_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-ban"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[
+        tuple[str, str, object | None, str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> object:
+        del self
+        discord_requests.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {"status": 204}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="ban",
+            params={
+                "guildId": "guild-1",
+                "userId": "user-1",
+                "deleteDays": "9.8",
+                "reason": "Rule 9",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-ban-action",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert discord_requests == [
+        (
+            "PUT",
+            "https://discord.com/api/v10/guilds/guild-1/bans/user-1",
+            {"delete_message_days": 7},
+            "Authorization",
+            "Bot discord-bot-token",
+            {"X-Audit-Log-Reason": "Rule%209"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_thread_list_active_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-discord-thread-list-active"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"threads": [{"id": "thread-1", "name": "build"}], "members": []}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="thread-list",
+            params={"guildId": "guild-1"},
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-thread-list-active-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "threads": {"threads": [{"id": "thread-1", "name": "build"}], "members": []},
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/guilds/guild-1/threads/active",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_thread_list_archived_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-discord-thread-list-archived"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"threads": [{"id": "archived-thread-1", "name": "old-build"}], "has_more": False}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="thread-list",
+            params={
+                "guildId": "guild-1",
+                "channelId": "channel:987654321",
+                "includeArchived": True,
+                "before": "2026-05-01T12:00:00.000Z",
+                "limit": "12.9",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-thread-list-archived-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "threads": {
+            "threads": [{"id": "archived-thread-1", "name": "old-build"}],
+            "has_more": False,
+        },
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/987654321/threads/archived/public"
+            "?before=2026-05-01T12%3A00%3A00.000Z&limit=12",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_thread_reply_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-thread-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "reply-message-1", "channel_id": "987654321"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="thread-reply",
+            params={
+                "threadId": "channel:987654321",
+                "message": "Thread reply from parity.",
+                "replyTo": "parent-message-1",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-thread-reply-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {"messageId": "reply-message-1", "channelId": "987654321"},
+    }
+    assert discord_requests == [
+        (
+            "POST",
+            "https://discord.com/api/v10/channels/987654321/messages",
+            {
+                "content": "Thread reply from parity.",
+                "message_reference": {
+                    "message_id": "parent-message-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_thread_reply_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-discord-thread-reply-media"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    upload_calls: list[dict[str, object]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self, target, method, payload, secret_header_name, secret_token
+        return {"id": "json-reply-should-not-send", "channel_id": "987654321"}
+
+    def fake_request_discord_message_upload(
+        self: OpsMeshService,
+        *,
+        channel_id: str,
+        payload: dict[str, object],
+        media_bytes: bytes,
+        content_type: str,
+        filename: str,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        upload_calls.append(
+            {
+                "channel_id": channel_id,
+                "payload": payload,
+                "media_bytes": media_bytes,
+                "content_type": content_type,
+                "filename": filename,
+                "secret_token": secret_token,
+            }
+        )
+        return {"id": "media-reply-1", "channel_id": "987654321"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_message_upload",
+        fake_request_discord_message_upload,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="thread-reply",
+            params={
+                "threadId": "channel:987654321",
+                "message": "Thread reply with media.",
+                "mediaUrl": "data:image/png;base64,aGVsbG8=",
+                "replyTo": "parent-message-1",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-thread-reply-media-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {"messageId": "media-reply-1", "channelId": "987654321"},
+    }
+    assert upload_calls == [
+        {
+            "channel_id": "987654321",
+            "payload": {
+                "content": "Thread reply with media.",
+                "message_reference": {
+                    "message_id": "parent-message-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+            "media_bytes": b"hello",
+            "content_type": "image/png",
+            "filename": "upload.png",
+            "secret_token": "discord-bot-token",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_search_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-search"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"total_results": 1, "messages": [[{"id": "message-1", "content": "needle"}]]}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="search",
+            params={
+                "guildId": "guild-1",
+                "query": "needle",
+                "channelIds": ["channel:987654321", "222222222"],
+                "authorId": "user-1",
+                "limit": "99.9",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-search-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "results": {"total_results": 1, "messages": [[{"id": "message-1", "content": "needle"}]]},
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/guilds/guild-1/messages/search"
+            "?content=needle&channel_id=987654321&channel_id=222222222&author_id=user-1&limit=25",
+            None,
             "Authorization",
             "Bot discord-bot-token",
         )
@@ -8110,6 +9365,11 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_edit_r
                 "archived": True,
                 "locked": False,
                 "autoArchiveDuration": "60.9",
+                "availableTags": [
+                    {"id": "0", "name": "General", "emoji_id": None},
+                    {"id": "1", "name": "Docs", "moderated": False, "emoji_name": "book"},
+                    {"id": "bad"},
+                ],
             },
             account_id="discord-bot",
             requester_sender_id="1234",
@@ -8137,6 +9397,10 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_edit_r
                 "archived": True,
                 "locked": False,
                 "auto_archive_duration": 60,
+                "available_tags": [
+                    {"id": "0", "name": "General", "emoji_id": None},
+                    {"id": "1", "name": "Docs", "moderated": False, "emoji_name": "book"},
+                ],
             },
             "Authorization",
             "Bot discord-bot-token",
@@ -8308,6 +9572,142 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_move_r
             "Authorization",
             "Bot discord-bot-token",
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_channel_permissions_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-discord-channel-permissions"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    role_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="channel-permission-set",
+            params={
+                "channelId": "channel:987654321",
+                "targetId": "role-1",
+                "targetType": "role",
+                "allow": "1024",
+                "deny": "2048",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-channel-permission-set-action",
+        )
+    )
+    member_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="channel-permission-set",
+            params={
+                "channelId": "channel:987654321",
+                "targetId": "member-1",
+                "targetType": "member",
+                "allow": "4096",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-channel-permission-member-set-action",
+        )
+    )
+    remove_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="channel-permission-remove",
+            params={"channelId": "channel:987654321", "targetId": "role-1"},
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-channel-permission-remove-action",
+        )
+    )
+
+    assert role_result == {"ok": True}
+    assert member_result == {"ok": True}
+    assert remove_result == {"ok": True}
+    assert discord_requests == [
+        (
+            "PUT",
+            "https://discord.com/api/v10/channels/987654321/permissions/role-1",
+            {"type": 0, "allow": "1024", "deny": "2048"},
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "PUT",
+            "https://discord.com/api/v10/channels/987654321/permissions/member-1",
+            {"type": 1, "allow": "4096"},
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "DELETE",
+            "https://discord.com/api/v10/channels/987654321/permissions/role-1",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
     ]
 
 
@@ -11374,6 +12774,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_discord_native_rou
                     ],
                     "duration": 2,
                     "allow_multiselect": True,
+                    "layout_type": 1,
                 },
             },
         )

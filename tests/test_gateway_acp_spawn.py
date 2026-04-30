@@ -338,6 +338,92 @@ async def test_runtime_manager_acp_spawn_prefers_line_group_current_conversation
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_preserves_telegram_topic_target() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Telegram topic tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:telegram:group:-1003342490704:topic:2"
+            ),
+            "requesterChannel": "telegram",
+            "requesterAccountId": "default",
+            "requesterTo": "telegram:group:-1003342490704:topic:2",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "telegram",
+        "accountId": "default",
+        "to": "telegram:group:-1003342490704:topic:2",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "telegram",
+        "accountId": "default",
+        "to": "telegram:group:-1003342490704:topic:2",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "telegram",
+        "accountId": "default",
+        "conversationId": "-1003342490704:topic:2",
+    }
+    assert session_binding["metadata"]["placement"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_binds_telegram_forum_topic_from_thread_id() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Telegram forum topic tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:telegram:group:-1003342490704:topic:2"
+            ),
+            "requesterChannel": "telegram",
+            "requesterAccountId": "default",
+            "requesterTo": "telegram:-1003342490704",
+            "requesterThreadId": "2",
+            "requesterGroupId": "-1003342490704",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "telegram",
+        "accountId": "default",
+        "to": "-1003342490704",
+        "threadId": "2",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "telegram",
+        "accountId": "default",
+        "conversationId": "-1003342490704:topic:2",
+    }
+    assert session_binding["metadata"]["placement"] == "current"
+    assert session_binding["metadata"]["threadId"] == "2"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_binds_matrix_child_thread_metadata() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

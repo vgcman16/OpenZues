@@ -176,8 +176,30 @@ def _strip_conversation_target_prefixes(channel: str, target: str) -> str | None
         if not matched:
             break
     if not value or ":" in value:
+        if channel == "telegram" and _is_telegram_topic_conversation_id(value):
+            return value
         return None
     return value
+
+
+def _is_telegram_topic_conversation_id(value: str) -> bool:
+    chat_id, separator, topic_id = value.partition(":topic:")
+    return bool(separator and chat_id.strip() and topic_id.strip())
+
+
+def _telegram_topic_conversation_id(
+    *,
+    parent_conversation_id: str | None,
+    thread_id: str | None,
+) -> str | None:
+    if thread_id is None:
+        return None
+    normalized_thread_id = thread_id.strip()
+    if _is_telegram_topic_conversation_id(normalized_thread_id):
+        return normalized_thread_id
+    if parent_conversation_id is None or normalized_thread_id == parent_conversation_id:
+        return None
+    return f"{parent_conversation_id}:topic:{normalized_thread_id}"
 
 
 def _strip_child_parent_conversation_target(channel: str, target: str) -> str | None:
@@ -239,6 +261,13 @@ def _current_conversation_ref(
 ) -> dict[str, str] | None:
     parent_conversation_id = _strip_conversation_target_prefixes(channel, to)
     if thread_id is not None:
+        if channel == "telegram":
+            topic_conversation_id = _telegram_topic_conversation_id(
+                parent_conversation_id=parent_conversation_id,
+                thread_id=thread_id,
+            )
+            if topic_conversation_id is not None:
+                return {"conversationId": topic_conversation_id}
         conversation: dict[str, str] = {"conversationId": thread_id}
         if parent_conversation_id is not None and parent_conversation_id != thread_id:
             conversation["parentConversationId"] = parent_conversation_id

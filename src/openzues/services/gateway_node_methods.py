@@ -9234,11 +9234,7 @@ class GatewayNodeMethodService:
                         f'invalid agent params: agent "{agent_id}" does not match session key '
                         f'agent "{session_agent_id}"'
                     )
-            if (
-                self._database is None
-                or self._sessions_service is None
-                or self._chat_send_service is None
-            ):
+            if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message="agent is unavailable until gateway agent runtime bridge is wired",
@@ -9406,17 +9402,76 @@ class GatewayNodeMethodService:
                     session_key=target_session_key,
                     metadata=next_session_metadata,
                 )
-            send_result = await self._chat_send_service(
-                session_key=target_session_key,
-                message=message,
-                idempotency_key=idempotency_key,
-                thinking=thinking,
-                deliver=requested_deliver,
-                timeout_ms=timeout_ms,
+            session_metadata_row = await self._database.get_gateway_session_metadata(
+                target_session_key
             )
+            session_metadata: dict[str, Any] = {}
+            if isinstance(session_metadata_row, dict):
+                raw_session_metadata = session_metadata_row.get("metadata")
+                if isinstance(raw_session_metadata, dict):
+                    session_metadata.update(raw_session_metadata)
+            sandbox_dispatch_kwargs = _agent_sandbox_dispatch_kwargs(
+                self._config_service,
+                session_key=target_session_key,
+                metadata=session_metadata,
+            )
+            effective_chat_send_service = (
+                self._sandbox_chat_send_service
+                if sandbox_dispatch_kwargs is not None
+                else self._chat_send_service
+            )
+            if effective_chat_send_service is None:
+                if sandbox_dispatch_kwargs is not None:
+                    return {
+                        "status": "forbidden",
+                        "error": FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
+                    }
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="agent is unavailable until gateway agent runtime bridge is wired",
+                    status_code=503,
+                )
+            send_kwargs: dict[str, object] = {
+                "session_key": target_session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": requested_deliver,
+                "timeout_ms": timeout_ms,
+            }
+            if sandbox_dispatch_kwargs is not None:
+                send_kwargs.update(sandbox_dispatch_kwargs)
+            send_result = await effective_chat_send_service(**send_kwargs)
+            if sandbox_dispatch_kwargs is not None:
+                sandbox_status_text = str(send_result.get("status") or "").strip().lower()
+                if sandbox_status_text not in {"ok", "accepted", "started"}:
+                    sandbox_error = str(
+                        send_result.get("error")
+                        or send_result.get("message")
+                        or "sandbox runtime dispatch failed"
+                    ).strip()
+                    return {
+                        "runId": _string_or_none(send_result.get("runId")) or idempotency_key,
+                        "status": (
+                            "forbidden"
+                            if sandbox_status_text == "forbidden"
+                            else "error"
+                        ),
+                        "error": sandbox_error or "sandbox runtime dispatch failed",
+                    }
+                runtime_metadata = sandbox_runtime_metadata(send_result)
+                if runtime_metadata:
+                    session_metadata.update(runtime_metadata)
+                    await self._database.upsert_gateway_session_metadata(
+                        session_key=target_session_key,
+                        metadata=session_metadata,
+                    )
+            tracked_send_result = dict(send_result)
+            if _string_or_none(tracked_send_result.get("runId")) is None:
+                tracked_send_result["runId"] = idempotency_key
             self._remember_gateway_chat_run(
                 target_session_key,
-                send_result,
+                tracked_send_result,
                 started_at_ms=timestamp_ms,
                 owner_requester=resolved_requester,
             )
@@ -9426,7 +9481,7 @@ class GatewayNodeMethodService:
                 now_ms=timestamp_ms,
             )
             return {
-                "runId": _string_or_none(send_result.get("runId")) or idempotency_key,
+                "runId": _string_or_none(tracked_send_result.get("runId")) or idempotency_key,
                 "status": "accepted",
                 "acceptedAt": timestamp_ms,
             }
@@ -13822,6 +13877,40 @@ def _sessions_spawn_native_sandbox_mode(
     if status.workspace_access in {"none", "ro"}:
         return "read-only"
     return "workspace-write"
+
+
+def _agent_sandbox_dispatch_kwargs(
+    config_service: GatewayConfigService | None,
+    *,
+    session_key: str,
+    metadata: Mapping[str, Any],
+) -> dict[str, object] | None:
+    sandbox_status = _sessions_spawn_sandbox_runtime_status(
+        config_service,
+        session_key=session_key,
+    )
+    if metadata.get("sandboxed") is not True and not sandbox_status.sandboxed:
+        return None
+
+    sandbox_mode = _string_or_none(metadata.get("sandboxMode"))
+    if sandbox_mode not in {"read-only", "workspace-write"}:
+        sandbox_mode = _sessions_spawn_native_sandbox_mode(sandbox_status)
+    dispatch: dict[str, object] = {
+        "sandbox": "require",
+        "sandbox_mode": sandbox_mode,
+        "agent_id": _string_or_none(metadata.get("agentId")) or sandbox_status.agent_id,
+    }
+    cwd = (
+        _string_or_none(metadata.get("spawnedWorkspaceDir"))
+        or _string_or_none(metadata.get("sandboxWorkspaceRoot"))
+        or sandbox_status.workspace_root
+    )
+    if cwd is not None:
+        dispatch["cwd"] = cwd
+    model = _string_or_none(metadata.get("model"))
+    if model is not None:
+        dispatch["model"] = model
+    return dispatch
 
 
 def _sessions_spawn_agents_config_roots(

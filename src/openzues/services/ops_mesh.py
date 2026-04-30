@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import math
+import mimetypes
 import re
+import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -885,6 +888,22 @@ def _message_action_param_string_array(
     return None
 
 
+def _message_action_param_bool(
+    params: dict[str, Any],
+    key: str,
+) -> bool | None:
+    value = params.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return None
+
+
 def _message_action_param_string_or_number(
     params: dict[str, Any],
     key: str,
@@ -1198,6 +1217,23 @@ def _slack_media_filename(media_url: str, index: int) -> str:
     return f"openzues-media-{index}.bin"
 
 
+def _discord_media_filename(media_url: str, content_type: str) -> str:
+    parsed = urlparse(media_url)
+    name = unquote(Path(parsed.path).name).replace("\\", "_").replace("/", "_").strip()
+    name = re.sub(r'["\r\n]+', "_", name)
+    if name and "." in name:
+        return name[:120]
+    normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+    extension = {
+        "image/jpg": ".jpg",
+        "image/jpeg": ".jpg",
+        "application/json": ".json",
+    }.get(normalized_content_type)
+    if extension is None and normalized_content_type:
+        extension = mimetypes.guess_extension(normalized_content_type) or ""
+    return f"upload{extension or ''}"
+
+
 def _safe_slack_file_label(value: str | None, fallback: str) -> str:
     label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
     label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
@@ -1421,6 +1457,15 @@ def _telegram_media_ids(result: object) -> list[str]:
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_MAX_EMOJI_BYTES = 256 * 1024
+DISCORD_MAX_EVENT_COVER_BYTES = 8 * 1024 * 1024
+DISCORD_MAX_MESSAGE_MEDIA_BYTES = 100 * 1024 * 1024
+DISCORD_MAX_STICKER_BYTES = 512 * 1024
+DISCORD_POLL_LAYOUT_TYPE_DEFAULT = 1
+DISCORD_POLL_MAX_DURATION_HOURS = 32 * 24
+DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
+DISCORD_EVENT_COVER_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
+DISCORD_STICKER_CONTENT_TYPES = {"image/png", "image/apng", "application/json"}
 DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
 DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
 DISCORD_CHANNEL_TYPE_GUILD_MEDIA = 16
@@ -1646,6 +1691,57 @@ def _discord_parent_id_param(params: dict[str, Any]) -> tuple[bool, str | None]:
     return False, None
 
 
+def _discord_available_tags_param(params: dict[str, Any]) -> list[dict[str, object]] | None:
+    raw_tags = params.get("availableTags")
+    if not isinstance(raw_tags, list):
+        return None
+    tags: list[dict[str, object]] = []
+    for raw_tag in raw_tags:
+        if not isinstance(raw_tag, dict) or not isinstance(raw_tag.get("name"), str):
+            continue
+        tag: dict[str, object] = {"name": str(raw_tag["name"])}
+        if isinstance(raw_tag.get("id"), str):
+            tag["id"] = str(raw_tag["id"])
+        if isinstance(raw_tag.get("moderated"), bool):
+            tag["moderated"] = bool(raw_tag["moderated"])
+        if "emoji_id" in raw_tag and (
+            raw_tag.get("emoji_id") is None or isinstance(raw_tag.get("emoji_id"), str)
+        ):
+            tag["emoji_id"] = raw_tag.get("emoji_id")
+        if "emoji_name" in raw_tag and (
+            raw_tag.get("emoji_name") is None or isinstance(raw_tag.get("emoji_name"), str)
+        ):
+            tag["emoji_name"] = raw_tag.get("emoji_name")
+        tags.append(tag)
+    return tags or None
+
+
+def _discord_audit_reason_headers(reason: str | None) -> dict[str, str] | None:
+    trimmed = str(reason or "").strip()
+    if not trimmed:
+        return None
+    return {"X-Audit-Log-Reason": quote(trimmed, safe="")}
+
+
+def _parse_discord_message_link(link: str) -> dict[str, str]:
+    match = re.match(
+        r"^(?:https?://)?(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/"
+        r"(\d+)/(\d+)/(\d+)(?:/?|\?.*)$",
+        link.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        raise RuntimeError(
+            "Invalid Discord message link. Expected "
+            "https://discord.com/channels/<guildId>/<channelId>/<messageId>."
+        )
+    return {
+        "guildId": match.group(1),
+        "channelId": match.group(2),
+        "messageId": match.group(3),
+    }
+
+
 class GatewayDiscordPresenceRuntime(Protocol):
     def update_presence(
         self,
@@ -1846,11 +1942,34 @@ def _discord_channel_id(result: object, fallback: str) -> str:
 def _discord_poll_duration_hours(event: dict[str, Any]) -> int:
     duration_hours = _optional_int_payload_value(event, "durationHours")
     if duration_hours is not None:
-        return max(1, duration_hours)
+        return min(DISCORD_POLL_MAX_DURATION_HOURS, max(1, duration_hours))
     duration_seconds = _optional_int_payload_value(event, "durationSeconds")
     if duration_seconds is not None:
-        return max(1, (duration_seconds + 3599) // 3600)
+        return min(DISCORD_POLL_MAX_DURATION_HOURS, max(1, (duration_seconds + 3599) // 3600))
     return 24
+
+
+def _discord_poll_payload(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+    duration_hours: int | None,
+) -> dict[str, object]:
+    _validate_direct_channel_poll_shape(question, options)
+    _validate_direct_channel_poll_option_count("discord", options)
+    _validate_direct_channel_poll_max_selections(options, max_selections)
+    duration = min(
+        DISCORD_POLL_MAX_DURATION_HOURS,
+        max(1, duration_hours if duration_hours is not None else 24),
+    )
+    return {
+        "question": {"text": question},
+        "answers": [{"poll_media": {"text": option}} for option in options],
+        "duration": duration,
+        "allow_multiselect": (max_selections or 1) > 1,
+        "layout_type": DISCORD_POLL_LAYOUT_TYPE_DEFAULT,
+    }
 
 
 def _validate_telegram_poll_duration_options(
@@ -7418,6 +7537,7 @@ class OpsMeshService:
                 request,
             )
         if channel == "discord" and action in {
+            "ban",
             "category-create",
             "category-delete",
             "category-edit",
@@ -7427,24 +7547,34 @@ class OpsMeshService:
             "channel-info",
             "channel-list",
             "channel-move",
+            "channel-permission-remove",
+            "channel-permission-set",
             "delete",
             "edit",
             "emoji-list",
+            "emoji-upload",
             "event-create",
             "event-list",
+            "fetch-message",
+            "kick",
             "list-pins",
             "member-info",
             "permissions",
             "pin",
+            "poll",
             "read",
             "react",
             "reactions",
             "role-add",
             "role-info",
             "role-remove",
+            "search",
             "send",
             "sticker",
+            "sticker-upload",
             "thread-create",
+            "thread-list",
+            "thread-reply",
             "timeout",
             "unpin",
             "voice-status",
@@ -7508,9 +7638,23 @@ class OpsMeshService:
                     request,
                     secret_token,
                 )
+            if action == "fetch-message":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_fetch_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             if action == "permissions":
                 return await asyncio.to_thread(
                     self._dispatch_discord_permissions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "poll":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_poll_message_action,
                     route,
                     request,
                     secret_token,
@@ -7540,6 +7684,13 @@ class OpsMeshService:
             if action == "emoji-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_emoji_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "emoji-upload":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_emoji_upload_message_action,
                     route,
                     request,
                     secret_token,
@@ -7582,6 +7733,20 @@ class OpsMeshService:
             if action == "timeout":
                 return await asyncio.to_thread(
                     self._dispatch_discord_timeout_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "kick":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_kick_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "ban":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_ban_message_action,
                     route,
                     request,
                     secret_token,
@@ -7635,6 +7800,20 @@ class OpsMeshService:
                     request,
                     secret_token,
                 )
+            if action == "channel-permission-set":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_permission_set_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-permission-remove":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_permission_remove_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             if action == "thread-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_thread_create_message_action,
@@ -7642,9 +7821,37 @@ class OpsMeshService:
                     request,
                     secret_token,
                 )
+            if action == "thread-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_thread_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "thread-reply":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_thread_reply_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "search":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_search_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             if action == "sticker":
                 return await asyncio.to_thread(
                     self._dispatch_discord_sticker_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "sticker-upload":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_sticker_upload_message_action,
                     route,
                     request,
                     secret_token,
@@ -9135,6 +9342,50 @@ class OpsMeshService:
             ],
         }
 
+    def _dispatch_discord_fetch_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        message_link = _message_action_param_string(request.params, "messageLink")
+        guild_id: str | None
+        channel_id_raw: str | None
+        message_id: str | None
+        if message_link is not None:
+            parsed = _parse_discord_message_link(message_link)
+            guild_id = parsed["guildId"]
+            channel_id_raw = parsed["channelId"]
+            message_id = parsed["messageId"]
+        else:
+            guild_id = _message_action_param_string(request.params, "guildId")
+            channel_id_raw = _message_action_param_string(request.params, "channelId")
+            message_id = _message_action_param_string(request.params, "messageId")
+        channel_id = _discord_action_channel_id(channel_id_raw)
+        if not guild_id or channel_id is None or not message_id:
+            raise RuntimeError(
+                "Discord message fetch requires guildId, channelId, and messageId "
+                "(or a valid messageLink)."
+            )
+        message = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(message, dict) and message.get("error"):
+            raise RuntimeError(str(message.get("error")))
+        if not isinstance(message, dict):
+            raise RuntimeError("Discord API returned a non-JSON message response.")
+        return {
+            "ok": True,
+            "message": _discord_message_with_normalized_timestamp(message),
+            "guildId": guild_id,
+            "channelId": channel_id,
+            "messageId": message_id,
+        }
+
     def _dispatch_discord_permissions_message_action(
         self,
         route: dict[str, Any],
@@ -9378,6 +9629,62 @@ class OpsMeshService:
             raise RuntimeError("Discord API returned a non-JSON emojis response.")
         return {"ok": True, "emojis": emojis}
 
+    def _dispatch_discord_emoji_upload_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(request.params, "emojiName") or (
+            _message_action_param_string(request.params, "name", required=True) or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "mediaUrl")
+            or ""
+        )
+        if not media_url:
+            raise RuntimeError("Discord emoji-upload requires media.")
+        media_bytes, content_type = self._load_discord_media(
+            media_url,
+            max_bytes=DISCORD_MAX_EMOJI_BYTES,
+        )
+        normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+        if normalized_content_type not in DISCORD_EMOJI_CONTENT_TYPES:
+            raise RuntimeError("Discord emoji uploads require a PNG, JPG, or GIF image.")
+        payload: dict[str, object] = {
+            "name": name.strip(),
+            "image": (
+                f"data:{normalized_content_type};base64,"
+                f"{base64.b64encode(media_bytes).decode('ascii')}"
+            ),
+        }
+        role_ids = [
+            role_id.strip()
+            for role_id in (_message_action_param_string_array(request.params, "roleIds") or [])
+            if role_id.strip()
+        ]
+        if role_ids:
+            payload["roles"] = role_ids
+        emoji = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/emojis"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(emoji, dict):
+            raise RuntimeError("Discord API returned a non-JSON emoji response.")
+        if emoji.get("error"):
+            raise RuntimeError(str(emoji.get("error")))
+        return {"ok": True, "emoji": emoji}
+
     def _dispatch_discord_channel_info_message_action(
         self,
         route: dict[str, Any],
@@ -9527,6 +9834,19 @@ class OpsMeshService:
         location = _message_action_param_string(request.params, "location")
         if entity_type == 3 and location:
             payload["entity_metadata"] = {"location": location}
+        image_url = _message_action_param_raw_string(request.params, "image")
+        if image_url:
+            media_bytes, content_type = self._load_discord_media(
+                image_url,
+                max_bytes=DISCORD_MAX_EVENT_COVER_BYTES,
+            )
+            normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+            if normalized_content_type not in DISCORD_EVENT_COVER_CONTENT_TYPES:
+                raise RuntimeError("Discord event cover images require a PNG, JPG, or GIF image.")
+            payload["image"] = (
+                f"data:{normalized_content_type};base64,"
+                f"{base64.b64encode(media_bytes).decode('ascii')}"
+            )
         event = self._request_json_provider_url(
             _discord_api_endpoint(f"guilds/{guild_id}/scheduled-events"),
             method="POST",
@@ -9567,18 +9887,119 @@ class OpsMeshService:
             if duration_minutes is not None:
                 timeout_until = datetime.now(UTC) + timedelta(minutes=duration_minutes)
                 until = timeout_until.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        member = self._request_json_provider_url(
-            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
-            method="PATCH",
-            payload={"communication_disabled_until": until},
-            secret_header_name="Authorization",
-            secret_token=_discord_bot_authorization(secret_token),
+        extra_headers = _discord_audit_reason_headers(
+            _message_action_param_string(request.params, "reason")
         )
+        if extra_headers:
+            member = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="PATCH",
+                payload={"communication_disabled_until": until},
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+                extra_headers=extra_headers,
+            )
+        else:
+            member = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="PATCH",
+                payload={"communication_disabled_until": until},
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
         if not isinstance(member, dict):
             raise RuntimeError("Discord API returned a non-JSON member response.")
         if member.get("error"):
             raise RuntimeError(str(member.get("error")))
         return {"ok": True, "member": member}
+
+    def _dispatch_discord_kick_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        extra_headers = _discord_audit_reason_headers(
+            _message_action_param_string(request.params, "reason")
+        )
+        if extra_headers:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+                extra_headers=extra_headers,
+            )
+        else:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_ban_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        payload: dict[str, object] | None = None
+        delete_message_days = _message_action_param_integer(
+            request.params,
+            "deleteMessageDays",
+            "deleteDays",
+        )
+        if delete_message_days is not None:
+            payload = {"delete_message_days": min(max(delete_message_days, 0), 7)}
+        extra_headers = _discord_audit_reason_headers(
+            _message_action_param_string(request.params, "reason")
+        )
+        if extra_headers:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/bans/{user_id}"),
+                method="PUT",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+                extra_headers=extra_headers,
+            )
+        else:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/bans/{user_id}"),
+                method="PUT",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     def _dispatch_discord_channel_create_message_action(
         self,
@@ -9772,6 +10193,9 @@ class OpsMeshService:
         )
         if auto_archive_duration is not None:
             payload["auto_archive_duration"] = auto_archive_duration
+        available_tags = _discord_available_tags_param(request.params)
+        if available_tags is not None:
+            payload["available_tags"] = available_tags
         channel = self._request_json_provider_url(
             _discord_api_endpoint(f"channels/{channel_id}"),
             method="PATCH",
@@ -9843,6 +10267,83 @@ class OpsMeshService:
             _discord_api_endpoint(f"guilds/{guild_id}/channels"),
             method="PATCH",
             payload=[moved_channel],
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_channel_permission_set_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-permission-set requires channelId.")
+        target_id = _message_action_param_string(
+            request.params,
+            "targetId",
+            required=True,
+        )
+        target_type_raw = _message_action_param_string(
+            request.params,
+            "targetType",
+            required=True,
+        )
+        payload: dict[str, object] = {
+            "type": 1 if str(target_type_raw or "") == "member" else 0,
+        }
+        allow = _message_action_param_string(request.params, "allow")
+        if allow is not None:
+            payload["allow"] = allow
+        deny = _message_action_param_string(request.params, "deny")
+        if deny is not None:
+            payload["deny"] = deny
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/permissions/{target_id}"),
+            method="PUT",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_channel_permission_remove_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-permission-remove requires channelId.")
+        target_id = _message_action_param_string(
+            request.params,
+            "targetId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/permissions/{target_id}"),
+            method="DELETE",
             secret_header_name="Authorization",
             secret_token=_discord_bot_authorization(secret_token),
         )
@@ -9934,6 +10435,165 @@ class OpsMeshService:
                 raise RuntimeError(str(result.get("error")))
         return {"ok": True, "thread": thread}
 
+    def _dispatch_discord_thread_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        target = _discord_api_endpoint(f"guilds/{guild_id}/threads/active")
+        if request.params.get("includeArchived") is True:
+            channel_id = _discord_action_channel_id(
+                _message_action_param_string(
+                    request.params,
+                    "channelId",
+                    required=True,
+                )
+            )
+            if channel_id is None:
+                raise RuntimeError("Discord thread-list archived requires channelId.")
+            query: dict[str, str] = {}
+            before = _message_action_param_string(request.params, "before")
+            if before is not None:
+                query["before"] = before
+            limit = _message_action_param_integer(request.params, "limit")
+            if limit is not None:
+                query["limit"] = str(limit)
+            target = _discord_api_endpoint(f"channels/{channel_id}/threads/archived/public")
+            if query:
+                target = f"{target}?{urlencode(query)}"
+        threads = self._request_json_provider_url(
+            target,
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(threads, dict):
+            raise RuntimeError("Discord API returned a non-JSON threads response.")
+        if threads.get("error"):
+            raise RuntimeError(str(threads.get("error")))
+        return {"ok": True, "threads": threads}
+
+    def _dispatch_discord_thread_reply_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        thread_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "threadId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if thread_id is None:
+            raise RuntimeError("Discord thread-reply requires threadId.")
+        message = _message_action_param_string(
+            request.params,
+            "message",
+            required=True,
+            allow_empty=True,
+        )
+        payload: dict[str, object] = {"content": message or ""}
+        reply_to = _message_action_param_string(request.params, "replyTo")
+        if reply_to is not None:
+            payload["message_reference"] = {
+                "message_id": reply_to,
+                "fail_if_not_exists": False,
+            }
+        media_url = _message_action_param_raw_string(
+            request.params,
+            "mediaUrl",
+        ) or _message_action_param_raw_string(request.params, "media")
+        result: object | None
+        if media_url is not None:
+            media_bytes, content_type = self._load_discord_media(
+                media_url,
+                max_bytes=DISCORD_MAX_MESSAGE_MEDIA_BYTES,
+            )
+            normalized_content_type = (
+                content_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
+            )
+            result = self._request_discord_message_upload(
+                channel_id=thread_id,
+                payload=payload,
+                media_bytes=media_bytes,
+                content_type=normalized_content_type,
+                filename=_discord_media_filename(media_url, normalized_content_type),
+                secret_token=secret_token,
+            )
+        else:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"channels/{thread_id}/messages"),
+                method="POST",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord API returned a non-JSON message response.")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {
+            "ok": True,
+            "result": {
+                "messageId": str(result.get("id") or ""),
+                "channelId": str(result.get("channel_id") or thread_id),
+            },
+        }
+
+    def _dispatch_discord_search_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        content = (
+            _message_action_param_string(request.params, "query")
+            or _message_action_param_string(request.params, "content", required=True)
+            or ""
+        )
+        query: list[tuple[str, str]] = [("content", content)]
+        channel_ids = _message_action_param_string_array(request.params, "channelIds") or []
+        channel_id = _message_action_param_string(request.params, "channelId")
+        if channel_id:
+            channel_ids.append(channel_id)
+        for raw_channel_id in channel_ids:
+            normalized_channel_id = _discord_action_channel_id(raw_channel_id)
+            if normalized_channel_id:
+                query.append(("channel_id", normalized_channel_id))
+        author_ids = _message_action_param_string_array(request.params, "authorIds") or []
+        author_id = _message_action_param_string(request.params, "authorId")
+        if author_id:
+            author_ids.append(author_id)
+        for raw_author_id in author_ids:
+            query.append(("author_id", raw_author_id))
+        limit = _message_action_param_integer(request.params, "limit")
+        if limit is not None:
+            query.append(("limit", str(min(max(limit, 1), 25))))
+        results = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/messages/search")
+            + f"?{urlencode(query)}",
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(results, dict) and results.get("error"):
+            raise RuntimeError(str(results.get("error")))
+        return {"ok": True, "results": results if results is not None else {}}
+
     def _dispatch_discord_sticker_message_action(
         self,
         route: dict[str, Any],
@@ -9977,6 +10637,104 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error")))
         return {"ok": True}
+
+    def _dispatch_discord_poll_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord poll requires to.")
+        question = _message_action_param_string(
+            request.params,
+            "question",
+            required=True,
+        )
+        answers = _message_action_param_string_array(
+            request.params,
+            "answers",
+            required=True,
+            label="answers",
+        )
+        allow_multiselect = _message_action_param_bool(request.params, "allowMultiselect")
+        max_selections = len(answers or []) if allow_multiselect is True else 1
+        duration_hours = _message_action_param_integer(request.params, "durationHours")
+        payload: dict[str, object] = {
+            "poll": _discord_poll_payload(
+                question=question or "",
+                options=answers or [],
+                max_selections=max_selections,
+                duration_hours=duration_hours,
+            )
+        }
+        content = _message_action_param_string(request.params, "content", allow_empty=True)
+        if content is not None:
+            payload["content"] = content
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_sticker_upload_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(request.params, "stickerName") or (
+            _message_action_param_string(request.params, "name", required=True) or ""
+        )
+        description = _message_action_param_string(request.params, "stickerDesc") or (
+            _message_action_param_string(request.params, "description", required=True) or ""
+        )
+        tags = _message_action_param_string(request.params, "stickerTags") or (
+            _message_action_param_string(request.params, "tags", required=True) or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "mediaUrl")
+            or ""
+        )
+        if not media_url:
+            raise RuntimeError("Discord sticker-upload requires media.")
+        media_bytes, content_type = self._load_discord_media(
+            media_url,
+            max_bytes=DISCORD_MAX_STICKER_BYTES,
+        )
+        normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+        if normalized_content_type not in DISCORD_STICKER_CONTENT_TYPES:
+            raise RuntimeError("Discord sticker uploads require a PNG, APNG, or Lottie JSON file.")
+        sticker = self._request_discord_sticker_upload(
+            guild_id=guild_id or "",
+            name=name.strip(),
+            description=description.strip(),
+            tags=tags.strip(),
+            media_bytes=media_bytes,
+            content_type=normalized_content_type,
+            secret_token=secret_token,
+        )
+        if not isinstance(sticker, dict):
+            raise RuntimeError("Discord API returned a non-JSON sticker response.")
+        if sticker.get("error"):
+            raise RuntimeError(str(sticker.get("error")))
+        return {"ok": True, "sticker": sticker}
 
     async def _post_provider_route_event(
         self,
@@ -11654,6 +12412,7 @@ class OpsMeshService:
         payload: object | None = None,
         secret_header_name: str | None = None,
         secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
         timeout_seconds: float = 10.0,
     ) -> object | None:
         headers: dict[str, str] = {}
@@ -11663,6 +12422,8 @@ class OpsMeshService:
             headers["Content-Type"] = "application/json"
         if secret_header_name and secret_token:
             headers[str(secret_header_name)] = str(secret_token)
+        if extra_headers:
+            headers.update({str(key): str(value) for key, value in extra_headers.items()})
         request = Request(
             target,
             data=body,
@@ -11684,6 +12445,128 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_discord_message_upload(
+        self,
+        *,
+        channel_id: str,
+        payload: dict[str, object],
+        media_bytes: bytes,
+        content_type: str,
+        filename: str,
+        secret_token: str | None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        boundary = f"OpenZuesDiscord{uuid.uuid4().hex}"
+        safe_filename = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        body = bytearray()
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b'Content-Disposition: form-data; name="payload_json"\r\n')
+        body.extend(b"Content-Type: application/json\r\n\r\n")
+        body.extend(json.dumps(payload).encode("utf-8"))
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        file_disposition = (
+            'Content-Disposition: form-data; name="files[0]"; '
+            f'filename="{safe_filename or "upload"}"\r\n'
+        )
+        body.extend(file_disposition.encode())
+        content_type_header = f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n"
+        body.extend(content_type_header.encode("ascii"))
+        body.extend(media_bytes)
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            data=bytes(body),
+            headers={
+                "Authorization": _discord_bot_authorization(secret_token),
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    parsed = json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Discord API returned a non-JSON message response.")
+        return parsed
+
+    def _request_discord_sticker_upload(
+        self,
+        *,
+        guild_id: str,
+        name: str,
+        description: str,
+        tags: str,
+        media_bytes: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        boundary = f"OpenZuesDiscord{uuid.uuid4().hex}"
+        body = bytearray()
+
+        def add_field(field_name: str, value: str) -> None:
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'.encode("ascii")
+            )
+            body.extend(value.encode("utf-8"))
+            body.extend(b"\r\n")
+
+        for field_name, value in {
+            "name": name,
+            "description": description,
+            "tags": tags,
+        }.items():
+            add_field(field_name, value)
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b'Content-Disposition: form-data; name="file"; filename="sticker"\r\n')
+        body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("ascii"))
+        body.extend(media_bytes)
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            _discord_api_endpoint(f"guilds/{guild_id}/stickers"),
+            data=bytes(body),
+            headers={
+                "Authorization": _discord_bot_authorization(secret_token),
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    parsed = json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Discord API returned a non-JSON sticker response.")
+        return parsed
 
     def _post_json_webhook(
         self,
@@ -11783,6 +12666,68 @@ class OpsMeshService:
                 if response.status >= 400:
                     raise RuntimeError(f"Media URL returned HTTP {response.status}")
                 return response.read()
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _load_discord_media(self, media_url: str, *, max_bytes: int) -> tuple[bytes, str]:
+        data_match = re.match(
+            r"^data:([^;,]+);base64,(.*)$",
+            media_url,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if data_match:
+            content_type = data_match.group(1).strip().lower()
+            try:
+                media_bytes = base64.b64decode(data_match.group(2).strip(), validate=True)
+            except ValueError as exc:
+                raise RuntimeError("Discord media data URL is not valid base64.") from exc
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Discord media exceeds the provider size limit.")
+            return media_bytes, content_type
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                media_bytes = local_path.read_bytes()
+                if len(media_bytes) > max_bytes:
+                    raise RuntimeError("Discord media exceeds the provider size limit.")
+                guessed_type = mimetypes.guess_type(local_path.name)[0] or ""
+                return media_bytes, guessed_type
+        parsed = urlparse(media_url)
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if not local_path.is_file():
+                raise RuntimeError(f"Media path does not exist: {media_url}")
+            media_bytes = local_path.read_bytes()
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Discord media exceeds the provider size limit.")
+            guessed_type = mimetypes.guess_type(local_path.name)[0] or ""
+            return media_bytes, guessed_type
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
+                media_bytes = local_path.read_bytes()
+                if len(media_bytes) > max_bytes:
+                    raise RuntimeError("Discord media exceeds the provider size limit.")
+                guessed_type = mimetypes.guess_type(local_path.name)[0] or ""
+                return media_bytes, guessed_type
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                media_bytes = response.read(max_bytes + 1)
+                if len(media_bytes) > max_bytes:
+                    raise RuntimeError("Discord media exceeds the provider size limit.")
+                content_type = response.headers.get("Content-Type") or ""
+                return media_bytes, content_type
         except HTTPError as exc:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:
@@ -12210,26 +13155,18 @@ class OpsMeshService:
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
-            _validate_direct_channel_poll_shape(question, options)
-            _validate_direct_channel_poll_option_count("discord", options)
             max_selections = _optional_int_payload_value(event, "maxSelections")
-            _validate_direct_channel_poll_max_selections(options, max_selections)
             _validate_direct_channel_poll_duration_exclusivity(
                 duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
                 duration_hours=_optional_int_payload_value(event, "durationHours"),
             )
             payload: dict[str, Any] = {
-                "poll": {
-                    "question": {
-                        "text": question,
-                    },
-                    "answers": [
-                        {"poll_media": {"text": option}}
-                        for option in options
-                    ],
-                    "duration": _discord_poll_duration_hours(event),
-                    "allow_multiselect": (max_selections or 1) > 1,
-                }
+                "poll": _discord_poll_payload(
+                    question=question,
+                    options=options,
+                    max_selections=max_selections,
+                    duration_hours=_discord_poll_duration_hours(event),
+                )
             }
         else:
             raw_media_urls = event.get("mediaUrls")
