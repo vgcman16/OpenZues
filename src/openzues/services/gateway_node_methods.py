@@ -8028,6 +8028,11 @@ class GatewayNodeMethodService:
                     return thread_binding_response
                 assert thread_binding is not None
                 metadata["threadBinding"] = thread_binding
+                raw_session_binding = raw_thread_binding.get("sessionBinding")
+                if isinstance(raw_session_binding, Mapping):
+                    metadata["sessionBinding"] = json.loads(
+                        json.dumps(dict(raw_session_binding))
+                    )
                 metadata["completionDelivery"] = {
                     "mode": "thread",
                     **thread_binding,

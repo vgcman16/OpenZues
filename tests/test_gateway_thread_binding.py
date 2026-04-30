@@ -37,6 +37,37 @@ def _route(
     )
 
 
+def _assert_session_binding_record(
+    value: object,
+    *,
+    target_session_key: str = "agent:main:subagent:child",
+    channel: str,
+    account_id: str,
+    conversation_id: str,
+    thread_id: str,
+) -> None:
+    assert isinstance(value, dict)
+    record_separator = "\u241f"
+    assert value["bindingId"] == (
+        f"generic:{channel}{record_separator}{account_id}"
+        f"{record_separator}{record_separator}{conversation_id}"
+    )
+    assert value["targetSessionKey"] == target_session_key
+    assert value["targetKind"] == "subagent"
+    assert value["conversation"] == {
+        "channel": channel,
+        "accountId": account_id,
+        "conversationId": conversation_id,
+    }
+    assert value["status"] == "active"
+    assert isinstance(value["boundAt"], int)
+    metadata = value["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["placement"] == "current"
+    assert metadata["threadId"] == thread_id
+    assert metadata["lastActivityAt"] == value["boundAt"]
+
+
 @pytest.mark.asyncio
 async def test_thread_binder_registry_resolves_current_provider_thread() -> None:
     async def list_routes() -> list[NotificationRouteView]:
@@ -55,6 +86,7 @@ async def test_thread_binder_registry_resolves_current_provider_thread() -> None
         },
     )
 
+    session_binding = result.pop("sessionBinding")
     assert result == {
         "status": "ok",
         "threadBindingReady": True,
@@ -69,6 +101,13 @@ async def test_thread_binder_registry_resolves_current_provider_thread() -> None
             "threadId": "1710000000.000100",
         },
     }
+    _assert_session_binding_record(
+        session_binding,
+        channel="slack",
+        account_id="default",
+        conversation_id="channel:C123",
+        thread_id="1710000000.000100",
+    )
 
 
 @pytest.mark.asyncio
@@ -95,6 +134,7 @@ async def test_thread_binder_registry_resolves_matrix_provider_thread() -> None:
         },
     )
 
+    session_binding = result.pop("sessionBinding")
     assert result == {
         "status": "ok",
         "threadBindingReady": True,
@@ -109,6 +149,13 @@ async def test_thread_binder_registry_resolves_matrix_provider_thread() -> None:
             "threadId": "$thread-root",
         },
     }
+    _assert_session_binding_record(
+        session_binding,
+        channel="matrix",
+        account_id="bot-alpha",
+        conversation_id="room:!room:example.org",
+        thread_id="$thread-root",
+    )
 
 
 @pytest.mark.asyncio

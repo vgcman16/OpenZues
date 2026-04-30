@@ -3288,6 +3288,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_config.py
   src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- Route-backed `sessions.spawn thread=true` now persists an OpenClaw-shaped
+  current-conversation `sessionBinding` record on child session metadata in
+  addition to `threadBinding` and `completionDelivery`. Records include
+  `bindingId`, `targetSessionKey`, `targetKind`, normalized `conversation`,
+  `status`, `boundAt`, and `metadata.lastActivityAt` for Slack/Telegram/
+  Discord/WhatsApp/Matrix route-backed binders.
+- Verified the session-binding record seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_route_backed_thread_binder
+  -q` (`1 passed`), adjacent binder coverage `python -m pytest
+  tests\test_gateway_thread_binding.py
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_route_backed_thread_binder
+  -q` (`5 passed`), adjacent thread-spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_thread_mode_uses_route_backed_thread_binder or
+  sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder or
+  sessions_spawn_thread_mode_requires_thread_binding_hook or
+  sessions_spawn_thread_mode_uses_thread_binding_hook or
+  sessions_spawn_thread_mode_cleans_up_binding_when_child_registration_fails or
+  sessions_spawn_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement"` (`6
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_thread_binding.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

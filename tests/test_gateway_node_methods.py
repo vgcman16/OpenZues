@@ -18150,6 +18150,23 @@ async def test_sessions_spawn_thread_mode_uses_route_backed_thread_binder(
         "accountId": "default",
         "threadId": "1710000000.000100",
     }
+    session_binding = metadata["sessionBinding"]
+    record_separator = "\u241f"
+    assert session_binding["bindingId"] == (
+        f"generic:slack{record_separator}default"
+        f"{record_separator}{record_separator}channel:C123"
+    )
+    assert session_binding["targetSessionKey"] == child_session_key
+    assert session_binding["targetKind"] == "subagent"
+    assert session_binding["conversation"] == {
+        "channel": "slack",
+        "accountId": "default",
+        "conversationId": "channel:C123",
+    }
+    assert session_binding["status"] == "active"
+    assert isinstance(session_binding["boundAt"], int)
+    assert session_binding["metadata"]["placement"] == "current"
+    assert session_binding["metadata"]["lastActivityAt"] == session_binding["boundAt"]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
@@ -12,6 +13,8 @@ NO_THREAD_BINDING_HOOK_ERROR = (
 SUPPORTED_THREAD_BINDING_CHANNELS = frozenset(
     {"slack", "telegram", "discord", "whatsapp", "matrix"}
 )
+_CURRENT_BINDINGS_ID_PREFIX = "generic:"
+_CONVERSATION_KEY_SEPARATOR = "\u241f"
 
 
 class GatewaySubagentThreadBinder(Protocol):
@@ -52,6 +55,43 @@ def _route_target_to(route: NotificationRouteView) -> str | None:
     if target is None:
         return None
     return _optional_string(target.peer_id)
+
+
+def _session_binding_record(
+    *,
+    child: dict[str, object],
+    channel: str,
+    account_id: str,
+    conversation_id: str,
+    thread_id: str | None,
+) -> dict[str, object] | None:
+    target_session_key = _optional_string(child.get("sessionKey"))
+    if target_session_key is None:
+        return None
+    bound_at = int(time.time() * 1000)
+    conversation: dict[str, object] = {
+        "channel": channel,
+        "accountId": account_id,
+        "conversationId": conversation_id,
+    }
+    metadata: dict[str, object] = {
+        "placement": "current",
+        "lastActivityAt": bound_at,
+    }
+    if thread_id is not None:
+        metadata["threadId"] = thread_id
+    binding_key = _CONVERSATION_KEY_SEPARATOR.join(
+        [channel, account_id, "", conversation_id]
+    )
+    return {
+        "bindingId": f"{_CURRENT_BINDINGS_ID_PREFIX}{binding_key}",
+        "targetSessionKey": target_session_key,
+        "targetKind": "subagent",
+        "conversation": conversation,
+        "status": "active",
+        "boundAt": bound_at,
+        "metadata": metadata,
+    }
 
 
 def _matches_requested_to(route_to: str | None, requested_to: str | None) -> bool:
@@ -105,7 +145,7 @@ class GatewaySubagentThreadBinderRegistry:
         child: dict[str, object],
         context: dict[str, object],
     ) -> dict[str, object]:
-        del parent, child
+        del parent
         channel = _normalize_channel(context.get("channel"))
         if channel is None or channel not in SUPPORTED_THREAD_BINDING_CHANNELS:
             return {"status": "error", "error": NO_THREAD_BINDING_HOOK_ERROR}
@@ -143,12 +183,22 @@ class GatewaySubagentThreadBinderRegistry:
         }
         if thread_id is not None:
             binding["threadId"] = thread_id
-        return {
+        session_binding = _session_binding_record(
+            child=child,
+            channel=channel,
+            account_id=account_id,
+            conversation_id=resolved_to,
+            thread_id=thread_id,
+        )
+        result: dict[str, object] = {
             "status": "ok",
             "threadBindingReady": True,
             **binding,
             "deliveryOrigin": dict(binding),
         }
+        if session_binding is not None:
+            result["sessionBinding"] = session_binding
+        return result
 
     async def unbind(
         self,

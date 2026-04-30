@@ -80,8 +80,8 @@ OpenClaw's child-placement channel default is now also mirrored for gateway
 ACP and subagent thread spawns: Discord and Matrix require explicit
 `spawnAcpSessions=true` / `spawnSubagentSessions=true` when the spawn flag is
 unset, while current-placement channels keep the permissive default. Remaining
-thread-binding parity is provider-adapter capability breadth, persistent
-session binding records, and unbind/end-hook lifecycle breadth.
+thread-binding parity is provider-adapter capability breadth and
+unbind/end-hook lifecycle breadth.
 OpenClaw's canonical `session.threadBindings` config keys now survive native
 config writes for `enabled`, `idleHours`, and `maxAgeHours`, while legacy
 `threadBindings.ttlHours` is rejected at session, channel, and channel-account
@@ -204,7 +204,12 @@ after a binding has been prepared but before the child run is accepted: the
 fakeable binder protocol exposes `unbind`, the production route-backed binder
 returns a stateless no-op cleanup result, and the provisional child transcript
 and metadata are still deleted with the original actionable startup error.
-Remaining lifecycle parity is deeper persistent provider binding records,
+Route-backed thread-bound subagent spawns now persist an OpenClaw-shaped
+current-conversation `sessionBinding` record on the child session metadata,
+including `bindingId`, `targetSessionKey`, `targetKind`, `conversation`,
+`status`, `boundAt`, and `metadata.lastActivityAt` alongside the existing
+delivery metadata.
+Remaining lifecycle parity is deeper provider-native unbind record stores,
 provider-native child-thread creation, target-agent bound-account selection,
 end-hook/farewell behavior on reset/delete, and ACP/session binding policy
 breadth.
