@@ -248,6 +248,7 @@ class GatewayConfigService:
             *_migrate_legacy_channel_allow_aliases(payload),
             *_migrate_legacy_x_search_api_key(payload),
             *_migrate_legacy_telegram_streaming_keys(payload),
+            *_migrate_legacy_slack_streaming_keys(payload),
         ]
         if not changes:
             snapshot = self.build_snapshot()
@@ -1672,6 +1673,17 @@ def _legacy_telegram_streaming_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_slack_streaming_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": f"{path}.streaming",
+        "message": (
+            f"{path} uses legacy Slack streaming scalar aliases; use "
+            f"{path}.streaming.*."
+        ),
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1689,6 +1701,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_telegram_streaming_issue(path)
             for path in _iter_legacy_telegram_streaming_paths(payload)
+        ],
+        *[
+            _legacy_slack_streaming_issue(path)
+            for path in _iter_legacy_slack_streaming_paths(payload)
         ],
     ]
 
@@ -2064,6 +2080,21 @@ def _iter_legacy_telegram_streaming_paths(payload: dict[str, Any]) -> list[str]:
     return paths
 
 
+def _iter_legacy_slack_streaming_paths(payload: dict[str, Any]) -> list[str]:
+    slack = _legacy_channel_config(payload, "slack")
+    if slack is None:
+        return []
+    paths: list[str] = []
+    if _has_legacy_slack_streaming_keys(slack):
+        paths.append("channels.slack")
+    accounts = slack.get("accounts")
+    if isinstance(accounts, dict):
+        for account_id, account in accounts.items():
+            if isinstance(account, dict) and _has_legacy_slack_streaming_keys(account):
+                paths.append(f"channels.slack.accounts.{account_id}")
+    return paths
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2080,6 +2111,17 @@ def _has_legacy_telegram_streaming_keys(entry: dict[str, Any]) -> bool:
         or "blockStreaming" in entry
         or "draftChunk" in entry
         or "blockStreamingCoalesce" in entry
+    )
+
+
+def _has_legacy_slack_streaming_keys(entry: dict[str, Any]) -> bool:
+    return (
+        "streamMode" in entry
+        or isinstance(entry.get("streaming"), bool | str)
+        or "chunkMode" in entry
+        or "blockStreaming" in entry
+        or "blockStreamingCoalesce" in entry
+        or "nativeStreaming" in entry
     )
 
 
@@ -2211,6 +2253,144 @@ def _migrate_telegram_streaming_entry(
         entry["streaming"] = streaming
 
 
+def _migrate_legacy_slack_streaming_keys(payload: dict[str, Any]) -> list[str]:
+    slack = _legacy_channel_config(payload, "slack")
+    if slack is None:
+        return []
+    changes: list[str] = []
+    _migrate_slack_streaming_entry(
+        slack,
+        path_label="channels.slack",
+        changes=changes,
+    )
+    accounts = slack.get("accounts")
+    if isinstance(accounts, dict):
+        for account_id, account in accounts.items():
+            if not isinstance(account, dict):
+                continue
+            _migrate_slack_streaming_entry(
+                account,
+                path_label=f"channels.slack.accounts.{account_id}",
+                changes=changes,
+            )
+    return changes
+
+
+def _migrate_slack_streaming_entry(
+    entry: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    if not _has_legacy_slack_streaming_keys(entry):
+        return
+    raw_streaming = entry.get("streaming")
+    raw_native_streaming = entry.get("nativeStreaming")
+    streaming = dict(raw_streaming) if isinstance(raw_streaming, dict) else {}
+    has_streaming_record = isinstance(raw_streaming, dict)
+
+    if "mode" not in streaming and (
+        "streamMode" in entry or isinstance(raw_streaming, bool | str)
+    ):
+        mode = _resolve_slack_streaming_mode(entry)
+        streaming["mode"] = mode
+        if "streamMode" in entry:
+            changes.append(
+                f"Moved {path_label}.streamMode to {path_label}.streaming.mode ({mode})."
+            )
+        if isinstance(raw_streaming, bool):
+            changes.append(
+                f"Moved {path_label}.streaming (boolean) to "
+                f"{path_label}.streaming.mode ({mode})."
+            )
+        elif isinstance(raw_streaming, str):
+            changes.append(
+                f"Moved {path_label}.streaming (scalar) to "
+                f"{path_label}.streaming.mode ({mode})."
+            )
+    elif "streamMode" in entry or isinstance(raw_streaming, bool | str):
+        changes.append(
+            f"Removed legacy {path_label}.streaming mode aliases "
+            f"({path_label}.streaming.mode already set)."
+        )
+
+    entry.pop("streamMode", None)
+    if isinstance(raw_streaming, bool | str) and not has_streaming_record:
+        entry["streaming"] = streaming
+
+    if "chunkMode" in entry:
+        if "chunkMode" not in streaming:
+            streaming["chunkMode"] = entry["chunkMode"]
+            changes.append(f"Moved {path_label}.chunkMode to {path_label}.streaming.chunkMode.")
+        else:
+            changes.append(
+                f"Removed {path_label}.chunkMode "
+                f"({path_label}.streaming.chunkMode already set)."
+            )
+        del entry["chunkMode"]
+
+    raw_block = streaming.get("block")
+    block = dict(raw_block) if isinstance(raw_block, dict) else {}
+    if "blockStreaming" in entry:
+        if "enabled" not in block:
+            block["enabled"] = entry["blockStreaming"]
+            changes.append(
+                f"Moved {path_label}.blockStreaming to {path_label}.streaming.block.enabled."
+            )
+        else:
+            changes.append(
+                f"Removed {path_label}.blockStreaming "
+                f"({path_label}.streaming.block.enabled already set)."
+            )
+        del entry["blockStreaming"]
+
+    if "blockStreamingCoalesce" in entry:
+        if "coalesce" not in block:
+            block["coalesce"] = entry["blockStreamingCoalesce"]
+            changes.append(
+                "Moved "
+                f"{path_label}.blockStreamingCoalesce to "
+                f"{path_label}.streaming.block.coalesce."
+            )
+        else:
+            changes.append(
+                f"Removed {path_label}.blockStreamingCoalesce "
+                f"({path_label}.streaming.block.coalesce already set)."
+            )
+        del entry["blockStreamingCoalesce"]
+
+    if "nativeStreaming" in entry:
+        if "nativeTransport" not in streaming:
+            streaming["nativeTransport"] = _resolve_slack_native_transport(
+                native_streaming=raw_native_streaming,
+                streaming=raw_streaming,
+            )
+            changes.append(
+                f"Moved {path_label}.nativeStreaming to "
+                f"{path_label}.streaming.nativeTransport."
+            )
+        else:
+            changes.append(
+                f"Removed {path_label}.nativeStreaming "
+                f"({path_label}.streaming.nativeTransport already set)."
+            )
+        del entry["nativeStreaming"]
+    elif isinstance(raw_streaming, bool) and "nativeTransport" not in streaming:
+        streaming["nativeTransport"] = _resolve_slack_native_transport(
+            native_streaming=None,
+            streaming=raw_streaming,
+        )
+        changes.append(
+            f"Moved {path_label}.streaming (boolean) to "
+            f"{path_label}.streaming.nativeTransport."
+        )
+
+    if block:
+        streaming["block"] = block
+    if streaming:
+        entry["streaming"] = streaming
+
+
 def _resolve_telegram_streaming_mode(entry: dict[str, Any]) -> str:
     raw_streaming = entry.get("streaming")
     streaming_mode = _parse_telegram_streaming_mode(raw_streaming)
@@ -2233,3 +2413,50 @@ def _parse_telegram_streaming_mode(value: object) -> str | None:
     if normalized in {"off", "partial", "block"}:
         return normalized
     return None
+
+
+def _resolve_slack_streaming_mode(entry: dict[str, Any]) -> str:
+    raw_streaming = entry.get("streaming")
+    streaming_mode = _parse_slack_streaming_mode(raw_streaming)
+    if streaming_mode is not None:
+        return streaming_mode
+    stream_mode = _parse_slack_legacy_stream_mode(entry.get("streamMode"))
+    if stream_mode is not None:
+        return stream_mode
+    if isinstance(raw_streaming, bool):
+        return "partial" if raw_streaming else "off"
+    return "partial"
+
+
+def _parse_slack_streaming_mode(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"off", "partial", "block", "progress"}:
+        return normalized
+    return None
+
+
+def _parse_slack_legacy_stream_mode(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized == "append":
+        return "block"
+    if normalized == "status_final":
+        return "progress"
+    if normalized == "replace":
+        return "partial"
+    return None
+
+
+def _resolve_slack_native_transport(
+    *,
+    native_streaming: object,
+    streaming: object,
+) -> bool:
+    if isinstance(native_streaming, bool):
+        return native_streaming
+    if isinstance(streaming, bool):
+        return streaming
+    return True

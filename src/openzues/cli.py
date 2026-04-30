@@ -2178,6 +2178,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy x_search config uses apiKey."
     if _legacy_config_issues_all_telegram_streaming(issues):
         return "Legacy Telegram streaming config uses scalar aliases."
+    if _legacy_config_issues_all_slack_streaming(issues):
+        return "Legacy Slack streaming config uses scalar aliases."
     return "Legacy config contains migratable keys."
 
 
@@ -2192,6 +2194,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy x_search config uses apiKey; run openzues doctor --fix."
     if _legacy_config_issues_all_telegram_streaming(issues):
         return "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
+    if _legacy_config_issues_all_slack_streaming(issues):
+        return "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
 
 
@@ -2211,6 +2215,18 @@ def _legacy_config_issues_all_telegram_streaming(issues: list[object]) -> bool:
         and (
             issue["path"] == "channels.telegram"
             or issue["path"].startswith("channels.telegram.accounts.")
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_slack_streaming(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "channels.slack"
+            or issue["path"].startswith("channels.slack.accounts.")
         )
         for issue in issues
     )

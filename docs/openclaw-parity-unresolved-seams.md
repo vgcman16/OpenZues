@@ -98,10 +98,14 @@ Telegram legacy streaming aliases now also flow through the same doctor
 contribution: `streamMode`, scalar/boolean `streaming`, `chunkMode`,
 `blockStreaming`, `draftChunk`, and `blockStreamingCoalesce` migrate into
 nested `channels.telegram.streaming` / account-scoped streaming config.
+Slack legacy streaming aliases now also normalize through `doctor --json` /
+`doctor --fix`: `streamMode`, scalar/boolean `streaming`, `chunkMode`,
+`blockStreaming`, `blockStreamingCoalesce`, and `nativeStreaming` migrate into
+nested `channels.slack.streaming` / account-scoped streaming config, including
+`nativeStreaming` -> `nativeTransport`.
 Remaining legacy-config parity is broader doctor migration breadth from
-OpenClaw's compatibility migrator; the next small source-backed head is Slack
-channel streaming-key normalization into nested `channels.slack.streaming`
-config, including `nativeStreaming` -> `nativeTransport`.
+OpenClaw's compatibility migrator; the next small source-backed head is Google
+Chat `streamMode` removal for root and account-scoped channel config.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

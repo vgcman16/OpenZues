@@ -15052,6 +15052,193 @@ def test_doctor_fix_migrates_legacy_telegram_streaming_keys(
     assert "blockStreamingCoalesce" not in telegram
 
 
+def test_doctor_json_warns_about_legacy_slack_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "streaming": True,
+                        "accounts": {
+                            "workspace": {
+                                "streamMode": "append",
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "channels.slack",
+        "channels.slack.accounts.workspace",
+    ]
+    assert payload["warnings"] == [
+        "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_slack_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "streamMode": "status_final",
+                        "chunkMode": "word",
+                        "blockStreaming": False,
+                        "blockStreamingCoalesce": 10,
+                        "nativeStreaming": False,
+                        "accounts": {
+                            "workspace": {
+                                "streaming": True,
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved channels.slack.streamMode to channels.slack.streaming.mode (progress).",
+        "Moved channels.slack.chunkMode to channels.slack.streaming.chunkMode.",
+        "Moved channels.slack.blockStreaming to channels.slack.streaming.block.enabled.",
+        "Moved channels.slack.blockStreamingCoalesce to channels.slack.streaming.block.coalesce.",
+        "Moved channels.slack.nativeStreaming to channels.slack.streaming.nativeTransport.",
+        "Moved channels.slack.accounts.workspace.streaming (boolean) to "
+        "channels.slack.accounts.workspace.streaming.mode (partial).",
+        "Moved channels.slack.accounts.workspace.streaming (boolean) to "
+        "channels.slack.accounts.workspace.streaming.nativeTransport.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    slack = repaired["channels"]["slack"]
+    assert slack["streaming"] == {
+        "mode": "progress",
+        "chunkMode": "word",
+        "block": {"enabled": False, "coalesce": 10},
+        "nativeTransport": False,
+    }
+    assert slack["accounts"]["workspace"]["streaming"] == {
+        "mode": "partial",
+        "nativeTransport": True,
+    }
+    assert "streamMode" not in slack
+    assert "chunkMode" not in slack
+    assert "blockStreaming" not in slack
+    assert "blockStreamingCoalesce" not in slack
+    assert "nativeStreaming" not in slack
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
