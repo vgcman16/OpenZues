@@ -17423,6 +17423,98 @@ async def test_sessions_spawn_thread_mode_uses_thread_binding_hook(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_honors_channel_spawn_policy(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": False,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    binder_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("thread spawn policy should reject before child dispatch")
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        binder_calls.append(
+            {
+                "parent": dict(parent),
+                "child": dict(child),
+                "context": dict(context),
+            }
+        )
+        return {
+            "status": "ok",
+            "threadBindingReady": True,
+            "channel": "slack",
+            "to": "channel:C123",
+            "accountId": "default",
+            "threadId": "1710000000.000600",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in this thread.",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:C123",
+            message_account_id="default",
+            message_thread_id="1710000000.000600",
+        ),
+    )
+
+    assert payload == {
+        "status": "error",
+        "error": (
+            "Thread-bound subagent spawns are disabled for slack "
+            "(set channels.slack.threadBindings.spawnSubagentSessions=true to enable)."
+        ),
+    }
+    assert binder_calls == []
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_delivers_initial_child_run_to_bound_origin(
     tmp_path,
 ) -> None:

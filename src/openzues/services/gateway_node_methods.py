@@ -7576,9 +7576,10 @@ class GatewayNodeMethodService:
                 )
                 requester_origin = _requester_route_context(resolved_requester)
                 if thread:
-                    acp_thread_policy_error = _sessions_spawn_acp_thread_policy_error(
+                    acp_thread_policy_error = _sessions_spawn_thread_policy_error(
                         self._config_service,
                         requester_origin=requester_origin,
+                        kind="acp",
                     )
                     if acp_thread_policy_error is not None:
                         return {
@@ -7964,6 +7965,18 @@ class GatewayNodeMethodService:
                     metadata["lastThreadId"] = requester_origin["threadId"]
             thread_binding: dict[str, Any] | None = None
             if thread:
+                subagent_thread_policy_error = _sessions_spawn_thread_policy_error(
+                    self._config_service,
+                    requester_origin=requester_origin,
+                    kind="subagent",
+                )
+                if subagent_thread_policy_error is not None:
+                    thread_policy_response: dict[str, Any] = {
+                        "status": "error",
+                        "error": subagent_thread_policy_error,
+                    }
+                    thread_policy_response.update(role_context)
+                    return thread_policy_response
                 assert self._subagent_thread_binder is not None
                 raw_thread_binding = await self._subagent_thread_binder(
                     {"sessionKey": spawn_parent_session_key, "agentId": requester_agent_id},
@@ -13035,10 +13048,11 @@ def _sessions_spawn_acp_agent_policy_error(
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
 
 
-def _sessions_spawn_acp_thread_policy_error(
+def _sessions_spawn_thread_policy_error(
     config_service: GatewayConfigService | None,
     *,
     requester_origin: Mapping[str, str] | None,
+    kind: Literal["acp", "subagent"],
 ) -> str | None:
     channel = (
         _string_or_none(requester_origin.get("channel"))
@@ -13046,7 +13060,9 @@ def _sessions_spawn_acp_thread_policy_error(
         else None
     )
     if channel is None:
-        return "thread=true for ACP sessions requires a channel context."
+        if kind == "acp":
+            return "thread=true for ACP sessions requires a channel context."
+        return None
     channel = channel.lower()
     account_id = (
         _string_or_none(requester_origin.get("accountId"))
@@ -13079,18 +13095,25 @@ def _sessions_spawn_acp_thread_policy_error(
             "for this account, or session.threadBindings.enabled=true globally)."
         )
     spawn_enabled = (
-        _bool_or_none(account_thread_bindings.get("spawnAcpSessions"))
+        _bool_or_none(account_thread_bindings.get(_thread_binding_spawn_flag_key(kind)))
         if account_thread_bindings is not None
         else None
     )
     if spawn_enabled is None and root_thread_bindings is not None:
-        spawn_enabled = _bool_or_none(root_thread_bindings.get("spawnAcpSessions"))
+        spawn_enabled = _bool_or_none(
+            root_thread_bindings.get(_thread_binding_spawn_flag_key(kind))
+        )
     if spawn_enabled is False:
+        spawn_flag_key = _thread_binding_spawn_flag_key(kind)
         return (
-            f"Thread-bound acp spawns are disabled for {channel} "
-            f"(set channels.{channel}.threadBindings.spawnAcpSessions=true to enable)."
+            f"Thread-bound {kind} spawns are disabled for {channel} "
+            f"(set channels.{channel}.threadBindings.{spawn_flag_key}=true to enable)."
         )
     return None
+
+
+def _thread_binding_spawn_flag_key(kind: Literal["acp", "subagent"]) -> str:
+    return "spawnAcpSessions" if kind == "acp" else "spawnSubagentSessions"
 
 
 def _mapping_or_none(value: object) -> Mapping[str, object] | None:

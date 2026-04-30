@@ -72,6 +72,13 @@ thread-binding spawn policy for explicit
 `thread_binding_invalid` error before runtime dispatch. Remaining ACP binding
 parity is provider-adapter capability/placement defaults, persistent session
 binding records, and unbind lifecycle breadth.
+Gateway-level subagent `thread=true` spawns now also honor OpenClaw's channel
+thread-binding spawn policy for explicit
+`channels.<channel>.threadBindings.spawnSubagentSessions=false`, returning the
+same no-dispatch policy error before route binding or child runtime dispatch.
+Remaining thread-binding parity is provider-adapter capability/placement
+defaults, persistent session binding records, and unbind/end-hook lifecycle
+breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

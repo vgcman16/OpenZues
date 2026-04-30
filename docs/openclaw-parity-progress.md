@@ -2771,6 +2771,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_acp_spawn.py`.
+- Gateway-level subagent `thread=true` spawns now honor OpenClaw's explicit
+  channel spawn policy before route binding or child dispatch: when
+  `channels.<channel>.threadBindings.spawnSubagentSessions=false`,
+  `sessions.spawn` returns the upstream-shaped policy error and the native
+  thread binder/runtime path is not called.
+- Verified the subagent channel spawn-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_honors_channel_spawn_policy -q`
+  (`1 passed`), adjacent gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or
+  sessions_spawn_acp"` (`13 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 
 ## References
 
