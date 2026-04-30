@@ -7439,6 +7439,7 @@ class OpsMeshService:
             "emoji-list",
             "event-create",
             "event-list",
+            "kick",
             "list-pins",
             "member-info",
             "permissions",
@@ -7589,6 +7590,13 @@ class OpsMeshService:
             if action == "timeout":
                 return await asyncio.to_thread(
                     self._dispatch_discord_timeout_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "kick":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_kick_message_action,
                     route,
                     request,
                     secret_token,
@@ -9599,6 +9607,45 @@ class OpsMeshService:
         if member.get("error"):
             raise RuntimeError(str(member.get("error")))
         return {"ok": True, "member": member}
+
+    def _dispatch_discord_kick_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        extra_headers = _discord_audit_reason_headers(
+            _message_action_param_string(request.params, "reason")
+        )
+        if extra_headers:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+                extra_headers=extra_headers,
+            )
+        else:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     def _dispatch_discord_channel_create_message_action(
         self,
