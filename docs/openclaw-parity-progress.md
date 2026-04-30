@@ -2931,6 +2931,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` doctor contribution now also covers OpenClaw's
+  nested channel allow-alias migration: Slack channel entries, Slack account
+  channel entries, Google Chat groups, and Discord guild channels warn in
+  `doctor --json` and rewrite `allow` to `enabled` in `doctor --fix`, preserving
+  existing `enabled` values when both keys are present.
+- Verified the channel allow-alias migration seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_channel_allow_aliases
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_channel_allow_aliases -q`
+  (`2 passed`), regression coverage for the previous thread-binding legacy
+  doctor seam `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_thread_binding_ttl_hours
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_thread_binding_ttl_hours
+  -q` (`2 passed`), adjacent doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or doctor_fix_runs_startup_channel_maintenance_adapter
+  or doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`10
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\gateway_config.py`.
 
 ## References
 

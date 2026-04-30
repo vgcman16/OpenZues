@@ -2055,7 +2055,9 @@ def _build_doctor_legacy_config_payload(
             "summary": "Gateway config is unavailable for legacy config checks.",
         }
     if should_repair:
-        repair = getattr(config_service, "repair_legacy_thread_binding_ttl_hours", None)
+        repair = getattr(config_service, "repair_legacy_config", None)
+        if not callable(repair):
+            repair = getattr(config_service, "repair_legacy_thread_binding_ttl_hours", None)
         if not callable(repair):
             return {
                 **base_payload,
@@ -2074,9 +2076,9 @@ def _build_doctor_legacy_config_payload(
         changes = _object_list(result_payload.get("changes"))
         changed = result_payload.get("changed") is True
         summary = (
-            "Migrated legacy thread binding config."
+            "Migrated legacy config."
             if changed
-            else "No legacy thread binding config keys found."
+            else "No legacy config keys found."
         )
         return {
             **base_payload,
@@ -2088,7 +2090,9 @@ def _build_doctor_legacy_config_payload(
             "path": result_payload.get("path"),
         }
 
-    detect = getattr(config_service, "detect_legacy_thread_binding_ttl_hours", None)
+    detect = getattr(config_service, "detect_legacy_config_issues", None)
+    if not callable(detect):
+        detect = getattr(config_service, "detect_legacy_thread_binding_ttl_hours", None)
     if not callable(detect):
         return {
             **base_payload,
@@ -2105,19 +2109,11 @@ def _build_doctor_legacy_config_payload(
         }
     result_payload = dict(result) if isinstance(result, dict) else {"result": result}
     issues = _object_list(result_payload.get("issues"))
-    warning = (
-        "Legacy thread binding config uses ttlHours; run openzues doctor --fix."
-        if issues
-        else None
-    )
+    warning = _doctor_legacy_config_warning(issues)
     return {
         **base_payload,
         "status": "warn" if issues else "ok",
-        "summary": (
-            "Legacy thread binding config uses ttlHours."
-            if issues
-            else "No legacy thread binding config keys found."
-        ),
+        "summary": _doctor_legacy_config_summary(issues),
         "repairAvailable": True,
         "issues": issues,
         "warnings": [warning] if warning else [],
@@ -2169,6 +2165,35 @@ def _with_doctor_added_warnings(
 
 def _object_list(value: object) -> list[object]:
     return list(value) if isinstance(value, list) else []
+
+
+def _doctor_legacy_config_summary(issues: list[object]) -> str:
+    if not issues:
+        return "No legacy config keys found."
+    if _legacy_config_issues_all_match(issues, ".threadBindings.ttlHours"):
+        return "Legacy thread binding config uses ttlHours."
+    if _legacy_config_issues_all_match(issues, ".allow"):
+        return "Legacy channel config uses allow aliases."
+    return "Legacy config contains migratable keys."
+
+
+def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
+    if not issues:
+        return None
+    if _legacy_config_issues_all_match(issues, ".threadBindings.ttlHours"):
+        return "Legacy thread binding config uses ttlHours; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, ".allow"):
+        return "Legacy channel config uses allow aliases; run openzues doctor --fix."
+    return "Legacy config contains migratable keys; run openzues doctor --fix."
+
+
+def _legacy_config_issues_all_match(issues: list[object], suffix: str) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and issue["path"].endswith(suffix)
+        for issue in issues
+    )
 
 
 def _doctor_sandbox_scope_warnings_from_snapshot(snapshot: dict[str, Any]) -> list[str]:

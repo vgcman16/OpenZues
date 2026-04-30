@@ -88,8 +88,12 @@ config writes for `enabled`, `idleHours`, and `maxAgeHours`, while legacy
 paths before snapshot validation. The doctor surface now also reports a native
 `legacyConfig` contribution for already-persisted `ttlHours` keys and
 `doctor --fix` rewrites them to `idleHours` before the rest of doctor reads the
-validated snapshot. Remaining legacy-config parity is broader non-thread-binding
-doctor migration breadth from OpenClaw's compatibility migrator.
+validated snapshot. The same native `legacyConfig` contribution now also covers
+OpenClaw's nested Slack, Google Chat, and Discord `allow` -> `enabled` channel
+alias migration, including account-scoped channel/group/guild-channel entries.
+Remaining legacy-config parity is broader doctor migration breadth from
+OpenClaw's compatibility migrator; the next small source-backed head is the
+`tools.web.x_search.apiKey` migration into `plugins.entries.xai.config.webSearch`.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

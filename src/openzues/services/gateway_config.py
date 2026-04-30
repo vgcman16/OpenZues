@@ -182,6 +182,17 @@ class GatewayConfigService:
             ],
         }
 
+    def detect_legacy_config_issues(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            return {"ok": True, "path": str(config_path), "issues": []}
+        payload = self._read_raw_config_object(label="legacy config detection")
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "issues": _collect_legacy_config_issues(payload),
+        }
+
     def repair_legacy_thread_binding_ttl_hours(self) -> dict[str, Any]:
         config_path = self._require_config_path()
         if not config_path.exists():
@@ -195,6 +206,47 @@ class GatewayConfigService:
             }
         payload = self._read_raw_config_object(label="legacy thread binding config repair")
         changes = _migrate_legacy_thread_binding_ttl_hours(payload)
+        if not changes:
+            snapshot = self.build_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        snapshot = self._validated_snapshot(payload)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changed": True,
+            "changes": changes,
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
+    def repair_legacy_config(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            snapshot = self._default_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        payload = self._read_raw_config_object(label="legacy config repair")
+        changes = [
+            *_migrate_legacy_thread_binding_ttl_hours(payload),
+            *_migrate_legacy_channel_allow_aliases(payload),
+        ]
         if not changes:
             snapshot = self.build_snapshot()
             return {
@@ -1587,6 +1639,28 @@ def _legacy_thread_binding_ttl_hour_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_channel_allow_alias_issue(path: str) -> dict[str, str]:
+    replacement = path.removesuffix(".allow") + ".enabled"
+    return {
+        "path": path,
+        "replacement": replacement,
+        "message": f"{path} is legacy; use {replacement}.",
+    }
+
+
+def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        *[
+            _legacy_thread_binding_ttl_hour_issue(path)
+            for path in _iter_legacy_thread_binding_ttl_hour_paths(payload)
+        ],
+        *[
+            _legacy_channel_allow_alias_issue(path)
+            for path in _iter_legacy_channel_allow_alias_paths(payload)
+        ],
+    ]
+
+
 def _migrate_legacy_thread_binding_ttl_hours(payload: dict[str, Any]) -> list[str]:
     changes: list[str] = []
     session = payload.get("session")
@@ -1637,3 +1711,235 @@ def _migrate_thread_binding_ttl_hours_at(
         thread_bindings["idleHours"] = thread_bindings["ttlHours"]
     del thread_bindings["ttlHours"]
     changes.append(f"Moved {path_label}.threadBindings.ttlHours to idleHours.")
+
+
+def _iter_legacy_channel_allow_alias_paths(payload: dict[str, Any]) -> list[str]:
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return []
+    paths: list[str] = []
+    slack = channels.get("slack")
+    if isinstance(slack, dict):
+        paths.extend(_iter_collection_allow_alias_paths(slack, "channels.slack", "channels"))
+        paths.extend(
+            _iter_account_collection_allow_alias_paths(
+                slack,
+                "channels.slack",
+                "channels",
+            )
+        )
+    googlechat = channels.get("googlechat")
+    if isinstance(googlechat, dict):
+        paths.extend(
+            _iter_collection_allow_alias_paths(googlechat, "channels.googlechat", "groups")
+        )
+        paths.extend(
+            _iter_account_collection_allow_alias_paths(
+                googlechat,
+                "channels.googlechat",
+                "groups",
+            )
+        )
+    discord = channels.get("discord")
+    if isinstance(discord, dict):
+        paths.extend(_iter_discord_guild_channel_allow_alias_paths(discord, "channels.discord"))
+        paths.extend(_iter_discord_account_guild_channel_allow_alias_paths(discord))
+    return paths
+
+
+def _iter_collection_allow_alias_paths(
+    container: dict[str, Any],
+    path_prefix: str,
+    collection_key: str,
+) -> list[str]:
+    collection = container.get(collection_key)
+    if not isinstance(collection, dict):
+        return []
+    return [
+        f"{path_prefix}.{collection_key}.{item_id}.allow"
+        for item_id, item in collection.items()
+        if isinstance(item, dict) and "allow" in item
+    ]
+
+
+def _iter_account_collection_allow_alias_paths(
+    provider: dict[str, Any],
+    path_prefix: str,
+    collection_key: str,
+) -> list[str]:
+    accounts = provider.get("accounts")
+    if not isinstance(accounts, dict):
+        return []
+    paths: list[str] = []
+    for account_id, account in accounts.items():
+        if not isinstance(account, dict):
+            continue
+        paths.extend(
+            _iter_collection_allow_alias_paths(
+                account,
+                f"{path_prefix}.accounts.{account_id}",
+                collection_key,
+            )
+        )
+    return paths
+
+
+def _iter_discord_guild_channel_allow_alias_paths(
+    container: dict[str, Any],
+    path_prefix: str,
+) -> list[str]:
+    guilds = container.get("guilds")
+    if not isinstance(guilds, dict):
+        return []
+    paths: list[str] = []
+    for guild_id, guild in guilds.items():
+        if not isinstance(guild, dict):
+            continue
+        paths.extend(
+            _iter_collection_allow_alias_paths(
+                guild,
+                f"{path_prefix}.guilds.{guild_id}",
+                "channels",
+            )
+        )
+    return paths
+
+
+def _iter_discord_account_guild_channel_allow_alias_paths(
+    discord: dict[str, Any],
+) -> list[str]:
+    accounts = discord.get("accounts")
+    if not isinstance(accounts, dict):
+        return []
+    paths: list[str] = []
+    for account_id, account in accounts.items():
+        if not isinstance(account, dict):
+            continue
+        paths.extend(
+            _iter_discord_guild_channel_allow_alias_paths(
+                account,
+                f"channels.discord.accounts.{account_id}",
+            )
+        )
+    return paths
+
+
+def _migrate_legacy_channel_allow_aliases(payload: dict[str, Any]) -> list[str]:
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return []
+    changes: list[str] = []
+    slack = channels.get("slack")
+    if isinstance(slack, dict):
+        _migrate_collection_allow_aliases(slack, "channels.slack", "channels", changes)
+        _migrate_account_collection_allow_aliases(slack, "channels.slack", "channels", changes)
+    googlechat = channels.get("googlechat")
+    if isinstance(googlechat, dict):
+        _migrate_collection_allow_aliases(
+            googlechat,
+            "channels.googlechat",
+            "groups",
+            changes,
+        )
+        _migrate_account_collection_allow_aliases(
+            googlechat,
+            "channels.googlechat",
+            "groups",
+            changes,
+        )
+    discord = channels.get("discord")
+    if isinstance(discord, dict):
+        _migrate_discord_guild_channel_allow_aliases(discord, "channels.discord", changes)
+        _migrate_discord_account_guild_channel_allow_aliases(discord, changes)
+    return changes
+
+
+def _migrate_collection_allow_aliases(
+    container: dict[str, Any],
+    path_prefix: str,
+    collection_key: str,
+    changes: list[str],
+) -> None:
+    collection = container.get(collection_key)
+    if not isinstance(collection, dict):
+        return
+    for item_id, item in collection.items():
+        if not isinstance(item, dict):
+            continue
+        _migrate_allow_alias_at(
+            item,
+            path_label=f"{path_prefix}.{collection_key}.{item_id}",
+            changes=changes,
+        )
+
+
+def _migrate_account_collection_allow_aliases(
+    provider: dict[str, Any],
+    path_prefix: str,
+    collection_key: str,
+    changes: list[str],
+) -> None:
+    accounts = provider.get("accounts")
+    if not isinstance(accounts, dict):
+        return
+    for account_id, account in accounts.items():
+        if not isinstance(account, dict):
+            continue
+        _migrate_collection_allow_aliases(
+            account,
+            f"{path_prefix}.accounts.{account_id}",
+            collection_key,
+            changes,
+        )
+
+
+def _migrate_discord_guild_channel_allow_aliases(
+    container: dict[str, Any],
+    path_prefix: str,
+    changes: list[str],
+) -> None:
+    guilds = container.get("guilds")
+    if not isinstance(guilds, dict):
+        return
+    for guild_id, guild in guilds.items():
+        if not isinstance(guild, dict):
+            continue
+        _migrate_collection_allow_aliases(
+            guild,
+            f"{path_prefix}.guilds.{guild_id}",
+            "channels",
+            changes,
+        )
+
+
+def _migrate_discord_account_guild_channel_allow_aliases(
+    discord: dict[str, Any],
+    changes: list[str],
+) -> None:
+    accounts = discord.get("accounts")
+    if not isinstance(accounts, dict):
+        return
+    for account_id, account in accounts.items():
+        if not isinstance(account, dict):
+            continue
+        _migrate_discord_guild_channel_allow_aliases(
+            account,
+            f"channels.discord.accounts.{account_id}",
+            changes,
+        )
+
+
+def _migrate_allow_alias_at(
+    entry: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    if "allow" not in entry:
+        return
+    if "enabled" not in entry:
+        entry["enabled"] = entry["allow"]
+        changes.append(f"Moved {path_label}.allow to enabled.")
+    else:
+        changes.append(f"Removed {path_label}.allow ({path_label}.enabled already set).")
+    del entry["allow"]
