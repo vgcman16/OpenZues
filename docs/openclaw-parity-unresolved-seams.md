@@ -2460,6 +2460,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
   doctor_and_update_status_json_include_hermes_sections"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the first structured `doctor:memory-search` gateway probe seam from
+  OpenClaw `doctor-gateway-health.ts` / `doctor-memory-search.ts`: `doctor
+  --json` now calls the native `doctor.memory.status` gateway method when
+  available, records checked/ready/error/provider state, and projects the
+  OpenClaw-shaped "Gateway memory probe for default agent is not ready"
+  warning into structured JSON. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_gateway_memory_probe_contribution
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

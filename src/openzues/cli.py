@@ -1868,6 +1868,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "security",
         "shellCompletion",
         "sandbox",
+        "memorySearch",
         "bundledPluginRuntimeDependencies",
         "acp",
         "extras",
@@ -2380,6 +2381,88 @@ def _with_doctor_bundled_plugin_runtime_dependencies(
     next_payload["bundledPluginRuntimeDependencies"] = (
         _build_doctor_bundled_plugin_runtime_dependency_payload(config_service)
     )
+    return next_payload
+
+
+def _doctor_gateway_memory_probe_warning(probe: dict[str, object]) -> str | None:
+    if probe.get("checked") is not True or probe.get("ready") is True:
+        return None
+    error = _optional_cli_string(probe.get("error"))
+    if error is not None:
+        return f"Gateway memory probe for default agent is not ready: {error}"
+    return "Gateway memory probe for default agent is not ready."
+
+
+async def _build_doctor_gateway_memory_probe(
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    call = getattr(gateway_node_methods, "call", None)
+    if not callable(call):
+        return {"checked": False, "ready": False}
+    try:
+        payload = await call("doctor.memory.status", {})
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "checked": True,
+            "ready": False,
+            "error": f"gateway memory probe unavailable: {exc}",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "checked": True,
+            "ready": False,
+            "error": "gateway memory probe response was not an object",
+        }
+    embedding = payload.get("embedding")
+    embedding_payload = embedding if isinstance(embedding, dict) else {}
+    result: dict[str, object] = {
+        "checked": True,
+        "ready": embedding_payload.get("ok") is True,
+    }
+    agent_id = _optional_cli_string(payload.get("agentId"))
+    if agent_id is not None:
+        result["agentId"] = agent_id
+    provider = _optional_cli_string(embedding_payload.get("provider"))
+    if provider is not None:
+        result["provider"] = provider
+    error = _optional_cli_string(embedding_payload.get("error"))
+    if error is not None:
+        result["error"] = error
+    return result
+
+
+def _build_doctor_memory_search_payload(
+    gateway_memory_probe: dict[str, object],
+) -> dict[str, object]:
+    warning = _doctor_gateway_memory_probe_warning(gateway_memory_probe)
+    if gateway_memory_probe.get("checked") is not True:
+        status = "unavailable"
+        summary = "Gateway memory probe is unavailable."
+    elif gateway_memory_probe.get("ready") is True:
+        status = "ok"
+        summary = "Gateway memory probe reports embeddings are ready."
+    else:
+        status = "warn"
+        summary = warning or "Gateway memory probe for default agent is not ready."
+    warnings = [warning] if warning else []
+    return {
+        "status": status,
+        "summary": summary,
+        "source": "openzues-native",
+        "openClawContribution": "doctor:memory-search",
+        "repairAvailable": False,
+        "gatewayMemoryProbe": gateway_memory_probe,
+        "warnings": warnings,
+    }
+
+
+async def _with_doctor_memory_search_payload(
+    payload: dict[str, object],
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    probe = await _build_doctor_gateway_memory_probe(gateway_node_methods)
+    next_payload["memorySearch"] = _build_doctor_memory_search_payload(probe)
     return next_payload
 
 
@@ -16288,6 +16371,10 @@ def doctor(
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
             payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = await _with_doctor_memory_search_payload(
+            payload,
+            getattr(services, "gateway_node_methods", None),
+        )
         payload = _with_doctor_bundled_plugin_runtime_dependencies(
             payload,
             services.gateway_config,

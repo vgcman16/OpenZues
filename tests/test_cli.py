@@ -13853,6 +13853,81 @@ def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     }
 
 
+def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    class FakeGatewayNodeMethods:
+        async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "agentId": "main",
+                "embedding": {
+                    "ok": False,
+                    "provider": "local",
+                    "error": "node-llama-cpp not installed",
+                },
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=FakeGatewayNodeMethods(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert calls == [("doctor.memory.status", {})]
+    assert payload["memorySearch"] == {
+        "status": "warn",
+        "summary": (
+            "Gateway memory probe for default agent is not ready: "
+            "node-llama-cpp not installed"
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:memory-search",
+        "repairAvailable": False,
+        "gatewayMemoryProbe": {
+            "checked": True,
+            "ready": False,
+            "agentId": "main",
+            "provider": "local",
+            "error": "node-llama-cpp not installed",
+        },
+        "warnings": [
+            "Gateway memory probe for default agent is not ready: node-llama-cpp not installed"
+        ],
+    }
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
