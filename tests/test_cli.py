@@ -18956,6 +18956,75 @@ def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch
     }
 
 
+def test_doctor_json_warns_when_shell_completion_uses_slow_dynamic_profile(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".zshrc").write_text("source <(openzues completion)\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        settings=SimpleNamespace(data_dir=tmp_path),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    shell_completion = payload["shellCompletion"]
+    warning = shell_completion["warnings"][0]
+    assert shell_completion["status"] == "warning"
+    assert shell_completion["shell"] == "zsh"
+    assert shell_completion["profileInstalled"] is True
+    assert shell_completion["cacheExists"] is False
+    assert shell_completion["usesSlowPattern"] is True
+    assert str(home / ".zshrc") == shell_completion["profilePath"]
+    assert str(tmp_path / "completions" / "openzues.zsh") == shell_completion["cachePath"]
+    assert "slow dynamic completion" in warning
+    assert "openzues doctor --fix" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_fix_regenerates_shell_completion_cache_and_upgrades_slow_profile(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    profile_path = home / ".zshrc"
+    profile_path.write_text("source <(openzues completion)\n", encoding="utf-8")
+    cache_path = tmp_path / "completions" / "openzues.zsh"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        settings=SimpleNamespace(data_dir=tmp_path),
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    shell_completion = payload["shellCompletion"]
+    profile = profile_path.read_text(encoding="utf-8")
+    assert shell_completion["status"] == "ok"
+    assert shell_completion["repairRequested"] is True
+    assert shell_completion["changed"] is True
+    assert shell_completion["cacheExists"] is True
+    assert shell_completion["usesSlowPattern"] is False
+    assert cache_path.exists()
+    assert "# OpenZues Completion" in profile
+    assert str(cache_path) in profile
+    assert "<(openzues completion" not in profile
+    assert "warnings" not in shell_completion or shell_completion["warnings"] == []
+    assert any("Generated completion cache" in item for item in shell_completion["changes"])
+    assert any("Updated zsh profile" in item for item in shell_completion["changes"])
+
+
 def test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled(
     monkeypatch,
 ) -> None:

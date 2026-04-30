@@ -2888,6 +2888,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   open_policy_allow_from or allowlist_policy_allow_from"` (`10 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `doctor:shell-completion` now has a native OpenClaw-shaped status and repair
+  path for existing profile installations. The doctor detects the current
+  shell, profile path, cache path, cache presence, and slow dynamic
+  `openzues completion` profile lines; `doctor --fix` regenerates the local
+  Typer completion cache and rewrites slow profile stanzas to source the cached
+  file.
+- Verified the shell-completion status/repair slice with `python -m pytest
+  tests\test_cli.py -k "shell_completion_uses_slow_dynamic_profile or
+  regenerates_shell_completion_cache"` (`2 passed`), adjacent doctor proof
+  `python -m pytest tests\test_cli.py -k "shell_completion_uses_slow_dynamic_profile
+  or regenerates_shell_completion_cache or security_and_shell_completion_surfaces
+  or channel_dm_policy_security or exec_policy_config_exceeds_host_policy or
+  doctor_json_warns_when_approvals_exec_forwarding_is_disabled or
+  doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  open_policy_allow_from or allowlist_policy_allow_from"` (`11 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the

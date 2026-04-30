@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -4765,7 +4765,277 @@ def _with_doctor_security_payload(
     return next_payload
 
 
-def _build_doctor_shell_completion_payload() -> dict[str, object]:
+_DOCTOR_COMPLETION_SHELL_EXTENSIONS = {
+    "bash": "bash",
+    "fish": "fish",
+    "powershell": "ps1",
+    "zsh": "zsh",
+}
+
+
+def _doctor_completion_shell_from_env(env: Mapping[str, str] | None = None) -> str:
+    environ = env or os.environ
+    shell_path = _optional_cli_string(environ.get("SHELL")) or ""
+    shell_name = Path(shell_path).name.lower() if shell_path else ""
+    if shell_name in {"bash", "fish", "zsh"}:
+        return shell_name
+    if shell_name in {"powershell", "pwsh"}:
+        return "powershell"
+    if os.name == "nt":
+        return "powershell"
+    return "zsh"
+
+
+def _doctor_completion_cache_path(
+    *,
+    data_dir: Path,
+    shell: str,
+    bin_name: str,
+) -> Path:
+    safe_bin_name = re.sub(r"[^a-zA-Z0-9._-]", "-", bin_name.strip() or "openzues")
+    extension = _DOCTOR_COMPLETION_SHELL_EXTENSIONS.get(shell, shell)
+    return data_dir / "completions" / f"{safe_bin_name}.{extension}"
+
+
+def _doctor_completion_profile_path(
+    *,
+    shell: str,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    environ = env or os.environ
+    home = Path(
+        _optional_cli_string(environ.get("HOME"))
+        or _optional_cli_string(environ.get("USERPROFILE"))
+        or str(Path.home())
+    )
+    if shell == "zsh":
+        return home / ".zshrc"
+    if shell == "bash":
+        bashrc = home / ".bashrc"
+        return bashrc if bashrc.exists() else home / ".bash_profile"
+    if shell == "fish":
+        return home / ".config" / "fish" / "config.fish"
+    if os.name == "nt":
+        user_profile = Path(_optional_cli_string(environ.get("USERPROFILE")) or str(home))
+        return (
+            user_profile
+            / "Documents"
+            / "PowerShell"
+            / "Microsoft.PowerShell_profile.ps1"
+        )
+    return home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"
+
+
+def _doctor_completion_profile_lines(profile_path: Path) -> list[str]:
+    try:
+        return profile_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+
+def _doctor_completion_is_profile_line(
+    line: str,
+    *,
+    bin_name: str,
+    cache_path: Path | None,
+) -> bool:
+    stripped = line.strip()
+    if stripped in {"# OpenClaw Completion", "# OpenZues Completion"}:
+        return True
+    if f"{bin_name} completion" in line:
+        return True
+    if cache_path is not None and str(cache_path) in line:
+        return True
+    return False
+
+
+def _doctor_completion_is_slow_line(line: str, *, bin_name: str, cache_path: Path) -> bool:
+    return (
+        (f"<({bin_name} completion" in line)
+        or (f"{bin_name} completion" in line and "| source" in line)
+    ) and str(cache_path) not in line
+
+
+def _doctor_completion_source_line(*, shell: str, cache_path: Path) -> str:
+    if shell == "powershell":
+        return f'. "{cache_path}"'
+    return f'source "{cache_path}"'
+
+
+def _doctor_completion_generate_cache(cache_path: Path) -> bool:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "openzues.cli", "--show-completion"],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    try:
+        cache_path.write_text(result.stdout, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _doctor_completion_update_profile(
+    *,
+    shell: str,
+    bin_name: str,
+    cache_path: Path,
+    profile_path: Path,
+) -> bool:
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = _doctor_completion_profile_lines(profile_path)
+    filtered: list[str] = []
+    skip_next = False
+    for line in lines:
+        if skip_next:
+            skip_next = False
+            continue
+        if line.strip() in {"# OpenClaw Completion", "# OpenZues Completion"}:
+            skip_next = True
+            continue
+        if _doctor_completion_is_profile_line(
+            line,
+            bin_name=bin_name,
+            cache_path=cache_path,
+        ):
+            continue
+        if _doctor_completion_is_slow_line(line, bin_name=bin_name, cache_path=cache_path):
+            continue
+        filtered.append(line)
+
+    trimmed = "\n".join(filtered).rstrip()
+    source_line = _doctor_completion_source_line(shell=shell, cache_path=cache_path)
+    block = f"# OpenZues Completion\n{source_line}"
+    next_content = f"{trimmed}\n\n{block}\n" if trimmed else f"{block}\n"
+    try:
+        current = profile_path.read_text(encoding="utf-8")
+    except OSError:
+        current = ""
+    if next_content == current:
+        return False
+    profile_path.write_text(next_content, encoding="utf-8")
+    return True
+
+
+def _build_doctor_shell_completion_payload(
+    data_dir: Path | None = None,
+    *,
+    bin_name: str = "openzues",
+    should_repair: bool = False,
+) -> dict[str, object]:
+    if data_dir is not None:
+        shell = _doctor_completion_shell_from_env()
+        cache_path = _doctor_completion_cache_path(
+            data_dir=data_dir,
+            shell=shell,
+            bin_name=bin_name,
+        )
+        profile_path = _doctor_completion_profile_path(shell=shell)
+        cache_exists = cache_path.exists()
+        profile_lines = _doctor_completion_profile_lines(profile_path)
+        profile_installed = any(
+            _doctor_completion_is_profile_line(
+                line,
+                bin_name=bin_name,
+                cache_path=cache_path if cache_exists else None,
+            )
+            for line in profile_lines
+        )
+        uses_slow_pattern = any(
+            _doctor_completion_is_slow_line(line, bin_name=bin_name, cache_path=cache_path)
+            for line in profile_lines
+        )
+        repair_changes: list[str] = []
+        repair_errors: list[str] = []
+        if should_repair and (
+            uses_slow_pattern or (profile_installed and not cache_exists)
+        ):
+            cache_generated = cache_exists or _doctor_completion_generate_cache(cache_path)
+            if cache_generated and not cache_exists:
+                repair_changes.append(f"Generated completion cache at {cache_path}.")
+            if not cache_generated:
+                repair_errors.append(
+                    f"Failed to generate completion cache at {cache_path}."
+                )
+            if cache_generated and uses_slow_pattern:
+                try:
+                    profile_changed = _doctor_completion_update_profile(
+                        shell=shell,
+                        bin_name=bin_name,
+                        cache_path=cache_path,
+                        profile_path=profile_path,
+                    )
+                except OSError as exc:
+                    profile_changed = False
+                    repair_errors.append(f"Failed to update {shell} profile: {exc}")
+                if profile_changed:
+                    repair_changes.append(f"Updated {shell} profile at {profile_path}.")
+            cache_exists = cache_path.exists()
+            profile_lines = _doctor_completion_profile_lines(profile_path)
+            profile_installed = any(
+                _doctor_completion_is_profile_line(
+                    line,
+                    bin_name=bin_name,
+                    cache_path=cache_path if cache_exists else None,
+                )
+                for line in profile_lines
+            )
+            uses_slow_pattern = any(
+                _doctor_completion_is_slow_line(line, bin_name=bin_name, cache_path=cache_path)
+                for line in profile_lines
+            )
+
+        warnings: list[str] = []
+        if uses_slow_pattern:
+            warnings.append(
+                f"- Shell completion: {shell} profile uses slow dynamic completion. "
+                "Run openzues doctor --fix to upgrade to cached completion."
+            )
+        if profile_installed and not cache_exists:
+            warnings.append(
+                f"- Shell completion: {shell} profile is configured but cache is missing "
+                f"at {cache_path}. Run openzues doctor --fix to regenerate it."
+            )
+        summary = (
+            "Shell completion repair applied."
+            if repair_changes and not warnings and not repair_errors
+            else (
+                "Shell completion needs attention."
+                if warnings or repair_errors
+                else "Shell completion profile and cache state are healthy."
+            )
+        )
+        payload: dict[str, object] = {
+            "status": "warning" if warnings else "ok",
+            "summary": summary,
+            "source": "openzues-native",
+            "openClawContribution": "doctor:shell-completion",
+            "repairAvailable": True,
+            "repairRequested": should_repair,
+            "changed": bool(repair_changes),
+            "shell": shell,
+            "profileInstalled": profile_installed,
+            "cacheExists": cache_exists,
+            "cachePath": str(cache_path),
+            "profilePath": str(profile_path),
+            "usesSlowPattern": uses_slow_pattern,
+            "warnings": warnings,
+        }
+        if repair_changes:
+            payload["changes"] = repair_changes
+        if repair_errors:
+            payload["errors"] = repair_errors
+            payload["status"] = "warning"
+        return payload
     return {
         "status": "partial",
         "summary": (
@@ -4776,6 +5046,24 @@ def _build_doctor_shell_completion_payload() -> dict[str, object]:
         "openClawContribution": "doctor:shell-completion",
         "repairAvailable": False,
     }
+
+
+def _with_doctor_shell_completion_payload(
+    payload: dict[str, object],
+    data_dir: Path | None,
+    *,
+    should_repair: bool = False,
+) -> dict[str, object]:
+    shell_completion = _build_doctor_shell_completion_payload(
+        data_dir,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["shellCompletion"] = shell_completion
+    warnings = [str(item) for item in _object_list(shell_completion.get("warnings"))]
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, warnings)
+    return next_payload
 
 
 def _doctor_bundled_plugin_runtime_dependency_summary(
@@ -20824,6 +21112,11 @@ def doctor(
             payload,
             services.gateway_config,
             data_dir if isinstance(data_dir, Path) else None,
+        )
+        payload = _with_doctor_shell_completion_payload(
+            payload,
+            data_dir if isinstance(data_dir, Path) else None,
+            should_repair=fix,
         )
         payload = await _with_doctor_gateway_health_payload(
             payload,

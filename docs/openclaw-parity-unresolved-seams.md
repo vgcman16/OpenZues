@@ -486,8 +486,11 @@ config/host/effective-policy warning when the requested policy is broader or
 less prompt-heavy than the host permits. Configured channel DM security now
 also mirrors OpenClaw's OPEN, invalid-open-allowFrom, locked allowlist/pairing,
 disabled, and shared-main-session warnings using native config snapshots and
-the existing pairing allowFrom store. Shell completion remains partial until
-production repair adapters are wired.
+the existing pairing allowFrom store. `doctor:shell-completion` now reports
+native shell/profile/cache/slow-pattern status and `doctor --fix` regenerates a
+missing cache and replaces slow dynamic profile stanzas with a cached source
+line. First-time interactive completion installation for profiles with no
+existing completion remains as the shell-completion tail.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes
 the OpenAI auth endpoint through a fakeable boundary, classifies TLS
