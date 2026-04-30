@@ -94,10 +94,14 @@ alias migration, including account-scoped channel/group/guild-channel entries.
 It also migrates `tools.web.x_search.apiKey` into
 `plugins.entries.xai.config.webSearch.apiKey`, preserving non-auth legacy
 `x_search` knobs and existing plugin-owned auth.
+Telegram legacy streaming aliases now also flow through the same doctor
+contribution: `streamMode`, scalar/boolean `streaming`, `chunkMode`,
+`blockStreaming`, `draftChunk`, and `blockStreamingCoalesce` migrate into
+nested `channels.telegram.streaming` / account-scoped streaming config.
 Remaining legacy-config parity is broader doctor migration breadth from
-OpenClaw's compatibility migrator; the next small source-backed head is
-Telegram/Slack channel streaming-key normalization into nested
-`channels.<provider>.streaming` config.
+OpenClaw's compatibility migrator; the next small source-backed head is Slack
+channel streaming-key normalization into nested `channels.slack.streaming`
+config, including `nativeStreaming` -> `nativeTransport`.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

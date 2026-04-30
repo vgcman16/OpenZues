@@ -247,6 +247,7 @@ class GatewayConfigService:
             *_migrate_legacy_thread_binding_ttl_hours(payload),
             *_migrate_legacy_channel_allow_aliases(payload),
             *_migrate_legacy_x_search_api_key(payload),
+            *_migrate_legacy_telegram_streaming_keys(payload),
         ]
         if not changes:
             snapshot = self.build_snapshot()
@@ -1660,6 +1661,17 @@ def _legacy_x_search_api_key_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_telegram_streaming_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": f"{path}.streaming",
+        "message": (
+            f"{path} uses legacy Telegram streaming scalar aliases; use "
+            f"{path}.streaming.*."
+        ),
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1673,6 +1685,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_x_search_api_key_issue(path)
             for path in _iter_legacy_x_search_api_key_paths(payload)
+        ],
+        *[
+            _legacy_telegram_streaming_issue(path)
+            for path in _iter_legacy_telegram_streaming_paths(payload)
         ],
     ]
 
@@ -2031,3 +2047,189 @@ def _ensure_config_record(container: dict[str, Any], key: str) -> dict[str, Any]
     created: dict[str, Any] = {}
     container[key] = created
     return created
+
+
+def _iter_legacy_telegram_streaming_paths(payload: dict[str, Any]) -> list[str]:
+    telegram = _legacy_channel_config(payload, "telegram")
+    if telegram is None:
+        return []
+    paths: list[str] = []
+    if _has_legacy_telegram_streaming_keys(telegram):
+        paths.append("channels.telegram")
+    accounts = telegram.get("accounts")
+    if isinstance(accounts, dict):
+        for account_id, account in accounts.items():
+            if isinstance(account, dict) and _has_legacy_telegram_streaming_keys(account):
+                paths.append(f"channels.telegram.accounts.{account_id}")
+    return paths
+
+
+def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return None
+    value = channels.get(channel)
+    return value if isinstance(value, dict) else None
+
+
+def _has_legacy_telegram_streaming_keys(entry: dict[str, Any]) -> bool:
+    return (
+        "streamMode" in entry
+        or isinstance(entry.get("streaming"), bool | str)
+        or "chunkMode" in entry
+        or "blockStreaming" in entry
+        or "draftChunk" in entry
+        or "blockStreamingCoalesce" in entry
+    )
+
+
+def _migrate_legacy_telegram_streaming_keys(payload: dict[str, Any]) -> list[str]:
+    telegram = _legacy_channel_config(payload, "telegram")
+    if telegram is None:
+        return []
+    changes: list[str] = []
+    _migrate_telegram_streaming_entry(
+        telegram,
+        path_label="channels.telegram",
+        changes=changes,
+    )
+    accounts = telegram.get("accounts")
+    if isinstance(accounts, dict):
+        for account_id, account in accounts.items():
+            if not isinstance(account, dict):
+                continue
+            _migrate_telegram_streaming_entry(
+                account,
+                path_label=f"channels.telegram.accounts.{account_id}",
+                changes=changes,
+            )
+    return changes
+
+
+def _migrate_telegram_streaming_entry(
+    entry: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    if not _has_legacy_telegram_streaming_keys(entry):
+        return
+    raw_streaming = entry.get("streaming")
+    streaming = dict(raw_streaming) if isinstance(raw_streaming, dict) else {}
+    has_streaming_record = isinstance(raw_streaming, dict)
+
+    if "mode" not in streaming and (
+        "streamMode" in entry or isinstance(raw_streaming, bool | str)
+    ):
+        mode = _resolve_telegram_streaming_mode(entry)
+        streaming["mode"] = mode
+        if "streamMode" in entry:
+            changes.append(
+                f"Moved {path_label}.streamMode to {path_label}.streaming.mode ({mode})."
+            )
+        elif isinstance(raw_streaming, bool):
+            changes.append(
+                f"Moved {path_label}.streaming (boolean) to "
+                f"{path_label}.streaming.mode ({mode})."
+            )
+        elif isinstance(raw_streaming, str):
+            changes.append(
+                f"Moved {path_label}.streaming (scalar) to "
+                f"{path_label}.streaming.mode ({mode})."
+            )
+    elif "streamMode" in entry or isinstance(raw_streaming, bool | str):
+        changes.append(
+            f"Removed legacy {path_label}.streaming mode aliases "
+            f"({path_label}.streaming.mode already set)."
+        )
+
+    entry.pop("streamMode", None)
+    if isinstance(raw_streaming, bool | str) and not has_streaming_record:
+        entry["streaming"] = streaming
+
+    if "chunkMode" in entry:
+        if "chunkMode" not in streaming:
+            streaming["chunkMode"] = entry["chunkMode"]
+            changes.append(f"Moved {path_label}.chunkMode to {path_label}.streaming.chunkMode.")
+        else:
+            changes.append(
+                f"Removed {path_label}.chunkMode "
+                f"({path_label}.streaming.chunkMode already set)."
+            )
+        del entry["chunkMode"]
+
+    raw_block = streaming.get("block")
+    block = dict(raw_block) if isinstance(raw_block, dict) else {}
+    if "blockStreaming" in entry:
+        if "enabled" not in block:
+            block["enabled"] = entry["blockStreaming"]
+            changes.append(
+                f"Moved {path_label}.blockStreaming to {path_label}.streaming.block.enabled."
+            )
+        else:
+            changes.append(
+                f"Removed {path_label}.blockStreaming "
+                f"({path_label}.streaming.block.enabled already set)."
+            )
+        del entry["blockStreaming"]
+
+    raw_preview = streaming.get("preview")
+    preview = dict(raw_preview) if isinstance(raw_preview, dict) else {}
+    if "draftChunk" in entry:
+        if "chunk" not in preview:
+            preview["chunk"] = entry["draftChunk"]
+            changes.append(
+                f"Moved {path_label}.draftChunk to {path_label}.streaming.preview.chunk."
+            )
+        else:
+            changes.append(
+                f"Removed {path_label}.draftChunk "
+                f"({path_label}.streaming.preview.chunk already set)."
+            )
+        del entry["draftChunk"]
+
+    if "blockStreamingCoalesce" in entry:
+        if "coalesce" not in block:
+            block["coalesce"] = entry["blockStreamingCoalesce"]
+            changes.append(
+                "Moved "
+                f"{path_label}.blockStreamingCoalesce to "
+                f"{path_label}.streaming.block.coalesce."
+            )
+        else:
+            changes.append(
+                f"Removed {path_label}.blockStreamingCoalesce "
+                f"({path_label}.streaming.block.coalesce already set)."
+            )
+        del entry["blockStreamingCoalesce"]
+
+    if block:
+        streaming["block"] = block
+    if preview:
+        streaming["preview"] = preview
+    if streaming:
+        entry["streaming"] = streaming
+
+
+def _resolve_telegram_streaming_mode(entry: dict[str, Any]) -> str:
+    raw_streaming = entry.get("streaming")
+    streaming_mode = _parse_telegram_streaming_mode(raw_streaming)
+    if streaming_mode is not None:
+        return streaming_mode
+    stream_mode = _parse_telegram_streaming_mode(entry.get("streamMode"))
+    if stream_mode is not None:
+        return stream_mode
+    if isinstance(raw_streaming, bool):
+        return "partial" if raw_streaming else "off"
+    return "partial"
+
+
+def _parse_telegram_streaming_mode(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized == "progress":
+        return "partial"
+    if normalized in {"off", "partial", "block"}:
+        return normalized
+    return None

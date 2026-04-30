@@ -2176,6 +2176,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy channel config uses allow aliases."
     if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
         return "Legacy x_search config uses apiKey."
+    if _legacy_config_issues_all_telegram_streaming(issues):
+        return "Legacy Telegram streaming config uses scalar aliases."
     return "Legacy config contains migratable keys."
 
 
@@ -2188,6 +2190,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy channel config uses allow aliases; run openzues doctor --fix."
     if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
         return "Legacy x_search config uses apiKey; run openzues doctor --fix."
+    if _legacy_config_issues_all_telegram_streaming(issues):
+        return "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
 
 
@@ -2196,6 +2200,18 @@ def _legacy_config_issues_all_match(issues: list[object], suffix: str) -> bool:
         isinstance(issue, dict)
         and isinstance(issue.get("path"), str)
         and issue["path"].endswith(suffix)
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_telegram_streaming(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "channels.telegram"
+            or issue["path"].startswith("channels.telegram.accounts.")
+        )
         for issue in issues
     )
 

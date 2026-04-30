@@ -14869,6 +14869,189 @@ def test_doctor_fix_migrates_legacy_x_search_api_key(
     }
 
 
+def test_doctor_json_warns_about_legacy_telegram_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "telegram": {
+                        "streamMode": "block",
+                        "accounts": {
+                            "ops": {
+                                "streaming": False,
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "channels.telegram",
+        "channels.telegram.accounts.ops",
+    ]
+    assert payload["warnings"] == [
+        "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_telegram_streaming_keys(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "telegram": {
+                        "streamMode": "progress",
+                        "chunkMode": "sentence",
+                        "blockStreaming": True,
+                        "draftChunk": 80,
+                        "blockStreamingCoalesce": 250,
+                        "accounts": {
+                            "ops": {
+                                "streaming": False,
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved channels.telegram.streamMode to channels.telegram.streaming.mode (partial).",
+        "Moved channels.telegram.chunkMode to channels.telegram.streaming.chunkMode.",
+        "Moved channels.telegram.blockStreaming to channels.telegram.streaming.block.enabled.",
+        "Moved channels.telegram.draftChunk to channels.telegram.streaming.preview.chunk.",
+        "Moved channels.telegram.blockStreamingCoalesce to "
+        "channels.telegram.streaming.block.coalesce.",
+        "Moved channels.telegram.accounts.ops.streaming (boolean) to "
+        "channels.telegram.accounts.ops.streaming.mode (off).",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    telegram = repaired["channels"]["telegram"]
+    assert telegram["streaming"] == {
+        "mode": "partial",
+        "chunkMode": "sentence",
+        "block": {"enabled": True, "coalesce": 250},
+        "preview": {"chunk": 80},
+    }
+    assert telegram["accounts"]["ops"]["streaming"] == {"mode": "off"}
+    assert "streamMode" not in telegram
+    assert "chunkMode" not in telegram
+    assert "blockStreaming" not in telegram
+    assert "draftChunk" not in telegram
+    assert "blockStreamingCoalesce" not in telegram
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
