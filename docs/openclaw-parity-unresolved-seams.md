@@ -161,10 +161,11 @@ fetches message reaction summaries and per-reaction users with bounded limits,
 so no smaller Discord reaction action seam remains in this queue.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
-normalization to E.164 recipients and the upstream empty-emoji/remove shape.
-Remaining action parity is other production provider action adapters, current
-message context resolution breadth, `supportsAction` breadth, and deeper
-trusted-sender requirements for provider-specific tool contexts.
+normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
+same-provider/same-chat `toolContext.currentMessageId` fallback with cross-chat
+fallback rejection. Remaining action parity is other production provider action
+adapters, `supportsAction` breadth, and deeper trusted-sender requirements for
+provider-specific tool contexts.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels

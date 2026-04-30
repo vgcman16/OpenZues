@@ -3476,6 +3476,173 @@ async def test_ops_mesh_service_message_action_dispatches_whatsapp_react_remove_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_whatsapp_react_current_message_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-whatsapp-react-context"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+123",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+123", "wa_id": "123"}],
+            "messages": [{"id": "wamid.react.ctx"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="whatsapp",
+            action="react",
+            params={"to": "+123", "emoji": "\u2764\ufe0f"},
+            account_id="wa-business",
+            requester_sender_id="123@s.whatsapp.net",
+            sender_is_owner=True,
+            session_key="agent:main:whatsapp:direct:+123",
+            idempotency_key="idem-whatsapp-react-context-action",
+            tool_context={
+                "currentChannelId": "whatsapp:123@s.whatsapp.net",
+                "currentChannelProvider": "whatsapp",
+                "currentMessageId": 12345,
+            },
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2764\ufe0f"}
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+123",
+                "type": "reaction",
+                "reaction": {
+                    "message_id": "12345",
+                    "emoji": "\u2764\ufe0f",
+                },
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_rejects_whatsapp_cross_chat_context_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-whatsapp-react-cross-chat"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+999",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {"messaging_product": "whatsapp", "messages": [{"id": "unexpected"}]}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(RuntimeError, match="messageId is required"):
+        await service.dispatch_message_action(
+            GatewayMessageActionDispatchRequest(
+                channel="whatsapp",
+                action="react",
+                params={"to": "+999", "emoji": "\u2705"},
+                account_id="wa-business",
+                requester_sender_id="123@s.whatsapp.net",
+                sender_is_owner=True,
+                session_key="agent:main:whatsapp:direct:+999",
+                idempotency_key="idem-whatsapp-react-cross-chat-action",
+                tool_context={
+                    "currentChannelId": "whatsapp:+123",
+                    "currentChannelProvider": "whatsapp",
+                    "currentMessageId": "ctx-msg-42",
+                },
+            )
+        )
+
+    assert whatsapp_posts == []
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-provider-options"

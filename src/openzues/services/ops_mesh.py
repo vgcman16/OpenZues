@@ -825,6 +825,25 @@ def _message_action_param_string(
     return trimmed
 
 
+def _message_action_param_string_or_number(
+    params: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+) -> str | None:
+    value = params.get(key)
+    if value is None:
+        if required:
+            raise RuntimeError(f"{key} is required.")
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise RuntimeError(f"{key} must be a string or number.")
+    trimmed = str(value).strip()
+    if required and not trimmed:
+        raise RuntimeError(f"{key} is required.")
+    return trimmed or None
+
+
 def _message_action_param_positive_int(
     params: dict[str, Any],
     *keys: str,
@@ -1598,6 +1617,33 @@ def _whatsapp_action_recipient_id(target: str | None) -> str | None:
         return None
     digits = re.sub(r"\D", "", normalized)
     return f"+{digits}" if digits else None
+
+
+def _whatsapp_reaction_context_message_id(
+    request: GatewayMessageActionDispatchRequest,
+    chat_target: str,
+) -> str | None:
+    tool_context = request.tool_context
+    if tool_context is None:
+        return None
+    if str(tool_context.get("currentChannelProvider") or "") != "whatsapp":
+        return None
+    current_channel_id = tool_context.get("currentChannelId")
+    if not isinstance(current_channel_id, str):
+        return None
+    current_target = _whatsapp_action_recipient_id(current_channel_id)
+    requested_target = _whatsapp_action_recipient_id(chat_target)
+    if current_target is None or requested_target is None or current_target != requested_target:
+        return None
+    current_message_id = tool_context.get("currentMessageId")
+    if current_message_id is None:
+        return None
+    if isinstance(current_message_id, bool) or not isinstance(
+        current_message_id,
+        (str, int, float),
+    ):
+        raise RuntimeError("toolContext.currentMessageId must be a string or number.")
+    return str(current_message_id).strip() or None
 
 
 def _whatsapp_message_id(result: object) -> str | None:
@@ -7012,14 +7058,20 @@ class OpsMeshService:
                 "to",
                 required=True,
             )
+        if chat_target is None:
+            raise RuntimeError("WhatsApp react requires chatJid.")
         recipient_id = _whatsapp_action_recipient_id(chat_target)
         if recipient_id is None:
             raise RuntimeError("WhatsApp react requires chatJid.")
-        message_id = _message_action_param_string(
-            request.params,
-            "messageId",
-            required=True,
-        )
+        message_id = _message_action_param_string_or_number(request.params, "messageId")
+        if message_id is None:
+            message_id = _whatsapp_reaction_context_message_id(request, chat_target)
+        if message_id is None:
+            _message_action_param_string_or_number(
+                request.params,
+                "messageId",
+                required=True,
+            )
         remove = request.params.get("remove") is True
         emoji = (
             _message_action_param_string(
@@ -7040,7 +7092,7 @@ class OpsMeshService:
                 "to": recipient_id,
                 "type": "reaction",
                 "reaction": {
-                    "message_id": message_id or "",
+                    "message_id": message_id,
                     "emoji": resolved_emoji,
                 },
             },
