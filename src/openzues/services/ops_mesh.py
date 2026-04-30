@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import math
+import mimetypes
 import re
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -1421,6 +1423,8 @@ def _telegram_media_ids(result: object) -> list[str]:
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_MAX_EMOJI_BYTES = 256 * 1024
+DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
 DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
 DISCORD_CHANNEL_TYPE_GUILD_MEDIA = 16
@@ -7463,6 +7467,7 @@ class OpsMeshService:
             "delete",
             "edit",
             "emoji-list",
+            "emoji-upload",
             "event-create",
             "event-list",
             "kick",
@@ -7577,6 +7582,13 @@ class OpsMeshService:
             if action == "emoji-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_emoji_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "emoji-upload":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_emoji_upload_message_action,
                     route,
                     request,
                     secret_token,
@@ -9449,6 +9461,62 @@ class OpsMeshService:
         if not isinstance(emojis, list):
             raise RuntimeError("Discord API returned a non-JSON emojis response.")
         return {"ok": True, "emojis": emojis}
+
+    def _dispatch_discord_emoji_upload_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(request.params, "emojiName") or (
+            _message_action_param_string(request.params, "name", required=True) or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "mediaUrl")
+            or ""
+        )
+        if not media_url:
+            raise RuntimeError("Discord emoji-upload requires media.")
+        media_bytes, content_type = self._load_discord_media(
+            media_url,
+            max_bytes=DISCORD_MAX_EMOJI_BYTES,
+        )
+        normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+        if normalized_content_type not in DISCORD_EMOJI_CONTENT_TYPES:
+            raise RuntimeError("Discord emoji uploads require a PNG, JPG, or GIF image.")
+        payload: dict[str, object] = {
+            "name": name.strip(),
+            "image": (
+                f"data:{normalized_content_type};base64,"
+                f"{base64.b64encode(media_bytes).decode('ascii')}"
+            ),
+        }
+        role_ids = [
+            role_id.strip()
+            for role_id in (_message_action_param_string_array(request.params, "roleIds") or [])
+            if role_id.strip()
+        ]
+        if role_ids:
+            payload["roles"] = role_ids
+        emoji = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/emojis"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(emoji, dict):
+            raise RuntimeError("Discord API returned a non-JSON emoji response.")
+        if emoji.get("error"):
+            raise RuntimeError(str(emoji.get("error")))
+        return {"ok": True, "emoji": emoji}
 
     def _dispatch_discord_channel_info_message_action(
         self,
@@ -12099,6 +12167,68 @@ class OpsMeshService:
                 if response.status >= 400:
                     raise RuntimeError(f"Media URL returned HTTP {response.status}")
                 return response.read()
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _load_discord_media(self, media_url: str, *, max_bytes: int) -> tuple[bytes, str]:
+        data_match = re.match(
+            r"^data:([^;,]+);base64,(.*)$",
+            media_url,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if data_match:
+            content_type = data_match.group(1).strip().lower()
+            try:
+                media_bytes = base64.b64decode(data_match.group(2).strip(), validate=True)
+            except ValueError as exc:
+                raise RuntimeError("Discord media data URL is not valid base64.") from exc
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Discord media exceeds the provider size limit.")
+            return media_bytes, content_type
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                media_bytes = local_path.read_bytes()
+                if len(media_bytes) > max_bytes:
+                    raise RuntimeError("Discord media exceeds the provider size limit.")
+                guessed_type = mimetypes.guess_type(local_path.name)[0] or ""
+                return media_bytes, guessed_type
+        parsed = urlparse(media_url)
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if not local_path.is_file():
+                raise RuntimeError(f"Media path does not exist: {media_url}")
+            media_bytes = local_path.read_bytes()
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Discord media exceeds the provider size limit.")
+            guessed_type = mimetypes.guess_type(local_path.name)[0] or ""
+            return media_bytes, guessed_type
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
+                media_bytes = local_path.read_bytes()
+                if len(media_bytes) > max_bytes:
+                    raise RuntimeError("Discord media exceeds the provider size limit.")
+                guessed_type = mimetypes.guess_type(local_path.name)[0] or ""
+                return media_bytes, guessed_type
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                media_bytes = response.read(max_bytes + 1)
+                if len(media_bytes) > max_bytes:
+                    raise RuntimeError("Discord media exceeds the provider size limit.")
+                content_type = response.headers.get("Content-Type") or ""
+                return media_bytes, content_type
         except HTTPError as exc:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:

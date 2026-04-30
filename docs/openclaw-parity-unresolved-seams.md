@@ -536,6 +536,10 @@ queued.
 Discord `search` now dispatches through the same route-backed bot-token REST
 path, including content, repeated channel/author filters, clamped limit, and
 the upstream-shaped `{ok: true, results}` payload.
+Discord guild-admin `emoji-upload` now dispatches through the same
+route-backed bot-token REST path, including data URL/local/canvas/HTTP media
+loading, PNG/JPG/GIF validation, role filtering, and the upstream-shaped
+`{ok: true, emoji}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
