@@ -66,7 +66,9 @@ from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
 from openzues.services.gateway_config import (
     GatewayConfigService,
+    _normalize_allowlist_entries,
     _normalize_openclaw_channel_plugin_id,
+    _read_channel_allow_from_store,
 )
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
 from openzues.services.gateway_model_scan import GatewayModelScanService
@@ -4406,6 +4408,310 @@ def _doctor_security_gateway_exposure_warnings(
     ]
 
 
+_DOCTOR_CHANNEL_LABELS = {
+    "discord": "Discord",
+    "feishu": "Feishu",
+    "googlechat": "Google Chat",
+    "imessage": "iMessage",
+    "irc": "IRC",
+    "line": "LINE",
+    "matrix": "Matrix",
+    "msteams": "Microsoft Teams",
+    "nextcloud-talk": "Nextcloud Talk",
+    "nostr": "Nostr",
+    "signal": "Signal",
+    "slack": "Slack",
+    "telegram": "Telegram",
+    "whatsapp": "WhatsApp",
+    "zalo": "Zalo",
+    "zulip": "Zulip",
+}
+_DOCTOR_CHANNEL_CREDENTIAL_KEYS = {
+    "accessToken",
+    "apiKey",
+    "apiToken",
+    "appToken",
+    "authToken",
+    "botToken",
+    "clientSecret",
+    "homeserver",
+    "password",
+    "phoneNumberId",
+    "signingSecret",
+    "token",
+    "userId",
+    "webhookSecret",
+    "webhookUrl",
+}
+
+
+@dataclass(frozen=True)
+class _DoctorChannelDmPolicy:
+    policy: str
+    allow_from: list[str]
+    policy_path: str
+    allow_from_path: str
+
+
+def _doctor_channel_label(channel_id: str) -> str:
+    normalized = _normalize_openclaw_channel_plugin_id(channel_id) or channel_id.strip().lower()
+    if normalized in _DOCTOR_CHANNEL_LABELS:
+        return _DOCTOR_CHANNEL_LABELS[normalized]
+    words = normalized.replace("-", " ").replace("_", " ").split()
+    return " ".join(word.capitalize() for word in words) or channel_id
+
+
+def _doctor_channel_enabled(
+    *,
+    channel_config: dict[str, object],
+    account_config: dict[str, object],
+) -> bool:
+    if channel_config.get("enabled") is False or account_config.get("enabled") is False:
+        return False
+    return True
+
+
+def _doctor_channel_secret_configured(value: object) -> bool:
+    if _optional_cli_string(value) is not None:
+        return True
+    if not isinstance(value, dict):
+        return False
+    if _optional_cli_string(value.get("id")) is not None and _optional_cli_string(
+        value.get("source")
+    ) is not None:
+        return True
+    return any(_doctor_channel_secret_configured(child) for child in value.values())
+
+
+def _doctor_channel_has_runtime_config(config: dict[str, object]) -> bool:
+    for key in _DOCTOR_CHANNEL_CREDENTIAL_KEYS:
+        if key in config and _doctor_channel_secret_configured(config.get(key)):
+            return True
+    return False
+
+
+def _doctor_channel_configured(
+    *,
+    channel_config: dict[str, object],
+    account_config: dict[str, object],
+) -> bool:
+    account_configured = account_config.get("configured")
+    if isinstance(account_configured, bool):
+        return account_configured
+    channel_configured = channel_config.get("configured")
+    if isinstance(channel_configured, bool):
+        return channel_configured
+    return _doctor_channel_has_runtime_config(account_config) or _doctor_channel_has_runtime_config(
+        channel_config
+    )
+
+
+def _doctor_channel_default_account(
+    channel_config: dict[str, object],
+) -> tuple[str | None, dict[str, object]]:
+    accounts = _dict_config(channel_config.get("accounts"))
+    if not accounts:
+        return None, channel_config
+    configured_default = _optional_cli_string(channel_config.get("defaultAccountId"))
+    if configured_default is not None and configured_default in accounts:
+        return configured_default, _dict_config(accounts.get(configured_default))
+    if DEFAULT_ACCOUNT_ID in accounts:
+        return DEFAULT_ACCOUNT_ID, _dict_config(accounts.get(DEFAULT_ACCOUNT_ID))
+    account_id = next(iter(accounts))
+    return str(account_id), _dict_config(accounts.get(account_id))
+
+
+def _doctor_dm_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for item in value:
+        entry = str(item).strip()
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def _doctor_dm_field(
+    config: dict[str, object],
+    *,
+    prefix: str,
+    policy_only: bool = False,
+) -> tuple[str | None, list[str] | None, str | None, str | None]:
+    policy = _optional_cli_string(config.get("dmPolicy"))
+    allow_from = _doctor_dm_list(config.get("allowFrom"))
+    if policy is not None or (allow_from and not policy_only):
+        return (
+            policy,
+            allow_from if allow_from else None,
+            f"{prefix}.dmPolicy" if policy is not None else None,
+            f"{prefix}.",
+        )
+    dm = _dict_config(config.get("dm"))
+    nested_policy = _optional_cli_string(dm.get("policy"))
+    nested_allow_from = _doctor_dm_list(dm.get("allowFrom"))
+    if nested_policy is not None or (nested_allow_from and not policy_only):
+        return (
+            nested_policy,
+            nested_allow_from if nested_allow_from else None,
+            f"{prefix}.dm.policy" if nested_policy is not None else None,
+            f"{prefix}.dm.",
+        )
+    return None, None, None, None
+
+
+def _doctor_security_resolve_dm_policy(
+    *,
+    channel_id: str,
+    channel_config: dict[str, object],
+    account_id: str | None,
+    account_config: dict[str, object],
+) -> _DoctorChannelDmPolicy:
+    root_prefix = f"channels.{channel_id}"
+    account_prefix = (
+        f"{root_prefix}.accounts.{account_id}" if account_id is not None else root_prefix
+    )
+    field_sources: list[tuple[dict[str, object], str]] = []
+    if account_id is not None:
+        field_sources.append((account_config, account_prefix))
+    field_sources.append((channel_config, root_prefix))
+
+    allow_from: list[str] | None = None
+    allow_from_path: str | None = None
+    for config, prefix in field_sources:
+        policy, source_allow_from, policy_path, source_allow_from_path = _doctor_dm_field(
+            config,
+            prefix=prefix,
+        )
+        if source_allow_from is not None and allow_from is None:
+            allow_from = source_allow_from
+            allow_from_path = source_allow_from_path
+        if policy is not None:
+            return _DoctorChannelDmPolicy(
+                policy=policy,
+                allow_from=allow_from or [],
+                policy_path=policy_path or f"{prefix}.dmPolicy",
+                allow_from_path=source_allow_from_path or f"{prefix}.",
+            )
+
+    default_prefix = account_prefix if account_id is not None else root_prefix
+    return _DoctorChannelDmPolicy(
+        policy="pairing",
+        allow_from=allow_from or [],
+        policy_path=f"{default_prefix}.dmPolicy",
+        allow_from_path=allow_from_path or f"{default_prefix}.",
+    )
+
+
+def _doctor_dm_allow_state(
+    *,
+    channel_id: str,
+    account_id: str | None,
+    allow_from: list[str],
+    data_dir: Path | None,
+) -> tuple[bool, int, bool]:
+    has_wildcard = any(entry.strip() == "*" for entry in allow_from)
+    normalized = _normalize_allowlist_entries(allow_from)
+    store_entries = _read_channel_allow_from_store(
+        channel_id,
+        account_id=account_id,
+        data_dir=data_dir,
+    )
+    allow_count = len({*normalized, *store_entries})
+    return has_wildcard, allow_count, has_wildcard or allow_count > 1
+
+
+def _doctor_security_channel_dm_warning_lines(
+    *,
+    label: str,
+    channel_id: str,
+    account_id: str | None,
+    dm_policy: _DoctorChannelDmPolicy,
+    dm_scope: str,
+    data_dir: Path | None,
+) -> list[str]:
+    warnings: list[str] = []
+    has_wildcard, allow_count, is_multi_user_dm = _doctor_dm_allow_state(
+        channel_id=channel_id,
+        account_id=account_id,
+        allow_from=dm_policy.allow_from,
+        data_dir=data_dir,
+    )
+    if dm_policy.policy == "open":
+        warnings.append(
+            f'- {label} DMs: OPEN ({dm_policy.policy_path}="open"). Anyone can DM it.'
+        )
+        if not has_wildcard:
+            warnings.append(
+                f'- {label} DMs: config invalid - "open" requires '
+                f'{dm_policy.allow_from_path}allowFrom to include "*".'
+            )
+    if dm_policy.policy == "disabled":
+        warnings.append(f'- {label} DMs: disabled ({dm_policy.policy_path}="disabled").')
+        return warnings
+    if dm_policy.policy != "open" and allow_count == 0:
+        warnings.append(
+            f'- {label} DMs: locked ({dm_policy.policy_path}="{dm_policy.policy}") '
+            "with no allowlist; unknown senders will be blocked / get a pairing code."
+        )
+        warnings.append(
+            f"  Approve via: openclaw pairing list {channel_id} / "
+            f"openclaw pairing approve {channel_id} <code>"
+        )
+    if dm_scope == "main" and is_multi_user_dm:
+        warnings.append(
+            f"- {label} DMs: multiple senders share the main session; run: "
+            'openclaw config set session.dmScope "per-channel-peer" '
+            '(or "per-account-channel-peer" for multi-account channels) to isolate sessions.'
+        )
+    return warnings
+
+
+def _doctor_security_channel_dm_warnings(
+    snapshot: dict[str, object],
+    data_dir: Path | None,
+) -> list[str]:
+    channels = _dict_config(snapshot.get("channels"))
+    if not channels:
+        return []
+    session = _dict_config(snapshot.get("session"))
+    dm_scope = _optional_cli_string(session.get("dmScope")) or "main"
+    warnings: list[str] = []
+    for raw_channel_id, raw_channel_config in channels.items():
+        channel_id = str(raw_channel_id)
+        if channel_id == "defaults" or not isinstance(raw_channel_config, dict):
+            continue
+        channel_config = raw_channel_config
+        account_id, account_config = _doctor_channel_default_account(channel_config)
+        if not _doctor_channel_enabled(
+            channel_config=channel_config,
+            account_config=account_config,
+        ):
+            continue
+        if not _doctor_channel_configured(
+            channel_config=channel_config,
+            account_config=account_config,
+        ):
+            continue
+        dm_policy = _doctor_security_resolve_dm_policy(
+            channel_id=channel_id,
+            channel_config=channel_config,
+            account_id=account_id,
+            account_config=account_config,
+        )
+        warnings.extend(
+            _doctor_security_channel_dm_warning_lines(
+                label=_doctor_channel_label(channel_id),
+                channel_id=channel_id,
+                account_id=account_id,
+                dm_policy=dm_policy,
+                dm_scope=dm_scope,
+                data_dir=data_dir,
+            )
+        )
+    return warnings
+
+
 def _build_doctor_security_payload(
     config_service: object | None = None,
     data_dir: Path | None = None,
@@ -4428,6 +4734,7 @@ def _build_doctor_security_payload(
         *_doctor_security_heartbeat_warnings(snapshot),
         *_doctor_security_exec_policy_warnings(snapshot, data_dir),
         *_doctor_security_gateway_exposure_warnings(snapshot),
+        *_doctor_security_channel_dm_warnings(snapshot, data_dir),
     ]
     return {
         "status": "warning" if warnings else "ok",

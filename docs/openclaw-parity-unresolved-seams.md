@@ -483,7 +483,10 @@ legacy bind aliases under the legacy-config migrator. It now also compares
 global and per-agent `tools.exec` policy against the native
 `settings/exec-approvals.json` host policy and emits the OpenClaw-shaped
 config/host/effective-policy warning when the requested policy is broader or
-less prompt-heavy than the host permits. Shell completion remains partial until
+less prompt-heavy than the host permits. Configured channel DM security now
+also mirrors OpenClaw's OPEN, invalid-open-allowFrom, locked allowlist/pairing,
+disabled, and shared-main-session warnings using native config snapshots and
+the existing pairing allowFrom store. Shell completion remains partial until
 production repair adapters are wired.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes

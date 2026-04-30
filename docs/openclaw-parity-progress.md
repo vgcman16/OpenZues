@@ -2870,6 +2870,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_includes_security_and_shell_completion_surfaces or
   legacy_gateway_bind_host_alias or legacy_thread_binding_ttl_hours"` (`10
   passed`).
+- `doctor:security` now mirrors OpenClaw's configured channel DM policy
+  warnings. The native doctor reads enabled/configured channel snapshots,
+  resolves the default account, preserves top-level and nested `dmPolicy` /
+  `allowFrom` paths, consults the pairing allowFrom store, and reports OPEN,
+  invalid-open, locked, disabled, and shared-main-session warnings with
+  OpenClaw-shaped pairing and `session.dmScope` guidance.
+- Verified the DM-policy security slice with `python -m pytest
+  tests\test_cli.py -k "channel_dm_policy_security"` (`1 passed`), adjacent
+  security/allowFrom proof `python -m pytest tests\test_cli.py -k
+  "channel_dm_policy_security or exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  doctor_json_warns_when_approvals_exec_forwarding_is_disabled or
+  doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  open_policy_allow_from or allowlist_policy_allow_from"` (`10 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the
