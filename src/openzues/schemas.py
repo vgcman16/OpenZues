@@ -1776,6 +1776,10 @@ class ControlUiGatewayToolsConfigView(ControlUiToolAllowDenyConfigView):
 class ControlUiGatewayConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    bind: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65_535)
+    custom_bind_host: str | None = Field(default=None, alias="customBindHost")
+    control_ui: dict[str, Any] | None = Field(default=None, alias="controlUi")
     webchat: ControlUiGatewayWebchatConfigView | None = None
     agents: ControlUiGatewayAgentsConfigView | None = None
     tools: ControlUiGatewayToolsConfigView | None = None

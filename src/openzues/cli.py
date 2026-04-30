@@ -2182,6 +2182,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy Slack streaming config uses scalar aliases."
     if _legacy_config_issues_all_googlechat_stream_mode(issues):
         return "Legacy Google Chat streamMode config is unused."
+    if _legacy_config_issues_all_match(issues, "gateway.bind"):
+        return "Legacy gateway bind host aliases use bind modes."
     return "Legacy config contains migratable keys."
 
 
@@ -2200,6 +2202,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
     if _legacy_config_issues_all_googlechat_stream_mode(issues):
         return "Legacy Google Chat streamMode config is unused; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, "gateway.bind"):
+        return "Legacy gateway bind host aliases use bind modes; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
 
 

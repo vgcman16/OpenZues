@@ -105,10 +105,14 @@ nested `channels.slack.streaming` / account-scoped streaming config, including
 `nativeStreaming` -> `nativeTransport`.
 Google Chat legacy `streamMode` keys are now removed through the same native
 doctor contribution for root and account-scoped channel config.
+Runtime gateway legacy config now also follows OpenClaw's compatibility
+migrator for non-loopback Control UI safety: `doctor --fix` seeds
+`gateway.controlUi.allowedOrigins` for existing `lan` / `tailnet` / `custom` /
+`auto` binds when no explicit origins are configured, and legacy
+`gateway.bind` host aliases normalize to bind modes.
 Remaining legacy-config parity is broader doctor migration breadth from
-OpenClaw's compatibility migrator; the next small source-backed head is runtime
-gateway config migration parity for non-loopback Control UI origins and
-`gateway.bind` host-alias normalization.
+OpenClaw's compatibility migrator; the next small source-backed head is
+`audio.transcription` migration into `tools.media.audio.models`.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

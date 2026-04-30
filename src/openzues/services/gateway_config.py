@@ -12,6 +12,7 @@ from typing import Any
 
 from openzues.schemas import ControlUiBootstrapConfigView
 
+_OPENCLAW_DEFAULT_GATEWAY_PORT = 18789
 _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "discord": "discord",
     "feishu": "feishu",
@@ -250,6 +251,8 @@ class GatewayConfigService:
             *_migrate_legacy_telegram_streaming_keys(payload),
             *_migrate_legacy_slack_streaming_keys(payload),
             *_migrate_legacy_googlechat_stream_mode(payload),
+            *_migrate_gateway_control_ui_allowed_origins(payload),
+            *_migrate_legacy_gateway_bind_alias(payload),
         ]
         if not changes:
             snapshot = self.build_snapshot()
@@ -1693,6 +1696,17 @@ def _legacy_googlechat_stream_mode_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_gateway_bind_alias_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": "gateway.bind",
+        "message": (
+            "gateway.bind host aliases are legacy; use bind modes "
+            "lan/loopback/custom/tailnet/auto instead."
+        ),
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1718,6 +1732,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_googlechat_stream_mode_issue(path)
             for path in _iter_legacy_googlechat_stream_mode_paths(payload)
+        ],
+        *[
+            _legacy_gateway_bind_alias_issue(path)
+            for path in _iter_legacy_gateway_bind_alias_paths(payload)
         ],
     ]
 
@@ -2123,6 +2141,13 @@ def _iter_legacy_googlechat_stream_mode_paths(payload: dict[str, Any]) -> list[s
     return paths
 
 
+def _iter_legacy_gateway_bind_alias_paths(payload: dict[str, Any]) -> list[str]:
+    gateway = payload.get("gateway")
+    if not isinstance(gateway, dict):
+        return []
+    return ["gateway.bind"] if _gateway_bind_alias_target(gateway.get("bind")) else []
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2318,6 +2343,98 @@ def _migrate_googlechat_stream_mode_entry(
         return
     del entry["streamMode"]
     changes.append(f"Removed {path_label}.streamMode (legacy key no longer used).")
+
+
+def _migrate_gateway_control_ui_allowed_origins(payload: dict[str, Any]) -> list[str]:
+    gateway = payload.get("gateway")
+    if not isinstance(gateway, dict) or not _is_gateway_non_loopback_bind_mode(
+        gateway.get("bind")
+    ):
+        return []
+    control_ui = gateway.get("controlUi")
+    next_control_ui = dict(control_ui) if isinstance(control_ui, dict) else {}
+    if _has_configured_control_ui_allowed_origins(next_control_ui):
+        return []
+    port = _resolve_gateway_port_with_default(gateway.get("port"))
+    origins = _build_default_control_ui_allowed_origins(
+        port=port,
+        bind=gateway.get("bind"),
+        custom_bind_host=gateway.get("customBindHost"),
+    )
+    next_control_ui["allowedOrigins"] = origins
+    gateway["controlUi"] = next_control_ui
+    return [
+        "Seeded gateway.controlUi.allowedOrigins "
+        f"{json.dumps(origins)} for bind={gateway.get('bind')}. "
+        "Required since v2026.2.26. Add other machine origins to "
+        "gateway.controlUi.allowedOrigins if needed."
+    ]
+
+
+def _migrate_legacy_gateway_bind_alias(payload: dict[str, Any]) -> list[str]:
+    gateway = payload.get("gateway")
+    if not isinstance(gateway, dict):
+        return []
+    raw_bind = gateway.get("bind")
+    mapped = _gateway_bind_alias_target(raw_bind)
+    if mapped is None:
+        return []
+    gateway["bind"] = mapped
+    return [f'Normalized gateway.bind "{_escape_control_for_log(raw_bind)}" to "{mapped}".']
+
+
+def _is_gateway_non_loopback_bind_mode(value: object) -> bool:
+    return value in {"lan", "tailnet", "custom", "auto"}
+
+
+def _has_configured_control_ui_allowed_origins(control_ui: dict[str, Any]) -> bool:
+    if control_ui.get("dangerouslyAllowHostHeaderOriginFallback") is True:
+        return True
+    allowed_origins = control_ui.get("allowedOrigins")
+    return isinstance(allowed_origins, list) and any(
+        isinstance(origin, str) and bool(origin.strip()) for origin in allowed_origins
+    )
+
+
+def _resolve_gateway_port_with_default(value: object) -> int:
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, float) and value.is_integer() and value > 0:
+        return int(value)
+    return _OPENCLAW_DEFAULT_GATEWAY_PORT
+
+
+def _build_default_control_ui_allowed_origins(
+    *,
+    port: int,
+    bind: object,
+    custom_bind_host: object,
+) -> list[str]:
+    origins = [
+        f"http://localhost:{port}",
+        f"http://127.0.0.1:{port}",
+    ]
+    if bind == "custom" and isinstance(custom_bind_host, str):
+        trimmed = custom_bind_host.strip()
+        if trimmed:
+            origins.append(f"http://{trimmed}:{port}")
+    return origins
+
+
+def _gateway_bind_alias_target(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"0.0.0.0", "::", "[::]", "*"}:
+        return "lan"
+    if normalized in {"127.0.0.1", "localhost", "::1", "[::1]"}:
+        return "loopback"
+    return None
+
+
+def _escape_control_for_log(value: object) -> str:
+    text = str(value)
+    return text.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
 
 
 def _migrate_legacy_slack_streaming_keys(payload: dict[str, Any]) -> list[str]:
