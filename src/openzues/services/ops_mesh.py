@@ -7407,6 +7407,8 @@ class OpsMeshService:
                 request,
             )
         if channel == "discord" and action in {
+            "channel-info",
+            "channel-list",
             "delete",
             "edit",
             "emoji-list",
@@ -7506,6 +7508,20 @@ class OpsMeshService:
             if action == "emoji-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_emoji_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-info":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_list_message_action,
                     route,
                     request,
                     secret_token,
@@ -9219,6 +9235,58 @@ class OpsMeshService:
         if not isinstance(emojis, list):
             raise RuntimeError("Discord API returned a non-JSON emojis response.")
         return {"ok": True, "emojis": emojis}
+
+    def _dispatch_discord_channel_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-info requires channelId.")
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_channel_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        channels = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(channels, dict) and channels.get("error"):
+            raise RuntimeError(str(channels.get("error")))
+        if not isinstance(channels, list):
+            raise RuntimeError("Discord API returned a non-JSON channels response.")
+        return {"ok": True, "channels": channels}
 
     def _dispatch_discord_thread_create_message_action(
         self,
