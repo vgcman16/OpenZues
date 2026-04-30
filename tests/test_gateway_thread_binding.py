@@ -72,6 +72,46 @@ async def test_thread_binder_registry_resolves_current_provider_thread() -> None
 
 
 @pytest.mark.asyncio
+async def test_thread_binder_registry_resolves_matrix_provider_thread() -> None:
+    async def list_routes() -> list[NotificationRouteView]:
+        return [
+            _route(
+                channel="matrix",
+                account_id="bot-alpha",
+                peer_id="!room:example.org",
+            )
+        ]
+
+    binder = GatewaySubagentThreadBinderRegistry(list_notification_route_views=list_routes)
+
+    result = await binder(
+        {"sessionKey": "agent:main:main", "agentId": "main"},
+        {"sessionKey": "agent:main:subagent:child", "agentId": "main"},
+        {
+            "channel": "matrix",
+            "accountId": "bot-alpha",
+            "to": "room:!room:example.org",
+            "threadId": "$thread-root",
+        },
+    )
+
+    assert result == {
+        "status": "ok",
+        "threadBindingReady": True,
+        "channel": "matrix",
+        "accountId": "bot-alpha",
+        "to": "room:!room:example.org",
+        "threadId": "$thread-root",
+        "deliveryOrigin": {
+            "channel": "matrix",
+            "accountId": "bot-alpha",
+            "to": "room:!room:example.org",
+            "threadId": "$thread-root",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_thread_binder_registry_preserves_no_hook_error_without_route() -> None:
     async def list_routes() -> list[NotificationRouteView]:
         return []

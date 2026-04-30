@@ -131,8 +131,8 @@ are projected even before a sandbox runtime has been spawned.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
-construction. Supported Slack, Telegram, Discord, and WhatsApp route contexts
-create persistent child sessions, force cleanup to `keep`, store
+construction. Supported Slack, Telegram, Discord, WhatsApp, and Matrix route
+contexts create persistent child sessions, force cleanup to `keep`, store
 thread/account/channel binding metadata, and route completion delivery through
 the bound thread. Binder results must now report both `status="ok"` and
 `threadBindingReady=true`; unsupported, unconfigured, or not-ready channels
@@ -151,8 +151,9 @@ fakeable binder protocol exposes `unbind`, the production route-backed binder
 returns a stateless no-op cleanup result, and the provisional child transcript
 and metadata are still deleted with the original actionable startup error.
 Remaining lifecycle parity is deeper persistent provider binding records,
-provider-native end-hook/farewell behavior on reset/delete, and ACP/session
-binding policy breadth.
+provider-native child-thread creation, target-agent bound-account selection,
+end-hook/farewell behavior on reset/delete, and ACP/session binding policy
+breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,

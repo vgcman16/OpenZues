@@ -2798,6 +2798,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_acp_spawn.py -q` (`9 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Matrix existing-thread route contexts are now first-class thread-bound
+  subagent targets: notification routes admit `kind="matrix"`, requester
+  route normalization preserves Matrix channel context, and the route-backed
+  binder accepts Matrix routes so `sessions.spawn thread=true` can persist
+  Matrix thread binding/completion delivery metadata after the explicit
+  `spawnSubagentSessions=true` opt-in required by child-placement policy.
+- Verified the Matrix route-backed thread-binding seam with `python -m pytest
+  tests\test_gateway_thread_binding.py::test_thread_binder_registry_resolves_matrix_provider_thread -q`
+  (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder -q`
+  (`1 passed`), adjacent coverage `python -m pytest
+  tests\test_gateway_thread_binding.py -q` (`4 passed`) and `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode"` (`9
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 
 ## References
 

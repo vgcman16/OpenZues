@@ -9,7 +9,9 @@ from openzues.services.session_keys import DEFAULT_ACCOUNT_ID
 NO_THREAD_BINDING_HOOK_ERROR = (
     "thread=true is unavailable because no channel plugin registered subagent_spawning hooks."
 )
-SUPPORTED_THREAD_BINDING_CHANNELS = frozenset({"slack", "telegram", "discord", "whatsapp"})
+SUPPORTED_THREAD_BINDING_CHANNELS = frozenset(
+    {"slack", "telegram", "discord", "whatsapp", "matrix"}
+)
 
 
 class GatewaySubagentThreadBinder(Protocol):

@@ -17967,6 +17967,126 @@ async def test_sessions_spawn_thread_mode_uses_route_backed_thread_binder(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder(
+    tmp_path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from openzues.schemas import ConversationTargetView, NotificationRouteView
+    from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-matrix-registry.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-matrix-thread-bound-child-1", "status": "ok"}
+
+    async def list_routes() -> list[NotificationRouteView]:
+        now = datetime.now(UTC)
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Matrix room route",
+                kind="matrix",
+                target="native://route",
+                events=["gateway/send"],
+                conversation_target=ConversationTargetView(
+                    channel="matrix",
+                    account_id="bot-alpha",
+                    peer_kind="channel",
+                    peer_id="!room:example.org",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=list_routes,
+        ),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in this Matrix thread.",
+            "thread": True,
+            "cleanup": "delete",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_to="room:!room:example.org",
+            message_account_id="bot-alpha",
+            message_thread_id="$thread-root",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert payload["mode"] == "session"
+    assert payload["cleanup"] == "keep"
+    assert send_calls[0]["deliver"] is True
+    assert send_calls[0]["channel"] == "matrix"
+    assert send_calls[0]["to"] == "room:!room:example.org"
+    assert send_calls[0]["account_id"] == "bot-alpha"
+    assert send_calls[0]["thread_id"] == "$thread-root"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$thread-root",
+    }
+    assert metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$thread-root",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_rejects_agent_id_outside_configured_allowlist(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-agent-allowlist.db")
     await database.initialize()
