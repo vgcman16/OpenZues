@@ -7451,6 +7451,7 @@ class OpsMeshService:
             "role-add",
             "role-info",
             "role-remove",
+            "search",
             "send",
             "sticker",
             "thread-create",
@@ -7677,6 +7678,13 @@ class OpsMeshService:
             if action == "thread-reply":
                 return await asyncio.to_thread(
                     self._dispatch_discord_thread_reply_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "search":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_search_message_action,
                     route,
                     request,
                     secret_token,
@@ -10164,6 +10172,52 @@ class OpsMeshService:
                 "channelId": str(result.get("channel_id") or thread_id),
             },
         }
+
+    def _dispatch_discord_search_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        content = (
+            _message_action_param_string(request.params, "query")
+            or _message_action_param_string(request.params, "content", required=True)
+            or ""
+        )
+        query: list[tuple[str, str]] = [("content", content)]
+        channel_ids = _message_action_param_string_array(request.params, "channelIds") or []
+        channel_id = _message_action_param_string(request.params, "channelId")
+        if channel_id:
+            channel_ids.append(channel_id)
+        for raw_channel_id in channel_ids:
+            normalized_channel_id = _discord_action_channel_id(raw_channel_id)
+            if normalized_channel_id:
+                query.append(("channel_id", normalized_channel_id))
+        author_ids = _message_action_param_string_array(request.params, "authorIds") or []
+        author_id = _message_action_param_string(request.params, "authorId")
+        if author_id:
+            author_ids.append(author_id)
+        for raw_author_id in author_ids:
+            query.append(("author_id", raw_author_id))
+        limit = _message_action_param_integer(request.params, "limit")
+        if limit is not None:
+            query.append(("limit", str(min(max(limit, 1), 25))))
+        results = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/messages/search")
+            + f"?{urlencode(query)}",
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(results, dict) and results.get("error"):
+            raise RuntimeError(str(results.get("error")))
+        return {"ok": True, "results": results if results is not None else {}}
 
     def _dispatch_discord_sticker_message_action(
         self,
