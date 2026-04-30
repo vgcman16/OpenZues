@@ -495,6 +495,11 @@ Discord guild-admin `channel-move` now dispatches through the same
 route-backed bot-token REST path, including the OpenClaw one-item guild
 channel positions body with parent clearing/assignment and integer position
 coercion.
+Discord guild-admin `channel-permission-set` and
+`channel-permission-remove` now dispatch through the same route-backed
+bot-token REST path, mapping role/member target types to Discord permission
+overwrite types, preserving optional `allow`/`deny`, normalizing channel ids,
+and returning the upstream-shaped `{ok: true}` payload.
 Discord guild-admin `category-create` now dispatches through the same
 route-backed bot-token REST path, creating a type `4` category and returning
 the upstream-shaped `{ok: true, category}` payload.

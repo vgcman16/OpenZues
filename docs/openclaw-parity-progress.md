@@ -4721,6 +4721,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "message_action_dispatches_discord"` (`45 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Discord guild-admin `channel-permission-set` and
+  `channel-permission-remove` now follow OpenClaw's permission overwrite
+  action contract through the route-backed bot-token REST path. Set maps
+  `targetType=role/member` to Discord types `0/1`, preserves optional
+  `allow`/`deny`, normalizes `channel:` ids, and remove deletes the overwrite
+  while both return `{ok: true}`.
+- Verified the Discord channel-permissions seam with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_channel_permissions_route"` (`1
+  passed`), adjacent Discord action coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "message_action_dispatches_discord"` (`46
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

@@ -7469,6 +7469,8 @@ class OpsMeshService:
             "channel-info",
             "channel-list",
             "channel-move",
+            "channel-permission-remove",
+            "channel-permission-set",
             "delete",
             "edit",
             "emoji-list",
@@ -7700,6 +7702,20 @@ class OpsMeshService:
             if action == "channel-move":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_move_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-permission-set":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_permission_set_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-permission-remove":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_permission_remove_message_action,
                     route,
                     request,
                     secret_token,
@@ -10113,6 +10129,83 @@ class OpsMeshService:
             _discord_api_endpoint(f"guilds/{guild_id}/channels"),
             method="PATCH",
             payload=[moved_channel],
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_channel_permission_set_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-permission-set requires channelId.")
+        target_id = _message_action_param_string(
+            request.params,
+            "targetId",
+            required=True,
+        )
+        target_type_raw = _message_action_param_string(
+            request.params,
+            "targetType",
+            required=True,
+        )
+        payload: dict[str, object] = {
+            "type": 1 if str(target_type_raw or "") == "member" else 0,
+        }
+        allow = _message_action_param_string(request.params, "allow")
+        if allow is not None:
+            payload["allow"] = allow
+        deny = _message_action_param_string(request.params, "deny")
+        if deny is not None:
+            payload["deny"] = deny
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/permissions/{target_id}"),
+            method="PUT",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_channel_permission_remove_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-permission-remove requires channelId.")
+        target_id = _message_action_param_string(
+            request.params,
+            "targetId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/permissions/{target_id}"),
+            method="DELETE",
             secret_header_name="Authorization",
             secret_token=_discord_bot_authorization(secret_token),
         )
