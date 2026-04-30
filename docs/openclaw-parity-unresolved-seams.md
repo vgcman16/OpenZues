@@ -443,6 +443,8 @@ so no smaller Discord reaction action seam remains in this queue. Discord
 `to` / `message` / `replyTo` / `threadId` / `silent` and media path aliases.
 Discord `edit` now dispatches through the route-backed bot-token REST path,
 mapping `message` to the upstream `content` edit payload.
+Discord `delete` now dispatches through the same route-backed bot-token REST
+path and returns the upstream-shaped `{ok: true}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

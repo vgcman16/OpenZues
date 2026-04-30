@@ -7185,7 +7185,13 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "discord" and action in {"edit", "react", "reactions", "send"}:
+        if channel == "discord" and action in {
+            "delete",
+            "edit",
+            "react",
+            "reactions",
+            "send",
+        }:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -7212,6 +7218,13 @@ class OpsMeshService:
             if action == "edit":
                 return await asyncio.to_thread(
                     self._dispatch_discord_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "delete":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_delete_message_action,
                     route,
                     request,
                     secret_token,
@@ -8496,6 +8509,34 @@ class OpsMeshService:
         if result.get("error"):
             raise RuntimeError(str(result.get("error")))
         return {"ok": True, "message": result}
+
+    def _dispatch_discord_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord delete requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     async def _post_provider_route_event(
         self,
