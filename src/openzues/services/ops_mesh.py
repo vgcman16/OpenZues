@@ -7194,7 +7194,9 @@ class OpsMeshService:
             required=True,
             allow_empty=True,
         )
-        if remove or not emoji:
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a Discord reaction.")
+        if not emoji:
             return None
         channel_id = _discord_action_channel_id(
             _message_action_param_string(request.params, "channelId", required=True)
@@ -7211,12 +7213,14 @@ class OpsMeshService:
             _discord_api_endpoint(
                 f"channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me"
             ),
-            method="PUT",
+            method="DELETE" if remove else "PUT",
             secret_header_name="Authorization",
             secret_token=_discord_bot_authorization(secret_token),
         )
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error")))
+        if remove:
+            return {"ok": True, "removed": emoji}
         return {"ok": True, "added": emoji}
 
     async def _post_provider_route_event(
