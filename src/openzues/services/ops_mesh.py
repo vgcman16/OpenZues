@@ -7423,6 +7423,7 @@ class OpsMeshService:
             "channel-edit",
             "channel-info",
             "channel-list",
+            "channel-move",
             "delete",
             "edit",
             "emoji-list",
@@ -7567,6 +7568,13 @@ class OpsMeshService:
             if action == "channel-delete":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_delete_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-move":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_move_message_action,
                     route,
                     request,
                     secret_token,
@@ -9500,6 +9508,45 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error")))
         return {"ok": True, "channelId": channel_id}
+
+    def _dispatch_discord_channel_move_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-move requires channelId.")
+        moved_channel: dict[str, object] = {"id": channel_id}
+        has_parent_id, parent_id = _discord_parent_id_param(request.params)
+        if has_parent_id:
+            moved_channel["parent_id"] = parent_id
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            moved_channel["position"] = position
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="PATCH",
+            payload=[moved_channel],
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     def _dispatch_discord_thread_create_message_action(
         self,
