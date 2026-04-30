@@ -4573,6 +4573,16 @@ def _doctor_find_active_token(
     return None
 
 
+def _doctor_number_ms(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
 def _doctor_paired_record_warnings(paired: dict[str, object]) -> list[str]:
     device_id = _doctor_safe_device_text(paired.get("deviceId")) or "unknown-device"
     device_label = _doctor_paired_device_label(paired)
@@ -4611,8 +4621,142 @@ def _doctor_paired_record_warnings(paired: dict[str, object]) -> list[str]:
     return warnings
 
 
+def _doctor_read_local_device_identity(data_dir: Path | None) -> str | None:
+    if data_dir is None:
+        return None
+    identity = _read_cli_json_object(data_dir / "identity" / "device.json")
+    if identity is None:
+        return None
+    if _doctor_number_ms(identity.get("version")) != 1:
+        return None
+    return _optional_cli_string(identity.get("deviceId"))
+
+
+def _doctor_local_auth_token_entry(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    if _optional_cli_string(value.get("token")) is None:
+        return None
+    role = _optional_cli_string(value.get("role"))
+    updated_at_ms = _doctor_number_ms(value.get("updatedAtMs"))
+    if role is None or updated_at_ms is None:
+        return None
+    raw_scopes = value.get("scopes")
+    if not isinstance(raw_scopes, list):
+        return None
+    scopes: list[str] = []
+    for scope in raw_scopes:
+        if not isinstance(scope, str):
+            return None
+        scopes.append(scope)
+    return {
+        "role": role,
+        "scopes": scopes,
+        "updatedAtMs": updated_at_ms,
+    }
+
+
+def _doctor_read_local_device_auth_store(
+    data_dir: Path | None,
+) -> dict[str, object] | None:
+    if data_dir is None:
+        return None
+    store = _read_cli_json_object(data_dir / "identity" / "device-auth.json")
+    if store is None:
+        return None
+    if _doctor_number_ms(store.get("version")) != 1:
+        return None
+    device_id = _optional_cli_string(store.get("deviceId"))
+    raw_tokens = store.get("tokens")
+    if device_id is None or not isinstance(raw_tokens, dict):
+        return None
+    tokens: list[dict[str, object]] = []
+    for entry in raw_tokens.values():
+        token = _doctor_local_auth_token_entry(entry)
+        if token is None:
+            return None
+        tokens.append(token)
+    return {"deviceId": device_id, "tokens": tokens}
+
+
+def _doctor_local_device_auth_warnings(
+    paired: Sequence[dict[str, object]],
+    data_dir: Path | None,
+) -> list[str]:
+    identity_device_id = _doctor_read_local_device_identity(data_dir)
+    store = _doctor_read_local_device_auth_store(data_dir)
+    if identity_device_id is None or store is None:
+        return []
+    store_device_id = _optional_cli_string(store.get("deviceId"))
+    if store_device_id != identity_device_id:
+        return []
+    paired_device = next(
+        (
+            device
+            for device in paired
+            if _optional_cli_string(device.get("deviceId")) == identity_device_id
+        ),
+        None,
+    )
+    if paired_device is None:
+        return []
+    device_label = _doctor_paired_device_label(paired_device)
+    approved_roles = set(_doctor_approved_roles(paired_device))
+    warnings: list[str] = []
+    for entry in _object_list(store.get("tokens")):
+        if not isinstance(entry, dict):
+            continue
+        role = _optional_cli_string(entry.get("role"))
+        updated_at_ms = _doctor_number_ms(entry.get("updatedAtMs"))
+        if role is None or updated_at_ms is None:
+            continue
+        rotate_command = _doctor_format_cli_args(
+            [
+                "openclaw",
+                "devices",
+                "rotate",
+                "--device",
+                identity_device_id,
+                "--role",
+                role,
+            ]
+        )
+        paired_token = _doctor_find_active_token(paired_device, role)
+        if paired_token is None:
+            if role in approved_roles:
+                continue
+            warnings.append(
+                f"- Local cached {role} device auth for {device_label} no longer has a "
+                "matching active gateway token. Reconnect with shared gateway auth to "
+                f"refresh it, or rotate with {rotate_command}."
+            )
+            continue
+        gateway_issued_at_ms = _doctor_number_ms(
+            paired_token.get("rotatedAtMs")
+        ) or _doctor_number_ms(paired_token.get("createdAtMs"))
+        if gateway_issued_at_ms is not None and updated_at_ms < gateway_issued_at_ms:
+            warnings.append(
+                f"- Local cached {role} device token for {device_label} predates the "
+                "gateway rotation. This is a stale device-token pattern and can fail "
+                "with device token mismatch. Reconnect with shared gateway auth to "
+                f"refresh it, or rotate again with {rotate_command}."
+            )
+            continue
+        cached_scopes = _doctor_normalize_device_scopes(entry.get("scopes"))
+        paired_scopes = _doctor_normalize_device_scopes(paired_token.get("scopes"))
+        if "\n".join(cached_scopes) != "\n".join(paired_scopes):
+            warnings.append(
+                f"- Local cached {role} device scopes for {device_label} differ from the "
+                f"gateway record. Cached scopes [{_doctor_format_scopes(cached_scopes)}], "
+                f"gateway scopes [{_doctor_format_scopes(paired_scopes)}]. Reconnect "
+                f"with shared gateway auth to refresh it, or rotate with {rotate_command}."
+            )
+    return warnings
+
+
 async def _build_doctor_device_pairing_payload(
     gateway_node_methods: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
     base_payload: dict[str, object] = {
         "source": "openzues-native",
@@ -4664,6 +4808,7 @@ async def _build_doctor_device_pairing_payload(
     ]
     for paired_device in paired:
         warnings.extend(_doctor_paired_record_warnings(paired_device))
+    warnings.extend(_doctor_local_device_auth_warnings(paired, data_dir))
     return {
         **base_payload,
         "status": "warning" if warnings else "ok",
@@ -4682,8 +4827,12 @@ async def _build_doctor_device_pairing_payload(
 async def _with_doctor_device_pairing_payload(
     payload: dict[str, object],
     gateway_node_methods: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
-    device_pairing = await _build_doctor_device_pairing_payload(gateway_node_methods)
+    device_pairing = await _build_doctor_device_pairing_payload(
+        gateway_node_methods,
+        data_dir=data_dir,
+    )
     next_payload = dict(payload)
     next_payload["devicePairing"] = device_pairing
     warnings = [
@@ -19926,6 +20075,7 @@ def doctor(
         payload = await _with_doctor_device_pairing_payload(
             payload,
             getattr(services, "gateway_node_methods", None),
+            data_dir if isinstance(data_dir, Path) else None,
         )
         payload = await _with_doctor_startup_channel_maintenance_payload(
             payload,

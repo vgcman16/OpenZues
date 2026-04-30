@@ -294,6 +294,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair or
   device_token"` (`6 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `doctor:device-pairing` now also reads OpenClaw-shaped local
+  `identity/device.json` and `identity/device-auth.json` files when present
+  under the native data directory, warning when cached local device auth
+  predates gateway token rotation, no longer has a matching active gateway
+  token, or has cached scopes that differ from the gateway record.
+- Verified the local device-auth doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_local_device_auth_token_is_stale
+  -q` (`1 passed`), adjacent doctor/gateway proof `python -m pytest
+  tests\test_cli.py -q -k "local_device_auth_token or device_pairing or
+  pending_device_pairing or gateway_memory_probe or gateway_health_contribution
+  or doctor_json_warns"` (`37 passed`), adjacent gateway pairing proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "device_pair or
+  device_token"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and

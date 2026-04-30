@@ -14748,6 +14748,84 @@ def test_cli_services_wire_device_pairing_runtime_for_doctor(tmp_path) -> None:
     }
 
 
+def test_doctor_json_warns_when_local_device_auth_token_is_stale(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    identity_dir = data_dir / "identity"
+    identity_dir.mkdir(parents=True)
+    (identity_dir / "device.json").write_text(
+        json.dumps({"version": 1, "deviceId": "device-local-1"}),
+        encoding="utf-8",
+    )
+    (identity_dir / "device-auth.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "deviceId": "device-local-1",
+                "tokens": {
+                    "operator": {
+                        "token": "stale-local-token",
+                        "role": "operator",
+                        "scopes": ["operator.read"],
+                        "updatedAtMs": 1,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            if method == "device.pair.list":
+                return {
+                    "pending": [],
+                    "paired": [
+                        {
+                            "deviceId": "device-local-1",
+                            "publicKey": "paired-pubkey",
+                            "displayName": "Local Dashboard",
+                            "role": "operator",
+                            "roles": ["operator"],
+                            "approvedScopes": ["operator.read"],
+                            "tokens": [
+                                {
+                                    "role": "operator",
+                                    "scopes": ["operator.read"],
+                                    "createdAtMs": 50,
+                                    "rotatedAtMs": 100,
+                                }
+                            ],
+                            "createdAtMs": 10,
+                            "approvedAtMs": 20,
+                        }
+                    ],
+                }
+            raise AssertionError(method)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "remote"}},
+        settings=SimpleNamespace(data_dir=data_dir),
+        gateway_node_methods=FakeGatewayNodeMethods(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["devicePairing"]["warnings"][0]
+    assert "Local cached operator device token for Local Dashboard" in warning
+    assert "predates the gateway rotation" in warning
+    assert "stale device-token pattern" in warning
+    assert "openclaw devices rotate --device device-local-1 --role operator" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,

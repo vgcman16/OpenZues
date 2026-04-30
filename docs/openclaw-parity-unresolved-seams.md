@@ -501,8 +501,12 @@ classifies paired-device repair, role-upgrade, scope-upgrade, missing-token,
 operator-baseline, and token-scope drift states from the gateway snapshot while
 quoting untrusted device/role command arguments. CLI service construction now
 wires the same native pairing runtime as the app server, so real CLI doctor
-runs can read local `device.pair.list` state. Deeper OpenClaw local token-file
-migration/cache checks remain future device doctor seams.
+runs can read local `device.pair.list` state. The contribution now also reads
+OpenClaw-shaped local `identity/device.json` / `identity/device-auth.json`
+cache files from the native data directory and warns for stale cached tokens,
+missing gateway-token matches, and cached-scope drift. Remaining device doctor
+work is limited to deeper repair automation if OpenZues adopts a first-class
+local device-auth cache writer.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
