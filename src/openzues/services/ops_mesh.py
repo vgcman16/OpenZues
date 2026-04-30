@@ -9558,6 +9558,15 @@ class OpsMeshService:
             required=True,
         )
         until = _message_action_param_string(request.params, "until")
+        if until is None:
+            duration_minutes = _message_action_param_integer(
+                request.params,
+                "durationMinutes",
+                "durationMin",
+            )
+            if duration_minutes is not None:
+                timeout_until = datetime.now(UTC) + timedelta(minutes=duration_minutes)
+                until = timeout_until.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         member = self._request_json_provider_url(
             _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
             method="PATCH",
