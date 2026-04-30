@@ -7445,6 +7445,7 @@ class OpsMeshService:
             "send",
             "sticker",
             "thread-create",
+            "timeout",
             "unpin",
             "voice-status",
         }:
@@ -7574,6 +7575,13 @@ class OpsMeshService:
             if action == "event-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_event_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "timeout":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_timeout_message_action,
                     route,
                     request,
                     secret_token,
@@ -9531,6 +9539,37 @@ class OpsMeshService:
         if event.get("error"):
             raise RuntimeError(str(event.get("error")))
         return {"ok": True, "event": event}
+
+    def _dispatch_discord_timeout_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        until = _message_action_param_string(request.params, "until")
+        member = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+            method="PATCH",
+            payload={"communication_disabled_until": until},
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(member, dict):
+            raise RuntimeError("Discord API returned a non-JSON member response.")
+        if member.get("error"):
+            raise RuntimeError(str(member.get("error")))
+        return {"ok": True, "member": member}
 
     def _dispatch_discord_channel_create_message_action(
         self,
