@@ -968,6 +968,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         models_service=GatewayModelsService(list_instance_views=manager.list_views),
         send_channel_message_service=ops_mesh.send_direct_channel_message,
         send_channel_poll_service=ops_mesh.send_direct_channel_poll,
+        message_action_dispatcher=ops_mesh.dispatch_message_action,
         acp_spawn_service=RuntimeManagerAcpSpawnService(manager),
         sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
         subagent_thread_binder=GatewaySubagentThreadBinderRegistry(

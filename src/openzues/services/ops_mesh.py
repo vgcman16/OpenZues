@@ -68,6 +68,7 @@ from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
 from openzues.services.gateway_cron import cron_expression_next_run_at
+from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
     GatewayOutboundRuntimeMessageRequest,
     GatewayOutboundRuntimePollRequest,
@@ -793,6 +794,32 @@ def _slack_channel_id(target: str | None) -> str | None:
             continue
         break
     return normalized or None
+
+
+def _slack_reaction_name(raw: str | None) -> str:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError("Emoji is required for Slack reactions")
+    return normalized.strip(":")
+
+
+def _message_action_param_string(
+    params: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+) -> str | None:
+    value = params.get(key)
+    if value is None:
+        if required:
+            raise RuntimeError(f"{key} is required.")
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a string.")
+    trimmed = value.strip()
+    if required and not trimmed:
+        raise RuntimeError(f"{key} is required.")
+    return trimmed or None
 
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
@@ -6799,6 +6826,70 @@ class OpsMeshService:
         if route_kind == "zalo":
             return self._post_zalo_provider_event
         return self._post_webhook
+
+    async def dispatch_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object] | None:
+        channel = request.channel.strip().lower()
+        action = request.action.strip()
+        if channel != "slack" or action != "react":
+            return None
+        route = await self._provider_route_for_channel_account(
+            channel=channel,
+            account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+        )
+        if route is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "No native Slack route is configured for message.action react."
+            )
+        secret_token = await self._notification_route_secret_token(route)
+        return await asyncio.to_thread(
+            self._dispatch_slack_react_message_action,
+            route,
+            request,
+            secret_token,
+        )
+
+    def _dispatch_slack_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack react requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        emoji = _slack_reaction_name(
+            _message_action_param_string(request.params, "emoji")
+        )
+        remove = request.params.get("remove") is True
+        result = self._post_json_webhook(
+            _slack_api_endpoint(
+                str(route.get("target") or ""),
+                "reactions.remove" if remove else "reactions.add",
+            ),
+            {
+                "channel": channel_id,
+                "timestamp": message_id or "",
+                "name": emoji,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {"ok": True, "removed" if remove else "added": emoji}
 
     async def _post_provider_route_event(
         self,

@@ -2321,6 +2321,7 @@ def create_app(
             models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
+            message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
             acp_spawn_service=RuntimeManagerAcpSpawnService(active_manager),
             sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
             subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
