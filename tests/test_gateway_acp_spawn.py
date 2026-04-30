@@ -197,6 +197,32 @@ async def test_runtime_manager_acp_spawn_rejects_thread_session_without_channel_
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_rejects_parent_stream_without_requester() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Relay progress back to the requester.",
+            "agentId": "codex",
+            "streamTo": "parent",
+        },
+        {},
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "requester_session_required",
+        "error": (
+            'sessions_spawn streamTo="parent" requires an active requester '
+            "session context."
+        ),
+    }
+    assert manager.start_thread_calls == []
+    assert manager.start_turn_calls == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_session_mode() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

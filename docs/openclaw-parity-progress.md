@@ -31,10 +31,14 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies
   terminal cleanup, and preserves the parent completion announcement while
-  returning the stream log/note envelope.
+  returning the stream log/note envelope. The RuntimeManager ACP adapter now
+  also rejects `streamTo="parent"` without requester session context before
+  starting any runtime thread.
 - Verified the ACP parent-stream tracking slice with `python -m pytest
   tests\test_gateway_node_methods.py -q -k
-  "sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`1 passed`),
+  "sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`1 passed`) and
+  `python -m pytest tests\test_gateway_acp_spawn.py -k
+  "rejects_parent_stream_without_requester" -q` (`1 passed`),
   adjacent ACP pack `python -m pytest tests\test_gateway_node_methods.py
   tests\test_gateway_acp_spawn.py -q -k "sessions_spawn_acp or acp_spawn or
   agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run or

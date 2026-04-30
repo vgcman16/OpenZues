@@ -46,9 +46,11 @@ ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
 parent completion announcements still fire, and `streamLogPath` / `note`
-fields are preserved in the spawn response. Remaining ACP parity is the
-standalone ACP bridge server/client harness and deeper protocol session
-presentation, permission, replay, and parent-stream relay breadth.
+fields are preserved in the spawn response. The RuntimeManager ACP adapter now
+also rejects `streamTo="parent"` without a requester session before starting a
+thread, matching OpenClaw's `requester_session_required` guard. Remaining ACP
+parity is the standalone ACP bridge server/client harness and deeper protocol
+session presentation, permission, replay, and parent-stream relay breadth.
 RuntimeManager-backed ACP prompt dispatch now also mirrors OpenClaw's prompt
 presentation prefix: when a child turn has `cwd`, the adapter sends
 `[Working directory: ...]` before the task text and redacts the user home to

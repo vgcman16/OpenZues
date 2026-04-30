@@ -19,6 +19,9 @@ _ACP_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound ACP session stays active after this task; continue in-thread for follow-ups."
 )
 _ACP_THREAD_CONTEXT_REQUIRED_ERROR = "thread=true for ACP sessions requires a channel context."
+_ACP_STREAM_PARENT_SESSION_REQUIRED_ERROR = (
+    'sessions_spawn streamTo="parent" requires an active requester session context.'
+)
 _CURRENT_BINDINGS_ID_PREFIX = "generic:"
 _CONVERSATION_KEY_SEPARATOR = "\u241f"
 _CHILD_THREAD_PLACEMENT_CHANNELS = frozenset({"discord", "matrix"})
@@ -81,6 +84,14 @@ def _requester_channel_from_context(context: Mapping[str, object]) -> str | None
         channel = _optional_string(context.get(key))
         if channel is not None:
             return channel.lower()
+    return None
+
+
+def _requester_session_key_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterSessionKey", "agentSessionKey", "sessionKey"):
+        session_key = _optional_string(context.get(key))
+        if session_key is not None:
+            return session_key
     return None
 
 
@@ -295,6 +306,15 @@ class RuntimeManagerAcpSpawnService:
         mode = requested_mode if requested_mode in {"run", "session"} else (
             "session" if thread_requested else "run"
         )
+        if (
+            _optional_string(params.get("streamTo")) == "parent"
+            and _requester_session_key_from_context(context) is None
+        ):
+            return {
+                "status": "error",
+                "errorCode": "requester_session_required",
+                "error": _ACP_STREAM_PARENT_SESSION_REQUIRED_ERROR,
+            }
         if mode == "session" and not thread_requested:
             return {
                 "status": "error",
