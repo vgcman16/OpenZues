@@ -13,6 +13,11 @@ from typing import Any
 from openzues.schemas import ControlUiBootstrapConfigView
 
 _OPENCLAW_DEFAULT_GATEWAY_PORT = 18789
+_SHELL_METACHARS_PATTERN = re.compile(r"[;&|`$<>]")
+_EXEC_CONTROL_CHARS_PATTERN = re.compile(r"[\r\n]")
+_EXEC_QUOTE_CHARS_PATTERN = re.compile(r"['\"]")
+_EXEC_BARE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._+-]+$")
+_EXEC_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
 _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "discord": "discord",
     "feishu": "feishu",
@@ -251,6 +256,7 @@ class GatewayConfigService:
             *_migrate_legacy_telegram_streaming_keys(payload),
             *_migrate_legacy_slack_streaming_keys(payload),
             *_migrate_legacy_googlechat_stream_mode(payload),
+            *_migrate_legacy_audio_transcription(payload),
             *_migrate_gateway_control_ui_allowed_origins(payload),
             *_migrate_legacy_gateway_bind_alias(payload),
         ]
@@ -2343,6 +2349,81 @@ def _migrate_googlechat_stream_mode_entry(
         return
     del entry["streamMode"]
     changes.append(f"Removed {path_label}.streamMode (legacy key no longer used).")
+
+
+def _migrate_legacy_audio_transcription(payload: dict[str, Any]) -> list[str]:
+    audio = payload.get("audio")
+    if not isinstance(audio, dict) or "transcription" not in audio:
+        return []
+    mapped = _map_legacy_audio_transcription(audio.get("transcription"))
+    changes: list[str] = []
+    if mapped is None:
+        changes.append("Removed audio.transcription (invalid or empty command).")
+    else:
+        tools = _ensure_config_record(payload, "tools")
+        media = _ensure_config_record(tools, "media")
+        media_audio = _ensure_config_record(media, "audio")
+        models = media_audio.get("models")
+        if isinstance(models, list) and models:
+            changes.append("Removed audio.transcription (tools.media.audio.models already set).")
+        else:
+            media_audio["enabled"] = True
+            media_audio["models"] = [mapped]
+            changes.append("Moved audio.transcription to tools.media.audio.models.")
+
+    del audio["transcription"]
+    if audio:
+        payload["audio"] = audio
+    else:
+        payload.pop("audio", None)
+    return changes
+
+
+def _map_legacy_audio_transcription(value: object) -> dict[str, Any] | None:
+    transcriber = value if isinstance(value, dict) else None
+    command = transcriber.get("command") if transcriber is not None else None
+    if not isinstance(command, list) or not command:
+        return None
+    if not all(isinstance(part, str) for part in command):
+        return None
+    executable = command[0].strip()
+    if not _is_safe_executable_value(executable):
+        return None
+    mapped: dict[str, Any] = {"command": executable, "type": "cli"}
+    args = command[1:]
+    if args:
+        mapped["args"] = args
+    timeout = transcriber.get("timeoutSeconds") if transcriber is not None else None
+    if isinstance(timeout, int | float) and not isinstance(timeout, bool):
+        mapped["timeoutSeconds"] = timeout
+    return mapped
+
+
+def _is_safe_executable_value(value: str) -> bool:
+    trimmed = value.strip()
+    if not trimmed or "\0" in trimmed:
+        return False
+    if _EXEC_CONTROL_CHARS_PATTERN.search(trimmed):
+        return False
+    if _SHELL_METACHARS_PATTERN.search(trimmed):
+        return False
+    if _EXEC_QUOTE_CHARS_PATTERN.search(trimmed):
+        return False
+    if _is_likely_executable_path(trimmed):
+        return True
+    if trimmed.startswith("-"):
+        return False
+    return bool(_EXEC_BARE_NAME_PATTERN.fullmatch(trimmed))
+
+
+def _is_likely_executable_path(value: str) -> bool:
+    return (
+        value.startswith(".")
+        or value.startswith("~")
+        or "/" in value
+        or "\\" in value
+        or bool(_EXEC_WINDOWS_DRIVE_PATTERN.match(value))
+    )
 
 
 def _migrate_gateway_control_ui_allowed_origins(payload: dict[str, Any]) -> list[str]:

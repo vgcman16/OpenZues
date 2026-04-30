@@ -110,9 +110,14 @@ migrator for non-loopback Control UI safety: `doctor --fix` seeds
 `gateway.controlUi.allowedOrigins` for existing `lan` / `tailnet` / `custom` /
 `auto` binds when no explicit origins are configured, and legacy
 `gateway.bind` host aliases normalize to bind modes.
+Legacy `audio.transcription` now migrates into
+`tools.media.audio.models` through `doctor --fix`, including safe executable
+mapping, existing-model preservation, invalid-command removal, and `tools.media`
+config retention.
 Remaining legacy-config parity is broader doctor migration breadth from
 OpenClaw's compatibility migrator; the next small source-backed head is
-`audio.transcription` migration into `tools.media.audio.models`.
+`agents.defaults.sandbox.perSession` / `agents.list[].sandbox.perSession`
+migration into `sandbox.scope`.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

@@ -1839,6 +1839,7 @@ class ControlUiToolsConfigView(BaseModel):
     )
     sessions: ControlUiToolsSessionsConfigView | None = None
     web: dict[str, Any] | None = None
+    media: dict[str, Any] | None = None
 
 
 class ControlUiBootstrapConfigView(BaseModel):
