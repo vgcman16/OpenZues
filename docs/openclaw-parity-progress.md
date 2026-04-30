@@ -2125,6 +2125,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Tracked `sessions.spawn` attachment directories now participate in the
+  OpenClaw terminal cleanup lifecycle: completed child runs remove staged
+  attachment directories when `cleanup="delete"` or when the session is kept
+  without `tools.sessions_spawn.attachments.retainOnSessionKeep=true`, while
+  provisional child metadata and transcripts remain intact for kept sessions.
+- Verified the attachment retention cleanup seam with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_removes_spawn_attachments_when_child_run_is_kept"` (`1 passed`),
+  adjacent wait/spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_removes_spawn_attachments_when_child_run_is_kept or
+  sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails or
+  sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails or
+  agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run or
+  agent_wait_waits_for_tracked_gateway_run_completion or
+  agent_wait_prefers_terminal_session_mission_over_stale_active or
+  agent_wait_does_not_duplicate_spawn_completion_announcement"` (`9 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Sandboxed `chat.send` attachment delivery now stages decoded base64 media
   inside the saved session workspace at `media/inbound/...`, strips inline
   payload bytes before attachment-runtime handoff, and carries sandbox-relative

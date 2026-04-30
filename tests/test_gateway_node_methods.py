@@ -15988,6 +15988,89 @@ async def test_sessions_spawn_removes_materialized_attachments_when_metadata_pat
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_removes_spawn_attachments_when_child_run_is_kept(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = Database(tmp_path / "gateway-sessions-spawn-attachments-retention.db")
+    await database.initialize()
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-spawned-attachment-retention-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Use the temporary attachment.",
+            "cwd": str(workspace),
+            "cleanup": "keep",
+            "attachments": [
+                {
+                    "name": "scratch.txt",
+                    "content": "Temporary attachment.\n",
+                    "encoding": "utf8",
+                }
+            ],
+        },
+        now_ms=894,
+    )
+
+    child_key = str(spawn_payload["childSessionKey"])
+    rel_dir = str(spawn_payload["attachments"]["relDir"])
+    attachment_dir = workspace / rel_dir
+    assert attachment_dir.exists()
+
+    mission_id = await database.create_mission(
+        name="Spawn attachment cleanup",
+        objective="Finish the kept child run.",
+        status="completed",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-spawn-attachment-retention",
+        session_key=child_key,
+        conversation_target=None,
+        cwd=str(workspace),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": "run-spawned-attachment-retention-1"},
+    )
+    await database.update_mission(
+        mission_id,
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Child run completed.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-spawned-attachment-retention-1", "timeoutMs": 0},
+    )
+
+    assert wait_payload["status"] == "ok"
+    assert not attachment_dir.exists()
+    assert await database.get_gateway_session_metadata(child_key) is not None
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted(
     tmp_path,
     monkeypatch,

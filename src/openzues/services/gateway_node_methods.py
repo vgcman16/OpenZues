@@ -8277,6 +8277,11 @@ class GatewayNodeMethodService:
                 rel_dir = _string_or_none(attachment_receipt.get("relDir"))
                 if rel_dir is not None:
                     attachment_dir = workspace_dir / rel_dir
+                    metadata["attachmentsDir"] = str(attachment_dir)
+                    metadata["attachmentsRootDir"] = str(attachment_dir.parent)
+                    metadata["retainAttachmentsOnKeep"] = (
+                        _sessions_spawn_retain_attachments_on_keep(self._config_service)
+                    )
                 metadata["attachments"] = attachment_receipt
             try:
                 await self._database.upsert_gateway_session_metadata(
@@ -12634,6 +12639,7 @@ class GatewayNodeMethodService:
         spawned_by = _string_or_none(metadata.get("spawnedBy")) or _string_or_none(
             metadata.get("parentSessionKey")
         )
+        _cleanup_sessions_spawn_attachment_dir(metadata, cleanup=cleanup)
         if cleanup != "delete" or spawn_mode == "session" or spawned_by is None:
             return
         await self._database.delete_control_chat_messages(session_key=session_key)
@@ -13793,6 +13799,88 @@ def _sessions_spawn_subagents_config(
         return None
     subagents_config = defaults_config.get("subagents")
     return subagents_config if isinstance(subagents_config, dict) else None
+
+
+def _sessions_spawn_attachments_config(
+    config_service: GatewayConfigService | None,
+) -> dict[str, Any] | None:
+    if config_service is None:
+        return None
+    snapshot = config_service.build_snapshot()
+    tools_config = snapshot.get("tools")
+    if not isinstance(tools_config, dict):
+        return None
+    sessions_spawn_config = tools_config.get("sessions_spawn")
+    if not isinstance(sessions_spawn_config, dict):
+        return None
+    attachments_config = sessions_spawn_config.get("attachments")
+    return attachments_config if isinstance(attachments_config, dict) else None
+
+
+def _sessions_spawn_retain_attachments_on_keep(
+    config_service: GatewayConfigService | None,
+) -> bool:
+    attachments_config = _sessions_spawn_attachments_config(config_service)
+    return bool(
+        isinstance(attachments_config, dict)
+        and attachments_config.get("retainOnSessionKeep") is True
+    )
+
+
+def _cleanup_sessions_spawn_attachment_dir(
+    metadata: Mapping[str, Any],
+    *,
+    cleanup: str,
+) -> None:
+    if cleanup != "delete" and _bool_or_none(metadata.get("retainAttachmentsOnKeep")) is True:
+        return
+    cleanup_paths = _sessions_spawn_attachment_cleanup_paths(metadata)
+    if cleanup_paths is None:
+        return
+    root_path, attachment_path = cleanup_paths
+    try:
+        root_resolved = root_path.expanduser().resolve()
+        attachment_resolved = attachment_path.expanduser().resolve()
+    except OSError:
+        return
+    if attachment_resolved == root_resolved:
+        return
+    try:
+        attachment_resolved.relative_to(root_resolved)
+    except ValueError:
+        return
+    shutil.rmtree(attachment_resolved, ignore_errors=True)
+
+
+def _sessions_spawn_attachment_cleanup_paths(
+    metadata: Mapping[str, Any],
+) -> tuple[Path, Path] | None:
+    raw_attachment_dir = _string_or_none(metadata.get("attachmentsDir"))
+    raw_attachment_root_dir = _string_or_none(metadata.get("attachmentsRootDir"))
+    if raw_attachment_dir is not None and raw_attachment_root_dir is not None:
+        return Path(raw_attachment_root_dir), Path(raw_attachment_dir)
+
+    receipt = metadata.get("attachments")
+    if not isinstance(receipt, Mapping):
+        return None
+    rel_dir = _string_or_none(receipt.get("relDir"))
+    workspace_dir = _string_or_none(metadata.get("spawnedWorkspaceDir")) or _string_or_none(
+        metadata.get("sandboxWorkspaceRoot")
+    )
+    if rel_dir is None or workspace_dir is None:
+        return None
+    rel_path = Path(rel_dir)
+    rel_parts = rel_path.parts
+    if (
+        rel_path.is_absolute()
+        or ".." in rel_parts
+        or len(rel_parts) < 3
+        or rel_parts[0] != ".openclaw"
+        or rel_parts[1] != "attachments"
+    ):
+        return None
+    workspace_path = Path(workspace_dir)
+    return workspace_path / ".openclaw" / "attachments", workspace_path / rel_path
 
 
 async def _sessions_spawn_requester_depth(
