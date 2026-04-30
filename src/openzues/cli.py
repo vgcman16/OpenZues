@@ -2180,6 +2180,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy Telegram streaming config uses scalar aliases."
     if _legacy_config_issues_all_slack_streaming(issues):
         return "Legacy Slack streaming config uses scalar aliases."
+    if _legacy_config_issues_all_googlechat_stream_mode(issues):
+        return "Legacy Google Chat streamMode config is unused."
     return "Legacy config contains migratable keys."
 
 
@@ -2196,6 +2198,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
     if _legacy_config_issues_all_slack_streaming(issues):
         return "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
+    if _legacy_config_issues_all_googlechat_stream_mode(issues):
+        return "Legacy Google Chat streamMode config is unused; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
 
 
@@ -2227,6 +2231,18 @@ def _legacy_config_issues_all_slack_streaming(issues: list[object]) -> bool:
         and (
             issue["path"] == "channels.slack"
             or issue["path"].startswith("channels.slack.accounts.")
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_googlechat_stream_mode(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "channels.googlechat"
+            or issue["path"].startswith("channels.googlechat.accounts.")
         )
         for issue in issues
     )

@@ -249,6 +249,7 @@ class GatewayConfigService:
             *_migrate_legacy_x_search_api_key(payload),
             *_migrate_legacy_telegram_streaming_keys(payload),
             *_migrate_legacy_slack_streaming_keys(payload),
+            *_migrate_legacy_googlechat_stream_mode(payload),
         ]
         if not changes:
             snapshot = self.build_snapshot()
@@ -1684,6 +1685,14 @@ def _legacy_slack_streaming_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_googlechat_stream_mode_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": "",
+        "message": f"{path}.streamMode is legacy and no longer used.",
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1705,6 +1714,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_slack_streaming_issue(path)
             for path in _iter_legacy_slack_streaming_paths(payload)
+        ],
+        *[
+            _legacy_googlechat_stream_mode_issue(path)
+            for path in _iter_legacy_googlechat_stream_mode_paths(payload)
         ],
     ]
 
@@ -2095,6 +2108,21 @@ def _iter_legacy_slack_streaming_paths(payload: dict[str, Any]) -> list[str]:
     return paths
 
 
+def _iter_legacy_googlechat_stream_mode_paths(payload: dict[str, Any]) -> list[str]:
+    googlechat = _legacy_channel_config(payload, "googlechat")
+    if googlechat is None:
+        return []
+    paths: list[str] = []
+    if _has_legacy_googlechat_stream_mode(googlechat):
+        paths.append("channels.googlechat")
+    accounts = googlechat.get("accounts")
+    if isinstance(accounts, dict):
+        for account_id, account in accounts.items():
+            if isinstance(account, dict) and _has_legacy_googlechat_stream_mode(account):
+                paths.append(f"channels.googlechat.accounts.{account_id}")
+    return paths
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2123,6 +2151,10 @@ def _has_legacy_slack_streaming_keys(entry: dict[str, Any]) -> bool:
         or "blockStreamingCoalesce" in entry
         or "nativeStreaming" in entry
     )
+
+
+def _has_legacy_googlechat_stream_mode(entry: dict[str, Any]) -> bool:
+    return "streamMode" in entry
 
 
 def _migrate_legacy_telegram_streaming_keys(payload: dict[str, Any]) -> list[str]:
@@ -2251,6 +2283,41 @@ def _migrate_telegram_streaming_entry(
         streaming["preview"] = preview
     if streaming:
         entry["streaming"] = streaming
+
+
+def _migrate_legacy_googlechat_stream_mode(payload: dict[str, Any]) -> list[str]:
+    googlechat = _legacy_channel_config(payload, "googlechat")
+    if googlechat is None:
+        return []
+    changes: list[str] = []
+    _migrate_googlechat_stream_mode_entry(
+        googlechat,
+        path_label="channels.googlechat",
+        changes=changes,
+    )
+    accounts = googlechat.get("accounts")
+    if isinstance(accounts, dict):
+        for account_id, account in accounts.items():
+            if not isinstance(account, dict):
+                continue
+            _migrate_googlechat_stream_mode_entry(
+                account,
+                path_label=f"channels.googlechat.accounts.{account_id}",
+                changes=changes,
+            )
+    return changes
+
+
+def _migrate_googlechat_stream_mode_entry(
+    entry: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    if "streamMode" not in entry:
+        return
+    del entry["streamMode"]
+    changes.append(f"Removed {path_label}.streamMode (legacy key no longer used).")
 
 
 def _migrate_legacy_slack_streaming_keys(payload: dict[str, Any]) -> list[str]:
