@@ -273,7 +273,10 @@ notification routes and stores LINE current-conversation ids without the
 provider/type prefix while preserving the original routable `to` target. The
 native CLI can now create `--kind line` routes with default `gateway/send` and
 `gateway/poll` subscriptions, so route-backed LINE current-conversation binders
-are operator-configurable without direct database edits.
+are operator-configurable without direct database edits. The native web/API
+operator surface now also classifies LINE as a first-class route channel with
+the upstream `LINE` label and offers LINE in the notification-route form with
+the same default gateway send/poll subscriptions.
 Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields

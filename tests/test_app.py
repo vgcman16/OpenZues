@@ -4805,8 +4805,9 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
     assert response.json()["routeCount"] == 1
     assert response.json()["enabledCount"] == 1
     assert response.json()["conversationTargetCount"] == 1
-    assert response.json()["channelOrder"] == ["discord", "slack", "telegram", "whatsapp"]
+    assert response.json()["channelOrder"] == ["discord", "slack", "telegram", "whatsapp", "line"]
     assert response.json()["channelLabels"]["slack"] == "Slack"
+    assert response.json()["channelLabels"]["line"] == "LINE"
     assert response.json()["channelDetailLabels"]["slack"] == "Slack"
     assert response.json()["channelMeta"][1] == {
         "id": "slack",
@@ -4828,6 +4829,53 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         }
     ]
     assert response.json()["channelDefaultAccountId"]["slack"] == "workspace-bot"
+
+
+def test_gateway_channels_endpoint_classifies_line_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "LINE Current Conversation",
+                "kind": "line",
+                "target": "https://api.line.me/v2/bot/message/push",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "line",
+                    "account_id": "default",
+                    "peer_kind": "direct",
+                    "peer_id": "line:user:U1234567890abcdef1234567890abcdef",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "line" in payload["channelOrder"]
+    assert payload["channelLabels"]["line"] == "LINE"
+    assert payload["channelDetailLabels"]["line"] == "LINE"
+    assert payload["channels"]["line"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["line"] == "default"
+
+
+def test_notification_route_operator_form_offers_line_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="line">LINE native route</option>' in template
+    assert '["slack", "telegram", "discord", "whatsapp", "line"].includes(routeKind)' in script
 
 
 def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(

@@ -28,6 +28,11 @@ _CHANNEL_META = (
         "label": "WhatsApp",
         "detailLabel": "WhatsApp",
     },
+    {
+        "id": "line",
+        "label": "LINE",
+        "detailLabel": "LINE",
+    },
 )
 
 

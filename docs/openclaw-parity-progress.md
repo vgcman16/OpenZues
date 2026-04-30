@@ -33,7 +33,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
   the persisted `sessionBinding` record. The native CLI now accepts
   `routes create --kind line`, applies default `gateway/send` and
   `gateway/poll` subscriptions, and persists LINE conversation targets for that
-  route-backed binder path.
+  route-backed binder path. The native gateway channel API now classifies LINE
+  as a known route channel with the upstream `LINE` label, and the web
+  notification-route form exposes LINE with gateway send/poll default events.
 - Verified the LINE route-backed binder slice with `python -m pytest
   tests\test_gateway_thread_binding.py -k "line_current_conversation" -q` (`1
   passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
@@ -52,6 +54,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_create_command_accepts_line_current_conversation_route" -q` (`2
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Verified the LINE web/API operator-surface slice with `python -m pytest
+  tests\test_app.py -k
+  "gateway_channels_endpoint_classifies_line_native_route or
+  notification_route_operator_form_offers_line_native_routes" -q` (`2
+  passed`), adjacent channel endpoint proof `python -m pytest tests\test_app.py
+  -k "gateway_channels_endpoint or
+  notification_route_operator_form_offers_line_native_routes" -q` (`3
+  passed`), `ruff check src\openzues\services\gateway_channels.py
+  tests\test_app.py`, and `mypy src\openzues\services\gateway_channels.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies
