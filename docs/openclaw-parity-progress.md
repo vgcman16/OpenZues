@@ -2554,6 +2554,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py`.
+- WhatsApp multi-media sends now report the final provider message id as the
+  canonical `messageId` while preserving the full ordered `mediaIds` list,
+  matching OpenClaw's outbound payload contract for iterated media sends.
+- Verified the WhatsApp media result seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media -q`
+  (`1 passed`), adjacent WhatsApp send coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "whatsapp_media or whatsapp_document_reply or
+  whatsapp_gif or whatsapp_text or
+  send_direct_channel_message_splits_whatsapp_media"` (`2 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

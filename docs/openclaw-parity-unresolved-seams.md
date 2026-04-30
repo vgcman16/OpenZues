@@ -2555,6 +2555,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py`.
+- Closed the WhatsApp multi-media result seam from OpenClaw's outbound payload
+  contract helper: multi-media WhatsApp sends now return the final provider
+  message id as canonical `messageId` while preserving the ordered `mediaIds`
+  list. Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "whatsapp_media or whatsapp_document_reply or whatsapp_gif or whatsapp_text
+  or send_direct_channel_message_splits_whatsapp_media"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

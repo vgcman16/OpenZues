@@ -9978,7 +9978,7 @@ class OpsMeshService:
                         delivered_contact = _whatsapp_contact_id(result, delivered_contact)
                     return {
                         "runtime": "native-provider-backed",
-                        "messageId": message_ids[0],
+                        "messageId": message_ids[-1],
                         "chatId": delivered_contact,
                         "channelId": delivered_contact,
                         "mediaIds": message_ids,

@@ -5835,7 +5835,7 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
     )
     delivery = await database.get_outbound_delivery(1)
 
-    assert result["messageId"] == "wamid.media.1"
+    assert result["messageId"] == "wamid.media.2"
     assert result["mediaIds"] == ["wamid.media.1", "wamid.media.2"]
     assert result["mediaUrls"] == [
         "https://example.com/one.png",
@@ -5869,6 +5869,7 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
         ),
     ]
     assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "wamid.media.2"
     assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
         "wamid.media.1",
         "wamid.media.2",
