@@ -510,11 +510,10 @@ returning the upstream-shaped `{ok: true, voice}` payload.
 Discord guild-admin `event-list` now dispatches through the same route-backed
 bot-token REST path, reading guild scheduled events and returning the
 upstream-shaped `{ok: true, events}` payload.
-Discord guild-admin `event-create` now dispatches its core no-cover-image
-scheduled-event payload through the same route-backed bot-token REST path,
-including entity type, timing, channel, description, location, and privacy
-mapping; OpenClaw-style cover image URL/path resolution remains queued as a
-separate media seam.
+Discord guild-admin `event-create` now dispatches its scheduled-event payload
+through the same route-backed bot-token REST path, including entity type,
+timing, channel, description, location, privacy mapping, and OpenClaw-style
+cover image URL/path/data-URI resolution with PNG/JPG/GIF validation.
 Discord moderation `timeout` now dispatches explicit-until,
 `durationMin`/`durationMinutes`, and encoded audit-log reason paths through the
 same route-backed bot-token REST path and returns the upstream-shaped

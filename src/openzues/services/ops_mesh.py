@@ -1425,8 +1425,10 @@ def _telegram_media_ids(result: object) -> list[str]:
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_MAX_EMOJI_BYTES = 256 * 1024
+DISCORD_MAX_EVENT_COVER_BYTES = 8 * 1024 * 1024
 DISCORD_MAX_STICKER_BYTES = 512 * 1024
 DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
+DISCORD_EVENT_COVER_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_STICKER_CONTENT_TYPES = {"image/png", "image/apng", "application/json"}
 DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
 DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
@@ -9678,6 +9680,19 @@ class OpsMeshService:
         location = _message_action_param_string(request.params, "location")
         if entity_type == 3 and location:
             payload["entity_metadata"] = {"location": location}
+        image_url = _message_action_param_raw_string(request.params, "image")
+        if image_url:
+            media_bytes, content_type = self._load_discord_media(
+                image_url,
+                max_bytes=DISCORD_MAX_EVENT_COVER_BYTES,
+            )
+            normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+            if normalized_content_type not in DISCORD_EVENT_COVER_CONTENT_TYPES:
+                raise RuntimeError("Discord event cover images require a PNG, JPG, or GIF image.")
+            payload["image"] = (
+                f"data:{normalized_content_type};base64,"
+                f"{base64.b64encode(media_bytes).decode('ascii')}"
+            )
         event = self._request_json_provider_url(
             _discord_api_endpoint(f"guilds/{guild_id}/scheduled-events"),
             method="POST",

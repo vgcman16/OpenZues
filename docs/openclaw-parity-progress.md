@@ -4708,6 +4708,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -q` (`3 passed`) and adjacent reset/delete/thread-binding coverage `python
   -m pytest tests\test_gateway_node_methods.py -q -k "sessions_reset or
   sessions_delete or thread_binding"` (`23 passed`).
+- Discord guild-admin `event-create` now includes OpenClaw-style scheduled
+  event cover-image resolution: `image` accepts data URLs, local/canvas paths,
+  and HTTP media through the shared Discord media loader, enforces the upstream
+  8 MB cap, validates PNG/JPG/GIF content types, and forwards a Discord data
+  URI in the scheduled-event payload.
+- Verified the Discord event-cover seam with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_event_create_cover_route"` (`1
+  passed`), adjacent event-create coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_event_create"` (`2 passed`), adjacent
+  Discord action coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`45 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
