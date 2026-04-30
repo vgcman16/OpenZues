@@ -108,6 +108,14 @@ def _requester_thread_id_from_context(context: Mapping[str, object]) -> str | No
     return None
 
 
+def _requester_group_id_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterGroupId", "groupId", "agentGroupId"):
+        group_id = _optional_string(context.get(key))
+        if group_id is not None:
+            return group_id
+    return None
+
+
 def _read_thread_id(result: object) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -231,11 +239,13 @@ def _current_acp_thread_binding_metadata(
     to = _requester_to_from_context(context)
     if to is None:
         return None
+    group_id = _requester_group_id_from_context(context)
+    current_conversation_target = group_id or to
     account_id = _requester_account_id_from_context(context)
     requester_thread_id = _requester_thread_id_from_context(context)
     conversation = _current_conversation_ref(
         channel=channel,
-        to=to,
+        to=current_conversation_target,
         thread_id=requester_thread_id,
     )
     if conversation is None:
@@ -243,7 +253,7 @@ def _current_acp_thread_binding_metadata(
     thread_binding: dict[str, object] = {
         "channel": channel,
         "accountId": account_id,
-        "to": to,
+        "to": current_conversation_target,
     }
     if requester_thread_id is not None:
         thread_binding["threadId"] = requester_thread_id

@@ -268,6 +268,50 @@ async def test_runtime_manager_acp_spawn_binds_line_current_conversation() -> No
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_prefers_line_group_current_conversation() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky group tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:line:direct:R1234567890abcdef1234567890abcdef"
+            ),
+            "requesterChannel": "line",
+            "requesterAccountId": "default",
+            "requesterTo": "line:user:U1234567890abcdef1234567890abcdef",
+            "agentGroupId": "line:room:R1234567890abcdef1234567890abcdef",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:room:R1234567890abcdef1234567890abcdef",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:room:R1234567890abcdef1234567890abcdef",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "line",
+        "accountId": "default",
+        "conversationId": "R1234567890abcdef1234567890abcdef",
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

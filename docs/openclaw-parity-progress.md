@@ -71,11 +71,14 @@ These are complete within the bounded OpenZues-local parity contract verified in
   OpenClaw-shaped current-conversation binding metadata for current-placement
   provider contexts such as LINE: accepted responses include `threadBinding`,
   `sessionBinding` with `targetKind="session"` / `placement="current"`, and
-  `completionDelivery` for the bound provider target.
+  `completionDelivery` for the bound provider target. LINE group/current
+  contexts now also prefer `agentGroupId` over the direct sender target, so
+  group replies bind and deliver to the current group conversation.
 - Verified the ACP current-conversation binding slice with `python -m pytest
-  tests\test_gateway_acp_spawn.py -k "binds_line_current_conversation" -q`
-  (`1 passed`), full ACP adapter proof `python -m pytest
-  tests\test_gateway_acp_spawn.py -q` (`10 passed`), adjacent gateway ACP
+  tests\test_gateway_acp_spawn.py -k "binds_line_current_conversation or
+  prefers_line_group_current_conversation" -q` (`2 passed`), full ACP adapter
+  proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`11 passed`), adjacent gateway ACP
   proof `python -m pytest tests\test_gateway_node_methods.py -k
   "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
   sessions_spawn_acp_thread_mode_uses_channel_default_account or
