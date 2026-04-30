@@ -4810,6 +4810,7 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         "slack",
         "telegram",
         "whatsapp",
+        "zalo",
         "line",
         "matrix",
     ]
@@ -4908,6 +4909,41 @@ def test_gateway_channels_endpoint_classifies_matrix_native_route(tmp_path) -> N
     assert payload["channelDefaultAccountId"]["matrix"] == "default"
 
 
+def test_gateway_channels_endpoint_classifies_zalo_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Zalo Native Gateway",
+                "kind": "zalo",
+                "target": "https://bot-api.zaloplatforms.test",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "zalo",
+                    "account_id": "zalo-bot",
+                    "peer_kind": "direct",
+                    "peer_id": "zalo:123456",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "zalo" in payload["channelOrder"]
+    assert payload["channelLabels"]["zalo"] == "Zalo"
+    assert payload["channelDetailLabels"]["zalo"] == "Zalo"
+    assert payload["channels"]["zalo"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["zalo"] == "zalo-bot"
+
+
 def test_notification_route_operator_form_offers_line_native_routes() -> None:
     template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
         encoding="utf-8"
@@ -4918,7 +4954,7 @@ def test_notification_route_operator_form_offers_line_native_routes() -> None:
 
     assert '<option value="line">LINE native route</option>' in template
     assert (
-        '["slack", "telegram", "discord", "whatsapp", "line", "matrix"].includes(routeKind)'
+        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
         in script
     )
 
@@ -4933,7 +4969,22 @@ def test_notification_route_operator_form_offers_matrix_native_routes() -> None:
 
     assert '<option value="matrix">Matrix native route</option>' in template
     assert (
-        '["slack", "telegram", "discord", "whatsapp", "line", "matrix"].includes(routeKind)'
+        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
+        in script
+    )
+
+
+def test_notification_route_operator_form_offers_zalo_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="zalo">Zalo native route</option>' in template
+    assert (
+        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
         in script
     )
 

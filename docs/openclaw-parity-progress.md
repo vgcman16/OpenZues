@@ -38,6 +38,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   notification-route form exposes LINE with gateway send/poll default events.
   Matrix route-backed child-thread binders are now configurable through the
   native CLI and web/API operator surfaces as native gateway send/poll routes.
+  Native Zalo direct/media send routes are now configurable through the same
+  CLI and web/API route setup surfaces.
 - Verified the LINE route-backed binder slice with `python -m pytest
   tests\test_gateway_thread_binding.py -k "line_current_conversation" -q` (`1
   passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
@@ -80,6 +82,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `python -m pytest tests\test_gateway_thread_binding.py -k
   "matrix_provider_thread or line_current_conversation" -q` (`2 passed`),
   `ruff check src\openzues\cli.py src\openzues\services\gateway_channels.py
+  tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_channels.py`.
+- Verified the Zalo route setup slice with `python -m pytest
+  tests\test_cli.py -k "routes_create_command_accepts_zalo_native_route" -q`
+  (`1 passed`), `python -m pytest tests\test_app.py -k
+  "gateway_channels_endpoint_classifies_zalo_native_route or
+  notification_route_operator_form_offers_zalo_native_routes" -q` (`2
+  passed`), adjacent route/channel/runtime proof `python -m pytest
+  tests\test_cli.py -k "routes_create_command_productizes_native_provider_routes
+  or routes_create_command_accepts_line_current_conversation_route or
+  routes_create_command_accepts_matrix_thread_route or
+  routes_create_command_accepts_zalo_native_route or
+  channels_capabilities_json_reports_zalo_support" -q` (`5 passed`),
+  `python -m pytest tests\test_app.py -k "gateway_channels_endpoint or
+  notification_route_operator_form_offers_line_native_routes or
+  notification_route_operator_form_offers_matrix_native_routes or
+  notification_route_operator_form_offers_zalo_native_routes" -q` (`7
+  passed`), `python -m pytest tests\test_ops_mesh.py -k
+  "notification_route_create_accepts_zalo_native_route or
+  uses_zalo_native_route or splits_zalo_media" -q` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_channels.py
   tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_channels.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run

@@ -11082,6 +11082,58 @@ def test_routes_create_command_accepts_matrix_thread_route(tmp_path, monkeypatch
     assert routes[0]["conversation_target"]["channel"] == "matrix"
 
 
+def test_routes_create_command_accepts_zalo_native_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Zalo Native Gateway",
+            "--kind",
+            "zalo",
+            "--target",
+            "https://bot-api.zaloplatforms.test",
+            "--conversation-channel",
+            "zalo",
+            "--conversation-account",
+            "zalo-bot",
+            "--conversation-peer-kind",
+            "direct",
+            "--conversation-peer-id",
+            "zalo:123456",
+            "--secret-token",
+            "zalo-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Zalo Native Gateway"
+    assert payload["kind"] == "zalo"
+    assert payload["target"] == "https://bot-api.zaloplatforms.test"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "zalo"
+    assert conversation_target["account_id"] == "zalo-bot"
+    assert conversation_target["peer_kind"] == "direct"
+    assert conversation_target["peer_id"] == "zalo:123456"
+    assert "zalo:123456" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "zalo"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "zalo"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

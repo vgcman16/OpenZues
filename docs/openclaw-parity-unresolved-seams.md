@@ -280,7 +280,10 @@ the same default gateway send/poll subscriptions. Matrix route-backed child
 thread binders are now operator-configurable through the same surfaces:
 `routes create --kind matrix`, `/api/gateway/channels`, and the web
 notification-route form all classify Matrix as a native gateway send/poll
-route.
+route. Native Zalo direct/media send routes are now operator-configurable
+through matching `routes create --kind zalo`, channel inventory, and web
+notification-route form surfaces, so the already-landed Zalo provider runtime
+no longer needs manual route insertion for setup.
 Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
