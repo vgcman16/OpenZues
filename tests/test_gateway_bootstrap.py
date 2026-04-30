@@ -1045,6 +1045,12 @@ async def test_get_view_surfaces_browser_service_inventory_from_runtime_status(
                     {"name": "browser.request", "scope": "operator.write"},
                 ],
                 "services": [{"service": {"id": "browser-control"}}],
+                "nodeHostCommands": [
+                    "browser.proxy",
+                    "photos.proxy",
+                    "browser.inspect",
+                ],
+                "nodeHostCaps": ["browser", "photos"],
             }
         ],
     )
@@ -1136,6 +1142,13 @@ async def test_get_view_surfaces_browser_service_inventory_from_runtime_status(
     assert view.runtime_inventory.browser_runtime.services == ["browser-control"]
     assert view.runtime_inventory.browser_runtime.plugins == ["browser"]
     assert view.runtime_inventory.browser_runtime.servers == ["browser-runtime"]
+    assert view.runtime_inventory.browser_runtime.node_host_commands == [
+        "browser.inspect",
+        "browser.proxy",
+    ]
+    assert view.runtime_inventory.browser_runtime.node_host_caps == ["browser"]
+    assert view.runtime_inventory.browser_runtime.node_host_command_count == 2
+    assert view.runtime_inventory.browser_runtime.node_host_cap_count == 1
 
 
 @pytest.mark.asyncio

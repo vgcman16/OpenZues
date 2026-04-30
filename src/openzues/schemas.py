@@ -878,8 +878,12 @@ class GatewayCapabilityBrowserLaneView(BaseModel):
     ready: bool = False
     method_count: int = 0
     service_count: int = 0
+    node_host_command_count: int = 0
+    node_host_cap_count: int = 0
     methods: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
+    node_host_commands: list[str] = Field(default_factory=list)
+    node_host_caps: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
     servers: list[str] = Field(default_factory=list)
     summary: str
@@ -894,10 +898,14 @@ class GatewayCapabilityBrowserRuntimeView(BaseModel):
     ready_lane_count: int = 0
     method_count: int = 0
     service_count: int = 0
+    node_host_command_count: int = 0
+    node_host_cap_count: int = 0
     plugin_count: int = 0
     server_count: int = 0
     methods: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
+    node_host_commands: list[str] = Field(default_factory=list)
+    node_host_caps: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
     servers: list[str] = Field(default_factory=list)
     recommended_action: str | None = None
