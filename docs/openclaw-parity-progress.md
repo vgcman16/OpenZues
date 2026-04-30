@@ -269,6 +269,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_includes_gateway_memory_probe_contribution or doctor_json_warns"`
   (`34 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`.
+- The same native `doctor:device-pairing` contribution now classifies
+  OpenClaw's paired-device follow-up states from the gateway snapshot:
+  public-key repair, role upgrade, scope upgrade, already-paired repair, missing
+  approved-role token, missing operator scope baseline, and token scopes outside
+  the approved baseline. Suggested `openclaw devices ...` repair commands quote
+  untrusted request/device/role arguments before they enter doctor output.
+- Verified the device-pairing classification slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_classifies_device_pairing_repairs_and_token_gaps
+  -q` (`1 passed`), adjacent device/gateway doctor proof `python -m pytest
+  tests\test_cli.py -q -k "device_pairing or pending_device_pairing or
+  gateway_memory_probe or gateway_health_contribution"` (`4 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and

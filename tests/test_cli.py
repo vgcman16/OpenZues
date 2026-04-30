@@ -14636,6 +14636,79 @@ def test_doctor_json_warns_about_pending_device_pairing_from_gateway(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_classifies_device_pairing_repairs_and_token_gaps(
+    monkeypatch,
+) -> None:
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            if method == "device.pair.list":
+                return {
+                    "pending": [
+                        {
+                            "requestId": "req-repair-1",
+                            "deviceId": "device; echo pwn",
+                            "publicKey": "pending-pubkey",
+                            "role": "operator",
+                            "roles": ["operator"],
+                            "scopes": ["operator.admin"],
+                            "clientId": "control-ui",
+                            "clientMode": "webchat",
+                            "displayName": "Dashboard",
+                            "ts": 1,
+                            "isRepair": True,
+                        }
+                    ],
+                    "paired": [
+                        {
+                            "deviceId": "device; echo pwn",
+                            "publicKey": "paired-pubkey",
+                            "displayName": "Dashboard",
+                            "clientId": "control-ui",
+                            "clientMode": "webchat",
+                            "role": "operator; touch /tmp/pwn",
+                            "roles": ["operator; touch /tmp/pwn"],
+                            "scopes": [],
+                            "approvedScopes": [],
+                            "tokens": [],
+                            "createdAtMs": 1,
+                            "approvedAtMs": 1,
+                        }
+                    ],
+                }
+            raise AssertionError(method)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "remote"}},
+        gateway_node_methods=FakeGatewayNodeMethods(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["devicePairing"]["warnings"]
+    assert any(
+        "Pending device repair req-repair-1" in warning
+        and "current device identity no longer matches" in warning
+        and "openclaw devices remove 'device; echo pwn'" in warning
+        for warning in warnings
+    )
+    assert any(
+        "has no active operator; touch /tmp/pwn device token" in warning
+        and (
+            "openclaw devices rotate --device 'device; echo pwn' "
+            "--role 'operator; touch /tmp/pwn'"
+        )
+        in warning
+        for warning in warnings
+    )
+    assert warnings[0] in payload["warnings"]
+    assert warnings[1] in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,

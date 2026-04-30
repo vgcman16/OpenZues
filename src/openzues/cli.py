@@ -4343,6 +4343,37 @@ def _doctor_safe_device_text(value: object) -> str | None:
     )
 
 
+def _doctor_quote_cli_arg(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_/:=.,@%+-]+", value):
+        return value
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _doctor_format_cli_args(args: Sequence[str]) -> str:
+    return " ".join(_doctor_quote_cli_arg(arg) for arg in args)
+
+
+def _doctor_unique_strings(*items: object) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, str):
+            candidates: Sequence[object] = [item]
+        elif isinstance(item, (list, tuple)):
+            candidates = item
+        else:
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            trimmed = candidate.strip()
+            if not trimmed or trimmed in seen:
+                continue
+            seen.add(trimmed)
+            values.append(trimmed)
+    return values
+
+
 def _doctor_device_label(pending: dict[str, object]) -> str:
     device_id = _doctor_safe_device_text(pending.get("deviceId")) or "unknown-device"
     label = _doctor_safe_device_text(pending.get("displayName")) or _doctor_safe_device_text(
@@ -4351,17 +4382,230 @@ def _doctor_device_label(pending: dict[str, object]) -> str:
     return f"{label} ({device_id})" if label else device_id
 
 
-def _doctor_pending_pairing_warning(pending: dict[str, object]) -> str | None:
+def _doctor_paired_device_label(paired: dict[str, object]) -> str:
+    device_id = _doctor_safe_device_text(paired.get("deviceId")) or "unknown-device"
+    label = _doctor_safe_device_text(paired.get("displayName")) or _doctor_safe_device_text(
+        paired.get("clientId")
+    )
+    return f"{label} ({device_id})" if label else device_id
+
+
+def _doctor_format_roles(roles: Sequence[str]) -> str:
+    return ", ".join(roles) if roles else "none"
+
+
+def _doctor_format_scopes(scopes: Sequence[str]) -> str:
+    return ", ".join(scopes) if scopes else "none"
+
+
+def _doctor_approved_roles(paired: dict[str, object]) -> list[str]:
+    return _doctor_unique_strings(paired.get("roles"), paired.get("role"))
+
+
+def _doctor_normalize_device_scopes(value: object) -> list[str]:
+    scopes = _doctor_unique_strings(value)
+    out = set(scopes)
+    if "operator.admin" in out:
+        out.add("operator.read")
+        out.add("operator.write")
+    elif "operator.write" in out:
+        out.add("operator.read")
+    return sorted(out)
+
+
+def _doctor_approved_scopes(paired: dict[str, object]) -> list[str]:
+    approved = _doctor_normalize_device_scopes(paired.get("approvedScopes"))
+    if approved:
+        return approved
+    return _doctor_normalize_device_scopes(paired.get("scopes"))
+
+
+def _doctor_role_scopes_allow(
+    *,
+    role: str,
+    requested_scopes: Sequence[str],
+    allowed_scopes: Sequence[str],
+) -> bool:
+    requested = _doctor_unique_strings(list(requested_scopes))
+    if not requested:
+        return True
+    allowed = _doctor_unique_strings(list(allowed_scopes))
+    if not allowed:
+        return False
+    allowed_set = set(allowed)
+    normalized_role = role.strip()
+    if normalized_role != "operator":
+        prefix = f"{normalized_role}."
+        return all(scope.startswith(prefix) and scope in allowed_set for scope in requested)
+    if "operator.admin" in allowed_set:
+        return all(scope.startswith("operator.") for scope in requested)
+    for scope in requested:
+        if not scope.startswith("operator."):
+            return False
+        if scope == "operator.read":
+            if "operator.read" in allowed_set or "operator.write" in allowed_set:
+                continue
+            return False
+        if scope == "operator.write":
+            if "operator.write" in allowed_set:
+                continue
+            return False
+        if scope not in allowed_set:
+            return False
+    return True
+
+
+def _doctor_has_pending_scope_upgrade(
+    *,
+    requested_roles: Sequence[str],
+    pending_scopes: Sequence[str],
+    approved_roles: Sequence[str],
+    approved_scopes: Sequence[str],
+) -> bool:
+    for role in requested_roles:
+        if role not in approved_roles:
+            continue
+        requested_for_role = [
+            scope
+            for scope in pending_scopes
+            if (
+                (role == "operator" and scope.startswith("operator."))
+                or (role != "operator" and not scope.startswith("operator."))
+            )
+        ]
+        if requested_for_role and not _doctor_role_scopes_allow(
+            role=role,
+            requested_scopes=requested_for_role,
+            allowed_scopes=approved_scopes,
+        ):
+            return True
+    return False
+
+
+def _doctor_pending_pairing_warning(
+    pending: dict[str, object],
+    paired: dict[str, object] | None = None,
+) -> str | None:
     request_id = _doctor_safe_device_text(pending.get("requestId"))
     if request_id is None:
         return None
     device_label = _doctor_device_label(pending)
-    inspect_command = "openclaw devices list"
-    approve_command = f"openclaw devices approve {request_id}"
+    inspect_command = _doctor_format_cli_args(["openclaw", "devices", "list"])
+    approve_command = _doctor_format_cli_args(
+        ["openclaw", "devices", "approve", request_id]
+    )
+    if paired is not None:
+        pending_public_key = _optional_cli_string(pending.get("publicKey"))
+        paired_public_key = _optional_cli_string(paired.get("publicKey"))
+        if (
+            pending_public_key is not None
+            and paired_public_key is not None
+            and pending_public_key != paired_public_key
+        ):
+            device_id = _doctor_safe_device_text(pending.get("deviceId")) or "unknown-device"
+            remove_command = _doctor_format_cli_args(
+                ["openclaw", "devices", "remove", device_id]
+            )
+            return (
+                f"- Pending device repair {request_id} for {device_label}: the current "
+                "device identity no longer matches the approved pairing record. This "
+                "commonly loops on pairing-required for an already paired device. "
+                f"Remove the stale record with {remove_command}, then rerun "
+                f"{inspect_command} and approve with {approve_command}."
+            )
+        requested_roles = _doctor_unique_strings(pending.get("roles"), pending.get("role"))
+        approved_roles = _doctor_approved_roles(paired)
+        if any(role not in approved_roles for role in requested_roles):
+            return (
+                f"- Pending role upgrade {request_id} for {device_label}: approved roles "
+                f"[{_doctor_format_roles(approved_roles)}], requested roles "
+                f"[{_doctor_format_roles(requested_roles)}]. Review with "
+                f"{inspect_command}, then approve with {approve_command}."
+            )
+        approved_scopes = _doctor_approved_scopes(paired)
+        requested_scopes = _doctor_normalize_device_scopes(pending.get("scopes"))
+        if _doctor_has_pending_scope_upgrade(
+            requested_roles=requested_roles,
+            pending_scopes=requested_scopes,
+            approved_roles=approved_roles,
+            approved_scopes=approved_scopes,
+        ):
+            return (
+                f"- Pending scope upgrade {request_id} for {device_label}: approved scopes "
+                f"[{_doctor_format_scopes(approved_scopes)}], requested scopes "
+                f"[{_doctor_format_scopes(requested_scopes)}]. Review with "
+                f"{inspect_command}, then approve with {approve_command}."
+            )
+        return (
+            f"- Pending device repair {request_id} for {device_label}: the device is already "
+            "paired, but a new approval is still required before the requested auth can be "
+            f"used. Review with {inspect_command}, then approve with {approve_command}."
+        )
     return (
         f"- Pending device pairing request {request_id} for {device_label}. "
         f"Review with {inspect_command}, then approve with {approve_command}."
     )
+
+
+def _doctor_token_summaries(paired: dict[str, object]) -> list[dict[str, object]]:
+    tokens = paired.get("tokens")
+    if isinstance(tokens, list):
+        return [item for item in tokens if isinstance(item, dict)]
+    if isinstance(tokens, dict):
+        return [item for item in tokens.values() if isinstance(item, dict)]
+    return []
+
+
+def _doctor_find_active_token(
+    paired: dict[str, object],
+    role: str,
+) -> dict[str, object] | None:
+    for token in _doctor_token_summaries(paired):
+        token_role = _optional_cli_string(token.get("role"))
+        if token_role != role:
+            continue
+        if token.get("revokedAtMs") is not None:
+            continue
+        return token
+    return None
+
+
+def _doctor_paired_record_warnings(paired: dict[str, object]) -> list[str]:
+    device_id = _doctor_safe_device_text(paired.get("deviceId")) or "unknown-device"
+    device_label = _doctor_paired_device_label(paired)
+    approved_roles = _doctor_approved_roles(paired)
+    approved_scopes = _doctor_approved_scopes(paired)
+    warnings: list[str] = []
+    if "operator" in approved_roles and not approved_scopes:
+        warnings.append(
+            f"- Paired device {device_label} is missing its approved operator scope "
+            "baseline. Scope upgrades can get stuck in pairing-required until the "
+            "device repairs or is re-approved."
+        )
+    for role in approved_roles:
+        rotate_command = _doctor_format_cli_args(
+            ["openclaw", "devices", "rotate", "--device", device_id, "--role", role]
+        )
+        token = _doctor_find_active_token(paired, role)
+        if token is None:
+            warnings.append(
+                f"- Paired device {device_label} has no active {role} device token even "
+                "though the role is approved. This commonly ends in pairing-required or "
+                f"device-token-mismatch. Rotate a fresh token with {rotate_command}."
+            )
+            continue
+        token_scopes = _doctor_normalize_device_scopes(token.get("scopes"))
+        if token_scopes and not _doctor_role_scopes_allow(
+            role=role,
+            requested_scopes=token_scopes,
+            allowed_scopes=approved_scopes,
+        ):
+            warnings.append(
+                f"- Paired device {device_label} has a {role} token outside the approved "
+                f"scope baseline [{_doctor_format_scopes(approved_scopes)}]. Rotate it "
+                f"with {rotate_command}."
+            )
+    return warnings
 
 
 async def _build_doctor_device_pairing_payload(
@@ -4397,11 +4641,26 @@ async def _build_doctor_device_pairing_payload(
     paired = [
         item for item in _object_list(result_payload.get("paired")) if isinstance(item, dict)
     ]
+    paired_by_device_id = {
+        device_id: paired_device
+        for paired_device in paired
+        if (device_id := _optional_cli_string(paired_device.get("deviceId"))) is not None
+    }
     warnings = [
         warning
         for pending_request in pending
-        if (warning := _doctor_pending_pairing_warning(pending_request)) is not None
+        if (
+            warning := _doctor_pending_pairing_warning(
+                pending_request,
+                paired_by_device_id.get(
+                    _optional_cli_string(pending_request.get("deviceId")) or ""
+                ),
+            )
+        )
+        is not None
     ]
+    for paired_device in paired:
+        warnings.extend(_doctor_paired_record_warnings(paired_device))
     return {
         **base_payload,
         "status": "warning" if warnings else "ok",

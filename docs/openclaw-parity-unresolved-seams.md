@@ -496,8 +496,11 @@ skill and TaskFlow recovery hints left as follow-on workspace-status seams.
 Top-level doctor output now includes the first OpenClaw
 `doctor:device-pairing` gateway-backed warning: pending requests returned by
 `device.pair.list` are surfaced with sanitized device labels, request counts,
-and the upstream review/approve command guidance. Deeper local pairing-store
-repair and token-file migration checks remain future device doctor seams.
+and the upstream review/approve command guidance. The same contribution now
+classifies paired-device repair, role-upgrade, scope-upgrade, missing-token,
+operator-baseline, and token-scope drift states from the gateway snapshot while
+quoting untrusted device/role command arguments. Deeper local pairing-store
+fallback and token-file migration checks remain future device doctor seams.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
