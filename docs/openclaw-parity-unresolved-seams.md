@@ -466,6 +466,9 @@ Discord `set-presence` now follows OpenClaw's gateway-backed runtime shape
 through a fakeable native adapter, including status/activity validation,
 projected presence payloads, and the honest gateway-not-available error when
 no Discord Gateway adapter is registered.
+Discord guild-admin `member-info` now dispatches through the same route-backed
+bot-token REST path and returns the upstream-shaped `{ok: true, member}`
+payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

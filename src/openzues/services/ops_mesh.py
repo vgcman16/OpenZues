@@ -7410,6 +7410,7 @@ class OpsMeshService:
             "delete",
             "edit",
             "list-pins",
+            "member-info",
             "permissions",
             "pin",
             "read",
@@ -7482,6 +7483,13 @@ class OpsMeshService:
             if action == "permissions":
                 return await asyncio.to_thread(
                     self._dispatch_discord_permissions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "member-info":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_member_info_message_action,
                     route,
                     request,
                     secret_token,
@@ -9118,6 +9126,35 @@ class OpsMeshService:
         if isinstance(channel_type, int):
             permissions_summary["channelType"] = channel_type
         return {"ok": True, "permissions": permissions_summary}
+
+    def _dispatch_discord_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        member = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(member, dict):
+            raise RuntimeError("Discord API returned a non-JSON member response.")
+        if member.get("error"):
+            raise RuntimeError(str(member.get("error")))
+        return {"ok": True, "member": member}
 
     def _dispatch_discord_thread_create_message_action(
         self,
