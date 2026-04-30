@@ -451,6 +451,10 @@ mutations and normalized pinned-message timestamps for `list-pins`.
 Discord `read` now dispatches through the same route-backed bot-token REST
 path, including upstream-style `limit` integer parsing, 1-100 clamping,
 `before` / `after` / `around` query params, and normalized message timestamps.
+Discord `permissions` now dispatches through the same route-backed bot-token
+REST path, fetching channel, bot identity, guild, and member records before
+applying OpenClaw's guild/role/member overwrite order into a permission
+summary.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

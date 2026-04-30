@@ -1403,6 +1403,62 @@ DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS = 1 << 14
 DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS_LIMITED = 1 << 15
 DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT = 1 << 18
 DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED = 1 << 19
+DISCORD_PERMISSION_BITS: dict[str, int] = {
+    "CreateInstantInvite": 1 << 0,
+    "KickMembers": 1 << 1,
+    "BanMembers": 1 << 2,
+    "Administrator": 1 << 3,
+    "ManageChannels": 1 << 4,
+    "ManageGuild": 1 << 5,
+    "AddReactions": 1 << 6,
+    "ViewAuditLog": 1 << 7,
+    "PrioritySpeaker": 1 << 8,
+    "Stream": 1 << 9,
+    "ViewChannel": 1 << 10,
+    "SendMessages": 1 << 11,
+    "SendTTSMessages": 1 << 12,
+    "ManageMessages": 1 << 13,
+    "EmbedLinks": 1 << 14,
+    "AttachFiles": 1 << 15,
+    "ReadMessageHistory": 1 << 16,
+    "MentionEveryone": 1 << 17,
+    "UseExternalEmojis": 1 << 18,
+    "ViewGuildInsights": 1 << 19,
+    "Connect": 1 << 20,
+    "Speak": 1 << 21,
+    "MuteMembers": 1 << 22,
+    "DeafenMembers": 1 << 23,
+    "MoveMembers": 1 << 24,
+    "UseVAD": 1 << 25,
+    "ChangeNickname": 1 << 26,
+    "ManageNicknames": 1 << 27,
+    "ManageRoles": 1 << 28,
+    "ManageWebhooks": 1 << 29,
+    "ManageGuildExpressions": 1 << 30,
+    "UseApplicationCommands": 1 << 31,
+    "RequestToSpeak": 1 << 32,
+    "ManageEvents": 1 << 33,
+    "ManageThreads": 1 << 34,
+    "CreatePublicThreads": 1 << 35,
+    "CreatePrivateThreads": 1 << 36,
+    "UseExternalStickers": 1 << 37,
+    "SendMessagesInThreads": 1 << 38,
+    "UseEmbeddedActivities": 1 << 39,
+    "ModerateMembers": 1 << 40,
+    "ViewCreatorMonetizationAnalytics": 1 << 41,
+    "UseSoundboard": 1 << 42,
+    "CreateGuildExpressions": 1 << 43,
+    "CreateEvents": 1 << 44,
+    "UseExternalSounds": 1 << 45,
+    "SendVoiceMessages": 1 << 46,
+    "PinMessages": 1 << 48,
+    "SendPolls": 1 << 49,
+    "UseExternalApps": 1 << 50,
+}
+DISCORD_ALL_PERMISSIONS = 0
+for _discord_permission_bit in DISCORD_PERMISSION_BITS.values():
+    DISCORD_ALL_PERMISSIONS |= _discord_permission_bit
+DISCORD_ADMINISTRATOR_PERMISSION = DISCORD_PERMISSION_BITS["Administrator"]
 
 
 def _discord_api_endpoint(path: str) -> str:
@@ -1515,6 +1571,32 @@ def _discord_message_with_normalized_timestamp(message: object) -> object:
     if not isinstance(current_utc, str) or not current_utc.strip():
         result["timestampUtc"] = timestamp_utc
     return result
+
+
+def _discord_permission_bitfield(raw: object) -> int:
+    if raw is None:
+        return 0
+    try:
+        return int(str(raw).strip() or "0", 10)
+    except ValueError as exc:
+        raise RuntimeError("Discord permission bitfield is invalid.") from exc
+
+
+def _discord_permission_names(bitfield: int) -> list[str]:
+    return sorted(
+        name
+        for name, value in DISCORD_PERMISSION_BITS.items()
+        if bitfield & value == value
+    )
+
+
+def _discord_apply_permission_overwrite(
+    permissions: int,
+    overwrite: dict[Any, Any],
+) -> int:
+    denied = _discord_permission_bitfield(overwrite.get("deny"))
+    allowed = _discord_permission_bitfield(overwrite.get("allow"))
+    return (permissions & ~denied) | allowed
 
 
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
@@ -7278,6 +7360,7 @@ class OpsMeshService:
             "delete",
             "edit",
             "list-pins",
+            "permissions",
             "pin",
             "read",
             "react",
@@ -7340,6 +7423,13 @@ class OpsMeshService:
             if action == "read":
                 return await asyncio.to_thread(
                     self._dispatch_discord_read_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "permissions":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_permissions_message_action,
                     route,
                     request,
                     secret_token,
@@ -8754,6 +8844,139 @@ class OpsMeshService:
                 for message in result
             ],
         }
+
+    def _dispatch_discord_permissions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord permissions requires channelId.")
+        authorization = _discord_bot_authorization(secret_token)
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        channel_type = channel.get("type")
+        guild_id = str(channel.get("guild_id") or "").strip()
+        if not guild_id:
+            permissions: dict[str, object] = {
+                "channelId": channel_id,
+                "permissions": [],
+                "raw": "0",
+                "isDm": True,
+            }
+            if isinstance(channel_type, int):
+                permissions["channelType"] = channel_type
+            return {"ok": True, "permissions": permissions}
+
+        me = self._request_json_provider_url(
+            _discord_api_endpoint("users/@me"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(me, dict) or not str(me.get("id") or "").strip():
+            raise RuntimeError("Failed to resolve Discord bot user id.")
+        bot_id = str(me.get("id") or "").strip()
+        guild = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        member = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{bot_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(guild, dict) or guild.get("error"):
+            raise RuntimeError("Discord API returned a non-JSON guild response.")
+        if not isinstance(member, dict) or member.get("error"):
+            raise RuntimeError("Discord API returned a non-JSON member response.")
+
+        roles_by_id: dict[str, dict[Any, Any]] = {}
+        raw_roles = guild.get("roles")
+        if isinstance(raw_roles, list):
+            for role in raw_roles:
+                if not isinstance(role, dict):
+                    continue
+                role_id = str(role.get("id") or "").strip()
+                if role_id:
+                    roles_by_id[role_id] = role
+        permissions_bitfield = 0
+        everyone_role = roles_by_id.get(guild_id)
+        if everyone_role is not None:
+            permissions_bitfield |= _discord_permission_bitfield(
+                everyone_role.get("permissions")
+            )
+        member_role_ids: set[str] = set()
+        raw_member_roles = member.get("roles")
+        if isinstance(raw_member_roles, list):
+            for raw_role_id in raw_member_roles:
+                role_id = str(raw_role_id or "").strip()
+                if not role_id:
+                    continue
+                member_role_ids.add(role_id)
+                role = roles_by_id.get(role_id)
+                if role is not None:
+                    permissions_bitfield |= _discord_permission_bitfield(
+                        role.get("permissions")
+                    )
+
+        if (
+            permissions_bitfield & DISCORD_ADMINISTRATOR_PERMISSION
+            == DISCORD_ADMINISTRATOR_PERMISSION
+        ):
+            permissions_bitfield = DISCORD_ALL_PERMISSIONS
+        else:
+            raw_overwrites = channel.get("permission_overwrites")
+            overwrites = raw_overwrites if isinstance(raw_overwrites, list) else []
+            for overwrite in overwrites:
+                if isinstance(overwrite, dict) and str(overwrite.get("id") or "") == guild_id:
+                    permissions_bitfield = _discord_apply_permission_overwrite(
+                        permissions_bitfield,
+                        overwrite,
+                    )
+            for overwrite in overwrites:
+                if (
+                    isinstance(overwrite, dict)
+                    and str(overwrite.get("id") or "") in member_role_ids
+                ):
+                    permissions_bitfield = _discord_apply_permission_overwrite(
+                        permissions_bitfield,
+                        overwrite,
+                    )
+            for overwrite in overwrites:
+                if isinstance(overwrite, dict) and str(overwrite.get("id") or "") == bot_id:
+                    permissions_bitfield = _discord_apply_permission_overwrite(
+                        permissions_bitfield,
+                        overwrite,
+                    )
+
+        permissions_summary: dict[str, object] = {
+            "channelId": channel_id,
+            "guildId": guild_id,
+            "permissions": _discord_permission_names(permissions_bitfield),
+            "raw": str(permissions_bitfield),
+            "isDm": False,
+        }
+        if isinstance(channel_type, int):
+            permissions_summary["channelType"] = channel_type
+        return {"ok": True, "permissions": permissions_summary}
 
     async def _post_provider_route_event(
         self,

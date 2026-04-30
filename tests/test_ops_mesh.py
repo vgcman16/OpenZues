@@ -6259,6 +6259,145 @@ async def test_ops_mesh_service_message_action_dispatches_discord_read_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_permissions_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-permissions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        if target.endswith("/channels/987654321"):
+            return {
+                "id": "987654321",
+                "guild_id": "guild-1",
+                "type": 0,
+                "permission_overwrites": [
+                    {"id": "guild-1", "allow": "0", "deny": "2048"},
+                    {"id": "role-writer", "allow": "2048", "deny": "0"},
+                    {"id": "bot-user", "allow": "0", "deny": "32768"},
+                ],
+            }
+        if target.endswith("/users/@me"):
+            return {"id": "bot-user"}
+        if target.endswith("/guilds/guild-1"):
+            return {
+                "roles": [
+                    {
+                        "id": "guild-1",
+                        "permissions": str(1024 + 2048 + 32768 + 65536),
+                    },
+                    {"id": "role-writer", "permissions": "0"},
+                ]
+            }
+        if target.endswith("/guilds/guild-1/members/bot-user"):
+            return {"roles": ["role-writer"]}
+        raise AssertionError(f"unexpected Discord API target {target}")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="permissions",
+            params={
+                "channelId": "channel:987654321",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-permissions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "permissions": {
+            "channelId": "987654321",
+            "guildId": "guild-1",
+            "permissions": ["ReadMessageHistory", "SendMessages", "ViewChannel"],
+            "raw": "68608",
+            "isDm": False,
+            "channelType": 0,
+        },
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/987654321",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            "https://discord.com/api/v10/users/@me",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            "https://discord.com/api/v10/guilds/guild-1",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            "https://discord.com/api/v10/guilds/guild-1/members/bot-user",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
