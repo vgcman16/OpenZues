@@ -5251,6 +5251,296 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
     ]
 
 
+def _write_openclaw_runtime_plugin(
+    plugin_dir: Path,
+    *,
+    plugin_id: str,
+    dependencies: dict[str, object] | None = None,
+    optional_dependencies: dict[str, object] | None = None,
+    enabled_by_default: bool = True,
+    channels: list[str] | None = None,
+) -> Path:
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": plugin_id,
+                "name": plugin_id,
+                "description": f"{plugin_id} runtime plugin.",
+                "version": "1.0.0",
+                "enabledByDefault": enabled_by_default,
+                "channels": list(channels or []),
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    package_payload: dict[str, object] = {}
+    if dependencies is not None:
+        package_payload["dependencies"] = dependencies
+    if optional_dependencies is not None:
+        package_payload["optionalDependencies"] = optional_dependencies
+    (plugin_dir / "package.json").write_text(
+        json.dumps(package_payload),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _patch_plugins_cli_services(
+    monkeypatch,
+    *,
+    gateway_config: GatewayConfigService,
+) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+
+def test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    plugin_dir = package_root / "dist" / "extensions" / "native-runtime"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="native-runtime",
+        dependencies={
+            "dep-one": "1.0.0",
+            "dep-blank": " ",
+            "dep-object": {"version": "skip"},
+        },
+        optional_dependencies={
+            "@scope/dep-two": "2.0.0",
+            "dep-opt": "3.0.0",
+        },
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["source"] == str(manifest_path)
+    assert payload["plugins"][0]["runtimeDependencyInstallRoot"] == str(package_root)
+    assert payload["plugins"][0]["runtimeDependencies"] == [
+        {"name": "@scope/dep-two", "version": "2.0.0"},
+        {"name": "dep-one", "version": "1.0.0"},
+        {"name": "dep-opt", "version": "3.0.0"},
+    ]
+
+
+def test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    extensions_dir = package_root / "dist" / "extensions"
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "alpha",
+        plugin_id="alpha",
+        dependencies={
+            "dep-one": "1.0.0",
+            "@scope/dep-two": "2.0.0",
+        },
+        optional_dependencies={"dep-opt": "3.0.0"},
+    )
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "beta",
+        plugin_id="beta",
+        dependencies={
+            "dep-one": "1.0.0",
+            "dep-conflict": "1.0.0",
+        },
+    )
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "gamma",
+        plugin_id="gamma",
+        dependencies={"dep-conflict": "2.0.0"},
+    )
+    installed_dep = package_root / "node_modules" / "dep-one" / "package.json"
+    installed_dep.parent.mkdir(parents=True)
+    installed_dep.write_text(json.dumps({"name": "dep-one"}), encoding="utf-8")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {
+                        "paths": [
+                            str(extensions_dir / "alpha"),
+                            str(extensions_dir / "beta"),
+                            str(extensions_dir / "gamma"),
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["runtimeDependencies"] == {
+        "missing": [
+            {
+                "name": "@scope/dep-two",
+                "version": "2.0.0",
+                "pluginIds": ["alpha"],
+                "installRoot": str(package_root),
+                "spec": "@scope/dep-two@2.0.0",
+            },
+            {
+                "name": "dep-opt",
+                "version": "3.0.0",
+                "pluginIds": ["alpha"],
+                "installRoot": str(package_root),
+                "spec": "dep-opt@3.0.0",
+            },
+        ],
+        "conflicts": [
+            {
+                "name": "dep-conflict",
+                "versions": ["1.0.0", "2.0.0"],
+                "pluginIdsByVersion": {
+                    "1.0.0": ["beta"],
+                    "2.0.0": ["gamma"],
+                },
+            }
+        ],
+    }
+    assert [entry["message"] for entry in payload["diagnostics"]] == [
+        "Bundled plugin runtime deps use conflicting versions.",
+        "Bundled plugin runtime deps are missing.",
+    ]
+
+
+def test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    extensions_dir = package_root / "dist" / "extensions"
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "discord",
+        plugin_id="discord",
+        dependencies={"discord-only": "1.0.0"},
+        enabled_by_default=False,
+        channels=["discord"],
+    )
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "whatsapp",
+        plugin_id="whatsapp",
+        dependencies={"whatsapp-only": "1.0.0"},
+        enabled_by_default=False,
+        channels=["whatsapp"],
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {"discord": {"enabled": True}},
+                "plugins": {
+                    "enabled": True,
+                    "load": {
+                        "paths": [
+                            str(extensions_dir / "discord"),
+                            str(extensions_dir / "whatsapp"),
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeDependencies"]["missing"] == [
+        {
+            "name": "discord-only",
+            "version": "1.0.0",
+            "pluginIds": ["discord"],
+            "installRoot": str(package_root),
+            "spec": "discord-only@1.0.0",
+        }
+    ]
+    assert payload["runtimeDependencies"]["conflicts"] == []
+
+
 def test_plugins_inspect_json_projects_runtime_executor_tools(
     tmp_path,
     monkeypatch,

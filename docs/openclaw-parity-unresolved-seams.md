@@ -2416,9 +2416,26 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and
   `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\control_chat.py src\openzues\app.py`.
+- Closed the bundled plugin runtime dependency doctor seam from OpenClaw
+  `doctor-bundled-plugin-runtime-deps.test.ts` /
+  `bundled-runtime-deps.ts`: OpenZues now reads manifest-adjacent
+  `package.json` `dependencies` and `optionalDependencies`, exposes them
+  through plugin inventory/inspect JSON, computes bundled install roots, skips
+  source checkouts, honors enabled channel plugin config, suppresses installed
+  dependency sentinels, and reports missing deps plus conflicting versions
+  through `plugins doctor --json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies
+  tests\test_cli.py::test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies
+  tests\test_cli.py::test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_discovers_openclaw_manifest_load_paths or runtime_deps or
+  runtime_dependencies or plugins_doctor or
+  plugins_inspect_json_projects_runtime_executor_tools"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
-  announce consistency, CLI/runtime doctor parity, and session runtime methods
-  (`chat.*`, `sessions.*`), rather than the older approval lifecycle/config/
-  device-token/agent-mutation/memory-doctor/placeheld provenance/false
-  steer-runtime/custom-agent-session placeholders.
+  announce consistency, top-level runtime bridge doctor/packaging checks, and
+  session runtime methods (`chat.*`, `sessions.*`), rather than the older
+  approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
+  provenance/false steer-runtime/custom-agent-session/plugin-dependency
+  placeholders.

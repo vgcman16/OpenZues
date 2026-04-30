@@ -64,7 +64,10 @@ from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
-from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_config import (
+    GatewayConfigService,
+    _normalize_openclaw_channel_plugin_id,
+)
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
 from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
@@ -6371,6 +6374,10 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         if isinstance(plugin, dict)
         for notice in _plugin_compatibility_notices(plugin)
     ]
+    runtime_dependency_payload, runtime_dependency_diagnostics = (
+        _build_plugin_runtime_dependency_doctor_payload(plugin_rows)
+    )
+    diagnostics.extend(runtime_dependency_diagnostics)
     issue_count = len(errors) + len(diagnostics) + len(compatibility)
     return {
         "ok": issue_count == 0,
@@ -6383,6 +6390,7 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "errors": errors,
         "diagnostics": diagnostics,
         "compatibility": compatibility,
+        "runtimeDependencies": runtime_dependency_payload,
         "docs": "https://docs.openclaw.ai/plugin",
     }
 
@@ -7578,10 +7586,11 @@ def _plugin_inspect_report(
     install = plugin.get("install")
     runtime_tool_entries = _plugin_runtime_tool_entries(plugin, runtime_specs)
     runtime_tools = _plugin_runtime_tool_names(runtime_tool_entries)
+    runtime_dependencies = _plugin_record_runtime_dependencies(plugin)
     inspected_plugin = dict(plugin)
     if runtime_tools:
         inspected_plugin["imported"] = True
-    return {
+    report: dict[str, object] = {
         "plugin": inspected_plugin,
         "shape": _plugin_inspect_shape(plugin),
         "capabilityMode": "runtime" if runtime_tools else "inventory",
@@ -7605,6 +7614,9 @@ def _plugin_inspect_report(
         "diagnostics": [],
         "install": dict(install) if isinstance(install, dict) else None,
     }
+    if runtime_dependencies:
+        report["runtimeDependencies"] = runtime_dependencies
+    return report
 
 
 def _plugin_record_string_list(plugin: dict[str, object], key: str) -> list[str]:
@@ -7896,10 +7908,24 @@ _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
 }
 
 
+@dataclass
+class _PluginRuntimeDependencyBucket:
+    plugin_ids: set[str]
+    install_roots: dict[str, set[str]]
+
+
 def _plugin_manifest_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _read_cli_json_object(path: Path) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _plugin_manifest_contracts(manifest: dict[str, object]) -> dict[str, object]:
@@ -7941,6 +7967,202 @@ def _plugin_manifest_capabilities(
     return unique
 
 
+def _plugin_manifest_has_enabled_channel(
+    manifest: dict[str, object],
+    config_snapshot: dict[str, object] | None,
+) -> bool:
+    if config_snapshot is None:
+        return False
+    raw_channels_config = config_snapshot.get("channels")
+    channels_config = raw_channels_config if isinstance(raw_channels_config, dict) else {}
+    if not channels_config:
+        return False
+    for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
+        normalized_channel = _normalize_openclaw_channel_plugin_id(channel_id)
+        if normalized_channel is None:
+            continue
+        channel_config = channels_config.get(normalized_channel)
+        if isinstance(channel_config, dict) and channel_config.get("enabled") is True:
+            return True
+    return False
+
+
+def _plugin_runtime_dependency_entries_from_package_json(
+    package_json: dict[str, object],
+) -> list[dict[str, object]]:
+    raw_runtime_deps: dict[str, object] = {}
+    for key in ("dependencies", "optionalDependencies"):
+        raw_value = package_json.get(key)
+        if isinstance(raw_value, dict):
+            raw_runtime_deps.update(raw_value)
+    entries: list[dict[str, object]] = []
+    for raw_name, raw_version in raw_runtime_deps.items():
+        name = _optional_cli_string(raw_name)
+        version = _optional_cli_string(raw_version)
+        if name is None or version is None:
+            continue
+        entries.append({"name": name, "version": version})
+    return sorted(entries, key=lambda entry: str(entry["name"]))
+
+
+def _is_openclaw_source_checkout_root(path: Path) -> bool:
+    return (
+        (path / ".git").exists()
+        and (path / "src").exists()
+        and (path / "extensions").exists()
+    )
+
+
+def _is_source_checkout_bundled_plugin_root(plugin_root: Path) -> bool:
+    extensions_dir = plugin_root.parent
+    return extensions_dir.name == "extensions" and _is_openclaw_source_checkout_root(
+        extensions_dir.parent
+    )
+
+
+def _plugin_runtime_dependency_install_root(plugin_root: Path) -> Path:
+    extensions_dir = plugin_root.parent
+    build_dir = extensions_dir.parent
+    if extensions_dir.name == "extensions" and build_dir.name in {"dist", "dist-runtime"}:
+        return build_dir.parent
+    return extensions_dir
+
+
+def _plugin_manifest_runtime_dependencies(
+    manifest_path: Path,
+) -> tuple[list[dict[str, object]], Path | None]:
+    plugin_root = manifest_path.parent
+    install_root = _plugin_runtime_dependency_install_root(plugin_root)
+    if _is_openclaw_source_checkout_root(install_root) or _is_source_checkout_bundled_plugin_root(
+        plugin_root
+    ):
+        return [], None
+    package_json = _read_cli_json_object(plugin_root / "package.json")
+    if package_json is None:
+        return [], None
+    return _plugin_runtime_dependency_entries_from_package_json(package_json), install_root
+
+
+def _plugin_record_runtime_dependencies(plugin: dict[str, object]) -> list[dict[str, object]]:
+    raw_dependencies = plugin.get("runtimeDependencies")
+    dependencies = raw_dependencies if isinstance(raw_dependencies, list) else []
+    result: list[dict[str, object]] = []
+    for raw_dependency in dependencies:
+        if not isinstance(raw_dependency, dict):
+            continue
+        name = _optional_cli_string(raw_dependency.get("name"))
+        version = _optional_cli_string(raw_dependency.get("version"))
+        if name is None or version is None:
+            continue
+        result.append({"name": name, "version": version})
+    return result
+
+
+def _dependency_sentinel_path(dep_name: str) -> Path | None:
+    parts = [part for part in dep_name.split("/") if part]
+    if not parts:
+        return None
+    return Path("node_modules", *parts, "package.json")
+
+
+def _dependency_sentinel_exists(install_root: str, dep_name: str) -> bool:
+    sentinel_path = _dependency_sentinel_path(dep_name)
+    if sentinel_path is None:
+        return False
+    return (Path(install_root) / sentinel_path).exists()
+
+
+def _build_plugin_runtime_dependency_doctor_payload(
+    plugin_rows: list[object],
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    version_map: dict[str, dict[str, _PluginRuntimeDependencyBucket]] = {}
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        if _optional_cli_string(plugin.get("status")) != "loaded":
+            continue
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        install_root = _optional_cli_string(plugin.get("runtimeDependencyInstallRoot"))
+        if plugin_id is None or install_root is None:
+            continue
+        for dependency in _plugin_record_runtime_dependencies(plugin):
+            name = _optional_cli_string(dependency.get("name"))
+            version = _optional_cli_string(dependency.get("version"))
+            if name is None or version is None:
+                continue
+            versions = version_map.setdefault(name, {})
+            bucket = versions.setdefault(
+                version,
+                _PluginRuntimeDependencyBucket(plugin_ids=set(), install_roots={}),
+            )
+            bucket.plugin_ids.add(plugin_id)
+            bucket.install_roots.setdefault(install_root, set()).add(plugin_id)
+
+    conflicts: list[dict[str, object]] = []
+    conflicted_names: set[str] = set()
+    for name in sorted(version_map):
+        versions = version_map[name]
+        if len(versions) <= 1:
+            continue
+        sorted_versions = sorted(versions)
+        conflicted_names.add(name)
+        conflicts.append(
+            {
+                "name": name,
+                "versions": sorted_versions,
+                "pluginIdsByVersion": {
+                    version: sorted(versions[version].plugin_ids)
+                    for version in sorted_versions
+                },
+            }
+        )
+
+    missing: list[dict[str, object]] = []
+    for name in sorted(version_map):
+        if name in conflicted_names:
+            continue
+        versions = version_map[name]
+        for version in sorted(versions):
+            bucket = versions[version]
+            for install_root in sorted(bucket.install_roots):
+                if _dependency_sentinel_exists(install_root, name):
+                    continue
+                missing.append(
+                    {
+                        "name": name,
+                        "version": version,
+                        "pluginIds": sorted(bucket.install_roots[install_root]),
+                        "installRoot": install_root,
+                        "spec": f"{name}@{version}",
+                    }
+                )
+
+    diagnostics: list[dict[str, object]] = []
+    if conflicts:
+        diagnostics.append(
+            {
+                "level": "error",
+                "category": "runtimeDependencies",
+                "code": "bundled_plugin_runtime_dependency_conflict",
+                "message": "Bundled plugin runtime deps use conflicting versions.",
+                "conflicts": conflicts,
+                "action": "Update bundled plugins and rerun openzues plugins doctor.",
+            }
+        )
+    if missing:
+        diagnostics.append(
+            {
+                "level": "error",
+                "category": "runtimeDependencies",
+                "code": "bundled_plugin_runtime_dependency_missing",
+                "message": "Bundled plugin runtime deps are missing.",
+                "missing": missing,
+                "action": "Fix: run openzues doctor --fix to install them.",
+            }
+        )
+    return {"missing": missing, "conflicts": conflicts}, diagnostics
+
+
 def _plugin_manifest_load_paths(plugins_config: dict[str, object]) -> list[Path]:
     load = plugins_config.get("load")
     load_payload = load if isinstance(load, dict) else {}
@@ -7973,6 +8195,7 @@ def _plugin_manifest_status(
     *,
     plugin_id: str,
     plugins_config: dict[str, object],
+    config_snapshot: dict[str, object] | None = None,
 ) -> str:
     if plugins_config.get("enabled") is False:
         return "disabled"
@@ -7992,6 +8215,8 @@ def _plugin_manifest_status(
     allow_values = {str(value) for value in allow} if isinstance(allow, list) else set()
     if plugin_id in allow_values:
         return "loaded"
+    if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
+        return "loaded"
     return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
 
 
@@ -7999,6 +8224,7 @@ def _plugin_record_from_openclaw_manifest(
     manifest_path: Path,
     *,
     plugins_config: dict[str, object],
+    config_snapshot: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -8020,6 +8246,7 @@ def _plugin_record_from_openclaw_manifest(
             manifest,
             plugin_id=plugin_id,
             plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
         ),
         "format": "openclaw",
         "source": str(manifest_path),
@@ -8052,11 +8279,18 @@ def _plugin_record_from_openclaw_manifest(
     route_count = _plugin_record_http_route_count(manifest)
     if route_count:
         record["httpRoutes"] = route_count
+    runtime_dependencies, install_root = _plugin_manifest_runtime_dependencies(manifest_path)
+    if runtime_dependencies:
+        record["runtimeDependencies"] = runtime_dependencies
+        if install_root is not None:
+            record["runtimeDependencyInstallRoot"] = str(install_root)
     return record
 
 
 def _plugin_manifest_records_from_config_snapshot(
     plugins_config: dict[str, object],
+    *,
+    config_snapshot: dict[str, object],
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     seen_ids: set[str] = set()
@@ -8067,6 +8301,7 @@ def _plugin_manifest_records_from_config_snapshot(
         record = _plugin_record_from_openclaw_manifest(
             manifest_path,
             plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
         )
         if record is None:
             continue
@@ -8081,7 +8316,10 @@ def _plugin_manifest_records_from_config_snapshot(
 def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
     plugins = snapshot.get("plugins")
     plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
-    manifest_records = _plugin_manifest_records_from_config_snapshot(plugins_config)
+    manifest_records = _plugin_manifest_records_from_config_snapshot(
+        plugins_config,
+        config_snapshot=snapshot,
+    )
     records_by_id = {
         str(record.get("id") or ""): dict(record)
         for record in manifest_records
