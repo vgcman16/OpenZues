@@ -7419,6 +7419,7 @@ class OpsMeshService:
             )
         if channel == "discord" and action in {
             "category-create",
+            "category-edit",
             "channel-create",
             "channel-delete",
             "channel-edit",
@@ -7562,6 +7563,13 @@ class OpsMeshService:
             if action == "category-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_category_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "category-edit":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_category_edit_message_action,
                     route,
                     request,
                     secret_token,
@@ -9452,6 +9460,42 @@ class OpsMeshService:
         category = self._request_json_provider_url(
             _discord_api_endpoint(f"guilds/{guild_id}/channels"),
             method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(category, dict):
+            raise RuntimeError("Discord API returned a non-JSON category response.")
+        if category.get("error"):
+            raise RuntimeError(str(category.get("error")))
+        return {"ok": True, "category": category}
+
+    def _dispatch_discord_category_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        category_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "categoryId",
+                required=True,
+            )
+        )
+        if category_id is None:
+            raise RuntimeError("Discord category-edit requires categoryId.")
+        payload: dict[str, object] = {}
+        name = _message_action_param_string(request.params, "name")
+        if name is not None:
+            payload["name"] = name
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        category = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{category_id}"),
+            method="PATCH",
             payload=payload,
             secret_header_name="Authorization",
             secret_token=_discord_bot_authorization(secret_token),
