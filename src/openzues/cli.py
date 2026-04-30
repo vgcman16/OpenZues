@@ -3863,6 +3863,49 @@ def _dict_config(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _build_doctor_gateway_config_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    raw_gateway = snapshot.get("gateway")
+    if not isinstance(raw_gateway, dict):
+        return None
+    gateway = _dict_config(raw_gateway)
+    if _optional_cli_string(gateway.get("mode")) is not None:
+        return None
+    warning = "\n".join(
+        [
+            "gateway.mode is unset; gateway start will be blocked.",
+            "Fix: run openclaw configure and set Gateway mode (local/remote).",
+            "Or set directly: openclaw config set gateway.mode local",
+        ]
+    )
+    return {
+        "status": "warning",
+        "summary": "gateway.mode is unset; gateway start will be blocked.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-config",
+        "reason": "missing_gateway_mode",
+        "warnings": [warning],
+    }
+
+
+def _with_doctor_gateway_config_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    gateway_config = _build_doctor_gateway_config_payload(config_service)
+    if gateway_config is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["gatewayConfig"] = gateway_config
+    warnings = [
+        str(warning)
+        for warning in _object_list(gateway_config.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _is_secret_ref(value: object) -> bool:
     return (
         isinstance(value, dict)
@@ -18116,6 +18159,10 @@ def doctor(
             should_repair=fix,
         )
         payload = _with_doctor_sandbox_warnings(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_gateway_config_payload(
             payload,
             services.gateway_config,
         )
