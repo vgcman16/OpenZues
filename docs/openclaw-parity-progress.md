@@ -230,6 +230,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "doctor_json_warns or doctor_fix_rewrites or
   doctor_fix_normalizes_legacy_cron_store"` (`33 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:bootstrap-size`
+  contribution for configured workspace directories. It scans `AGENTS.md`
+  against `agents.defaults.bootstrapMaxChars` /
+  `bootstrapTotalMaxChars`, reports truncation/near-limit statistics, and
+  emits the upstream max/file and max/total tuning hints without mutating
+  workspace files.
+- Verified the bootstrap-size doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_bootstrap_file_exceeds_limits
+  -q` (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py
+  -q -k "bootstrap_file_exceeds_limits or hooks_gmail_model or
+  doctor_json_warns or doctor_fix_rewrites or
+  doctor_fix_normalizes_legacy_cron_store"` (`34 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and

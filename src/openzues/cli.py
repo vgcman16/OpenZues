@@ -5145,6 +5145,224 @@ def _with_doctor_hooks_model_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+def _doctor_bootstrap_workspace_dir(snapshot: dict[str, object]) -> Path | None:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    raw_workspace = (
+        _optional_cli_string(defaults.get("workspaceDir"))
+        or _optional_cli_string(agents.get("workspaceDir"))
+        or _optional_cli_string(snapshot.get("workspaceDir"))
+    )
+    if raw_workspace is None:
+        workspace = _dict_config(snapshot.get("workspace"))
+        raw_workspace = _optional_cli_string(workspace.get("dir"))
+    if raw_workspace is None:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(raw_workspace))
+    try:
+        return Path(expanded).resolve(strict=False)
+    except OSError:
+        return Path(expanded)
+
+
+def _doctor_bootstrap_limit(snapshot: dict[str, object], key: str, default: int) -> int:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    value = defaults.get(key)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return default
+
+
+def _doctor_format_int(value: int) -> str:
+    return f"{max(0, int(value)):,}"
+
+
+def _doctor_format_percent(numerator: int, denominator: int) -> str:
+    if denominator <= 0:
+        return "0%"
+    pct = min(100, max(0, round((numerator / denominator) * 100)))
+    return f"{pct}%"
+
+
+def _doctor_int_record_value(record: dict[str, object], key: str) -> int:
+    value = record.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return 0
+
+
+def _doctor_bootstrap_file_record(
+    path: Path,
+    *,
+    max_chars: int,
+) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    raw_chars = len(content)
+    injected_chars = min(raw_chars, max_chars)
+    truncated = raw_chars > injected_chars
+    near_limit = not truncated and raw_chars >= int(max_chars * 0.9)
+    causes = ["per-file-limit"] if truncated else []
+    return {
+        "name": path.name,
+        "path": str(path),
+        "rawChars": raw_chars,
+        "injectedChars": injected_chars,
+        "truncated": truncated,
+        "nearLimit": near_limit,
+        "causes": causes,
+    }
+
+
+def _doctor_bootstrap_warning(
+    *,
+    truncated_files: list[dict[str, object]],
+    near_limit_files: list[dict[str, object]],
+    injected_total: int,
+    raw_total: int,
+    max_chars: int,
+    total_max_chars: int,
+    total_near_limit: bool,
+) -> str | None:
+    if not truncated_files and not near_limit_files and not total_near_limit:
+        return None
+    lines: list[str] = []
+    if truncated_files:
+        lines.append("Workspace bootstrap files exceed limits and will be truncated:")
+        for file in truncated_files:
+            raw_chars = _doctor_int_record_value(file, "rawChars")
+            injected_chars = _doctor_int_record_value(file, "injectedChars")
+            truncated_chars = max(0, raw_chars - injected_chars)
+            lines.append(
+                f"- {file.get('name')}: {_doctor_format_int(raw_chars)} raw / "
+                f"{_doctor_format_int(injected_chars)} injected "
+                f"({_doctor_format_percent(truncated_chars, raw_chars)} truncated; max/file)"
+            )
+    else:
+        lines.append("Workspace bootstrap files are near configured limits:")
+    for file in near_limit_files:
+        raw_chars = _doctor_int_record_value(file, "rawChars")
+        lines.append(
+            f"- {file.get('name')}: {_doctor_format_int(raw_chars)} chars "
+            f"({_doctor_format_percent(raw_chars, max_chars)} of max/file "
+            f"{_doctor_format_int(max_chars)})"
+        )
+    lines.append(
+        f"Total bootstrap injected chars: {_doctor_format_int(injected_total)} "
+        f"({_doctor_format_percent(injected_total, total_max_chars)} of max/total "
+        f"{_doctor_format_int(total_max_chars)})."
+    )
+    lines.append(
+        f"Total bootstrap raw chars (before truncation): {_doctor_format_int(raw_total)}."
+    )
+    lines.append("")
+    if truncated_files or near_limit_files:
+        lines.append("- Tip: tune `agents.defaults.bootstrapMaxChars` for per-file limits.")
+    if total_near_limit:
+        lines.append(
+            "- Tip: tune `agents.defaults.bootstrapTotalMaxChars` for total-budget limits."
+        )
+    return "\n".join(lines)
+
+
+def _build_doctor_bootstrap_size_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bootstrap-size",
+        "repairAvailable": False,
+        "warnings": [],
+    }
+    snapshot = _doctor_config_snapshot(config_service)
+    workspace_dir = _doctor_bootstrap_workspace_dir(snapshot)
+    if workspace_dir is None:
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "No workspace directory configured for bootstrap size checks.",
+            "checked": False,
+        }
+    max_chars = _doctor_bootstrap_limit(snapshot, "bootstrapMaxChars", 20_000)
+    total_max_chars = _doctor_bootstrap_limit(
+        snapshot,
+        "bootstrapTotalMaxChars",
+        150_000,
+    )
+    files = [
+        record
+        for filename in ("AGENTS.md",)
+        if (
+            record := _doctor_bootstrap_file_record(
+                workspace_dir / filename,
+                max_chars=max_chars,
+            )
+        )
+        is not None
+    ]
+    raw_total = sum(_doctor_int_record_value(file, "rawChars") for file in files)
+    injected_total = min(
+        sum(_doctor_int_record_value(file, "injectedChars") for file in files),
+        total_max_chars,
+    )
+    truncated_files = [file for file in files if file.get("truncated") is True]
+    near_limit_files = [file for file in files if file.get("nearLimit") is True]
+    total_near_limit = injected_total >= int(total_max_chars * 0.9)
+    warning = _doctor_bootstrap_warning(
+        truncated_files=truncated_files,
+        near_limit_files=near_limit_files,
+        injected_total=injected_total,
+        raw_total=raw_total,
+        max_chars=max_chars,
+        total_max_chars=total_max_chars,
+        total_near_limit=total_near_limit,
+    )
+    return {
+        **base_payload,
+        "status": "warning" if warning else "ok",
+        "summary": (
+            "Workspace bootstrap files exceed or approach configured limits."
+            if warning
+            else "Workspace bootstrap files are within configured limits."
+        ),
+        "checked": True,
+        "workspaceDir": str(workspace_dir),
+        "maxChars": max_chars,
+        "totalMaxChars": total_max_chars,
+        "files": files,
+        "truncatedFiles": truncated_files,
+        "nearLimitFiles": near_limit_files,
+        "totals": {
+            "rawChars": raw_total,
+            "injectedChars": injected_total,
+        },
+        "warnings": [warning] if warning else [],
+    }
+
+
+def _with_doctor_bootstrap_size_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    bootstrap_size = _build_doctor_bootstrap_size_payload(config_service)
+    next_payload = dict(payload)
+    next_payload["bootstrapSize"] = bootstrap_size
+    warnings = [
+        str(warning)
+        for warning in _object_list(bootstrap_size.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
     data_dir: Path | None = None,
@@ -19237,6 +19455,10 @@ def doctor(
             services.gateway_config,
         )
         payload = _with_doctor_hooks_model_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_bootstrap_size_payload(
             payload,
             services.gateway_config,
         )

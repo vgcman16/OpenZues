@@ -14510,6 +14510,39 @@ def test_doctor_json_warns_when_hooks_gmail_model_is_not_allowed_or_cataloged(
     assert warnings[0] in payload["warnings"]
 
 
+def test_doctor_json_warns_when_bootstrap_file_exceeds_limits(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "AGENTS.md").write_text("a" * 25_000, encoding="utf-8")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "agents": {
+                "defaults": {
+                    "workspaceDir": str(workspace),
+                    "bootstrapMaxChars": 20_000,
+                    "bootstrapTotalMaxChars": 150_000,
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["bootstrapSize"]["warnings"][0]
+    assert payload["bootstrapSize"]["status"] == "warning"
+    assert payload["bootstrapSize"]["openClawContribution"] == "doctor:bootstrap-size"
+    assert payload["bootstrapSize"]["truncatedFiles"][0]["name"] == "AGENTS.md"
+    assert "Workspace bootstrap files exceed limits and will be truncated" in warning
+    assert "AGENTS.md" in warning
+    assert "max/file" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,

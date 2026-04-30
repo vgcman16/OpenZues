@@ -485,6 +485,10 @@ contribution for configured Gmail hook model overrides: it resolves aliases and
 model refs from native config, warns for `agents.defaults.models` allowlist
 drift, and warns when the hook model is missing from the configured model
 catalog.
+Top-level doctor output now also includes OpenClaw's `doctor:bootstrap-size`
+contribution for configured workspaces: it scans `AGENTS.md` against native
+bootstrap character budgets and reports truncation/near-limit guidance without
+mutating workspace files.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
