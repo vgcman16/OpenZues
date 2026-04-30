@@ -6253,11 +6253,16 @@ class GatewayNodeMethodService:
             if session_payload is None:
                 raise ValueError("session not found")
             canonical_session_key = str(session_payload["key"])
+            parent_message_id = await self._latest_control_chat_message_id(canonical_session_key)
+            inject_metadata: dict[str, Any] = {
+                "parentId": str(parent_message_id) if parent_message_id > 0 else None,
+            }
             message_id = await self._database.append_control_chat_message(
                 role="assistant",
                 content=message,
                 target_label=label,
                 session_key=canonical_session_key,
+                metadata=inject_metadata,
             )
             message_row = await self._database.get_control_chat_message(message_id)
             assert message_row is not None
@@ -14311,7 +14316,7 @@ def _chat_history_message_payload(
     if cost is not None:
         payload["cost"] = cost
     if metadata is not None:
-        for key in ("idempotencyKey", "stopReason", "openclawAbort"):
+        for key in ("idempotencyKey", "stopReason", "openclawAbort", "parentId"):
             if key in metadata:
                 payload[key] = metadata[key]
     return payload

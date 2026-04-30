@@ -2375,6 +2375,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   sessions visibility pack, `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Closed the `chat.inject` parent-link seam from OpenClaw
+  `chat.inject.parentid.test.ts`: injected assistant transcript rows now record
+  the current control-chat leaf as `parentId` metadata and project that linkage
+  through `chat.history` plus session message payloads. Verified with
+  `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_inject_records_parent_id_from_current_transcript_leaf -q`,
+  adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "chat_inject or chat_history"`, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_sessions.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, CLI/runtime doctor parity, and session runtime methods

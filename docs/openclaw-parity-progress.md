@@ -2345,6 +2345,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- `chat.inject` now records the current control-chat leaf as `parentId`
+  metadata on injected assistant rows and projects that linkage through
+  `chat.history` plus live/session message payloads, matching OpenClaw's
+  SessionManager append behavior instead of creating orphan transcript entries.
+- Verified the injected-chat parent-link seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_inject_records_parent_id_from_current_transcript_leaf -q`
+  (`1 passed`), adjacent transcript coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "chat_inject or chat_history"`
+  (`17 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_sessions.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_sessions.py`.
 
 ## References
 

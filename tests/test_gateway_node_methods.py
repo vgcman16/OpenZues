@@ -8901,6 +8901,75 @@ async def test_chat_inject_appends_assistant_message_and_publishes_session_messa
 
 
 @pytest.mark.asyncio
+async def test_chat_inject_records_parent_id_from_current_transcript_leaf() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-inject-parent-id"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "gateway-chat-inject-parent-id.db")
+    await database.initialize()
+    session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+        ),
+        thread_id="thread-chat-inject-parent",
+    ).session_key
+    await database.create_mission(
+        name="Gateway Chat Inject Parent",
+        objective="Keep injected transcript entries linked to the current leaf.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-chat-inject-parent",
+        session_key=session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    parent_message_id = await database.append_control_chat_message(
+        role="user",
+        content="Existing transcript leaf",
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call(
+        "chat.inject",
+        {
+            "sessionKey": session_key,
+            "message": "Injected assistant leaf",
+        },
+        now_ms=555,
+    )
+
+    assert payload == {"ok": True, "messageId": "2"}
+    rows = await database.list_control_chat_messages(limit=10, session_key=session_key)
+    injected = rows[-1]
+    metadata = json.loads(str(injected["metadata_json"]))
+    assert metadata["parentId"] == str(parent_message_id)
+    history = await service.call("chat.history", {"sessionKey": session_key, "limit": 10})
+    assert history["messages"][-1]["parentId"] == str(parent_message_id)
+
+
+@pytest.mark.asyncio
 async def test_chat_inject_uses_resolved_custom_subagent_store_key() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-chat-inject-custom-alias"
     shutil.rmtree(tmp_path, ignore_errors=True)

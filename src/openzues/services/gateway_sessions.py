@@ -395,6 +395,7 @@ class GatewaySessionsService:
         session_payload = await self._session_payload(session=session, now_ms=now_ms)
         message_id = _string_or_none(message_row.get("id"))
         message_seq = await self._message_sequence(message_row)
+        parent_id = _message_parent_id(message_row.get("metadata_json"))
         payload: dict[str, Any] = {
             "sessionKey": session.current_session_key,
             "message": _message_payload(
@@ -402,6 +403,7 @@ class GatewaySessionsService:
                 text=message_text,
                 message_id=message_id,
                 message_seq=message_seq,
+                parent_id=parent_id,
             ),
             "updatedAt": session_payload["updatedAt"],
             "sessionId": session_payload["sessionId"],
@@ -961,6 +963,7 @@ class GatewaySessionsService:
                     text=text,
                     message_id=_message_id_text(message.get("id")),
                     message_seq=await self._message_sequence(message),
+                    parent_id=_message_parent_id(message.get("metadata_json")),
                 )
             )
         return projected
@@ -1697,6 +1700,13 @@ def _message_id_text(value: object) -> str | None:
     return _string_or_none(value)
 
 
+def _message_parent_id(metadata_value: object) -> str | None:
+    metadata = _json_object_or_none(metadata_value)
+    if metadata is None:
+        return None
+    return _message_id_text(metadata.get("parentId"))
+
+
 def _snapshot_sort_key(session_payload: dict[str, Any]) -> tuple[int, str]:
     updated_at = _int_or_none(session_payload.get("updatedAt"))
     return (
@@ -1725,6 +1735,7 @@ def _message_payload(
     text: str,
     message_id: str | None,
     message_seq: int | None,
+    parent_id: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "role": role,
@@ -1732,6 +1743,8 @@ def _message_payload(
     }
     if message_id is not None:
         payload["id"] = message_id
+    if parent_id is not None:
+        payload["parentId"] = parent_id
     openclaw_meta: dict[str, str | int] = {}
     if message_id is not None:
         openclaw_meta["id"] = message_id
