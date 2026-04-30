@@ -2565,6 +2565,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   or send_direct_channel_message_splits_whatsapp_media"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the Slack native media upload auth seam from OpenClaw
+  `extensions/slack/src/send.ts`: route-backed media upload now passes the raw
+  Slack route token into the upload helper and relies on the Slack form poster
+  to apply a single `Bearer` wrapper, preserving thread/reply upload metadata
+  without double-wrapping authorization. Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_slack_native_route
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "slack_native_route or slack_reply_to or slack_media_download or
+  send_direct_channel_message_uses_slack_native_route or
+  message_action_dispatches_slack"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

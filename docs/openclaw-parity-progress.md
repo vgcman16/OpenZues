@@ -2565,6 +2565,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_message_splits_whatsapp_media"` (`2 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Slack native media upload now passes the raw resolved route token into the
+  upload helper and leaves `Authorization: Bearer ...` formatting to the Slack
+  form poster, matching OpenClaw's WebClient-style raw-token upload flow and
+  avoiding `Bearer Bearer ...` headers.
+- Verified the Slack media auth seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_slack_native_route -q`
+  (`1 passed`), adjacent Slack route/action coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "slack_native_route or slack_reply_to or
+  slack_media_download or send_direct_channel_message_uses_slack_native_route
+  or message_action_dispatches_slack"` (`9 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

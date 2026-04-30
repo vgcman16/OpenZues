@@ -9545,7 +9545,7 @@ class OpsMeshService:
                 channel_id=channel_id,
                 initial_comment=text,
                 thread_id=thread_id or None,
-                secret_token=_slack_bearer_token(secret_token),
+                secret_token=secret_token or "",
             )
             return {
                 "runtime": "native-provider-backed",

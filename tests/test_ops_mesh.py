@@ -4524,7 +4524,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
                 "filename": "slack.png",
                 "length": "8",
             },
-            "Bearer xoxb-route-token",
+            "xoxb-route-token",
         ),
         (
             "https://slack.com/api/files.completeUploadExternal",
@@ -4535,7 +4535,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
                     "Ship native Slack parity.\n\nMedia:\n1. https://example.com/slack.png"
                 ),
             },
-            "Bearer xoxb-route-token",
+            "xoxb-route-token",
         ),
     ]
     assert uploaded_files == [("https://upload.slack.test/file-1", b"fake-png")]
