@@ -861,6 +861,30 @@ def _message_action_param_blocks(params: dict[str, Any]) -> list[dict[str, Any]]
     return blocks
 
 
+def _message_action_param_string_array(
+    params: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+    label: str | None = None,
+) -> list[str] | None:
+    value = params.get(key)
+    if isinstance(value, list):
+        values = [entry.strip() for entry in value if isinstance(entry, str) and entry.strip()]
+        if values:
+            return values
+        if required:
+            raise RuntimeError(f"{label or key} is required.")
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if trimmed:
+            return [trimmed]
+    if required:
+        raise RuntimeError(f"{label or key} is required.")
+    return None
+
+
 def _message_action_param_string_or_number(
     params: dict[str, Any],
     key: str,
@@ -1397,6 +1421,9 @@ def _telegram_media_ids(result: object) -> list[str]:
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
+DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
+DISCORD_CHANNEL_TYPE_GUILD_MEDIA = 16
 DISCORD_APP_FLAG_GATEWAY_PRESENCE = 1 << 12
 DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED = 1 << 13
 DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS = 1 << 14
@@ -7366,6 +7393,7 @@ class OpsMeshService:
             "react",
             "reactions",
             "send",
+            "thread-create",
             "unpin",
         }:
             route = await self._provider_route_for_channel_account(
@@ -7430,6 +7458,13 @@ class OpsMeshService:
             if action == "permissions":
                 return await asyncio.to_thread(
                     self._dispatch_discord_permissions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "thread-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_thread_create_message_action,
                     route,
                     request,
                     secret_token,
@@ -8977,6 +9012,90 @@ class OpsMeshService:
         if isinstance(channel_type, int):
             permissions_summary["channelType"] = channel_type
         return {"ok": True, "permissions": permissions_summary}
+
+    def _dispatch_discord_thread_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord thread-create requires channelId.")
+        name = _message_action_param_string(
+            request.params,
+            "threadName",
+            required=True,
+        )
+        message_id = _message_action_param_string(request.params, "messageId")
+        content = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        )
+        auto_archive_minutes = _message_action_param_integer(
+            request.params,
+            "autoArchiveMin",
+            "autoArchiveMinutes",
+        )
+        applied_tags = _message_action_param_string_array(request.params, "appliedTags")
+        authorization = _discord_bot_authorization(secret_token)
+        channel_type: int | None = None
+        if message_id is None:
+            channel = self._request_json_provider_url(
+                _discord_api_endpoint(f"channels/{channel_id}"),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            if isinstance(channel, dict) and isinstance(channel.get("type"), int):
+                channel_type = int(channel["type"])
+        is_forum_like = channel_type in {
+            DISCORD_CHANNEL_TYPE_GUILD_FORUM,
+            DISCORD_CHANNEL_TYPE_GUILD_MEDIA,
+        }
+        body: dict[str, object] = {"name": name or ""}
+        if auto_archive_minutes:
+            body["auto_archive_duration"] = auto_archive_minutes
+        if is_forum_like:
+            starter_content = content.strip() if content and content.strip() else name or ""
+            body["message"] = {"content": starter_content}
+            if applied_tags:
+                body["applied_tags"] = applied_tags
+        elif message_id is None:
+            body["type"] = DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD
+        endpoint = (
+            f"channels/{channel_id}/messages/{message_id}/threads"
+            if message_id is not None
+            else f"channels/{channel_id}/threads"
+        )
+        thread = self._request_json_provider_url(
+            _discord_api_endpoint(endpoint),
+            method="POST",
+            payload=body,
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(thread, dict):
+            raise RuntimeError("Discord API returned a non-JSON thread response.")
+        if thread.get("error"):
+            raise RuntimeError(str(thread.get("error")))
+        thread_id = str(thread.get("id") or "").strip()
+        if not is_forum_like and content and content.strip() and thread_id:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"channels/{thread_id}/messages"),
+                method="POST",
+                payload={"content": content},
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "thread": thread}
 
     async def _post_provider_route_event(
         self,

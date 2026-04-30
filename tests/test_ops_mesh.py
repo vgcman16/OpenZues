@@ -6398,6 +6398,116 @@ async def test_ops_mesh_service_message_action_dispatches_discord_permissions_ro
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_thread_create_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-thread-create"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        if method == "GET" and target.endswith("/channels/987654321"):
+            return {"id": "987654321", "type": 0}
+        if method == "POST" and target.endswith("/channels/987654321/threads"):
+            return {"id": "thread-1", "name": "Parity thread"}
+        if method == "POST" and target.endswith("/channels/thread-1/messages"):
+            return {"id": "thread-message-1", "channel_id": "thread-1"}
+        raise AssertionError(f"unexpected Discord API request {method} {target}")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="thread-create",
+            params={
+                "channelId": "channel:987654321",
+                "threadName": "Parity thread",
+                "message": "Thread starter",
+                "autoArchiveMin": "1440.8",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-thread-create-action",
+        )
+    )
+
+    assert result == {"ok": True, "thread": {"id": "thread-1", "name": "Parity thread"}}
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/987654321",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "POST",
+            "https://discord.com/api/v10/channels/987654321/threads",
+            {
+                "name": "Parity thread",
+                "auto_archive_duration": 1440,
+                "type": 11,
+            },
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "POST",
+            "https://discord.com/api/v10/channels/thread-1/messages",
+            {"content": "Thread starter"},
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
