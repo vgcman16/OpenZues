@@ -2309,6 +2309,97 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_mirrors_explicit_session_key(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-source-session"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, str]:
+        provider_requests.append(request)
+        return {"messageId": "provider-source-session-42"}
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        raise AssertionError(f"session fallback should not run: {session_key} {message}")
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            session_deliverer=fake_session_delivery,
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Mirror source session.",
+        account_id="workspace-bot",
+        session_key="agent:Work:Slack:channel:C123",
+        idempotency_key="idem-provider-source-session",
+    )
+
+    expected_source_session_key = "agent:work:slack:channel:c123"
+    expected_target_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="workspace-bot",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-provider-source-session",
+        "channel": "slack",
+        "messageId": "provider-source-session-42",
+        "sessionKey": expected_target_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "provider-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "workspace-bot",
+            "sessionKey": expected_source_session_key,
+        },
+    }
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="slack",
+            target="channel:C123",
+            message="Mirror source session.",
+            account_id="workspace-bot",
+            session_key=expected_source_session_key,
+        )
+    ]
+    assert delivery is not None
+    assert delivery["session_key"] == expected_target_session_key
+    assert delivery["event_payload"]["sessionKey"] == expected_target_session_key
+    assert delivery["event_payload"]["sourceSessionKey"] == expected_source_session_key
+    assert delivery["route_scope"]["source_session_key"] == expected_source_session_key
+    assert delivery["route_scope"]["runtime_session_key"] == expected_source_session_key
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

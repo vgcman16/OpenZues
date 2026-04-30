@@ -2315,6 +2315,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_human_output_reports_session_lock_files or
   doctor_json_includes_cli_runtime_surfaces"` (`4 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
+  behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
+  outbound runtime/mirror session, and keeps the delivery history row on the
+  channel-derived target session so saved history and replay remain anchored to
+  the external target.
+- Verified the direct-send source-session seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_mirrors_explicit_session_key -q`
+  (`1 passed`), adjacent direct-send runtime/idempotency/provider coverage
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_message_mirrors_explicit_session_key or
+  send_direct_channel_message_uses_shared_outbound_runtime_owner or
+  send_direct_channel_message_prefers_provider_runtime or
+  send_direct_channel_message_uses_gateway_route_adapter or
+  send_direct_channel_message_dedupes_inflight_idempotent_retries or
+  send_direct_channel_message_uses_known_channel_default_account"` (`6
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

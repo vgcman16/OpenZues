@@ -123,7 +123,11 @@ reply and silent flags, and saved failed `gateway/send` / `gateway/poll` rows
 replay through provider-native runtime calls with their original OpenClaw-style
 delivery options. The CLI now exposes `routes send` and `routes poll` as thin
 JSON/human wrappers over the same native direct send/poll runtime owner,
-including reply/thread/media/silent/document/idempotency options. Remaining
+including reply/thread/media/silent/document/idempotency options. Direct
+provider-backed `gateway.send` calls with an explicit `sessionKey` now
+canonicalize and pass that key as the runtime/mirror session while keeping the
+saved delivery row attached to the channel-derived target session for history
+and replay. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API

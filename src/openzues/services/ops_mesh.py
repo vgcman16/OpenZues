@@ -108,6 +108,7 @@ from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.session_keys import (
     DEFAULT_ACCOUNT_ID,
     build_launch_session_key,
+    canonicalize_session_key,
     normalize_optional_account_id,
     resolve_thread_session_keys,
 )
@@ -2080,7 +2081,10 @@ def _direct_channel_transport_from_delivery_row(
     thread_id = event_payload.get("threadId")
     if thread_id is None:
         thread_id = route_scope.get("thread_id")
-    session_key = str(delivery_row.get("session_key") or "").strip() or None
+    session_key = (
+        str(route_scope.get("runtime_session_key") or delivery_row.get("session_key") or "").strip()
+        or None
+    )
     runtime = str(route_scope.get("transport_runtime") or "").strip() or "session-backed"
     return _build_direct_channel_transport(
         channel=channel,
@@ -7874,6 +7878,8 @@ class OpsMeshService:
             resolved_target,
             thread_id=normalized_thread_id,
         )
+        source_session_key = canonicalize_session_key(payload.get("sourceSessionKey"))
+        runtime_session_key = source_session_key or announce_session_key
         route_target = (
             str(serialized_target.get("summary") or "").strip() or announce_session_key
         )
@@ -7886,6 +7892,8 @@ class OpsMeshService:
         payload_with_target = dict(payload)
         payload_with_target["sessionKey"] = announce_session_key
         payload_with_target["conversationTarget"] = serialized_target
+        if source_session_key is not None:
+            payload_with_target["sourceSessionKey"] = source_session_key
         if "accountId" not in payload_with_target and resolved_target.account_id is not None:
             payload_with_target["accountId"] = resolved_target.account_id
         if thread_id is not None:
@@ -7898,6 +7906,9 @@ class OpsMeshService:
             for key, value in route_scope_extra.items():
                 if value is not None:
                     route_scope[key] = value
+        if source_session_key is not None:
+            route_scope["source_session_key"] = source_session_key
+            route_scope["runtime_session_key"] = runtime_session_key
         delivery_id = await self.database.create_outbound_delivery(
             route_id=None,
             route_name=route_name,
@@ -7936,7 +7947,7 @@ class OpsMeshService:
                     else ()
                 )
                 runtime_result = await runtime.deliver_poll(
-                    session_key=announce_session_key,
+                    session_key=runtime_session_key,
                     message=message,
                     channel=resolved_target.channel,
                     target=runtime_target,
@@ -7975,7 +7986,7 @@ class OpsMeshService:
                 ):
                     runtime_message = str(payload.get("message") or "").strip()
                 runtime_result = await runtime.deliver_message(
-                    session_key=announce_session_key,
+                    session_key=runtime_session_key,
                     message=runtime_message,
                     channel=resolved_target.channel,
                     target=runtime_target,
@@ -8010,7 +8021,7 @@ class OpsMeshService:
                     target=runtime_target,
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
-                    session_key=announce_session_key,
+                    session_key=runtime_session_key,
                 ),
                 "error": error,
             }
@@ -8099,8 +8110,9 @@ class OpsMeshService:
             payload["accountId"] = account_id
         if agent_id is not None:
             payload["agentId"] = agent_id
-        if session_key is not None:
-            payload["sourceSessionKey"] = session_key
+        source_session_key = canonicalize_session_key(session_key)
+        if source_session_key is not None:
+            payload["sourceSessionKey"] = source_session_key
         if idempotency_key is not None:
             payload["idempotencyKey"] = idempotency_key
         result = await self._deliver_direct_channel_message(
@@ -8116,7 +8128,7 @@ class OpsMeshService:
             ),
             route_scope_extra={
                 "source": "gateway.send",
-                "source_session_key": session_key,
+                "source_session_key": source_session_key,
                 "agent_id": agent_id,
                 "idempotency_key": idempotency_key,
             },
