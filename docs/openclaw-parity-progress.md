@@ -1137,7 +1137,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Discord `message.action channel-edit` now follows OpenClaw's guild-admin
   runtime by dispatching route-backed bot-token REST channel PATCH requests,
   including `clearParent` / null parent handling plus rate-limit, archive, lock,
-  and auto-archive body mapping.
+  auto-archive, and forum/media `availableTags` body mapping.
 - Verified the Discord channel-edit-action slice with `python -m pytest
   tests\test_ops_mesh.py -q -k "discord_channel_edit_route"` (`1 passed`),
   adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
@@ -1296,6 +1296,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "message_action_dispatches_discord"` (`42 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Re-verified the Discord channel-edit `availableTags` expansion with
+  `python -m pytest tests\test_ops_mesh.py -q -k "discord_channel_edit_route"`
+  (`1 passed`), adjacent Discord action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "message_action_dispatches_discord"` (`42
+  passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py`.
 - WhatsApp `message.action react` now dispatches through the native WhatsApp
   Cloud API route, normalizing direct WhatsApp JIDs to E.164 recipients and
   sending `type="reaction"` payloads for add, empty-emoji clear, and explicit

@@ -1646,6 +1646,31 @@ def _discord_parent_id_param(params: dict[str, Any]) -> tuple[bool, str | None]:
     return False, None
 
 
+def _discord_available_tags_param(params: dict[str, Any]) -> list[dict[str, object]] | None:
+    raw_tags = params.get("availableTags")
+    if not isinstance(raw_tags, list):
+        return None
+    tags: list[dict[str, object]] = []
+    for raw_tag in raw_tags:
+        if not isinstance(raw_tag, dict) or not isinstance(raw_tag.get("name"), str):
+            continue
+        tag: dict[str, object] = {"name": str(raw_tag["name"])}
+        if isinstance(raw_tag.get("id"), str):
+            tag["id"] = str(raw_tag["id"])
+        if isinstance(raw_tag.get("moderated"), bool):
+            tag["moderated"] = bool(raw_tag["moderated"])
+        if "emoji_id" in raw_tag and (
+            raw_tag.get("emoji_id") is None or isinstance(raw_tag.get("emoji_id"), str)
+        ):
+            tag["emoji_id"] = raw_tag.get("emoji_id")
+        if "emoji_name" in raw_tag and (
+            raw_tag.get("emoji_name") is None or isinstance(raw_tag.get("emoji_name"), str)
+        ):
+            tag["emoji_name"] = raw_tag.get("emoji_name")
+        tags.append(tag)
+    return tags or None
+
+
 def _discord_audit_reason_headers(reason: str | None) -> dict[str, str] | None:
     trimmed = str(reason or "").strip()
     if not trimmed:
@@ -9920,6 +9945,9 @@ class OpsMeshService:
         )
         if auto_archive_duration is not None:
             payload["auto_archive_duration"] = auto_archive_duration
+        available_tags = _discord_available_tags_param(request.params)
+        if available_tags is not None:
+            payload["available_tags"] = available_tags
         channel = self._request_json_provider_url(
             _discord_api_endpoint(f"channels/{channel_id}"),
             method="PATCH",

@@ -8761,6 +8761,11 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_edit_r
                 "archived": True,
                 "locked": False,
                 "autoArchiveDuration": "60.9",
+                "availableTags": [
+                    {"id": "0", "name": "General", "emoji_id": None},
+                    {"id": "1", "name": "Docs", "moderated": False, "emoji_name": "book"},
+                    {"id": "bad"},
+                ],
             },
             account_id="discord-bot",
             requester_sender_id="1234",
@@ -8788,6 +8793,10 @@ async def test_ops_mesh_service_message_action_dispatches_discord_channel_edit_r
                 "archived": True,
                 "locked": False,
                 "auto_archive_duration": 60,
+                "available_tags": [
+                    {"id": "0", "name": "General", "emoji_id": None},
+                    {"id": "1", "name": "Docs", "moderated": False, "emoji_name": "book"},
+                ],
             },
             "Authorization",
             "Bot discord-bot-token",

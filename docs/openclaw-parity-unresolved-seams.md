@@ -486,7 +486,8 @@ route-backed bot-token REST path, mapping OpenClaw's channel creation fields
 into the Discord channel body and returning `{ok: true, channel}`.
 Discord guild-admin `channel-edit` now dispatches through the same
 route-backed bot-token REST path, including OpenClaw's `clearParent` nulling
-and channel/thread edit body mapping.
+and channel/thread edit body mapping plus forum/media `availableTags`
+projection to Discord `available_tags`.
 Discord guild-admin `channel-delete` now dispatches through the same
 route-backed bot-token REST path and returns the upstream-shaped
 `{ok: true, channelId}` payload.
