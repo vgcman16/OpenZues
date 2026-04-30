@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from openzues.database import Database, utcnow
@@ -1250,6 +1250,25 @@ def _discord_bot_authorization(secret_token: str | None) -> str:
     if not token:
         raise RuntimeError("Discord route is missing a bot token secret.")
     return f"Bot {token}"
+
+
+def _discord_action_channel_id(raw: str | None) -> str | None:
+    resolved = _parse_discord_channel_resolve_input(str(raw or ""))
+    channel_id = resolved.get("channelId")
+    return str(channel_id or "").strip() or None
+
+
+def _discord_reaction_identifier(raw: str | None) -> str:
+    trimmed = str(raw or "").strip()
+    if not trimmed:
+        raise RuntimeError("Emoji is required for Discord reactions.")
+    custom_match = re.match(r"^<a?:([^:>]+):(\d+)>$", trimmed)
+    identifier = (
+        f"{custom_match.group(1)}:{custom_match.group(2)}"
+        if custom_match
+        else re.sub("[\ufe0e\ufe0f]", "", trimmed)
+    )
+    return quote(identifier, safe="")
 
 
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
@@ -6880,6 +6899,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "discord" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Discord route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_discord_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel != "slack" or action not in {"react", "reactions"}:
             return None
         route = await self._provider_route_for_channel_account(
@@ -7143,6 +7178,45 @@ class OpsMeshService:
             }
         if remove or not emoji:
             return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
+
+    def _dispatch_discord_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object] | None:
+        del route
+        remove = request.params.get("remove") is True
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+            allow_empty=True,
+        )
+        if remove or not emoji:
+            return None
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord react requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        encoded_emoji = _discord_reaction_identifier(emoji)
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(
+                f"channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me"
+            ),
+            method="PUT",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
         return {"ok": True, "added": emoji}
 
     async def _post_provider_route_event(
@@ -8679,6 +8753,45 @@ class OpsMeshService:
             target,
             headers=headers,
             method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_json_provider_url(
+        self,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        headers: dict[str, str] = {}
+        body: bytes | None = None
+        if payload is not None:
+            body = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if secret_header_name and secret_token:
+            headers[str(secret_header_name)] = str(secret_token)
+        request = Request(
+            target,
+            data=body,
+            headers=headers,
+            method=str(method or "GET").upper(),
         )
         try:
             with urlopen(request, timeout=timeout_seconds) as response:

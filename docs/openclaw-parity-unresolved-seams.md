@@ -154,6 +154,10 @@ trusted-sender requirements for provider-specific tool contexts.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
 dispatch via Bot API `setMessageReaction`, including the upstream empty
 reaction-array remove shape and soft missing-message-id result.
+Discord route-backed action parity now includes `react` add dispatch via REST
+own-reaction `PUT` using the saved bot token and OpenClaw-style encoded emoji
+identifier. Remaining Discord action parity is explicit remove, remove-own, and
+`reactions` listing fanout.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels
