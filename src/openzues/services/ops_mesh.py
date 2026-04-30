@@ -1576,6 +1576,30 @@ def _whatsapp_recipient_id(target: str | None) -> str | None:
     return normalized or None
 
 
+def _whatsapp_action_recipient_id(target: str | None) -> str | None:
+    normalized = _whatsapp_recipient_id(target)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered.endswith("@g.us"):
+        group_id = lowered.removesuffix("@g.us")
+        if re.fullmatch(r"\d+(?:-\d+)*", group_id):
+            return f"{group_id}@g.us"
+        return None
+    for pattern in (
+        r"^(\d+)(?::\d+)?@s\.whatsapp\.net$",
+        r"^(\d+)@c\.us$",
+        r"^(\d+)@lid$",
+    ):
+        match = re.fullmatch(pattern, normalized, flags=re.IGNORECASE)
+        if match is not None:
+            return f"+{match.group(1)}"
+    if "@" in normalized:
+        return None
+    digits = re.sub(r"\D", "", normalized)
+    return f"+{digits}" if digits else None
+
+
 def _whatsapp_message_id(result: object) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -6895,6 +6919,22 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
+        if channel == "whatsapp" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native WhatsApp route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_whatsapp_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "telegram" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -6958,6 +6998,67 @@ class OpsMeshService:
             request,
             secret_token,
         )
+
+    def _dispatch_whatsapp_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_target = _message_action_param_string(request.params, "chatJid")
+        if chat_target is None:
+            chat_target = _message_action_param_string(
+                request.params,
+                "to",
+                required=True,
+            )
+        recipient_id = _whatsapp_action_recipient_id(chat_target)
+        if recipient_id is None:
+            raise RuntimeError("WhatsApp react requires chatJid.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        remove = request.params.get("remove") is True
+        emoji = (
+            _message_action_param_string(
+                request.params,
+                "emoji",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a WhatsApp reaction.")
+        resolved_emoji = "" if remove else emoji
+        result = self._post_json_webhook(
+            _whatsapp_messages_endpoint(str(route.get("target") or "")),
+            {
+                "messaging_product": "whatsapp",
+                "to": recipient_id,
+                "type": "reaction",
+                "reaction": {
+                    "message_id": message_id or "",
+                    "emoji": resolved_emoji,
+                },
+            },
+            secret_header_name="Authorization",
+            secret_token=_whatsapp_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("WhatsApp API returned a non-JSON response.")
+        if result.get("error"):
+            error = result.get("error")
+            if isinstance(error, dict):
+                detail = str(error.get("message") or error.get("code") or "unknown")
+            else:
+                detail = str(error)
+            raise RuntimeError(f"WhatsApp API returned {detail}.")
+        if remove or not emoji:
+            return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
 
     def _dispatch_slack_react_message_action(
         self,

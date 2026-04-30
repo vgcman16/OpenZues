@@ -148,9 +148,7 @@ route-backed Slack action parity now includes `react` add/remove dispatch via
 Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
 `reactions.get full=true` using the saved native route token. Empty-emoji
 `react` now also resolves the bot user through `auth.test`, removes only the
-bot-owned reactions, and returns the removed names. Remaining action parity is
-other production provider action adapters, `supportsAction` breadth, and deeper
-trusted-sender requirements for provider-specific tool contexts.
+bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
 dispatch via Bot API `setMessageReaction`, including the upstream empty
 reaction-array remove shape and soft missing-message-id result.
@@ -161,6 +159,12 @@ identifier, plus explicit `remove=true` through the matching own-reaction
 own reaction identifier, and returns the removed list. Discord `reactions` now
 fetches message reaction summaries and per-reaction users with bounded limits,
 so no smaller Discord reaction action seam remains in this queue.
+WhatsApp route-backed action parity now includes `react` add/remove dispatch
+via the native WhatsApp Cloud API messages endpoint, including direct JID
+normalization to E.164 recipients and the upstream empty-emoji/remove shape.
+Remaining action parity is other production provider action adapters, current
+message context resolution breadth, `supportsAction` breadth, and deeper
+trusted-sender requirements for provider-specific tool contexts.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels
