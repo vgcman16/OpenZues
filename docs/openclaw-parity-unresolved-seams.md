@@ -408,6 +408,8 @@ Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
 `reactions.get full=true` and `edit` dispatch via Slack `chat.update` using
 the saved native route token. Slack `delete` now dispatches through
 `chat.delete` with the same route token and channel/message metadata path.
+Slack `pin` now dispatches through `pins.add` with upstream-style
+`messageId` -> `timestamp` mapping.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
