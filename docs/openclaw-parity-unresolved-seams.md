@@ -126,10 +126,16 @@ fields and empty legacy heartbeat blocks removed.
 TTS provider config now normalizes legacy `messages.tts.<provider>` and
 `plugins.entries.voice-call.config.tts.<provider>` keys into nested
 `tts.providers`, including `edge` -> `microsoft`.
-Remaining legacy-config parity is broader doctor migration breadth from
-OpenClaw's compatibility migrator; the next small source-backed head is
-`tools.web.search` provider-owned config migration into plugin entry
-`webSearch` config.
+`tools.web.search` provider-owned config now also migrates into bundled plugin
+entry `webSearch` config: global `apiKey` maps to Brave, provider-scoped
+records such as `grok` and `kimi` map through the OpenClaw manifest ownership
+table to `xai` and `moonshot`, existing plugin config wins, and modern
+`openaiCodex` search config stays under `tools.web.search`.
+The currently identified OpenClaw legacy-config doctor migrator files are now
+covered by native OpenZues repair paths. Future config work should come from a
+new upstream migration file or validation seam rather than this closed queue.
+The repo-level queue now returns to the runtime lifecycle head: persistent
+thread-bound provider binding records and unbind/end-hook lifecycle breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

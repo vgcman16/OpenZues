@@ -2176,6 +2176,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy channel config uses allow aliases."
     if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
         return "Legacy x_search config uses apiKey."
+    if _legacy_config_issues_all_web_search_provider_config(issues):
+        return "Legacy web search provider config moved to plugin entries."
     if _legacy_config_issues_all_telegram_streaming(issues):
         return "Legacy Telegram streaming config uses scalar aliases."
     if _legacy_config_issues_all_slack_streaming(issues):
@@ -2204,6 +2206,11 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy channel config uses allow aliases; run openzues doctor --fix."
     if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
         return "Legacy x_search config uses apiKey; run openzues doctor --fix."
+    if _legacy_config_issues_all_web_search_provider_config(issues):
+        return (
+            "Legacy web search provider config moved to plugin entries; "
+            "run openzues doctor --fix."
+        )
     if _legacy_config_issues_all_telegram_streaming(issues):
         return "Legacy Telegram streaming config uses scalar aliases; run openzues doctor --fix."
     if _legacy_config_issues_all_slack_streaming(issues):
@@ -2294,6 +2301,14 @@ def _legacy_config_issues_all_tts_provider_config(issues: list[object]) -> bool:
             issue["path"] == "messages.tts"
             or issue["path"] == "plugins.entries.voice-call.config.tts"
         )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_web_search_provider_config(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and issue.get("path") == "tools.web.search"
         for issue in issues
     )
 

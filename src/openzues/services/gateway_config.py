@@ -44,6 +44,22 @@ _LEGACY_TTS_PROVIDER_TARGETS = {
     "edge": "microsoft",
 }
 _LEGACY_TTS_PLUGIN_IDS = {"voice-call"}
+_LEGACY_WEB_SEARCH_GLOBAL_PROVIDER_ID = "brave"
+_LEGACY_WEB_SEARCH_MODERN_SCOPED_KEYS = {"openaiCodex"}
+_LEGACY_WEB_SEARCH_PROVIDER_PLUGIN_IDS = {
+    "brave": "brave",
+    "duckduckgo": "duckduckgo",
+    "exa": "exa",
+    "firecrawl": "firecrawl",
+    "gemini": "google",
+    "grok": "xai",
+    "kimi": "moonshot",
+    "minimax": "minimax",
+    "ollama": "ollama",
+    "perplexity": "perplexity",
+    "searxng": "searxng",
+}
+_LEGACY_WEB_SEARCH_PROVIDER_IDS = tuple(sorted(_LEGACY_WEB_SEARCH_PROVIDER_PLUGIN_IDS))
 _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "discord": "discord",
     "feishu": "feishu",
@@ -279,6 +295,7 @@ class GatewayConfigService:
             *_migrate_legacy_thread_binding_ttl_hours(payload),
             *_migrate_legacy_channel_allow_aliases(payload),
             *_migrate_legacy_x_search_api_key(payload),
+            *_migrate_legacy_web_search_provider_config(payload),
             *_migrate_legacy_telegram_streaming_keys(payload),
             *_migrate_legacy_slack_streaming_keys(payload),
             *_migrate_legacy_googlechat_stream_mode(payload),
@@ -1703,6 +1720,17 @@ def _legacy_x_search_api_key_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_web_search_provider_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": "plugins.entries.<plugin>.config.webSearch",
+        "message": (
+            "tools.web.search provider-owned config moved to "
+            "plugins.entries.<plugin>.config.webSearch."
+        ),
+    }
+
+
 def _legacy_telegram_streaming_issue(path: str) -> dict[str, str]:
     return {
         "path": path,
@@ -1790,6 +1818,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_x_search_api_key_issue(path)
             for path in _iter_legacy_x_search_api_key_paths(payload)
+        ],
+        *[
+            _legacy_web_search_provider_issue(path)
+            for path in _iter_legacy_web_search_provider_paths(payload)
         ],
         *[
             _legacy_telegram_streaming_issue(path)
@@ -2171,6 +2203,152 @@ def _migrate_legacy_x_search_api_key(payload: dict[str, Any]) -> list[str]:
     if not legacy and not had_enabled:
         changes.append("Removed empty tools.web.x_search.")
     return changes
+
+
+def _iter_legacy_web_search_provider_paths(payload: dict[str, Any]) -> list[str]:
+    return (
+        ["tools.web.search"]
+        if _has_mapped_legacy_web_search_provider_config(payload)
+        else []
+    )
+
+
+def _legacy_web_search_config(payload: dict[str, Any]) -> dict[str, Any] | None:
+    tools = payload.get("tools")
+    if not isinstance(tools, dict):
+        return None
+    web = tools.get("web")
+    if not isinstance(web, dict):
+        return None
+    search = web.get("search")
+    return search if isinstance(search, dict) else None
+
+
+def _has_mapped_legacy_web_search_provider_config(payload: dict[str, Any]) -> bool:
+    search = _legacy_web_search_config(payload)
+    if search is None:
+        return False
+    if "apiKey" in search:
+        return True
+    return any(
+        isinstance(search.get(provider_id), dict)
+        for provider_id in _LEGACY_WEB_SEARCH_PROVIDER_IDS
+    )
+
+
+def _migrate_legacy_web_search_provider_config(payload: dict[str, Any]) -> list[str]:
+    search = _legacy_web_search_config(payload)
+    if search is None or not _has_mapped_legacy_web_search_provider_config(payload):
+        return []
+
+    tools = _ensure_config_record(payload, "tools")
+    web = _ensure_config_record(tools, "web")
+    next_search: dict[str, Any] = {}
+    for key, value in search.items():
+        if key == "apiKey":
+            continue
+        if (
+            key in _LEGACY_WEB_SEARCH_PROVIDER_PLUGIN_IDS
+            and isinstance(value, dict)
+        ):
+            continue
+        if key in _LEGACY_WEB_SEARCH_MODERN_SCOPED_KEYS or not isinstance(value, dict):
+            next_search[key] = copy.deepcopy(value)
+    web["search"] = next_search
+
+    changes: list[str] = []
+    global_migration = _legacy_global_web_search_migration(search)
+    if global_migration is not None:
+        _migrate_plugin_web_search_config(
+            payload,
+            legacy_path=global_migration["legacyPath"],
+            target_path=global_migration["targetPath"],
+            plugin_id=global_migration["pluginId"],
+            provider_config=global_migration["payload"],
+            changes=changes,
+        )
+
+    for provider_id in _LEGACY_WEB_SEARCH_PROVIDER_IDS:
+        if provider_id == _LEGACY_WEB_SEARCH_GLOBAL_PROVIDER_ID:
+            continue
+        scoped = search.get(provider_id)
+        if not isinstance(scoped, dict) or not scoped:
+            continue
+        plugin_id = _LEGACY_WEB_SEARCH_PROVIDER_PLUGIN_IDS.get(provider_id)
+        if not plugin_id:
+            continue
+        _migrate_plugin_web_search_config(
+            payload,
+            legacy_path=f"tools.web.search.{provider_id}",
+            target_path=f"plugins.entries.{plugin_id}.config.webSearch",
+            plugin_id=plugin_id,
+            provider_config=copy.deepcopy(scoped),
+            changes=changes,
+        )
+    return changes
+
+
+def _legacy_global_web_search_migration(
+    search: dict[str, Any],
+) -> dict[str, Any] | None:
+    provider_config = search.get(_LEGACY_WEB_SEARCH_GLOBAL_PROVIDER_ID)
+    payload = copy.deepcopy(provider_config) if isinstance(provider_config, dict) else {}
+    has_legacy_api_key = "apiKey" in search
+    if has_legacy_api_key:
+        payload["apiKey"] = copy.deepcopy(search.get("apiKey"))
+    if not payload:
+        return None
+    plugin_id = _LEGACY_WEB_SEARCH_PROVIDER_PLUGIN_IDS[
+        _LEGACY_WEB_SEARCH_GLOBAL_PROVIDER_ID
+    ]
+    return {
+        "pluginId": plugin_id,
+        "payload": payload,
+        "legacyPath": (
+            "tools.web.search.apiKey"
+            if has_legacy_api_key
+            else f"tools.web.search.{_LEGACY_WEB_SEARCH_GLOBAL_PROVIDER_ID}"
+        ),
+        "targetPath": (
+            f"plugins.entries.{plugin_id}.config.webSearch.apiKey"
+            if has_legacy_api_key and not isinstance(provider_config, dict)
+            else f"plugins.entries.{plugin_id}.config.webSearch"
+        ),
+    }
+
+
+def _migrate_plugin_web_search_config(
+    payload: dict[str, Any],
+    *,
+    legacy_path: str,
+    target_path: str,
+    plugin_id: str,
+    provider_config: dict[str, Any],
+    changes: list[str],
+) -> None:
+    plugins = _ensure_config_record(payload, "plugins")
+    entries = _ensure_config_record(plugins, "entries")
+    entry = _ensure_config_record(entries, plugin_id)
+    had_enabled = "enabled" in entry
+    if not had_enabled:
+        entry["enabled"] = True
+    config = _ensure_config_record(entry, "config")
+    existing = config.get("webSearch")
+    if not isinstance(existing, dict):
+        config["webSearch"] = copy.deepcopy(provider_config)
+        changes.append(f"Moved {legacy_path} to {target_path}.")
+        return
+
+    merged = copy.deepcopy(existing)
+    _merge_missing_config_values(merged, provider_config)
+    config["webSearch"] = merged
+    if merged != existing or not had_enabled:
+        changes.append(
+            f"Merged {legacy_path} to {target_path} "
+            "(filled missing fields from legacy; kept explicit plugin config values)."
+        )
+        return
+    changes.append(f"Removed {legacy_path} ({target_path} already set).")
 
 
 def _ensure_config_record(container: dict[str, Any], key: str) -> dict[str, Any]:
