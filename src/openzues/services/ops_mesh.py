@@ -7185,7 +7185,7 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "discord" and action in {"react", "reactions"}:
+        if channel == "discord" and action in {"react", "reactions", "send"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -7198,6 +7198,13 @@ class OpsMeshService:
             if action == "reactions":
                 return await asyncio.to_thread(
                     self._dispatch_discord_reactions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "send":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_send_message_action,
                     route,
                     request,
                     secret_token,
@@ -8395,6 +8402,56 @@ class OpsMeshService:
                 }
             )
         return {"ok": True, "reactions": summaries}
+
+    def _dispatch_discord_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+            or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "path")
+            or _message_action_param_raw_string(request.params, "filePath")
+        )
+        if not message and media_url is None:
+            raise RuntimeError("Discord send requires message or media.")
+        event: dict[str, Any] = {
+            "to": target,
+            "message": message,
+        }
+        if media_url is not None:
+            event["mediaUrl"] = media_url
+        reply_to = _message_action_param_string(request.params, "replyTo")
+        if reply_to is not None:
+            event["replyToId"] = reply_to
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            event["threadId"] = thread_id
+        if request.params.get("silent") is True:
+            event["silent"] = True
+        result = self._post_discord_provider_event(
+            route,
+            "gateway/send",
+            event,
+            secret_token,
+        )
+        return {
+            "ok": True,
+            "result": {
+                "messageId": str(result.get("messageId") or ""),
+                "channelId": str(result.get("channelId") or result.get("chatId") or ""),
+            },
+        }
 
     async def _post_provider_route_event(
         self,

@@ -438,7 +438,9 @@ identifier, plus explicit `remove=true` through the matching own-reaction
 `DELETE`. Empty-emoji `react` now also fetches message reactions, removes each
 own reaction identifier, and returns the removed list. Discord `reactions` now
 fetches message reaction summaries and per-reaction users with bounded limits,
-so no smaller Discord reaction action seam remains in this queue.
+so no smaller Discord reaction action seam remains in this queue. Discord
+`send` now dispatches through the native webhook route owner with OpenClaw's
+`to` / `message` / `replyTo` / `threadId` / `silent` and media path aliases.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
