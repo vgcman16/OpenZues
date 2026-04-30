@@ -2387,6 +2387,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_sessions.py`.
+- Closed the cron direct-announce replay idempotency seam from OpenClaw
+  `delivery-dispatch.double-announce.test.ts`: explicit cron failure announce
+  and failure-alert channel deliveries now pass stable
+  `cron-direct-delivery:v1:*` idempotency keys into the shared direct-channel
+  delivery owner, so repeated handling of the same failed cron execution reuses
+  the saved delivered row instead of double-sending. Verified with
+  `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_dedupes_replayed_cron_failure_announce_delivery -q`,
+  adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "explicit_cron_failure_to_announce or replayed_cron_failure_announce or
+  send_direct_channel_message_dedupes_inflight_idempotent_retries or
+  replay_outbound_deliveries_retries_saved_failed_announce_delivery"`, `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, CLI/runtime doctor parity, and session runtime methods

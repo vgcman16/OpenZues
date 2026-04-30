@@ -7886,6 +7886,112 @@ async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_threa
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_dedupes_replayed_cron_failure_announce_delivery(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Replay Safe Announce Failure Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Deliver the cron failure once per execution.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "deploy-room",
+                    "accountId": "coordinator",
+                    "threadId": 77,
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Replay Safe Announce Failure Delivery",
+        objective="Deliver the cron failure once per execution.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_replay_safe_announce_failure_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="explicit announce delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:replay-safe-announce-failure-route",
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    expected_base_session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="77",
+    ).session_key
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            (
+                '\u26a0\ufe0f Cron job "Replay Safe Announce Failure Delivery" '
+                "failed: lane timed out"
+            ),
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].route_kind == "announce"
+    assert deliveries[0].request_idempotency_key is not None
+    assert deliveries[0].request_idempotency_key.startswith(
+        "cron-direct-delivery:v1:"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_delivers_explicit_cron_failure_to_known_channel_default_account(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-cron-default-account"

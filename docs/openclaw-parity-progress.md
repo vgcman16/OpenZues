@@ -2359,6 +2359,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_sessions.py`.
+- Cron failure announce deliveries now carry OpenClaw-style stable direct
+  delivery idempotency keys, so replaying the same failed cron execution
+  reuses the saved delivered row instead of sending a second channel announce;
+  distinct runs still have separate runtime keys through the cron execution
+  timestamp.
+- Verified the cron direct-announce replay seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_dedupes_replayed_cron_failure_announce_delivery -q`
+  (`1 passed`), adjacent cron/direct replay coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k
+  "explicit_cron_failure_to_announce or replayed_cron_failure_announce or
+  send_direct_channel_message_dedupes_inflight_idempotent_retries or
+  replay_outbound_deliveries_retries_saved_failed_announce_delivery"` (`6
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

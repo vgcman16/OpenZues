@@ -1761,6 +1761,29 @@ def _cron_job_id(task_id: int) -> str:
     return f"task-blueprint:{task_id}"
 
 
+def _cron_direct_delivery_idempotency_key(
+    *,
+    task: TaskBlueprintView,
+    mission: dict[str, Any],
+    event_type: str,
+    conversation_target: ConversationTargetView,
+    thread_id: str | int | None = None,
+) -> str:
+    started_at_ms, _ = _cron_runtime_window_ms(task, mission)
+    job_id = _cron_job_id(int(task.id))
+    execution_id = f"cron:{job_id}:{started_at_ms}"
+    channel = str(conversation_target.channel or "").strip().lower()
+    account_id = normalize_optional_account_id(conversation_target.account_id) or ""
+    target = str(conversation_target.peer_id or "").strip()
+    normalized_thread_id = _normalized_delivery_thread_id(thread_id) or ""
+    normalized_event_type = str(event_type or "").strip().lower()
+    return (
+        "cron-direct-delivery:v1:"
+        f"{normalized_event_type}:{execution_id}:{channel}:"
+        f"{account_id}:{target}:{normalized_thread_id}"
+    )
+
+
 def _cron_failure_message(task: TaskBlueprintView, mission: dict[str, Any]) -> str:
     error = str(mission.get("last_error") or "").strip() or "unknown error"
     return f'Cron job "{task.name}" failed: {error}'
@@ -5905,6 +5928,7 @@ class OpsMeshService:
         event_type: str,
         payload: dict[str, Any],
         message: str,
+        request_idempotency_key: str | None = None,
     ) -> None:
         await self._deliver_direct_channel_message(
             route_name=route_name,
@@ -5913,6 +5937,7 @@ class OpsMeshService:
             event_type=event_type,
             payload=payload,
             message=message,
+            request_idempotency_key=request_idempotency_key,
         )
 
     async def _send_cron_failure_alert(
@@ -5963,6 +5988,12 @@ class OpsMeshService:
                 event_type="cron/failure-alert",
                 payload=payload,
                 message=message,
+                request_idempotency_key=_cron_direct_delivery_idempotency_key(
+                    task=task,
+                    mission=mission,
+                    event_type="cron/failure-alert",
+                    conversation_target=conversation_target,
+                ),
             )
             return
         if session_key is not None and self._session_outbound_runtime_available():
@@ -8489,6 +8520,12 @@ class OpsMeshService:
                         event_type="cron/failure",
                         payload=payload,
                         message=announce_message,
+                        request_idempotency_key=_cron_direct_delivery_idempotency_key(
+                            task=task,
+                            mission=mission,
+                            event_type="cron/failure",
+                            conversation_target=failure_destination_target,
+                        ),
                     )
                     return
                 if (
@@ -8512,13 +8549,21 @@ class OpsMeshService:
                     explicit_announce_target is not None
                     and self._session_outbound_runtime_available()
                 ):
+                    explicit_thread_id = _task_cron_delivery_thread_id(task)
                     await self._send_ad_hoc_announce_delivery(
                         route_name=f"Announce delivery for {task.name}",
                         conversation_target=explicit_announce_target,
-                        thread_id=_task_cron_delivery_thread_id(task),
+                        thread_id=explicit_thread_id,
                         event_type="cron/failure",
                         payload=payload,
                         message=announce_message,
+                        request_idempotency_key=_cron_direct_delivery_idempotency_key(
+                            task=task,
+                            mission=mission,
+                            event_type="cron/failure",
+                            conversation_target=explicit_announce_target,
+                            thread_id=explicit_thread_id,
+                        ),
                     )
                     return
                 if (
