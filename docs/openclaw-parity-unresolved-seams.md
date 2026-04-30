@@ -456,6 +456,10 @@ Sandbox warning text while preserving the existing warning surface. The
 top-level human/JSON doctor view now also reports OpenClaw-style session lock
 health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
 liveness, age, stale posture, and read-only guidance without removing files.
+The same state-integrity doctor surface now reports a structured
+`stateDirectory` payload and CRITICAL warning when the configured OpenZues data
+directory is missing, mirroring OpenClaw's missing-state-directory doctor
+warning.
 Top-level doctor output now also includes the upstream `doctor:security` and
 `doctor:shell-completion` contribution surfaces as stable native read models,
 currently marked honest unavailable/partial until production security and shell

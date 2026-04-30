@@ -13895,6 +13895,59 @@ def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> N
     ]
 
 
+def test_doctor_json_warns_when_state_directory_is_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    missing_dir = tmp_path / "missing-state"
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(data_dir=missing_dir),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["stateDirectory"] == {
+        "ok": False,
+        "path": str(missing_dir),
+        "severity": "critical",
+        "warnings": [
+            f"CRITICAL: state directory missing: {missing_dir}",
+        ],
+    }
+    assert f"CRITICAL: state directory missing: {missing_dir}" in payload["warnings"]
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

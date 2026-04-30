@@ -77,6 +77,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_warns_when_sandbox_enabled_without_docker or
   doctor_and_update_status_json_include_hermes_sections"` (`3 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now reports the OpenClaw state-integrity warning
+  for a missing configured state/data directory, including a structured
+  `stateDirectory` payload and the CRITICAL warning text from
+  `C:\Users\skull\OneDrive\Documents\openclaw-main\src\commands\doctor.warns-state-directory-is-missing.e2e.test.ts`.
+- Verified the missing-state-directory doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_state_directory_is_missing -q`
+  (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q
+  -k "doctor_json_warns_when_state_directory_is_missing or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.

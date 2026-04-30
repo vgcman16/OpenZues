@@ -3192,6 +3192,39 @@ def _with_doctor_sandbox_payload(
 _SESSION_LOCK_STALE_SECONDS = 30 * 60
 
 
+def _doctor_state_directory_payload(data_dir: Path) -> dict[str, object]:
+    path_text = str(data_dir)
+    if data_dir.exists() and data_dir.is_dir():
+        return {
+            "ok": True,
+            "path": path_text,
+            "severity": "ok",
+            "warnings": [],
+        }
+    return {
+        "ok": False,
+        "path": path_text,
+        "severity": "critical",
+        "warnings": [f"CRITICAL: state directory missing: {path_text}"],
+    }
+
+
+def _with_doctor_state_directory_health(
+    payload: dict[str, object],
+    data_dir: Path,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    state_payload = _doctor_state_directory_payload(data_dir)
+    next_payload["stateDirectory"] = state_payload
+    warnings = _object_list(state_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(
+            next_payload,
+            [str(warning) for warning in warnings],
+        )
+    return next_payload
+
+
 def _doctor_session_lock_payload(data_dir: Path) -> dict[str, object] | None:
     lock_paths = sorted((data_dir / "agents").glob("*/sessions/*.jsonl.lock"))
     if not lock_paths:
@@ -17698,6 +17731,7 @@ def doctor(
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
+            payload = _with_doctor_state_directory_health(payload, data_dir)
             payload = _with_doctor_session_lock_health(payload, data_dir)
         payload = await _with_doctor_gateway_health_payload(
             payload,
