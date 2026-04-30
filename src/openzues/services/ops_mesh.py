@@ -7444,6 +7444,7 @@ class OpsMeshService:
             "sticker",
             "thread-create",
             "unpin",
+            "voice-status",
         }:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -7550,6 +7551,13 @@ class OpsMeshService:
             if action == "channel-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "voice-status":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_voice_status_message_action,
                     route,
                     request,
                     secret_token,
@@ -9397,6 +9405,35 @@ class OpsMeshService:
         if not isinstance(channels, list):
             raise RuntimeError("Discord API returned a non-JSON channels response.")
         return {"ok": True, "channels": channels}
+
+    def _dispatch_discord_voice_status_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        voice = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/voice-states/{user_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(voice, dict):
+            raise RuntimeError("Discord API returned a non-JSON voice status response.")
+        if voice.get("error"):
+            raise RuntimeError(str(voice.get("error")))
+        return {"ok": True, "voice": voice}
 
     def _dispatch_discord_channel_create_message_action(
         self,
