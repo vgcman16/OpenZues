@@ -209,13 +209,17 @@ sandboxed `mode="all"` / `mode="non-main"` child targets now dispatch through
 the native sandbox runtime even when the caller uses inherited sandbox policy.
 The native sandbox adapter now preserves read-only Codex sandbox policy metadata
 when dispatched with `sandbox_mode="read-only"`; remaining staging work is
-limited to deeper OpenClaw media/workspace filesystem staging. Explicit
+limited to deeper OpenClaw provider filesystem staging. Explicit
 `workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
 while omitted/`"rw"` access keeps the writable workspace sandbox path.
 Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+Sandboxed `chat.send` now also stages managed path-backed inbound attachments
+already persisted under `openzuesSavedPath`, copying them into the child
+workspace's `media/inbound` directory and rewriting runtime attachment metadata
+to sandbox-relative media refs instead of host paths.
 If provisional child metadata/session materialization fails after inline
 attachment staging, OpenZues now removes the staged attachment directory,
 forgets provisional child state, and returns the spawn error envelope before
@@ -401,9 +405,30 @@ trusted-owner posture, tool context, and idempotency key, returning the
 dispatcher payload instead of always reporting unsupported action. Remaining
 route-backed Slack action parity now includes `react` add/remove dispatch via
 Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
-`reactions.get full=true` using the saved native route token. Empty-emoji
-`react` now also resolves the bot user through `auth.test`, removes only the
-bot-owned reactions, and returns the removed names.
+`reactions.get full=true` and `edit` dispatch via Slack `chat.update` using
+the saved native route token. Slack `delete` now dispatches through
+`chat.delete` with the same route token and channel/message metadata path.
+Slack `pin` now dispatches through `pins.add` with upstream-style
+`messageId` -> `timestamp` mapping, and Slack `unpin` now dispatches through
+`pins.remove` with the same route-token path. Slack `list-pins` now dispatches
+through `pins.list` and returns provider-shaped pin items. Slack channel-history
+`read` now dispatches through `conversations.history` with OpenClaw's
+`limit`/`before`/`after` parameter mapping, while threaded reads dispatch
+through `conversations.replies` and filter out the parent message. Slack
+`member-info` now dispatches through `users.info` and returns the provider
+info envelope. Slack `emoji-list` now dispatches through `emoji.list` and
+applies OpenClaw's sorted local result limit. Slack `upload-file` now dispatches
+through Slack's external upload flow with OpenClaw's `filePath` / `path` /
+`media`, caption, filename/title, and thread aliases, including native local
+path reads before the presigned upload. Slack `download-file` now dispatches
+through fresh `files.info` metadata, rejects definite channel/thread scope
+mismatches before media fetch, downloads private file URLs with the saved route
+token, and returns saved local media path metadata.
+Slack `send` now dispatches through the native Slack route as OpenClaw's generic
+action entrypoint, including `threadId` / `replyTo` routing, blocks validation,
+and the same external upload helper for media sends.
+Empty-emoji `react` now also resolves the bot user through `auth.test`,
+removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
 dispatch via Bot API `setMessageReaction`, including the upstream empty
 reaction-array remove shape and soft missing-message-id result.
@@ -413,7 +438,37 @@ identifier, plus explicit `remove=true` through the matching own-reaction
 `DELETE`. Empty-emoji `react` now also fetches message reactions, removes each
 own reaction identifier, and returns the removed list. Discord `reactions` now
 fetches message reaction summaries and per-reaction users with bounded limits,
-so no smaller Discord reaction action seam remains in this queue.
+so no smaller Discord reaction action seam remains in this queue. Discord
+`send` now dispatches through the native webhook route owner with OpenClaw's
+`to` / `message` / `replyTo` / `threadId` / `silent` and media path aliases.
+Discord `edit` now dispatches through the route-backed bot-token REST path,
+mapping `message` to the upstream `content` edit payload.
+Discord `delete` now dispatches through the same route-backed bot-token REST
+path and returns the upstream-shaped `{ok: true}` payload.
+Discord `pin`, `unpin`, and `list-pins` now dispatch through the same
+route-backed bot-token REST path, including upstream-shaped `{ok: true}` pin
+mutations and normalized pinned-message timestamps for `list-pins`.
+Discord `read` now dispatches through the same route-backed bot-token REST
+path, including upstream-style `limit` integer parsing, 1-100 clamping,
+`before` / `after` / `around` query params, and normalized message timestamps.
+Discord `permissions` now dispatches through the same route-backed bot-token
+REST path, fetching channel, bot identity, guild, and member records before
+applying OpenClaw's guild/role/member overwrite order into a permission
+summary.
+Discord `thread-create` now dispatches through the same route-backed bot-token
+REST path, including standalone channel-type lookup, non-forum public-thread
+defaults, auto-archive duration mapping, and starter-message delivery into the
+created thread.
+Discord `sticker` now dispatches through the same route-backed bot-token REST
+path, mapping upstream `stickerId` / `stickerIds` params into Discord
+`sticker_ids` channel-message sends with optional message content.
+Discord `set-presence` now follows OpenClaw's gateway-backed runtime shape
+through a fakeable native adapter, including status/activity validation,
+projected presence payloads, and the honest gateway-not-available error when
+no Discord Gateway adapter is registered.
+Discord guild-admin `member-info` now dispatches through the same route-backed
+bot-token REST path and returns the upstream-shaped `{ok: true, member}`
+payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

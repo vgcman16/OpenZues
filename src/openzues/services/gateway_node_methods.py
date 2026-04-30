@@ -17690,6 +17690,9 @@ def _has_effective_agent_attachments(value: object) -> bool:
             continue
         if _has_effective_agent_attachment_content(entry.get("content")):
             return True
+        saved_path = _chat_attachment_saved_path(entry)
+        if saved_path is not None:
+            return True
         source = entry.get("source")
         if not isinstance(source, dict):
             continue
@@ -17703,6 +17706,35 @@ def _has_effective_agent_attachments(value: object) -> bool:
 
 def _chat_attachment_text_value(value: object) -> str | None:
     return value.strip() or None if isinstance(value, str) else None
+
+
+def _chat_attachment_saved_path(attachment: Mapping[str, object]) -> Path | None:
+    saved_path = _chat_attachment_text_value(attachment.get("openzuesSavedPath"))
+    if saved_path is None:
+        return None
+    path = _chat_attachment_local_path(saved_path)
+    if path is None:
+        return None
+    try:
+        if not path.is_file():
+            return None
+        if path.stat().st_size > _CHAT_ATTACHMENT_MAX_BYTES:
+            return None
+    except OSError:
+        return None
+    return path
+
+
+def _chat_attachment_local_path(value: str) -> Path | None:
+    if value.lower().startswith("file://"):
+        parsed = urlsplit(value)
+        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+            return None
+        path_text = unquote(parsed.path)
+        if re.match(r"^/[A-Za-z]:/", path_text):
+            path_text = path_text[1:]
+        return Path(path_text).expanduser()
+    return Path(value).expanduser()
 
 
 def _chat_attachment_base64_value(attachment: Mapping[str, object]) -> str | None:
@@ -17774,6 +17806,13 @@ def _stage_gateway_chat_sandbox_attachments(
             if base64_value is not None
             else None
         )
+        if decoded is None:
+            saved_path = _chat_attachment_saved_path(attachment)
+            if saved_path is not None:
+                try:
+                    decoded = saved_path.read_bytes()
+                except OSError:
+                    decoded = None
         if decoded is None:
             staged.append(dict(attachment))
             continue

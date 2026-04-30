@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -826,6 +827,64 @@ def _message_action_param_string(
     return trimmed
 
 
+def _message_action_param_raw_string(
+    params: dict[str, Any],
+    key: str,
+) -> str | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a string.")
+    if not value.strip():
+        return None
+    return value
+
+
+def _message_action_param_blocks(params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    value = params.get("blocks")
+    if value is None:
+        return None
+    parsed: object = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("blocks must be a JSON array.") from exc
+    if not isinstance(parsed, list):
+        raise RuntimeError("blocks must be an array.")
+    blocks: list[dict[str, Any]] = []
+    for block in parsed:
+        if not isinstance(block, dict):
+            raise RuntimeError("blocks entries must be objects.")
+        blocks.append(dict(block))
+    return blocks
+
+
+def _message_action_param_string_array(
+    params: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+    label: str | None = None,
+) -> list[str] | None:
+    value = params.get(key)
+    if isinstance(value, list):
+        values = [entry.strip() for entry in value if isinstance(entry, str) and entry.strip()]
+        if values:
+            return values
+        if required:
+            raise RuntimeError(f"{label or key} is required.")
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if trimmed:
+            return [trimmed]
+    if required:
+        raise RuntimeError(f"{label or key} is required.")
+    return None
+
+
 def _message_action_param_string_or_number(
     params: dict[str, Any],
     key: str,
@@ -870,6 +929,29 @@ def _message_action_param_positive_int(
         if parsed <= 0:
             raise RuntimeError(f"{key} must be a positive integer.")
         return parsed
+    return None
+
+
+def _message_action_param_integer(
+    params: dict[str, Any],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        value = params.get(key)
+        if value is None:
+            continue
+        parsed: float | None = None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = float(value)
+        elif isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                continue
+            match = re.match(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)", trimmed)
+            if match:
+                parsed = float(match.group(0))
+        if parsed is not None and math.isfinite(parsed):
+            return math.trunc(parsed)
     return None
 
 
@@ -1116,6 +1198,92 @@ def _slack_media_filename(media_url: str, index: int) -> str:
     return f"openzues-media-{index}.bin"
 
 
+def _safe_slack_file_label(value: str | None, fallback: str) -> str:
+    label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
+    label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
+    return label[:120] if label else fallback
+
+
+def _slack_file_download_url(file_info: dict[str, Any]) -> str | None:
+    for key in ("url_private_download", "url_private"):
+        value = file_info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _slack_file_channel_scope_values(file_info: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for key in ("channels", "groups", "ims"):
+        raw_values = file_info.get(key)
+        if not isinstance(raw_values, list):
+            continue
+        ids.update(str(value).strip() for value in raw_values if str(value).strip())
+    shares = file_info.get("shares")
+    if isinstance(shares, dict):
+        for share_kind in ("public", "private"):
+            share_map = shares.get(share_kind)
+            if not isinstance(share_map, dict):
+                continue
+            ids.update(
+                str(channel_id).strip()
+                for channel_id in share_map
+                if str(channel_id).strip()
+            )
+    return ids
+
+
+def _slack_file_thread_scope_values(
+    file_info: dict[str, Any],
+    channel_id: str,
+) -> set[str]:
+    values: set[str] = set()
+    shares = file_info.get("shares")
+    if not isinstance(shares, dict):
+        return values
+    for share_kind in ("public", "private"):
+        share_map = shares.get(share_kind)
+        if not isinstance(share_map, dict):
+            continue
+        entries = share_map.get(channel_id)
+        if not isinstance(entries, list):
+            continue
+        for raw_entry in entries:
+            if not isinstance(raw_entry, dict):
+                continue
+            for key in ("thread_ts", "ts"):
+                value = raw_entry.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.add(value.strip())
+    return values
+
+
+def _slack_file_scope_mismatches(
+    file_info: dict[str, Any],
+    *,
+    channel_id: str | None,
+    thread_id: str | None,
+) -> bool:
+    normalized_channel_id = str(channel_id or "").strip()
+    if not normalized_channel_id:
+        return False
+    channel_values = _slack_file_channel_scope_values(file_info)
+    if channel_values and normalized_channel_id not in channel_values:
+        return True
+    normalized_thread_id = str(thread_id or "").strip()
+    if not normalized_thread_id:
+        return False
+    thread_values = _slack_file_thread_scope_values(file_info, normalized_channel_id)
+    return bool(thread_values and normalized_thread_id not in thread_values)
+
+
+def _slack_download_file_unavailable_result() -> dict[str, object]:
+    return {
+        "ok": False,
+        "error": "File could not be downloaded (not found, too large, or inaccessible).",
+    }
+
+
 def _telegram_bot_token(secret_token: str | None) -> str:
     token = str(secret_token or "").strip()
     if token.lower().startswith("bot"):
@@ -1253,12 +1421,80 @@ def _telegram_media_ids(result: object) -> list[str]:
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
+DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
+DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
+DISCORD_CHANNEL_TYPE_GUILD_MEDIA = 16
+DISCORD_PRESENCE_ACTIVITY_TYPES = {
+    "playing": 0,
+    "streaming": 1,
+    "listening": 2,
+    "watching": 3,
+    "custom": 4,
+    "competing": 5,
+}
+DISCORD_PRESENCE_STATUSES = {"online", "dnd", "idle", "invisible"}
 DISCORD_APP_FLAG_GATEWAY_PRESENCE = 1 << 12
 DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED = 1 << 13
 DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS = 1 << 14
 DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS_LIMITED = 1 << 15
 DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT = 1 << 18
 DISCORD_APP_FLAG_GATEWAY_MESSAGE_CONTENT_LIMITED = 1 << 19
+DISCORD_PERMISSION_BITS: dict[str, int] = {
+    "CreateInstantInvite": 1 << 0,
+    "KickMembers": 1 << 1,
+    "BanMembers": 1 << 2,
+    "Administrator": 1 << 3,
+    "ManageChannels": 1 << 4,
+    "ManageGuild": 1 << 5,
+    "AddReactions": 1 << 6,
+    "ViewAuditLog": 1 << 7,
+    "PrioritySpeaker": 1 << 8,
+    "Stream": 1 << 9,
+    "ViewChannel": 1 << 10,
+    "SendMessages": 1 << 11,
+    "SendTTSMessages": 1 << 12,
+    "ManageMessages": 1 << 13,
+    "EmbedLinks": 1 << 14,
+    "AttachFiles": 1 << 15,
+    "ReadMessageHistory": 1 << 16,
+    "MentionEveryone": 1 << 17,
+    "UseExternalEmojis": 1 << 18,
+    "ViewGuildInsights": 1 << 19,
+    "Connect": 1 << 20,
+    "Speak": 1 << 21,
+    "MuteMembers": 1 << 22,
+    "DeafenMembers": 1 << 23,
+    "MoveMembers": 1 << 24,
+    "UseVAD": 1 << 25,
+    "ChangeNickname": 1 << 26,
+    "ManageNicknames": 1 << 27,
+    "ManageRoles": 1 << 28,
+    "ManageWebhooks": 1 << 29,
+    "ManageGuildExpressions": 1 << 30,
+    "UseApplicationCommands": 1 << 31,
+    "RequestToSpeak": 1 << 32,
+    "ManageEvents": 1 << 33,
+    "ManageThreads": 1 << 34,
+    "CreatePublicThreads": 1 << 35,
+    "CreatePrivateThreads": 1 << 36,
+    "UseExternalStickers": 1 << 37,
+    "SendMessagesInThreads": 1 << 38,
+    "UseEmbeddedActivities": 1 << 39,
+    "ModerateMembers": 1 << 40,
+    "ViewCreatorMonetizationAnalytics": 1 << 41,
+    "UseSoundboard": 1 << 42,
+    "CreateGuildExpressions": 1 << 43,
+    "CreateEvents": 1 << 44,
+    "UseExternalSounds": 1 << 45,
+    "SendVoiceMessages": 1 << 46,
+    "PinMessages": 1 << 48,
+    "SendPolls": 1 << 49,
+    "UseExternalApps": 1 << 50,
+}
+DISCORD_ALL_PERMISSIONS = 0
+for _discord_permission_bit in DISCORD_PERMISSION_BITS.values():
+    DISCORD_ALL_PERMISSIONS |= _discord_permission_bit
+DISCORD_ADMINISTRATOR_PERMISSION = DISCORD_PERMISSION_BITS["Administrator"]
 
 
 def _discord_api_endpoint(path: str) -> str:
@@ -1306,6 +1542,105 @@ def _discord_reaction_identifier_from_payload(emoji: object) -> str | None:
     if name and emoji_id:
         return f"{name}:{emoji_id}"
     return name or None
+
+
+def _discord_normalized_timestamp(raw: object) -> tuple[int, str] | None:
+    timestamp_ms: int | None = None
+    if isinstance(raw, datetime):
+        candidate = raw if raw.tzinfo is not None else raw.replace(tzinfo=UTC)
+        timestamp_ms = round(candidate.timestamp() * 1000)
+    elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        numeric = float(raw)
+        if math.isfinite(numeric):
+            timestamp_ms = round(
+                numeric * 1000 if numeric < 1_000_000_000_000 else numeric
+            )
+    elif isinstance(raw, str):
+        trimmed = raw.strip()
+        if not trimmed:
+            return None
+        if re.match(r"^\d+(\.\d+)?$", trimmed):
+            numeric = float(trimmed)
+            if math.isfinite(numeric):
+                timestamp_ms = round(
+                    numeric
+                    if "." not in trimmed and len(trimmed) >= 13
+                    else numeric * 1000
+                )
+        else:
+            try:
+                parsed = datetime.fromisoformat(trimmed.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                candidate = (
+                    parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+                )
+                timestamp_ms = round(candidate.timestamp() * 1000)
+    if timestamp_ms is None or not math.isfinite(timestamp_ms):
+        return None
+    timestamp_utc = (
+        datetime.fromtimestamp(timestamp_ms / 1000, UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+    return timestamp_ms, timestamp_utc
+
+
+def _discord_message_with_normalized_timestamp(message: object) -> object:
+    if not isinstance(message, dict):
+        return message
+    normalized = _discord_normalized_timestamp(message.get("timestamp"))
+    if normalized is None:
+        return message
+    timestamp_ms, timestamp_utc = normalized
+    result: dict[str, object] = dict(message)
+    current_ms = result.get("timestampMs")
+    has_valid_ms = (
+        isinstance(current_ms, (int, float))
+        and not isinstance(current_ms, bool)
+        and math.isfinite(float(current_ms))
+    )
+    if not has_valid_ms:
+        result["timestampMs"] = timestamp_ms
+    current_utc = result.get("timestampUtc")
+    if not isinstance(current_utc, str) or not current_utc.strip():
+        result["timestampUtc"] = timestamp_utc
+    return result
+
+
+def _discord_permission_bitfield(raw: object) -> int:
+    if raw is None:
+        return 0
+    try:
+        return int(str(raw).strip() or "0", 10)
+    except ValueError as exc:
+        raise RuntimeError("Discord permission bitfield is invalid.") from exc
+
+
+def _discord_permission_names(bitfield: int) -> list[str]:
+    return sorted(
+        name
+        for name, value in DISCORD_PERMISSION_BITS.items()
+        if bitfield & value == value
+    )
+
+
+def _discord_apply_permission_overwrite(
+    permissions: int,
+    overwrite: dict[Any, Any],
+) -> int:
+    denied = _discord_permission_bitfield(overwrite.get("deny"))
+    allowed = _discord_permission_bitfield(overwrite.get("allow"))
+    return (permissions & ~denied) | allowed
+
+
+class GatewayDiscordPresenceRuntime(Protocol):
+    def update_presence(
+        self,
+        account_id: str | None,
+        presence: dict[str, object],
+    ) -> None: ...
 
 
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
@@ -4502,6 +4837,7 @@ class OpsMeshService:
     parity_checkpoint_path: Path | None = None
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
+    discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
@@ -7065,7 +7401,26 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "discord" and action in {"react", "reactions"}:
+        if channel == "discord" and action == "set-presence":
+            return await asyncio.to_thread(
+                self._dispatch_discord_set_presence_message_action,
+                request,
+            )
+        if channel == "discord" and action in {
+            "delete",
+            "edit",
+            "list-pins",
+            "member-info",
+            "permissions",
+            "pin",
+            "read",
+            "react",
+            "reactions",
+            "send",
+            "sticker",
+            "thread-create",
+            "unpin",
+        }:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -7082,13 +7437,98 @@ class OpsMeshService:
                     request,
                     secret_token,
                 )
+            if action == "send":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_send_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "edit":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "delete":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_delete_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action in {"pin", "unpin"}:
+                return await asyncio.to_thread(
+                    self._dispatch_discord_pin_mutation_message_action,
+                    route,
+                    request,
+                    secret_token,
+                    cast(Literal["pin", "unpin"], action),
+                )
+            if action == "list-pins":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_list_pins_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "read":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_read_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "permissions":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_permissions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "member-info":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_member_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "thread-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_thread_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "sticker":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_sticker_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             return await asyncio.to_thread(
                 self._dispatch_discord_react_message_action,
                 route,
                 request,
                 secret_token,
             )
-        if channel != "slack" or action not in {"react", "reactions"}:
+        if channel != "slack" or action not in {
+            "delete",
+            "download-file",
+            "edit",
+            "emoji-list",
+            "list-pins",
+            "member-info",
+            "pin",
+            "read",
+            "react",
+            "reactions",
+            "send",
+            "unpin",
+            "upload-file",
+        }:
             return None
         route = await self._provider_route_for_channel_account(
             channel=channel,
@@ -7102,6 +7542,83 @@ class OpsMeshService:
         if action == "reactions":
             return await asyncio.to_thread(
                 self._dispatch_slack_reactions_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "edit":
+            return await asyncio.to_thread(
+                self._dispatch_slack_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "delete":
+            return await asyncio.to_thread(
+                self._dispatch_slack_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "download-file":
+            return await asyncio.to_thread(
+                self._dispatch_slack_download_file_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "pin":
+            return await asyncio.to_thread(
+                self._dispatch_slack_pin_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "unpin":
+            return await asyncio.to_thread(
+                self._dispatch_slack_unpin_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "list-pins":
+            return await asyncio.to_thread(
+                self._dispatch_slack_list_pins_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "read":
+            return await asyncio.to_thread(
+                self._dispatch_slack_read_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "member-info":
+            return await asyncio.to_thread(
+                self._dispatch_slack_member_info_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "emoji-list":
+            return await asyncio.to_thread(
+                self._dispatch_slack_emoji_list_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "send":
+            return await asyncio.to_thread(
+                self._dispatch_slack_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "upload-file":
+            return await asyncio.to_thread(
+                self._dispatch_slack_upload_file_message_action,
                 route,
                 request,
                 secret_token,
@@ -7330,6 +7847,526 @@ class OpsMeshService:
                 reactions = raw_reactions
         return {"ok": True, "reactions": reactions}
 
+    def _dispatch_slack_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack edit requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if not message:
+            raise RuntimeError("Slack edit requires message.")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "chat.update"),
+            {
+                "channel": channel_id,
+                "ts": message_id or "",
+                "text": message,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        delivered_channel = str(result.get("channel") or channel_id).strip() or channel_id
+        delivered_message_id = str(result.get("ts") or message_id or "").strip()
+        return {
+            "ok": True,
+            "edited": True,
+            "channelId": delivered_channel,
+            "messageId": delivered_message_id,
+        }
+
+    def _dispatch_slack_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack delete requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "chat.delete"),
+            {
+                "channel": channel_id,
+                "ts": message_id or "",
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        delivered_channel = str(result.get("channel") or channel_id).strip() or channel_id
+        delivered_message_id = str(result.get("ts") or message_id or "").strip()
+        return {
+            "ok": True,
+            "deleted": True,
+            "channelId": delivered_channel,
+            "messageId": delivered_message_id,
+        }
+
+    def _dispatch_slack_pin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack pin requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "pins.add"),
+            {
+                "channel": channel_id,
+                "timestamp": message_id or "",
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {
+            "ok": True,
+            "pinned": True,
+            "channelId": channel_id,
+            "messageId": message_id or "",
+        }
+
+    def _dispatch_slack_unpin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack unpin requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "pins.remove"),
+            {
+                "channel": channel_id,
+                "timestamp": message_id or "",
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {
+            "ok": True,
+            "unpinned": True,
+            "channelId": channel_id,
+            "messageId": message_id or "",
+        }
+
+    def _dispatch_slack_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack list-pins requires channelId.")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "pins.list"),
+            {"channel": channel_id},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        pins = result.get("items")
+        return {
+            "ok": True,
+            "channelId": channel_id,
+            "pins": pins if isinstance(pins, list) else [],
+        }
+
+    def _dispatch_slack_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack read requires channelId.")
+        payload: dict[str, object] = {"channel": channel_id}
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            payload["ts"] = thread_id
+        limit = _message_action_param_positive_int(request.params, "limit")
+        if limit is not None:
+            payload["limit"] = limit
+        before = _message_action_param_string(request.params, "before")
+        if before is not None:
+            payload["latest"] = before
+        after = _message_action_param_string(request.params, "after")
+        if after is not None:
+            payload["oldest"] = after
+        result = self._post_json_webhook(
+            _slack_api_endpoint(
+                str(route.get("target") or ""),
+                "conversations.replies" if thread_id is not None else "conversations.history",
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        messages = result.get("messages")
+        if isinstance(messages, list) and thread_id is not None:
+            messages = [
+                message
+                for message in messages
+                if not (isinstance(message, dict) and message.get("ts") == thread_id)
+            ]
+        return {
+            "ok": True,
+            "channelId": channel_id,
+            "messages": messages if isinstance(messages, list) else [],
+            "hasMore": result.get("has_more") is True,
+        }
+
+    def _dispatch_slack_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        user_id = _message_action_param_string(request.params, "userId", required=True)
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "users.info"),
+            {"user": user_id or ""},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {"ok": True, "info": result}
+
+    def _dispatch_slack_emoji_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "emoji.list"),
+            {},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        emojis: dict[str, object] = dict(result)
+        limit = _message_action_param_positive_int(request.params, "limit")
+        raw_emoji = result.get("emoji")
+        if limit is not None and isinstance(raw_emoji, dict):
+            entries = sorted(raw_emoji.items(), key=lambda item: str(item[0]))
+            emojis["emoji"] = {str(key): value for key, value in entries[:limit]}
+        return {"ok": True, "emojis": emojis}
+
+    def _dispatch_slack_download_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        file_id = _message_action_param_string(request.params, "fileId", required=True)
+        channel_target = _message_action_param_string(
+            request.params,
+            "channelId",
+        ) or _message_action_param_string(request.params, "to")
+        channel_id = _slack_channel_id(channel_target) if channel_target is not None else None
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.info"),
+            {"file": file_id or ""},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        file_info = result.get("file")
+        if not isinstance(file_info, dict):
+            return _slack_download_file_unavailable_result()
+        download_url = _slack_file_download_url(file_info)
+        if download_url is None:
+            return _slack_download_file_unavailable_result()
+        if _slack_file_scope_mismatches(
+            file_info,
+            channel_id=channel_id,
+            thread_id=thread_id,
+        ):
+            return _slack_download_file_unavailable_result()
+        max_bytes = 20 * 1024 * 1024
+        try:
+            file_bytes, content_type = self._download_slack_private_file(
+                download_url,
+                secret_token=secret_token,
+                max_bytes=max_bytes,
+            )
+        except (OSError, RuntimeError, ValueError):
+            return _slack_download_file_unavailable_result()
+        if not file_bytes:
+            return _slack_download_file_unavailable_result()
+        file_name = str(file_info.get("name") or file_id or "slack-file").strip()
+        saved_path = self._save_slack_downloaded_file(
+            file_id=file_id or "slack-file",
+            file_name=file_name,
+            file_bytes=file_bytes,
+        )
+        placeholder = f"[Slack file: {Path(file_name).name}]" if file_name else "[Slack file]"
+        media: dict[str, object] = {"mediaUrl": str(saved_path)}
+        if content_type:
+            media["contentType"] = content_type
+        response: dict[str, object] = {
+            "ok": True,
+            "fileId": file_id or "",
+            "path": str(saved_path),
+            "placeholder": placeholder,
+            "media": media,
+        }
+        if content_type:
+            response["contentType"] = content_type
+        return response
+
+    def _dispatch_slack_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        channel_id = _slack_channel_id(target)
+        if channel_id is None:
+            raise RuntimeError("Slack send requires to.")
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+            or ""
+        )
+        media_url = _message_action_param_raw_string(request.params, "media")
+        blocks = _message_action_param_blocks(request.params)
+        if not message and media_url is None and blocks is None:
+            raise RuntimeError("Slack send requires message, blocks, or media.")
+        if media_url is not None and blocks is not None:
+            raise RuntimeError("Slack send does not support blocks with media.")
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        if media_url is not None:
+            media_ids = self._upload_slack_media_files(
+                route=route,
+                media_urls=[media_url],
+                channel_id=channel_id,
+                initial_comment=message,
+                thread_id=thread_id,
+                secret_token=secret_token or "",
+            )
+            return {
+                "ok": True,
+                "result": {
+                    "messageId": media_ids[0],
+                    "channelId": channel_id,
+                },
+            }
+        payload: dict[str, Any] = {
+            "channel": channel_id,
+            "text": message,
+        }
+        if thread_id:
+            payload["thread_ts"] = thread_id
+        if blocks is not None:
+            payload["blocks"] = blocks
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "chat.postMessage"),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message_id = _slack_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Slack API response did not include a message timestamp.")
+        return {
+            "ok": True,
+            "result": {
+                "messageId": message_id,
+                "channelId": _slack_channel_from_result(result, channel_id),
+            },
+        }
+
+    def _dispatch_slack_upload_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to")
+        if target is None:
+            target = _message_action_param_string(request.params, "channelId", required=True)
+        channel_id = _slack_channel_id(target)
+        if channel_id is None:
+            raise RuntimeError("Slack upload-file requires channelId or to.")
+        file_path = (
+            _message_action_param_raw_string(request.params, "filePath")
+            or _message_action_param_raw_string(request.params, "path")
+            or _message_action_param_raw_string(request.params, "media")
+        )
+        if file_path is None:
+            raise RuntimeError("upload-file requires filePath, path, or media")
+        initial_comment = (
+            _message_action_param_string(
+                request.params,
+                "initialComment",
+                allow_empty=True,
+            )
+            or _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+            or ""
+        )
+        upload_filename = (
+            _message_action_param_string(request.params, "filename")
+            or _slack_media_filename(file_path, 1)
+        )
+        upload_title = _message_action_param_string(request.params, "title") or upload_filename
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        file_bytes = self._download_slack_media_url(file_path)
+        ticket = self._post_slack_form(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.getUploadURLExternal"),
+            {
+                "filename": upload_filename,
+                "length": str(len(file_bytes)),
+            },
+            secret_token=secret_token or "",
+        )
+        upload_url = str(ticket.get("upload_url") or "").strip()
+        file_id = str(ticket.get("file_id") or "").strip()
+        if not upload_url or not file_id:
+            raise RuntimeError("Slack upload URL response is missing upload_url or file_id.")
+        self._upload_slack_file_bytes(
+            upload_url=upload_url,
+            file_bytes=file_bytes,
+        )
+        complete_payload: dict[str, Any] = {
+            "files": json.dumps([{"id": file_id, "title": upload_title}]),
+            "channel_id": channel_id,
+        }
+        if initial_comment:
+            complete_payload["initial_comment"] = initial_comment
+        if thread_id:
+            complete_payload["thread_ts"] = thread_id
+        self._post_slack_form(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.completeUploadExternal"),
+            complete_payload,
+            secret_token=secret_token or "",
+        )
+        return {
+            "ok": True,
+            "result": {
+                "messageId": file_id,
+                "channelId": channel_id,
+            },
+        }
+
     def _remove_own_slack_reactions(
         self,
         *,
@@ -7476,6 +8513,81 @@ class OpsMeshService:
         if remove or not emoji:
             return {"ok": True, "removed": True}
         return {"ok": True, "added": emoji}
+
+    def _dispatch_discord_set_presence_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        account_id = _message_action_param_string(
+            request.params,
+            "accountId",
+        ) or request.account_id
+        runtime = self.discord_presence_runtime
+        if runtime is None:
+            suffix = f' for account "{account_id}"' if account_id else ""
+            raise GatewayOutboundRuntimeUnavailableError(
+                f"Discord gateway not available{suffix}. The bot may not be connected."
+            )
+        status = _message_action_param_string(request.params, "status") or "online"
+        if status not in DISCORD_PRESENCE_STATUSES:
+            raise RuntimeError(
+                f'Invalid status "{status}". Must be one of: '
+                f"{', '.join(sorted(DISCORD_PRESENCE_STATUSES))}"
+            )
+        activity_type_raw = _message_action_param_string(request.params, "activityType")
+        activity_name = _message_action_param_string(request.params, "activityName")
+        activities: list[dict[str, object]] = []
+        if activity_type_raw or activity_name is not None:
+            if not activity_type_raw:
+                raise RuntimeError(
+                    "activityType is required when activityName is provided. "
+                    f"Valid types: {', '.join(DISCORD_PRESENCE_ACTIVITY_TYPES)}"
+                )
+            activity_type = DISCORD_PRESENCE_ACTIVITY_TYPES.get(
+                activity_type_raw.strip().lower()
+            )
+            if activity_type is None:
+                raise RuntimeError(
+                    f'Invalid activityType "{activity_type_raw}". Must be one of: '
+                    f"{', '.join(DISCORD_PRESENCE_ACTIVITY_TYPES)}"
+                )
+            activity: dict[str, object] = {
+                "name": activity_name or "",
+                "type": activity_type,
+            }
+            if activity_type == DISCORD_PRESENCE_ACTIVITY_TYPES["streaming"]:
+                activity_url = _message_action_param_string(
+                    request.params,
+                    "activityUrl",
+                )
+                if activity_url:
+                    activity["url"] = activity_url
+            activity_state = _message_action_param_string(
+                request.params,
+                "activityState",
+            )
+            if activity_state:
+                activity["state"] = activity_state
+            activities.append(activity)
+        presence: dict[str, object] = {
+            "since": None,
+            "activities": activities,
+            "status": status,
+            "afk": False,
+        }
+        runtime.update_presence(account_id, presence)
+        return {
+            "ok": True,
+            "status": status,
+            "activities": [
+                {
+                    key: activity[key]
+                    for key in ("type", "name", "url", "state")
+                    if key in activity
+                }
+                for activity in activities
+            ],
+        }
 
     def _dispatch_discord_react_message_action(
         self,
@@ -7664,6 +8776,513 @@ class OpsMeshService:
                 }
             )
         return {"ok": True, "reactions": summaries}
+
+    def _dispatch_discord_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+            or ""
+        )
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "path")
+            or _message_action_param_raw_string(request.params, "filePath")
+        )
+        if not message and media_url is None:
+            raise RuntimeError("Discord send requires message or media.")
+        event: dict[str, Any] = {
+            "to": target,
+            "message": message,
+        }
+        if media_url is not None:
+            event["mediaUrl"] = media_url
+        reply_to = _message_action_param_string(request.params, "replyTo")
+        if reply_to is not None:
+            event["replyToId"] = reply_to
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            event["threadId"] = thread_id
+        if request.params.get("silent") is True:
+            event["silent"] = True
+        result = self._post_discord_provider_event(
+            route,
+            "gateway/send",
+            event,
+            secret_token,
+        )
+        return {
+            "ok": True,
+            "result": {
+                "messageId": str(result.get("messageId") or ""),
+                "channelId": str(result.get("channelId") or result.get("chatId") or ""),
+            },
+        }
+
+    def _dispatch_discord_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord edit requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        content = _message_action_param_string(
+            request.params,
+            "message",
+            required=True,
+            allow_empty=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="PATCH",
+            payload={"content": content or ""},
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord API returned a non-JSON response.")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "message": result}
+
+    def _dispatch_discord_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord delete requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_pin_mutation_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+        action: Literal["pin", "unpin"],
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError(f"Discord {action} requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/pins/{message_id}"),
+            method="PUT" if action == "pin" else "DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord list-pins requires channelId.")
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/pins"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if not isinstance(result, list):
+            raise RuntimeError("Discord API returned a non-JSON pins response.")
+        return {
+            "ok": True,
+            "pins": [
+                _discord_message_with_normalized_timestamp(message)
+                for message in result
+            ],
+        }
+
+    def _dispatch_discord_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord read requires channelId.")
+        query: dict[str, str | int] = {}
+        limit = _message_action_param_integer(request.params, "limit")
+        if limit is not None:
+            query["limit"] = min(max(limit, 1), 100)
+        for key in ("before", "after", "around"):
+            value = _message_action_param_string(request.params, key)
+            if value is not None:
+                query[key] = value
+        endpoint_path = f"channels/{channel_id}/messages"
+        if query:
+            endpoint_path = f"{endpoint_path}?{urlencode(query)}"
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(endpoint_path),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if not isinstance(result, list):
+            raise RuntimeError("Discord API returned a non-JSON messages response.")
+        return {
+            "ok": True,
+            "messages": [
+                _discord_message_with_normalized_timestamp(message)
+                for message in result
+            ],
+        }
+
+    def _dispatch_discord_permissions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord permissions requires channelId.")
+        authorization = _discord_bot_authorization(secret_token)
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        channel_type = channel.get("type")
+        guild_id = str(channel.get("guild_id") or "").strip()
+        if not guild_id:
+            permissions: dict[str, object] = {
+                "channelId": channel_id,
+                "permissions": [],
+                "raw": "0",
+                "isDm": True,
+            }
+            if isinstance(channel_type, int):
+                permissions["channelType"] = channel_type
+            return {"ok": True, "permissions": permissions}
+
+        me = self._request_json_provider_url(
+            _discord_api_endpoint("users/@me"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(me, dict) or not str(me.get("id") or "").strip():
+            raise RuntimeError("Failed to resolve Discord bot user id.")
+        bot_id = str(me.get("id") or "").strip()
+        guild = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        member = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{bot_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(guild, dict) or guild.get("error"):
+            raise RuntimeError("Discord API returned a non-JSON guild response.")
+        if not isinstance(member, dict) or member.get("error"):
+            raise RuntimeError("Discord API returned a non-JSON member response.")
+
+        roles_by_id: dict[str, dict[Any, Any]] = {}
+        raw_roles = guild.get("roles")
+        if isinstance(raw_roles, list):
+            for role in raw_roles:
+                if not isinstance(role, dict):
+                    continue
+                role_id = str(role.get("id") or "").strip()
+                if role_id:
+                    roles_by_id[role_id] = role
+        permissions_bitfield = 0
+        everyone_role = roles_by_id.get(guild_id)
+        if everyone_role is not None:
+            permissions_bitfield |= _discord_permission_bitfield(
+                everyone_role.get("permissions")
+            )
+        member_role_ids: set[str] = set()
+        raw_member_roles = member.get("roles")
+        if isinstance(raw_member_roles, list):
+            for raw_role_id in raw_member_roles:
+                role_id = str(raw_role_id or "").strip()
+                if not role_id:
+                    continue
+                member_role_ids.add(role_id)
+                role = roles_by_id.get(role_id)
+                if role is not None:
+                    permissions_bitfield |= _discord_permission_bitfield(
+                        role.get("permissions")
+                    )
+
+        if (
+            permissions_bitfield & DISCORD_ADMINISTRATOR_PERMISSION
+            == DISCORD_ADMINISTRATOR_PERMISSION
+        ):
+            permissions_bitfield = DISCORD_ALL_PERMISSIONS
+        else:
+            raw_overwrites = channel.get("permission_overwrites")
+            overwrites = raw_overwrites if isinstance(raw_overwrites, list) else []
+            for overwrite in overwrites:
+                if isinstance(overwrite, dict) and str(overwrite.get("id") or "") == guild_id:
+                    permissions_bitfield = _discord_apply_permission_overwrite(
+                        permissions_bitfield,
+                        overwrite,
+                    )
+            for overwrite in overwrites:
+                if (
+                    isinstance(overwrite, dict)
+                    and str(overwrite.get("id") or "") in member_role_ids
+                ):
+                    permissions_bitfield = _discord_apply_permission_overwrite(
+                        permissions_bitfield,
+                        overwrite,
+                    )
+            for overwrite in overwrites:
+                if isinstance(overwrite, dict) and str(overwrite.get("id") or "") == bot_id:
+                    permissions_bitfield = _discord_apply_permission_overwrite(
+                        permissions_bitfield,
+                        overwrite,
+                    )
+
+        permissions_summary: dict[str, object] = {
+            "channelId": channel_id,
+            "guildId": guild_id,
+            "permissions": _discord_permission_names(permissions_bitfield),
+            "raw": str(permissions_bitfield),
+            "isDm": False,
+        }
+        if isinstance(channel_type, int):
+            permissions_summary["channelType"] = channel_type
+        return {"ok": True, "permissions": permissions_summary}
+
+    def _dispatch_discord_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        member = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(member, dict):
+            raise RuntimeError("Discord API returned a non-JSON member response.")
+        if member.get("error"):
+            raise RuntimeError(str(member.get("error")))
+        return {"ok": True, "member": member}
+
+    def _dispatch_discord_thread_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord thread-create requires channelId.")
+        name = _message_action_param_string(
+            request.params,
+            "threadName",
+            required=True,
+        )
+        message_id = _message_action_param_string(request.params, "messageId")
+        content = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        )
+        auto_archive_minutes = _message_action_param_integer(
+            request.params,
+            "autoArchiveMin",
+            "autoArchiveMinutes",
+        )
+        applied_tags = _message_action_param_string_array(request.params, "appliedTags")
+        authorization = _discord_bot_authorization(secret_token)
+        channel_type: int | None = None
+        if message_id is None:
+            channel = self._request_json_provider_url(
+                _discord_api_endpoint(f"channels/{channel_id}"),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            if isinstance(channel, dict) and isinstance(channel.get("type"), int):
+                channel_type = int(channel["type"])
+        is_forum_like = channel_type in {
+            DISCORD_CHANNEL_TYPE_GUILD_FORUM,
+            DISCORD_CHANNEL_TYPE_GUILD_MEDIA,
+        }
+        body: dict[str, object] = {"name": name or ""}
+        if auto_archive_minutes:
+            body["auto_archive_duration"] = auto_archive_minutes
+        if is_forum_like:
+            starter_content = content.strip() if content and content.strip() else name or ""
+            body["message"] = {"content": starter_content}
+            if applied_tags:
+                body["applied_tags"] = applied_tags
+        elif message_id is None:
+            body["type"] = DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD
+        endpoint = (
+            f"channels/{channel_id}/messages/{message_id}/threads"
+            if message_id is not None
+            else f"channels/{channel_id}/threads"
+        )
+        thread = self._request_json_provider_url(
+            _discord_api_endpoint(endpoint),
+            method="POST",
+            payload=body,
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        if not isinstance(thread, dict):
+            raise RuntimeError("Discord API returned a non-JSON thread response.")
+        if thread.get("error"):
+            raise RuntimeError(str(thread.get("error")))
+        thread_id = str(thread.get("id") or "").strip()
+        if not is_forum_like and content and content.strip() and thread_id:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"channels/{thread_id}/messages"),
+                method="POST",
+                payload={"content": content},
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "thread": thread}
+
+    def _dispatch_discord_sticker_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord sticker requires channelId.")
+        sticker_ids = _message_action_param_string_array(
+            request.params,
+            "stickerId",
+        ) or _message_action_param_string_array(
+            request.params,
+            "stickerIds",
+            required=True,
+            label="sticker-id",
+        )
+        content = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        ) or _message_action_param_string(
+            request.params,
+            "content",
+            allow_empty=True,
+        )
+        payload: dict[str, object] = {"sticker_ids": sticker_ids or []}
+        if content:
+            payload["content"] = content
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     async def _post_provider_route_event(
         self,
@@ -9451,6 +11070,19 @@ class OpsMeshService:
             )
             if local_path is not None and local_path.is_file():
                 return local_path.read_bytes()
+        parsed = urlparse(media_url)
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if local_path.is_file():
+                return local_path.read_bytes()
+            raise RuntimeError(f"Media path does not exist: {media_url}")
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
+                return local_path.read_bytes()
         request = Request(media_url, method="GET")
         try:
             with urlopen(request, timeout=30) as response:
@@ -9461,6 +11093,53 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _download_slack_private_file(
+        self,
+        url: str,
+        *,
+        secret_token: str | None,
+        max_bytes: int,
+    ) -> tuple[bytes, str | None]:
+        request = Request(
+            url,
+            headers={"Authorization": _slack_bearer_token(secret_token)},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Slack file URL returned HTTP {response.status}")
+                file_bytes = response.read(max_bytes + 1)
+                if len(file_bytes) > max_bytes:
+                    raise RuntimeError("Slack file is too large to download.")
+                content_type = response.headers.get("Content-Type")
+                return file_bytes, content_type.strip() if content_type else None
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Slack file URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Slack file URL failed: {exc.reason}") from exc
+
+    def _save_slack_downloaded_file(
+        self,
+        *,
+        file_id: str,
+        file_name: str,
+        file_bytes: bytes,
+    ) -> Path:
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else Path.cwd() / ".openzues"
+        )
+        safe_file_id = _safe_slack_file_label(file_id, "slack-file")
+        safe_file_name = _safe_slack_file_label(file_name, "download.bin")
+        stored_path = storage_root / "slack-downloads" / "inbound" / (
+            f"{safe_file_id}-{safe_file_name}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        stored_path.write_bytes(file_bytes)
+        return stored_path
 
     def _upload_slack_file_bytes(
         self,
