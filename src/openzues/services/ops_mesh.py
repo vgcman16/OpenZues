@@ -826,6 +826,20 @@ def _message_action_param_string(
     return trimmed
 
 
+def _message_action_param_raw_string(
+    params: dict[str, Any],
+    key: str,
+) -> str | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a string.")
+    if not value.strip():
+        return None
+    return value
+
+
 def _message_action_param_string_or_number(
     params: dict[str, Any],
     key: str,
@@ -7099,6 +7113,7 @@ class OpsMeshService:
             "react",
             "reactions",
             "unpin",
+            "upload-file",
         }:
             return None
         route = await self._provider_route_for_channel_account(
@@ -7169,6 +7184,13 @@ class OpsMeshService:
         if action == "emoji-list":
             return await asyncio.to_thread(
                 self._dispatch_slack_emoji_list_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "upload-file":
+            return await asyncio.to_thread(
+                self._dispatch_slack_upload_file_message_action,
                 route,
                 request,
                 secret_token,
@@ -7692,6 +7714,85 @@ class OpsMeshService:
             entries = sorted(raw_emoji.items(), key=lambda item: str(item[0]))
             emojis["emoji"] = {str(key): value for key, value in entries[:limit]}
         return {"ok": True, "emojis": emojis}
+
+    def _dispatch_slack_upload_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to")
+        if target is None:
+            target = _message_action_param_string(request.params, "channelId", required=True)
+        channel_id = _slack_channel_id(target)
+        if channel_id is None:
+            raise RuntimeError("Slack upload-file requires channelId or to.")
+        file_path = (
+            _message_action_param_raw_string(request.params, "filePath")
+            or _message_action_param_raw_string(request.params, "path")
+            or _message_action_param_raw_string(request.params, "media")
+        )
+        if file_path is None:
+            raise RuntimeError("upload-file requires filePath, path, or media")
+        initial_comment = (
+            _message_action_param_string(
+                request.params,
+                "initialComment",
+                allow_empty=True,
+            )
+            or _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+            or ""
+        )
+        upload_filename = (
+            _message_action_param_string(request.params, "filename")
+            or _slack_media_filename(file_path, 1)
+        )
+        upload_title = _message_action_param_string(request.params, "title") or upload_filename
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        file_bytes = self._download_slack_media_url(file_path)
+        ticket = self._post_slack_form(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.getUploadURLExternal"),
+            {
+                "filename": upload_filename,
+                "length": str(len(file_bytes)),
+            },
+            secret_token=secret_token or "",
+        )
+        upload_url = str(ticket.get("upload_url") or "").strip()
+        file_id = str(ticket.get("file_id") or "").strip()
+        if not upload_url or not file_id:
+            raise RuntimeError("Slack upload URL response is missing upload_url or file_id.")
+        self._upload_slack_file_bytes(
+            upload_url=upload_url,
+            file_bytes=file_bytes,
+        )
+        complete_payload: dict[str, Any] = {
+            "files": json.dumps([{"id": file_id, "title": upload_title}]),
+            "channel_id": channel_id,
+        }
+        if initial_comment:
+            complete_payload["initial_comment"] = initial_comment
+        if thread_id:
+            complete_payload["thread_ts"] = thread_id
+        self._post_slack_form(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.completeUploadExternal"),
+            complete_payload,
+            secret_token=secret_token or "",
+        )
+        return {
+            "ok": True,
+            "result": {
+                "messageId": file_id,
+                "channelId": channel_id,
+            },
+        }
 
     def _remove_own_slack_reactions(
         self,
@@ -9813,6 +9914,19 @@ class OpsMeshService:
                 state_dir=self.canvas_state_dir,
             )
             if local_path is not None and local_path.is_file():
+                return local_path.read_bytes()
+        parsed = urlparse(media_url)
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if local_path.is_file():
+                return local_path.read_bytes()
+            raise RuntimeError(f"Media path does not exist: {media_url}")
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
                 return local_path.read_bytes()
         request = Request(media_url, method="GET")
         try:

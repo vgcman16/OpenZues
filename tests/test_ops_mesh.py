@@ -3515,6 +3515,128 @@ async def test_ops_mesh_service_message_action_dispatches_slack_emoji_list_route
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_upload_file_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-upload-file"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_forms: list[tuple[str, dict[str, object], str]] = []
+    uploaded_files: list[tuple[str, bytes]] = []
+    media_path = tmp_path / "report.png"
+    media_path.write_bytes(b"fake-report")
+
+    def fake_post_slack_form(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_token: str,
+    ) -> dict[str, object]:
+        del self
+        slack_forms.append((target, payload, secret_token))
+        if target.endswith("/files.getUploadURLExternal"):
+            return {
+                "ok": True,
+                "upload_url": "https://upload.slack.test/report",
+                "file_id": "F222",
+            }
+        return {"ok": True, "files": [{"id": "F222", "title": "Build Report"}]}
+
+    def fake_upload_slack_file_bytes(
+        self: OpsMeshService,
+        *,
+        upload_url: str,
+        file_bytes: bytes,
+    ) -> None:
+        del self
+        uploaded_files.append((upload_url, file_bytes))
+
+    monkeypatch.setattr(OpsMeshService, "_post_slack_form", fake_post_slack_form)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_slack_file_bytes",
+        fake_upload_slack_file_bytes,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="upload-file",
+            params={
+                "to": "channel:C123",
+                "filePath": str(media_path),
+                "initialComment": "fresh build",
+                "filename": "report-final.png",
+                "title": "Build Report",
+                "threadId": "1710000000.0010",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-upload-file-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "F222",
+            "channelId": "C123",
+        },
+    }
+    assert slack_forms == [
+        (
+            "https://slack.test/api/files.getUploadURLExternal",
+            {
+                "filename": "report-final.png",
+                "length": "11",
+            },
+            "xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/files.completeUploadExternal",
+            {
+                "files": '[{"id": "F222", "title": "Build Report"}]',
+                "channel_id": "C123",
+                "initial_comment": "fresh build",
+                "thread_ts": "1710000000.0010",
+            },
+            "xoxb-action-token",
+        ),
+    ]
+    assert uploaded_files == [("https://upload.slack.test/report", b"fake-report")]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
