@@ -33,6 +33,11 @@ _CHANNEL_META = (
         "label": "LINE",
         "detailLabel": "LINE",
     },
+    {
+        "id": "matrix",
+        "label": "Matrix",
+        "detailLabel": "Matrix",
+    },
 )
 
 

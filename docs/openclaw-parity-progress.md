@@ -36,6 +36,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   route-backed binder path. The native gateway channel API now classifies LINE
   as a known route channel with the upstream `LINE` label, and the web
   notification-route form exposes LINE with gateway send/poll default events.
+  Matrix route-backed child-thread binders are now configurable through the
+  native CLI and web/API operator surfaces as native gateway send/poll routes.
 - Verified the LINE route-backed binder slice with `python -m pytest
   tests\test_gateway_thread_binding.py -k "line_current_conversation" -q` (`1
   passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
@@ -63,6 +65,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   notification_route_operator_form_offers_line_native_routes" -q` (`3
   passed`), `ruff check src\openzues\services\gateway_channels.py
   tests\test_app.py`, and `mypy src\openzues\services\gateway_channels.py`.
+- Verified the Matrix route setup slice with `python -m pytest
+  tests\test_cli.py -k "routes_create_command_accepts_matrix_thread_route" -q`
+  (`1 passed`), `python -m pytest tests\test_app.py -k
+  "gateway_channels_endpoint_classifies_matrix_native_route or
+  notification_route_operator_form_offers_matrix_native_routes" -q` (`2
+  passed`), adjacent route/channel/binder proof `python -m pytest
+  tests\test_cli.py -k "routes_create_command_productizes_native_provider_routes
+  or routes_create_command_accepts_line_current_conversation_route or
+  routes_create_command_accepts_matrix_thread_route" -q` (`3 passed`),
+  `python -m pytest tests\test_app.py -k "gateway_channels_endpoint or
+  notification_route_operator_form_offers_line_native_routes or
+  notification_route_operator_form_offers_matrix_native_routes" -q` (`5
+  passed`), `python -m pytest tests\test_gateway_thread_binding.py -k
+  "matrix_provider_thread or line_current_conversation" -q` (`2 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_channels.py
+  tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_channels.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies

@@ -4805,7 +4805,14 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
     assert response.json()["routeCount"] == 1
     assert response.json()["enabledCount"] == 1
     assert response.json()["conversationTargetCount"] == 1
-    assert response.json()["channelOrder"] == ["discord", "slack", "telegram", "whatsapp", "line"]
+    assert response.json()["channelOrder"] == [
+        "discord",
+        "slack",
+        "telegram",
+        "whatsapp",
+        "line",
+        "matrix",
+    ]
     assert response.json()["channelLabels"]["slack"] == "Slack"
     assert response.json()["channelLabels"]["line"] == "LINE"
     assert response.json()["channelDetailLabels"]["slack"] == "Slack"
@@ -4866,6 +4873,41 @@ def test_gateway_channels_endpoint_classifies_line_native_route(tmp_path) -> Non
     assert payload["channelDefaultAccountId"]["line"] == "default"
 
 
+def test_gateway_channels_endpoint_classifies_matrix_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Matrix Thread Gateway",
+                "kind": "matrix",
+                "target": "https://matrix.example.org",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "matrix",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "room:!ops:matrix.example",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "matrix" in payload["channelOrder"]
+    assert payload["channelLabels"]["matrix"] == "Matrix"
+    assert payload["channelDetailLabels"]["matrix"] == "Matrix"
+    assert payload["channels"]["matrix"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["matrix"] == "default"
+
+
 def test_notification_route_operator_form_offers_line_native_routes() -> None:
     template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
         encoding="utf-8"
@@ -4875,7 +4917,25 @@ def test_notification_route_operator_form_offers_line_native_routes() -> None:
     )
 
     assert '<option value="line">LINE native route</option>' in template
-    assert '["slack", "telegram", "discord", "whatsapp", "line"].includes(routeKind)' in script
+    assert (
+        '["slack", "telegram", "discord", "whatsapp", "line", "matrix"].includes(routeKind)'
+        in script
+    )
+
+
+def test_notification_route_operator_form_offers_matrix_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="matrix">Matrix native route</option>' in template
+    assert (
+        '["slack", "telegram", "discord", "whatsapp", "line", "matrix"].includes(routeKind)'
+        in script
+    )
 
 
 def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(

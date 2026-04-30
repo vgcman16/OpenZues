@@ -276,7 +276,11 @@ native CLI can now create `--kind line` routes with default `gateway/send` and
 are operator-configurable without direct database edits. The native web/API
 operator surface now also classifies LINE as a first-class route channel with
 the upstream `LINE` label and offers LINE in the notification-route form with
-the same default gateway send/poll subscriptions.
+the same default gateway send/poll subscriptions. Matrix route-backed child
+thread binders are now operator-configurable through the same surfaces:
+`routes create --kind matrix`, `/api/gateway/channels`, and the web
+notification-route form all classify Matrix as a native gateway send/poll
+route.
 Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
