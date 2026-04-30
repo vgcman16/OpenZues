@@ -8071,6 +8071,12 @@ class GatewayNodeMethodService:
             if run_timeout_seconds is not None:
                 metadata["runTimeoutSeconds"] = run_timeout_seconds
             requester_origin = _requester_route_context(resolved_requester)
+            requester_origin = _sessions_spawn_origin_for_target_agent(
+                self._config_service,
+                requester_origin=requester_origin,
+                requester_agent_id=requester_agent_id,
+                target_agent_id=target_agent_id,
+            )
             if requester_origin is not None:
                 metadata["requesterOrigin"] = dict(requester_origin)
                 metadata["deliveryContext"] = dict(requester_origin)
@@ -13245,6 +13251,174 @@ def _sessions_spawn_thread_policy_error(
             f"Thread-bound {kind} spawns are disabled for {channel} "
             f"(set channels.{channel}.threadBindings.{spawn_flag_key}=true to enable)."
         )
+    return None
+
+
+_THREAD_BINDING_KIND_PREFIX_TO_PEER_KIND = {
+    "room:": "channel",
+    "channel:": "channel",
+    "conversation:": "channel",
+    "chat:": "channel",
+    "thread:": "channel",
+    "topic:": "channel",
+    "group:": "group",
+    "team:": "group",
+    "user:": "direct",
+    "dm:": "direct",
+    "pm:": "direct",
+}
+_THREAD_BINDING_GENERIC_PREFIX_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*:", re.IGNORECASE)
+
+
+def _sessions_spawn_origin_for_target_agent(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str] | None,
+    requester_agent_id: str,
+    target_agent_id: str,
+) -> dict[str, str] | None:
+    if requester_origin is None:
+        return None
+    origin = dict(requester_origin)
+    bound_account_id = _sessions_spawn_target_bound_account_id(
+        config_service,
+        requester_origin=origin,
+        requester_agent_id=requester_agent_id,
+        target_agent_id=target_agent_id,
+    )
+    if bound_account_id is None:
+        return origin
+    origin["accountId"] = bound_account_id
+    return origin
+
+
+def _sessions_spawn_target_bound_account_id(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str],
+    requester_agent_id: str,
+    target_agent_id: str,
+) -> str | None:
+    if config_service is None or target_agent_id == requester_agent_id:
+        return None
+    channel = _string_or_none(requester_origin.get("channel"))
+    if channel is None:
+        return None
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return None
+    bindings = snapshot.get("bindings")
+    if not isinstance(bindings, list):
+        return None
+    peer_id, peer_kind, peer_aliases = _sessions_spawn_requester_peer(
+        channel,
+        _string_or_none(requester_origin.get("to")),
+    )
+    del peer_id
+    channel_token = channel.lower()
+    target_token = normalize_agent_id(target_agent_id)
+    best_score = -1
+    best_account_id: str | None = None
+    for binding in bindings:
+        if not isinstance(binding, Mapping):
+            continue
+        binding_type = str(binding.get("type") or "route").strip().lower()
+        if binding_type != "route":
+            continue
+        binding_agent_id = _string_or_none(binding.get("agentId"))
+        if binding_agent_id is None or normalize_agent_id(binding_agent_id) != target_token:
+            continue
+        match = _mapping_or_none(binding.get("match"))
+        if match is None:
+            continue
+        match_channel = _string_or_none(match.get("channel"))
+        if match_channel is None or match_channel.lower() != channel_token:
+            continue
+        account_id = _string_or_none(match.get("accountId"))
+        if account_id is None:
+            continue
+        score = _sessions_spawn_route_binding_match_score(
+            match,
+            peer_kind=peer_kind,
+            peer_aliases=peer_aliases,
+        )
+        if score is None or score <= best_score:
+            continue
+        best_score = score
+        best_account_id = account_id
+    return best_account_id
+
+
+def _sessions_spawn_requester_peer(
+    channel_id: str,
+    requester_to: str | None,
+) -> tuple[str | None, str | None, set[str]]:
+    if requester_to is None:
+        return None, None, set()
+    raw = requester_to.strip()
+    if not raw:
+        return None, None, set()
+    channel_prefix = f"{channel_id.strip().lower()}:"
+    value = raw
+    inferred_kind: str | None = None
+    allow_bare_kind_override = False
+    while True:
+        match = _THREAD_BINDING_GENERIC_PREFIX_PATTERN.match(value)
+        if match is None:
+            break
+        prefix = match.group(0).lower()
+        kind_from_prefix = _THREAD_BINDING_KIND_PREFIX_TO_PEER_KIND.get(prefix)
+        if kind_from_prefix is None and prefix != channel_prefix:
+            break
+        if kind_from_prefix is not None and inferred_kind is None:
+            inferred_kind = kind_from_prefix
+        allow_bare_kind_override = allow_bare_kind_override or prefix in {
+            channel_prefix,
+            "room:",
+        }
+        value = value[len(match.group(0)) :].strip()
+    bare_kind = _sessions_spawn_bare_peer_kind(value)
+    if bare_kind is not None and (inferred_kind is None or allow_bare_kind_override):
+        inferred_kind = bare_kind
+    aliases = {raw}
+    if value:
+        aliases.add(value)
+    return value or None, inferred_kind, aliases
+
+
+def _sessions_spawn_bare_peer_kind(value: str) -> str | None:
+    if value.startswith("@"):
+        return "direct"
+    if value.startswith(("!", "#")):
+        return "channel"
+    return None
+
+
+def _sessions_spawn_route_binding_match_score(
+    match: Mapping[str, object],
+    *,
+    peer_kind: str | None,
+    peer_aliases: set[str],
+) -> int | None:
+    peer = _mapping_or_none(match.get("peer"))
+    if peer is None:
+        return 0
+    peer_id = _string_or_none(peer.get("id"))
+    if peer_id is None:
+        return None
+    configured_kind = _string_or_none(peer.get("kind"))
+    if (
+        configured_kind is not None
+        and peer_kind is not None
+        and configured_kind.lower() != peer_kind
+    ):
+        return None
+    if peer_id == "*":
+        return 1
+    normalized_aliases = {alias.lower() for alias in peer_aliases}
+    if peer_id.lower() in normalized_aliases:
+        return 2
     return None
 
 

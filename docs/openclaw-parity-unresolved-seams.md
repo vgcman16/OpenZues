@@ -239,9 +239,13 @@ event through a fakeable native lifecycle service after session mutation,
 including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;
 `sessions.delete emitLifecycleHooks=false` still skips only that hook while the
 delete/unbind path proceeds.
+Cross-agent thread-bound subagent spawns now also resolve the requester origin
+through OpenClaw-style route `bindings`: when the target agent has a configured
+route binding for the requester channel/peer, the binder context and initial
+child run use the target agent's bound account instead of the caller's inbound
+account.
 Remaining lifecycle parity is deeper provider-native binding record stores,
-provider-native child-thread creation, target-agent bound-account selection,
-and ACP/session binding policy breadth.
+provider-native child-thread creation, and ACP/session binding policy breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,

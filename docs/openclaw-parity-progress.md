@@ -3372,6 +3372,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_thread_binding.py
   src\openzues\services\gateway_node_methods.py`.
+- Cross-agent `sessions.spawn thread=true` now mirrors OpenClaw's
+  `resolveRequesterOriginForChild` account selection for route bindings:
+  top-level `bindings` survive the native config snapshot, Matrix-style
+  `room:` targets are matched against configured peer ids, and the binder plus
+  initial child run use the target agent's bound account when it differs from
+  the caller account.
+- Verified the target-agent bound-account seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_target_agent_bound_account
+  -q` (`1 passed`), adjacent thread-spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "target_agent_bound_account or
+  sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder or
+  sessions_spawn_thread_mode_uses_route_backed_thread_binder or
+  sessions_spawn_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement"` (`5
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the
