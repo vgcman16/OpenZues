@@ -825,6 +825,34 @@ def _message_action_param_string(
     return trimmed
 
 
+def _message_action_param_positive_int(
+    params: dict[str, Any],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        value = params.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            raise RuntimeError(f"{key} must be a positive integer.")
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                continue
+            try:
+                parsed = int(trimmed)
+            except ValueError as exc:
+                raise RuntimeError(f"{key} must be a positive integer.") from exc
+        else:
+            raise RuntimeError(f"{key} must be a positive integer.")
+        if parsed <= 0:
+            raise RuntimeError(f"{key} must be a positive integer.")
+        return parsed
+    return None
+
+
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
     if normalized.startswith(("direct:", "dm:")):
@@ -6836,6 +6864,22 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
+        if channel == "telegram" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Telegram route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel != "slack" or action not in {"react", "reactions"}:
             return None
         route = await self._provider_route_for_channel_account(
@@ -7027,6 +7071,79 @@ class OpsMeshService:
                 error = str(remove_result.get("error") or "unknown_error")
                 raise RuntimeError(f"Slack API returned {error}.")
         return removed
+
+    def _dispatch_telegram_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string(request.params, "chatId", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram react requires chatId.")
+        message_id = _message_action_param_positive_int(
+            request.params,
+            "messageId",
+            "message_id",
+        )
+        if message_id is None:
+            return {
+                "ok": False,
+                "reason": "missing_message_id",
+                "hint": (
+                    "Telegram reaction requires a valid messageId "
+                    "(or inbound context fallback). Do not retry."
+                ),
+            }
+        remove = request.params.get("remove") is True
+        emoji = (
+            _message_action_param_string(
+                request.params,
+                "emoji",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a Telegram reaction.")
+        reaction: list[dict[str, str]] = []
+        if not remove and emoji:
+            reaction.append({"type": "emoji", "emoji": emoji})
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "setMessageReaction",
+            ),
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reaction": reaction,
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            description = str(result.get("description") or "")
+            is_invalid = "REACTION_INVALID" in description
+            return {
+                "ok": False,
+                "reason": "REACTION_INVALID" if is_invalid else "error",
+                "emoji": emoji,
+                "hint": (
+                    "This emoji is not supported for Telegram reactions. "
+                    "Add it to your reaction disallow list so you do not try it again."
+                    if is_invalid
+                    else "Reaction failed. Do not retry."
+                ),
+            }
+        if remove or not emoji:
+            return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
 
     async def _post_provider_route_event(
         self,

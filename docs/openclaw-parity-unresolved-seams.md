@@ -151,6 +151,9 @@ Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
 bot-owned reactions, and returns the removed names. Remaining action parity is
 other production provider action adapters, `supportsAction` breadth, and deeper
 trusted-sender requirements for provider-specific tool contexts.
+Telegram route-backed action parity now includes `react` add/remove/empty-clear
+dispatch via Bot API `setMessageReaction`, including the upstream empty
+reaction-array remove shape and soft missing-message-id result.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels

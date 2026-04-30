@@ -2676,6 +2676,183 @@ async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="react",
+            params={
+                "chatId": "channel:-100123",
+                "messageId": 456,
+                "emoji": "\u2705",
+            },
+            account_id="telegram-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2705"}
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/setMessageReaction",
+            {
+                "chat_id": "-100123",
+                "message_id": 456,
+                "reaction": [{"type": "emoji", "emoji": "\u2705"}],
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "idempotency_key"),
+    [
+        ({"chatId": "channel:-100123", "messageId": 456, "emoji": ""}, "empty"),
+        (
+            {
+                "chatId": "channel:-100123",
+                "messageId": 456,
+                "emoji": "\u2705",
+                "remove": True,
+            },
+            "remove",
+        ),
+    ],
+)
+async def test_ops_mesh_service_message_action_dispatches_telegram_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+    params: dict[str, object],
+    idempotency_key: str,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / f"ops-mesh-message-action-telegram-react-{idempotency_key}"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="react",
+            params=params,
+            account_id="telegram-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key=f"idem-telegram-react-{idempotency_key}-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": True}
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/setMessageReaction",
+            {
+                "chat_id": "-100123",
+                "message_id": 456,
+                "reaction": [],
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-provider-options"
