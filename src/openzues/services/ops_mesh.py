@@ -7455,6 +7455,7 @@ class OpsMeshService:
             "sticker",
             "thread-create",
             "thread-list",
+            "thread-reply",
             "timeout",
             "unpin",
             "voice-status",
@@ -7669,6 +7670,13 @@ class OpsMeshService:
             if action == "thread-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_thread_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "thread-reply":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_thread_reply_message_action,
                     route,
                     request,
                     secret_token,
@@ -10110,6 +10118,52 @@ class OpsMeshService:
         if threads.get("error"):
             raise RuntimeError(str(threads.get("error")))
         return {"ok": True, "threads": threads}
+
+    def _dispatch_discord_thread_reply_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        thread_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "threadId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if thread_id is None:
+            raise RuntimeError("Discord thread-reply requires threadId.")
+        message = _message_action_param_string(
+            request.params,
+            "message",
+            required=True,
+            allow_empty=True,
+        )
+        payload: dict[str, object] = {"content": message or ""}
+        reply_to = _message_action_param_string(request.params, "replyTo")
+        if reply_to is not None:
+            payload["message_reference"] = {
+                "message_id": reply_to,
+                "fail_if_not_exists": False,
+            }
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{thread_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord API returned a non-JSON message response.")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {
+            "ok": True,
+            "result": {
+                "messageId": str(result.get("id") or ""),
+                "channelId": str(result.get("channel_id") or thread_id),
+            },
+        }
 
     def _dispatch_discord_sticker_message_action(
         self,
