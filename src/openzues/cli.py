@@ -4331,6 +4331,106 @@ async def _with_doctor_memory_search_payload(
     return next_payload
 
 
+def _doctor_safe_device_text(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    return (
+        text.replace("\x1b", "")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", " ")
+    )
+
+
+def _doctor_device_label(pending: dict[str, object]) -> str:
+    device_id = _doctor_safe_device_text(pending.get("deviceId")) or "unknown-device"
+    label = _doctor_safe_device_text(pending.get("displayName")) or _doctor_safe_device_text(
+        pending.get("clientId")
+    )
+    return f"{label} ({device_id})" if label else device_id
+
+
+def _doctor_pending_pairing_warning(pending: dict[str, object]) -> str | None:
+    request_id = _doctor_safe_device_text(pending.get("requestId"))
+    if request_id is None:
+        return None
+    device_label = _doctor_device_label(pending)
+    inspect_command = "openclaw devices list"
+    approve_command = f"openclaw devices approve {request_id}"
+    return (
+        f"- Pending device pairing request {request_id} for {device_label}. "
+        f"Review with {inspect_command}, then approve with {approve_command}."
+    )
+
+
+async def _build_doctor_device_pairing_payload(
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:device-pairing",
+        "repairAvailable": False,
+        "warnings": [],
+    }
+    call = getattr(gateway_node_methods, "call", None)
+    if not callable(call):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Device pairing health is unavailable.",
+            "checked": False,
+        }
+    try:
+        result = await call("device.pair.list", {})
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": f"Device pairing health is unavailable: {exc}",
+            "checked": False,
+        }
+    result_payload = result if isinstance(result, dict) else {}
+    pending = [
+        item for item in _object_list(result_payload.get("pending")) if isinstance(item, dict)
+    ]
+    paired = [
+        item for item in _object_list(result_payload.get("paired")) if isinstance(item, dict)
+    ]
+    warnings = [
+        warning
+        for pending_request in pending
+        if (warning := _doctor_pending_pairing_warning(pending_request)) is not None
+    ]
+    return {
+        **base_payload,
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "Device pairing has pending requests."
+            if warnings
+            else "Device pairing has no pending requests."
+        ),
+        "checked": True,
+        "pendingCount": len(pending),
+        "pairedCount": len(paired),
+        "warnings": warnings,
+    }
+
+
+async def _with_doctor_device_pairing_payload(
+    payload: dict[str, object],
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    device_pairing = await _build_doctor_device_pairing_payload(gateway_node_methods)
+    next_payload = dict(payload)
+    next_payload["devicePairing"] = device_pairing
+    warnings = [
+        str(warning)
+        for warning in _object_list(device_pairing.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
     build_snapshot = getattr(config_service, "build_snapshot", None)
     if not callable(build_snapshot):
@@ -19558,6 +19658,10 @@ def doctor(
             getattr(services, "gateway_node_methods", None),
         )
         payload = await _with_doctor_memory_search_payload(
+            payload,
+            getattr(services, "gateway_node_methods", None),
+        )
+        payload = await _with_doctor_device_pairing_payload(
             payload,
             getattr(services, "gateway_node_methods", None),
         )

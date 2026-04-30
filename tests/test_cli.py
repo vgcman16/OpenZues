@@ -14022,6 +14022,7 @@ def _invoke_doctor_json_with_config_snapshot(
     *,
     settings: object | None = None,
     args: list[str] | None = None,
+    gateway_node_methods: object | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -14049,6 +14050,7 @@ def _invoke_doctor_json_with_config_snapshot(
                 settings=settings or SimpleNamespace(),
                 hermes_platform=FakeHermesPlatform(),
                 gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=gateway_node_methods,
             )
         )
 
@@ -14583,6 +14585,57 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
     }
 
 
+def test_doctor_json_warns_about_pending_device_pairing_from_gateway(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "device.pair.list":
+                return {
+                    "pending": [
+                        {
+                            "requestId": "req-gateway-1",
+                            "deviceId": "device-gateway-1",
+                            "publicKey": "pubkey",
+                            "role": "operator",
+                            "roles": ["operator"],
+                            "scopes": ["operator.admin"],
+                            "clientId": "control-ui",
+                            "clientMode": "webchat",
+                            "displayName": "Dashboard",
+                            "ts": 1,
+                            "isRepair": False,
+                        }
+                    ],
+                    "paired": [],
+                }
+            raise AssertionError(method)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "remote"}},
+        gateway_node_methods=FakeGatewayNodeMethods(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["devicePairing"]["warnings"][0]
+    assert ("device.pair.list", {}) in calls
+    assert payload["devicePairing"]["status"] == "warning"
+    assert payload["devicePairing"]["openClawContribution"] == "doctor:device-pairing"
+    assert "Pending device pairing request req-gateway-1" in warning
+    assert "Dashboard (device-gateway-1)" in warning
+    assert "openclaw devices approve req-gateway-1" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,
@@ -14785,14 +14838,18 @@ def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> 
     class FakeGatewayNodeMethods:
         async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
             calls.append((method, params))
-            return {
-                "agentId": "main",
-                "embedding": {
-                    "ok": False,
-                    "provider": "local",
-                    "error": "node-llama-cpp not installed",
-                },
-            }
+            if method == "doctor.memory.status":
+                return {
+                    "agentId": "main",
+                    "embedding": {
+                        "ok": False,
+                        "provider": "local",
+                        "error": "node-llama-cpp not installed",
+                    },
+                }
+            if method == "device.pair.list":
+                return {"pending": [], "paired": []}
+            raise AssertionError(method)
 
     async def fake_live_view(_settings: object) -> None:
         return None
@@ -14814,7 +14871,10 @@ def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> 
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
-    assert calls == [("doctor.memory.status", {})]
+    assert calls == [
+        ("doctor.memory.status", {}),
+        ("device.pair.list", {}),
+    ]
     assert payload["memorySearch"] == {
         "status": "warn",
         "summary": (
@@ -14897,6 +14957,8 @@ def test_doctor_json_includes_gateway_health_contribution_and_channel_warnings(
                 }
             if method == "doctor.memory.status":
                 return {"embedding": {"ok": True, "provider": "local"}}
+            if method == "device.pair.list":
+                return {"pending": [], "paired": []}
             raise AssertionError(method)
 
     async def fake_live_view(_settings: object) -> None:
@@ -14937,6 +14999,7 @@ def test_doctor_json_includes_gateway_health_contribution_and_channel_warnings(
     assert gateway_calls == [
         ("channels.status", {"probe": True, "timeoutMs": 5000}),
         ("doctor.memory.status", {}),
+        ("device.pair.list", {}),
     ]
     assert payload["gatewayHealth"]["openClawContribution"] == "doctor:gateway-health"
     assert payload["gatewayHealth"]["status"] == "warn"

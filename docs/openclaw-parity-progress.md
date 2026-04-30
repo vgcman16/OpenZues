@@ -255,6 +255,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_manifest_load_paths or
   bootstrap_file_exceeds_limits or doctor_json_warns"` (`33 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's
+  `doctor:device-pairing` gateway-backed pending request warning. It calls
+  `device.pair.list` through the native gateway method owner, summarizes
+  pending/paired counts, sanitizes request/device labels, and projects the
+  upstream `openclaw devices list` / `openclaw devices approve <requestId>`
+  guidance into the structured doctor warnings.
+- Verified the device-pairing doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_pending_device_pairing_from_gateway
+  -q` (`1 passed`), adjacent gateway doctor proof `python -m pytest
+  tests\test_cli.py -q -k "pending_device_pairing or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_json_includes_gateway_memory_probe_contribution or doctor_json_warns"`
+  (`34 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
   contribution for configured file-backed `cron.store` paths. It reports
   legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and
