@@ -7755,6 +7755,9 @@ class GatewayNodeMethodService:
             model = _optional_non_empty_string(payload.get("model"), label="model")
             thinking = _optional_non_empty_string(payload.get("thinking"), label="thinking")
             cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
+            spawned_workspace_dir = cwd
+            if spawned_workspace_dir is None and child_sandbox_status.sandboxed:
+                spawned_workspace_dir = child_sandbox_status.workspace_root
             mode = _optional_enum_value(
                 payload.get("mode"),
                 label="mode",
@@ -7899,8 +7902,8 @@ class GatewayNodeMethodService:
                 metadata["model"] = model
             if thinking is not None:
                 metadata["thinkingLevel"] = thinking
-            if cwd is not None:
-                metadata["spawnedWorkspaceDir"] = cwd
+            if spawned_workspace_dir is not None:
+                metadata["spawnedWorkspaceDir"] = spawned_workspace_dir
             if agent_id is not None:
                 metadata["agentId"] = agent_id
             if light_context:
@@ -7919,7 +7922,11 @@ class GatewayNodeMethodService:
             attachment_suffix: str | None = None
             attachment_dir: Path | None = None
             if payload.get("attachments") not in (None, []):
-                workspace_dir = Path(cwd).expanduser() if cwd is not None else Path.cwd()
+                workspace_dir = (
+                    Path(spawned_workspace_dir).expanduser()
+                    if spawned_workspace_dir is not None
+                    else Path.cwd()
+                )
                 attachment_receipt, attachment_suffix = _materialize_sessions_spawn_attachments(
                     workspace_dir=workspace_dir,
                     attachments=payload.get("attachments"),
@@ -7966,7 +7973,7 @@ class GatewayNodeMethodService:
                         "sandbox": "require",
                         "sandbox_mode": child_native_sandbox_mode,
                         "agent_id": target_agent_id,
-                        "cwd": cwd,
+                        "cwd": spawned_workspace_dir,
                         "model": model,
                     }
                     if child_sandbox_status.sandboxed

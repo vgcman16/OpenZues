@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-29
+Updated: 2026-04-30
 
 Current percentage rollup:
 
@@ -80,6 +80,10 @@ when dispatched with `sandbox_mode="read-only"`; remaining staging work is
 limited to deeper OpenClaw media/workspace filesystem staging. Explicit
 `workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
 while omitted/`"rw"` access keeps the writable workspace sandbox path.
+Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
+inside the resolved child sandbox workspace from `workspaceRoot`, persist that
+workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
+and keep the OpenClaw untrusted-attachment prompt suffix.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,

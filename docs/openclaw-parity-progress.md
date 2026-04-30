@@ -1846,6 +1846,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   session; omitted or `"rw"` access stays on the writable workspace sandbox
   path.
 - Verified the workspace-access mapping seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Sandboxed `sessions.spawn` calls that omit `cwd` now resolve the configured
+  child sandbox `workspaceRoot` before staging inline attachments, persist that
+  workspace as `spawnedWorkspaceDir`, pass it into the sandbox dispatch, and
+  preserve the OpenClaw untrusted-attachment prompt suffix.
+- Verified the sandbox attachment workspace-staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_inherit_dispatches_sandboxed_config_target or
+  sessions_spawn_rejects_acp_attachments_before_runtime_boundary"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Telegram native `sendPoll` topic-qualified targets are now covered by the
   same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
