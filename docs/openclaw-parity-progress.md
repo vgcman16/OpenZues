@@ -3423,6 +3423,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- ACP `thread=true` spawns now also mirror OpenClaw's
+  `resolveAcpSpawnChannelAccountId` fallback: when channel context omits an
+  account id, `channels.<channel>.defaultAccount` is applied before
+  account-scoped spawn policy checks and before the native ACP runtime context
+  is dispatched.
+- Verified the ACP default-account seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_uses_channel_default_account
+  -q` (`1 passed`), adjacent ACP account-policy coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement"`
+  (`5 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the

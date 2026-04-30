@@ -253,6 +253,10 @@ OpenClaw-shaped `threadBinding`, `sessionBinding targetKind="session"`,
 `completionDelivery`, and bound delivery context metadata on the child session,
 so downstream wait/reset/delete lifecycle paths can see the ACP session binding
 record instead of only requester-origin metadata.
+ACP thread-bound spawns with a channel context but no explicit account id now
+mirror OpenClaw's `resolveAcpSpawnChannelAccountId`: the native gateway uses
+`channels.<channel>.defaultAccount` when present and otherwise falls back to
+`default` before account-scoped spawn policy checks and ACP runtime dispatch.
 Remaining lifecycle parity is deeper provider-native binding record stores,
 provider-native child-thread creation, and production ACP provider binding
 creation breadth.

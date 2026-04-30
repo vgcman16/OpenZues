@@ -17726,6 +17726,103 @@ async def test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_uses_channel_default_account(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-default-account.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "channels": {
+                    "matrix": {
+                        "defaultAccount": "work",
+                        "accounts": {
+                            "work": {
+                                "threadBindings": {
+                                    "enabled": True,
+                                    "spawnAcpSessions": True,
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-default-account",
+                "runId": "run-acp-default-account-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-default-account",
+                "runtimeSessionId": "thread-default-account",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind ACP through the configured channel default account.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_to="room:!room:example.org",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    assert calls[0]["context"]["requesterAccountId"] == "work"
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-default-account"
+    )
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["requesterOrigin"]["accountId"] == "work"
+    assert metadata["deliveryContext"]["accountId"] == "work"
+    assert metadata["lastAccountId"] == "work"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:

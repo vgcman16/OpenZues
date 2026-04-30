@@ -7702,6 +7702,10 @@ class GatewayNodeMethodService:
                     target_agent_id=acp_agent_id,
                 )
                 if thread:
+                    requester_origin = _sessions_spawn_origin_with_channel_default_account(
+                        self._config_service,
+                        requester_origin=requester_origin,
+                    )
                     acp_thread_policy_error = _sessions_spawn_thread_policy_error(
                         self._config_service,
                         requester_origin=requester_origin,
@@ -13327,6 +13331,32 @@ def _sessions_spawn_origin_for_target_agent(
     if bound_account_id is None:
         return origin
     origin["accountId"] = bound_account_id
+    return origin
+
+
+def _sessions_spawn_origin_with_channel_default_account(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str] | None,
+) -> dict[str, str] | None:
+    if requester_origin is None:
+        return None
+    origin = dict(requester_origin)
+    if _string_or_none(origin.get("accountId")) is not None:
+        return origin
+    channel = _string_or_none(origin.get("channel"))
+    if channel is None:
+        return origin
+    default_account_id: str | None = None
+    if config_service is not None:
+        try:
+            snapshot = config_service.build_snapshot()
+        except Exception:
+            snapshot = {}
+        channel_config = _channel_config_for_thread_binding(snapshot, channel.lower())
+        if channel_config is not None:
+            default_account_id = _string_or_none(channel_config.get("defaultAccount"))
+    origin["accountId"] = default_account_id or DEFAULT_ACCOUNT_ID
     return origin
 
 
