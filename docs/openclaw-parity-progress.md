@@ -2300,6 +2300,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   status_all_human_output_renders_pasteable_diagnosis"` (`4 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `doctor --json` and human doctor output now include stable OpenClaw doctor
+  contribution surfaces for `doctor:security` and `doctor:shell-completion`.
+  The native CLI marks security as unavailable and shell completion as partial
+  until production repair adapters are wired, while preserving any future real
+  adapter payloads.
+- Verified the doctor contribution-surface seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_security_and_shell_completion_surfaces -q`
+  (`1 passed`), adjacent doctor coverage `python -m pytest tests\test_cli.py
+  -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_human_output_reports_session_lock_files or
+  doctor_json_includes_cli_runtime_surfaces"` (`4 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 

@@ -13555,6 +13555,65 @@ def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> 
     ]
 
 
+def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["security"] == {
+        "status": "unavailable",
+        "summary": (
+            "Security doctor contribution is not available from the native OpenZues "
+            "CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:security",
+        "repairAvailable": False,
+    }
+    assert payload["shellCompletion"] == {
+        "status": "partial",
+        "summary": (
+            "Typer shell completion is available, but the OpenClaw doctor repair flow "
+            "is not wired into the native OpenZues CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:shell-completion",
+        "repairAvailable": False,
+    }
+
+
 def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     sessions_dir = data_dir / "agents" / "main" / "sessions"

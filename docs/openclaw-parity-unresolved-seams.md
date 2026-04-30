@@ -274,6 +274,10 @@ Sandbox warning text while preserving the existing warning surface. The
 top-level human/JSON doctor view now also reports OpenClaw-style session lock
 health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
 liveness, age, stale posture, and read-only guidance without removing files.
+Top-level doctor output now also includes the upstream `doctor:security` and
+`doctor:shell-completion` contribution surfaces as stable native read models,
+currently marked honest unavailable/partial until production security and shell
+completion repair adapters are wired.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining

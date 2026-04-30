@@ -1857,7 +1857,16 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
     promotion_loop = payload.get("promotion_loop")
     if isinstance(promotion_loop, dict):
         typer.echo("learning: " + str(promotion_loop.get("summary") or ""))
-    for key in ("memory", "executors", "plugins", "delivery", "acp", "extras"):
+    for key in (
+        "memory",
+        "executors",
+        "plugins",
+        "delivery",
+        "security",
+        "shellCompletion",
+        "acp",
+        "extras",
+    ):
         section = payload.get(key)
         if isinstance(section, dict):
             typer.echo(f"{key}: " + str(section.get("summary") or ""))
@@ -2161,6 +2170,39 @@ def _with_doctor_session_lock_health(
         return payload
     next_payload = dict(payload)
     next_payload["session_locks"] = session_locks
+    return next_payload
+
+
+def _build_doctor_security_payload() -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "summary": (
+            "Security doctor contribution is not available from the native OpenZues "
+            "CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:security",
+        "repairAvailable": False,
+    }
+
+
+def _build_doctor_shell_completion_payload() -> dict[str, object]:
+    return {
+        "status": "partial",
+        "summary": (
+            "Typer shell completion is available, but the OpenClaw doctor repair flow "
+            "is not wired into the native OpenZues CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:shell-completion",
+        "repairAvailable": False,
+    }
+
+
+def _with_doctor_contribution_surfaces(payload: dict[str, object]) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload.setdefault("security", _build_doctor_security_payload())
+    next_payload.setdefault("shellCompletion", _build_doctor_shell_completion_payload())
     return next_payload
 
 
@@ -15826,6 +15868,7 @@ def doctor(
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
             payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = _with_doctor_contribution_surfaces(payload)
         return payload
 
     payload = _run(_run_with_services(_action))
