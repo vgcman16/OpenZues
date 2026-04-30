@@ -157,8 +157,9 @@ reaction-array remove shape and soft missing-message-id result.
 Discord route-backed action parity now includes `react` add dispatch via REST
 own-reaction `PUT` using the saved bot token and OpenClaw-style encoded emoji
 identifier, plus explicit `remove=true` through the matching own-reaction
-`DELETE`. Remaining Discord action parity is remove-own and `reactions`
-listing fanout.
+`DELETE`. Empty-emoji `react` now also fetches message reactions, removes each
+own reaction identifier, and returns the removed list. Remaining Discord action
+parity is `reactions` listing fanout.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels

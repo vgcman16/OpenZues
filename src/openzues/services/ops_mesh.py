@@ -1271,6 +1271,18 @@ def _discord_reaction_identifier(raw: str | None) -> str:
     return quote(identifier, safe="")
 
 
+def _discord_reaction_identifier_from_payload(emoji: object) -> str | None:
+    if not isinstance(emoji, dict):
+        return None
+    raw_name = emoji.get("name")
+    name = str(raw_name).strip() if raw_name is not None else ""
+    raw_id = emoji.get("id")
+    emoji_id = str(raw_id).strip() if raw_id is not None else ""
+    if name and emoji_id:
+        return f"{name}:{emoji_id}"
+    return name or None
+
+
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
     trimmed = raw.strip()
     if not trimmed:
@@ -7197,7 +7209,22 @@ class OpsMeshService:
         if remove and not emoji:
             raise RuntimeError("Emoji is required to remove a Discord reaction.")
         if not emoji:
-            return None
+            removed = self._remove_own_discord_reactions(
+                channel_id=_discord_action_channel_id(
+                    _message_action_param_string(
+                        request.params,
+                        "channelId",
+                        required=True,
+                    )
+                ),
+                message_id=_message_action_param_string(
+                    request.params,
+                    "messageId",
+                    required=True,
+                ),
+                secret_token=secret_token,
+            )
+            return {"ok": True, "removed": removed}
         channel_id = _discord_action_channel_id(
             _message_action_param_string(request.params, "channelId", required=True)
         )
@@ -7222,6 +7249,52 @@ class OpsMeshService:
         if remove:
             return {"ok": True, "removed": emoji}
         return {"ok": True, "added": emoji}
+
+    def _remove_own_discord_reactions(
+        self,
+        *,
+        channel_id: str | None,
+        message_id: str | None,
+        secret_token: str | None,
+    ) -> list[str]:
+        if channel_id is None:
+            raise RuntimeError("Discord react requires channelId.")
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        authorization = _discord_bot_authorization(secret_token)
+        message = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        raw_reactions = message.get("reactions") if isinstance(message, dict) else []
+        removed: list[str] = []
+        if isinstance(raw_reactions, list):
+            seen: set[str] = set()
+            for reaction in raw_reactions:
+                if not isinstance(reaction, dict):
+                    continue
+                identifier = _discord_reaction_identifier_from_payload(
+                    reaction.get("emoji")
+                )
+                if identifier and identifier not in seen:
+                    seen.add(identifier)
+                    removed.append(identifier)
+        for identifier in removed:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(
+                    "channels/"
+                    f"{channel_id}/messages/{message_id}/reactions/"
+                    f"{_discord_reaction_identifier(identifier)}/@me"
+                ),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(str(result.get("error")))
+        return removed
 
     async def _post_provider_route_event(
         self,
