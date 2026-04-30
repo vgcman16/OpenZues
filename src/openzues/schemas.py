@@ -1868,6 +1868,7 @@ class ControlUiBootstrapConfigView(BaseModel):
     acp: dict[str, Any] | None = None
     plugins: dict[str, Any] | None = None
     channels: dict[str, Any] | None = None
+    messages: dict[str, Any] | None = None
 
 
 class SetupFootprintResourceView(BaseModel):

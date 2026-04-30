@@ -2188,6 +2188,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy memorySearch config moved to agents.defaults.memorySearch."
     if _legacy_config_issues_all_match(issues, "heartbeat"):
         return "Legacy heartbeat config moved to defaults."
+    if _legacy_config_issues_all_tts_provider_config(issues):
+        return "Legacy TTS provider config uses providers."
     if _legacy_config_issues_all_match(issues, "gateway.bind"):
         return "Legacy gateway bind host aliases use bind modes."
     return "Legacy config contains migratable keys."
@@ -2217,6 +2219,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         )
     if _legacy_config_issues_all_match(issues, "heartbeat"):
         return "Legacy heartbeat config moved to defaults; run openzues doctor --fix."
+    if _legacy_config_issues_all_tts_provider_config(issues):
+        return "Legacy TTS provider config uses providers; run openzues doctor --fix."
     if _legacy_config_issues_all_match(issues, "gateway.bind"):
         return "Legacy gateway bind host aliases use bind modes; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
@@ -2277,6 +2281,18 @@ def _legacy_config_issues_all_sandbox_per_session(issues: list[object]) -> bool:
                 issue["path"].startswith("agents.list.")
                 and issue["path"].endswith(".sandbox.perSession")
             )
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_tts_provider_config(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "messages.tts"
+            or issue["path"] == "plugins.entries.voice-call.config.tts"
         )
         for issue in issues
     )

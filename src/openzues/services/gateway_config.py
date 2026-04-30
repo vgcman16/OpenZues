@@ -36,6 +36,14 @@ _AGENT_HEARTBEAT_KEYS = {
     "isolatedSession",
 }
 _CHANNEL_HEARTBEAT_KEYS = {"showOk", "showAlerts", "useIndicator"}
+_LEGACY_TTS_PROVIDER_KEYS = ("openai", "elevenlabs", "microsoft", "edge")
+_LEGACY_TTS_PROVIDER_TARGETS = {
+    "openai": "openai",
+    "elevenlabs": "elevenlabs",
+    "microsoft": "microsoft",
+    "edge": "microsoft",
+}
+_LEGACY_TTS_PLUGIN_IDS = {"voice-call"}
 _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "discord": "discord",
     "feishu": "feishu",
@@ -278,6 +286,7 @@ class GatewayConfigService:
             *_migrate_legacy_sandbox_per_session(payload),
             *_migrate_legacy_memory_search(payload),
             *_migrate_legacy_heartbeat(payload),
+            *_migrate_legacy_tts_provider_config(payload),
             *_migrate_gateway_control_ui_allowed_origins(payload),
             *_migrate_legacy_gateway_bind_alias(payload),
         ]
@@ -1611,6 +1620,7 @@ def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "acp",
         "plugins",
         "channels",
+        "messages",
     )
     if any(snapshot.get(section) is None for section in omitted_null_sections):
         snapshot = dict(snapshot)
@@ -1759,6 +1769,14 @@ def _legacy_heartbeat_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_tts_provider_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": f"{path}.providers",
+        "message": f"{path}.<provider> keys are legacy; use {path}.providers.",
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1796,6 +1814,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_heartbeat_issue(path)
             for path in _iter_legacy_heartbeat_paths(payload)
+        ],
+        *[
+            _legacy_tts_provider_issue(path)
+            for path in _iter_legacy_tts_provider_paths(payload)
         ],
         *[
             _legacy_gateway_bind_alias_issue(path)
@@ -2241,6 +2263,30 @@ def _iter_legacy_heartbeat_paths(payload: dict[str, Any]) -> list[str]:
     return ["heartbeat"] if "heartbeat" in payload else []
 
 
+def _iter_legacy_tts_provider_paths(payload: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    messages = payload.get("messages")
+    messages_tts = messages.get("tts") if isinstance(messages, dict) else None
+    if isinstance(messages_tts, dict) and _has_legacy_tts_provider_keys(messages_tts):
+        paths.append("messages.tts")
+
+    plugins = payload.get("plugins")
+    entries = plugins.get("entries") if isinstance(plugins, dict) else None
+    if isinstance(entries, dict):
+        for plugin_id, entry_value in entries.items():
+            if plugin_id not in _LEGACY_TTS_PLUGIN_IDS or not isinstance(entry_value, dict):
+                continue
+            config = entry_value.get("config")
+            tts = config.get("tts") if isinstance(config, dict) else None
+            if isinstance(tts, dict) and _has_legacy_tts_provider_keys(tts):
+                paths.append(f"plugins.entries.{plugin_id}.config.tts")
+    return paths
+
+
+def _has_legacy_tts_provider_keys(tts: dict[str, Any]) -> bool:
+    return any(key in tts for key in _LEGACY_TTS_PROVIDER_KEYS)
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2670,6 +2716,55 @@ def _merge_legacy_record_into_defaults(
     _merge_missing_config_values(merged, legacy_value)
     defaults[field_key] = merged
     changes.append(merged_message)
+
+
+def _migrate_legacy_tts_provider_config(payload: dict[str, Any]) -> list[str]:
+    changes: list[str] = []
+    messages = payload.get("messages")
+    messages_tts = messages.get("tts") if isinstance(messages, dict) else None
+    if isinstance(messages_tts, dict):
+        _migrate_legacy_tts_config_at(
+            messages_tts,
+            path_label="messages.tts",
+            changes=changes,
+        )
+
+    plugins = payload.get("plugins")
+    entries = plugins.get("entries") if isinstance(plugins, dict) else None
+    if isinstance(entries, dict):
+        for plugin_id, entry_value in entries.items():
+            if plugin_id not in _LEGACY_TTS_PLUGIN_IDS or not isinstance(entry_value, dict):
+                continue
+            config = entry_value.get("config")
+            tts = config.get("tts") if isinstance(config, dict) else None
+            if not isinstance(tts, dict):
+                continue
+            _migrate_legacy_tts_config_at(
+                tts,
+                path_label=f"plugins.entries.{plugin_id}.config.tts",
+                changes=changes,
+            )
+    return changes
+
+
+def _migrate_legacy_tts_config_at(
+    tts: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    for legacy_key in _LEGACY_TTS_PROVIDER_KEYS:
+        provider_id = _LEGACY_TTS_PROVIDER_TARGETS[legacy_key]
+        legacy_value = tts.get(legacy_key)
+        if not isinstance(legacy_value, dict):
+            continue
+        providers = _ensure_config_record(tts, "providers")
+        existing = providers.get(provider_id)
+        merged = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+        _merge_missing_config_values(merged, legacy_value)
+        providers[provider_id] = merged
+        del tts[legacy_key]
+        changes.append(f"Moved {path_label}.{legacy_key} to {path_label}.providers.{provider_id}.")
 
 
 def _migrate_gateway_control_ui_allowed_origins(payload: dict[str, Any]) -> list[str]:

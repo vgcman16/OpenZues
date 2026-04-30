@@ -16571,6 +16571,194 @@ def test_doctor_fix_removes_empty_legacy_heartbeat(
     assert "channels" not in repaired
 
 
+def test_doctor_json_warns_about_legacy_tts_provider_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "messages": {"tts": {"openai": {"voice": "alloy"}}},
+                "plugins": {
+                    "entries": {
+                        "voice-call": {
+                            "config": {"tts": {"elevenlabs": {"voice": "Rachel"}}},
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "warn"
+    assert [issue["path"] for issue in payload["legacyConfig"]["issues"]] == [
+        "messages.tts",
+        "plugins.entries.voice-call.config.tts",
+    ]
+    assert payload["warnings"] == [
+        "Legacy TTS provider config uses providers; run openzues doctor --fix."
+    ]
+
+
+def test_doctor_fix_migrates_legacy_tts_provider_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "messages": {
+                    "tts": {
+                        "openai": {"voice": "alloy"},
+                        "edge": {"voice": "Aria"},
+                        "providers": {"openai": {"model": "tts-1"}},
+                    },
+                },
+                "plugins": {
+                    "entries": {
+                        "voice-call": {
+                            "config": {
+                                "tts": {
+                                    "elevenlabs": {"voice": "Rachel"},
+                                    "microsoft": {"voice": "Jenny"},
+                                    "providers": {
+                                        "microsoft": {"region": "westus"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["legacyConfig"]["status"] == "ok"
+    assert payload["legacyConfig"]["changes"] == [
+        "Moved messages.tts.openai to messages.tts.providers.openai.",
+        "Moved messages.tts.edge to messages.tts.providers.microsoft.",
+        "Moved plugins.entries.voice-call.config.tts.elevenlabs to "
+        "plugins.entries.voice-call.config.tts.providers.elevenlabs.",
+        "Moved plugins.entries.voice-call.config.tts.microsoft to "
+        "plugins.entries.voice-call.config.tts.providers.microsoft.",
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    messages_tts = repaired["messages"]["tts"]
+    assert "openai" not in messages_tts
+    assert "edge" not in messages_tts
+    assert messages_tts["providers"] == {
+        "openai": {"model": "tts-1", "voice": "alloy"},
+        "microsoft": {"voice": "Aria"},
+    }
+    plugin_tts = repaired["plugins"]["entries"]["voice-call"]["config"]["tts"]
+    assert "elevenlabs" not in plugin_tts
+    assert "microsoft" not in plugin_tts
+    assert plugin_tts["providers"] == {
+        "elevenlabs": {"voice": "Rachel"},
+        "microsoft": {"region": "westus", "voice": "Jenny"},
+    }
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

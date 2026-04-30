@@ -123,10 +123,13 @@ already exist.
 Top-level `heartbeat` now splits into `agents.defaults.heartbeat` and
 `channels.defaults.heartbeat`, with existing defaults receiving only missing
 fields and empty legacy heartbeat blocks removed.
+TTS provider config now normalizes legacy `messages.tts.<provider>` and
+`plugins.entries.voice-call.config.tts.<provider>` keys into nested
+`tts.providers`, including `edge` -> `microsoft`.
 Remaining legacy-config parity is broader doctor migration breadth from
 OpenClaw's compatibility migrator; the next small source-backed head is
-TTS provider config normalization into `messages.tts.providers` and
-`plugins.entries.voice-call.config.tts.providers`.
+`tools.web.search` provider-owned config migration into plugin entry
+`webSearch` config.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
