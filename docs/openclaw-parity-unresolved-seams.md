@@ -533,10 +533,10 @@ Discord `thread-list` now dispatches active guild and archived channel
 thread-list paths through the same route-backed bot-token REST path, including
 archived `before`/`limit` query parameters, and returns the upstream-shaped
 `{ok: true, threads}` payload.
-Discord `thread-reply` now dispatches the core text/reply path through the
-same route-backed bot-token REST path, including `message_reference` mapping
-and the upstream-shaped `{ok: true, result}` payload; media handling remains
-queued.
+Discord `thread-reply` now dispatches through the same route-backed bot-token
+REST path, including `message_reference` mapping, OpenClaw-style `mediaUrl`
+uploads through Discord multipart `payload_json` + `files[0]`, and the
+upstream-shaped `{ok: true, result}` payload.
 Discord `search` now dispatches through the same route-backed bot-token REST
 path, including content, repeated channel/author filters, clamped limit, and
 the upstream-shaped `{ok: true, results}` payload.

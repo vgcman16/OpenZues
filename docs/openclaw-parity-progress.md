@@ -4733,6 +4733,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py -q -k "message_action_dispatches_discord"` (`46
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord `thread-reply` now handles OpenClaw-style `mediaUrl` through the
+  bot-token REST path. Media replies load data URLs/local/canvas/HTTP media
+  with the upstream default 100 MB cap, derive a Discord upload filename,
+  preserve `message_reference`, and POST multipart `payload_json` plus
+  `files[0]` to the thread message endpoint.
+- Verified the Discord thread-reply media seam with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_thread_reply_media_route"` (`1
+  passed`), adjacent thread-reply coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_thread_reply"` (`2 passed`), adjacent
+  Discord action coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`47 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

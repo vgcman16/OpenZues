@@ -1201,6 +1201,23 @@ def _slack_media_filename(media_url: str, index: int) -> str:
     return f"openzues-media-{index}.bin"
 
 
+def _discord_media_filename(media_url: str, content_type: str) -> str:
+    parsed = urlparse(media_url)
+    name = unquote(Path(parsed.path).name).replace("\\", "_").replace("/", "_").strip()
+    name = re.sub(r'["\r\n]+', "_", name)
+    if name and "." in name:
+        return name[:120]
+    normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+    extension = {
+        "image/jpg": ".jpg",
+        "image/jpeg": ".jpg",
+        "application/json": ".json",
+    }.get(normalized_content_type)
+    if extension is None and normalized_content_type:
+        extension = mimetypes.guess_extension(normalized_content_type) or ""
+    return f"upload{extension or ''}"
+
+
 def _safe_slack_file_label(value: str | None, fallback: str) -> str:
     label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
     label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
@@ -1426,6 +1443,7 @@ def _telegram_media_ids(result: object) -> list[str]:
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_MAX_EMOJI_BYTES = 256 * 1024
 DISCORD_MAX_EVENT_COVER_BYTES = 8 * 1024 * 1024
+DISCORD_MAX_MESSAGE_MEDIA_BYTES = 100 * 1024 * 1024
 DISCORD_MAX_STICKER_BYTES = 512 * 1024
 DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_EVENT_COVER_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
@@ -10369,13 +10387,35 @@ class OpsMeshService:
                 "message_id": reply_to,
                 "fail_if_not_exists": False,
             }
-        result = self._request_json_provider_url(
-            _discord_api_endpoint(f"channels/{thread_id}/messages"),
-            method="POST",
-            payload=payload,
-            secret_header_name="Authorization",
-            secret_token=_discord_bot_authorization(secret_token),
-        )
+        media_url = _message_action_param_raw_string(
+            request.params,
+            "mediaUrl",
+        ) or _message_action_param_raw_string(request.params, "media")
+        result: object | None
+        if media_url is not None:
+            media_bytes, content_type = self._load_discord_media(
+                media_url,
+                max_bytes=DISCORD_MAX_MESSAGE_MEDIA_BYTES,
+            )
+            normalized_content_type = (
+                content_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
+            )
+            result = self._request_discord_message_upload(
+                channel_id=thread_id,
+                payload=payload,
+                media_bytes=media_bytes,
+                content_type=normalized_content_type,
+                filename=_discord_media_filename(media_url, normalized_content_type),
+                secret_token=secret_token,
+            )
+        else:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"channels/{thread_id}/messages"),
+                method="POST",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
         if not isinstance(result, dict):
             raise RuntimeError("Discord API returned a non-JSON message response.")
         if result.get("error"):
@@ -12237,6 +12277,65 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_discord_message_upload(
+        self,
+        *,
+        channel_id: str,
+        payload: dict[str, object],
+        media_bytes: bytes,
+        content_type: str,
+        filename: str,
+        secret_token: str | None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        boundary = f"OpenZuesDiscord{uuid.uuid4().hex}"
+        safe_filename = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        body = bytearray()
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b'Content-Disposition: form-data; name="payload_json"\r\n')
+        body.extend(b"Content-Type: application/json\r\n\r\n")
+        body.extend(json.dumps(payload).encode("utf-8"))
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        file_disposition = (
+            'Content-Disposition: form-data; name="files[0]"; '
+            f'filename="{safe_filename or "upload"}"\r\n'
+        )
+        body.extend(file_disposition.encode())
+        content_type_header = f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n"
+        body.extend(content_type_header.encode("ascii"))
+        body.extend(media_bytes)
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            data=bytes(body),
+            headers={
+                "Authorization": _discord_bot_authorization(secret_token),
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    parsed = json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Discord API returned a non-JSON message response.")
+        return parsed
 
     def _request_discord_sticker_upload(
         self,

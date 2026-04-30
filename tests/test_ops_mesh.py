@@ -8441,6 +8441,134 @@ async def test_ops_mesh_service_message_action_dispatches_discord_thread_reply_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_thread_reply_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-discord-thread-reply-media"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    upload_calls: list[dict[str, object]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self, target, method, payload, secret_header_name, secret_token
+        return {"id": "json-reply-should-not-send", "channel_id": "987654321"}
+
+    def fake_request_discord_message_upload(
+        self: OpsMeshService,
+        *,
+        channel_id: str,
+        payload: dict[str, object],
+        media_bytes: bytes,
+        content_type: str,
+        filename: str,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        upload_calls.append(
+            {
+                "channel_id": channel_id,
+                "payload": payload,
+                "media_bytes": media_bytes,
+                "content_type": content_type,
+                "filename": filename,
+                "secret_token": secret_token,
+            }
+        )
+        return {"id": "media-reply-1", "channel_id": "987654321"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_discord_message_upload",
+        fake_request_discord_message_upload,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="thread-reply",
+            params={
+                "threadId": "channel:987654321",
+                "message": "Thread reply with media.",
+                "mediaUrl": "data:image/png;base64,aGVsbG8=",
+                "replyTo": "parent-message-1",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-thread-reply-media-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {"messageId": "media-reply-1", "channelId": "987654321"},
+    }
+    assert upload_calls == [
+        {
+            "channel_id": "987654321",
+            "payload": {
+                "content": "Thread reply with media.",
+                "message_reference": {
+                    "message_id": "parent-message-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+            "media_bytes": b"hello",
+            "content_type": "image/png",
+            "filename": "upload.png",
+            "secret_token": "discord-bot-token",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_search_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
