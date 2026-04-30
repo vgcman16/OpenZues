@@ -20488,7 +20488,7 @@ def routes_create_command(
     kind: str = typer.Option(
         "webhook",
         "--kind",
-        help="Route kind: webhook, slack, telegram, discord, or whatsapp.",
+        help="Route kind: webhook, slack, telegram, discord, whatsapp, or line.",
     ),
     target: str = typer.Option(
         ...,
@@ -20539,21 +20539,21 @@ def routes_create_command(
     json_output: bool = typer.Option(False, "--json", help="Emit the route as JSON."),
 ) -> None:
     route_kind = str(kind or "").strip().lower()
-    if route_kind not in {"webhook", "slack", "telegram", "discord", "whatsapp"}:
+    if route_kind not in {"webhook", "slack", "telegram", "discord", "whatsapp", "line"}:
         raise typer.BadParameter(
-            "--kind must be one of: webhook, slack, telegram, discord, whatsapp."
+            "--kind must be one of: webhook, slack, telegram, discord, whatsapp, line."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
         route_events = (
             ["gateway/send", "gateway/poll"]
-            if route_kind in {"slack", "telegram", "discord", "whatsapp"}
+            if route_kind in {"slack", "telegram", "discord", "whatsapp", "line"}
             else ["mission/completed", "mission/failed"]
         )
     payload = NotificationRouteCreate(
         name=name,
         kind=cast(
-            Literal["webhook", "slack", "telegram", "discord", "whatsapp"],
+            Literal["webhook", "slack", "telegram", "discord", "whatsapp", "line"],
             route_kind,
         ),
         target=target,

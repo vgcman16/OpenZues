@@ -30,7 +30,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Route-backed thread-bound spawn binding now includes LINE current-conversation
   routes. The shared binder accepts LINE notification route views, keeps the
   provider target for delivery, and stores normalized LINE conversation ids in
-  the persisted `sessionBinding` record.
+  the persisted `sessionBinding` record. The native CLI now accepts
+  `routes create --kind line`, applies default `gateway/send` and
+  `gateway/poll` subscriptions, and persists LINE conversation targets for that
+  route-backed binder path.
 - Verified the LINE route-backed binder slice with `python -m pytest
   tests\test_gateway_thread_binding.py -k "line_current_conversation" -q` (`1
   passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
@@ -41,6 +44,14 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_thread_binding.py
   src\openzues\schemas.py tests\test_gateway_thread_binding.py`, and `mypy
   src\openzues\services\gateway_thread_binding.py src\openzues\schemas.py`.
+- Verified the LINE route-create CLI slice with `python -m pytest
+  tests\test_cli.py -k
+  "routes_create_command_accepts_line_current_conversation_route" -q` (`1
+  passed`), adjacent route-create proof `python -m pytest tests\test_cli.py -k
+  "routes_create_command_productizes_native_provider_routes or
+  routes_create_command_accepts_line_current_conversation_route" -q` (`2
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies

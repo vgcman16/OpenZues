@@ -240,8 +240,8 @@ are projected even before a sandbox runtime has been spawned.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
-construction. Supported Slack, Telegram, Discord, WhatsApp, and Matrix route
-contexts create persistent child sessions, force cleanup to `keep`, store
+construction. Supported Slack, Telegram, Discord, WhatsApp, LINE, and Matrix
+route contexts create persistent child sessions, force cleanup to `keep`, store
 thread/account/channel binding metadata, and route completion delivery through
 the bound thread. Binder results must now report both `status="ok"` and
 `threadBindingReady=true`; unsupported, unconfigured, or not-ready channels
@@ -270,7 +270,10 @@ including `bindingId`, `targetSessionKey`, `targetKind`, `conversation`,
 `status`, `boundAt`, and `metadata.lastActivityAt` alongside the existing
 delivery metadata. The production route-backed binder now also accepts LINE
 notification routes and stores LINE current-conversation ids without the
-provider/type prefix while preserving the original routable `to` target.
+provider/type prefix while preserving the original routable `to` target. The
+native CLI can now create `--kind line` routes with default `gateway/send` and
+`gateway/poll` subscriptions, so route-backed LINE current-conversation binders
+are operator-configurable without direct database edits.
 Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
