@@ -201,6 +201,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections"` (`18 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's `doctor:legacy-cron`
+  contribution for configured file-backed `cron.store` paths. It reports
+  legacy `jobId`, `schedule.cron`, top-level payload/delivery fields, and
+  `notify: true` fallback issues, and `doctor --fix` normalizes the store while
+  migrating notify-only jobs to `cron.webhook` delivery.
+- Verified the legacy-cron doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_cron_store
+  tests\test_cli.py::test_doctor_fix_normalizes_legacy_cron_store -q` (`2
+  passed`), adjacent cron/CLI proof `python -m pytest tests\test_cli.py -q -k
+  "legacy_cron_store or cron_add_payload_extra_flags or
+  cron_edit_payload_extra_flags or cron_add_at_timezone"` (`7 passed`), broader
+  doctor warning/repair proof `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_warns or doctor_fix_rewrites or
+  doctor_fix_normalizes_legacy_cron_store"` (`31 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.

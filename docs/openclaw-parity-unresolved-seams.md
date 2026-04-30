@@ -466,6 +466,11 @@ The same state-integrity doctor surface now reports a structured
 `stateDirectory` payload and CRITICAL warning when the configured OpenZues data
 directory is missing, mirroring OpenClaw's missing-state-directory doctor
 warning.
+Top-level doctor output now also includes OpenClaw's `doctor:legacy-cron`
+contribution for configured file-backed cron stores: it reports legacy
+`jobId`, `schedule.cron`, top-level payload/delivery, and `notify` fallback
+issues, and `doctor --fix` rewrites the store before the scheduler has to
+consume old shapes.
 Top-level doctor output now also includes the upstream `doctor:security` and
 `doctor:shell-completion` contribution surfaces as stable native read models,
 currently marked honest unavailable/partial until production security and shell

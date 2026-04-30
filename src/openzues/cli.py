@@ -3572,6 +3572,426 @@ def _with_doctor_session_lock_health(
     return next_payload
 
 
+_LEGACY_CRON_ISSUE_LABELS: dict[str, str] = {
+    "jobId": "still uses legacy `jobId`",
+    "legacyScheduleString": "stores schedule as a bare string",
+    "legacyScheduleCron": "still uses `schedule.cron`",
+    "legacyPayloadKind": "needs payload kind normalization",
+    "legacyPayloadProvider": "still uses payload `provider` as a delivery alias",
+    "legacyTopLevelPayloadFields": "still uses top-level payload fields",
+    "legacyTopLevelDeliveryFields": "still uses top-level delivery fields",
+    "legacyDeliveryMode": "still uses delivery mode `deliver`",
+    "legacyNotify": "still uses legacy `notify: true` webhook fallback",
+}
+
+
+def _doctor_cron_store_path(snapshot: dict[str, object]) -> Path | None:
+    cron = _dict_config(snapshot.get("cron"))
+    store_path = _optional_cli_string(cron.get("store"))
+    if store_path is None:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(store_path))
+    try:
+        return Path(expanded).resolve(strict=False)
+    except OSError:
+        return Path(expanded)
+
+
+def _doctor_cron_webhook(snapshot: dict[str, object]) -> str | None:
+    cron = _dict_config(snapshot.get("cron"))
+    return _optional_cli_string(cron.get("webhook")) or _optional_cli_string(
+        cron.get("webhookUrl")
+    )
+
+
+def _legacy_cron_increment(issues: dict[str, int], key: str) -> None:
+    issues[key] = issues.get(key, 0) + 1
+
+
+def _legacy_cron_track_issue(
+    issues: dict[str, int],
+    seen: set[str],
+    key: str,
+) -> None:
+    if key in seen:
+        return
+    seen.add(key)
+    _legacy_cron_increment(issues, key)
+
+
+def _legacy_cron_plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _doctor_legacy_cron_payload_record(job: dict[str, object]) -> dict[str, object] | None:
+    payload = job.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def _doctor_legacy_cron_delivery_record(job: dict[str, object]) -> dict[str, object] | None:
+    delivery = job.get("delivery")
+    return delivery if isinstance(delivery, dict) else None
+
+
+def _doctor_legacy_cron_set_payload_from_top_level(job: dict[str, object]) -> bool:
+    if isinstance(job.get("payload"), dict):
+        return False
+    message = _optional_cli_string(job.get("message"))
+    if message is not None:
+        job["payload"] = {"kind": "agentTurn", "message": message}
+        return True
+    text = _optional_cli_string(job.get("text"))
+    if text is not None:
+        job["payload"] = {"kind": "systemEvent", "text": text}
+        return True
+    command = _optional_cli_string(job.get("command"))
+    if command is not None:
+        job["payload"] = {"kind": "systemEvent", "text": command}
+        return True
+    return False
+
+
+def _doctor_legacy_cron_normalize_payload_kind(payload: dict[str, object]) -> bool:
+    kind = _optional_cli_string(payload.get("kind"))
+    normalized = (kind or "").replace(" ", "").lower()
+    if normalized == "agentturn" and payload.get("kind") != "agentTurn":
+        payload["kind"] = "agentTurn"
+        return True
+    if normalized == "systemevent" and payload.get("kind") != "systemEvent":
+        payload["kind"] = "systemEvent"
+        return True
+    if not kind:
+        if _optional_cli_string(payload.get("message")) is not None:
+            payload["kind"] = "agentTurn"
+            return True
+        if _optional_cli_string(payload.get("text")) is not None:
+            payload["kind"] = "systemEvent"
+            return True
+    return False
+
+
+def _doctor_legacy_cron_copy_payload_fields(
+    job: dict[str, object],
+    payload: dict[str, object],
+) -> bool:
+    changed = False
+    for field in ("model", "thinking"):
+        value = _optional_cli_string(job.get(field))
+        if value is not None and _optional_cli_string(payload.get(field)) is None:
+            payload[field] = value
+            changed = True
+    timeout = job.get("timeoutSeconds")
+    if (
+        isinstance(timeout, int | float)
+        and not isinstance(timeout, bool)
+        and "timeoutSeconds" not in payload
+    ):
+        payload["timeoutSeconds"] = max(0, int(timeout))
+        changed = True
+    return changed
+
+
+def _doctor_legacy_cron_strip_fields(job: dict[str, object], fields: Sequence[str]) -> None:
+    for field in fields:
+        job.pop(field, None)
+
+
+def _doctor_legacy_cron_delivery_from_top_level(
+    job: dict[str, object],
+) -> dict[str, object] | None:
+    deliver = job.get("deliver")
+    channel = _optional_cli_string(job.get("channel")) or _optional_cli_string(
+        job.get("provider")
+    )
+    to = _optional_cli_string(job.get("to"))
+    thread_id = _optional_cli_string(job.get("threadId"))
+    best_effort = job.get("bestEffortDeliver")
+    if deliver is not True and channel is None and to is None and thread_id is None:
+        return None
+    delivery: dict[str, object] = {"mode": "announce"}
+    if channel is not None:
+        delivery["channel"] = channel.lower()
+    if to is not None:
+        delivery["to"] = to
+    if thread_id is not None:
+        delivery["threadId"] = thread_id
+    if isinstance(best_effort, bool):
+        delivery["bestEffort"] = best_effort
+    return delivery
+
+
+def _doctor_legacy_cron_migrate_notify(
+    job: dict[str, object],
+    *,
+    legacy_webhook: str | None,
+) -> tuple[bool, list[str]]:
+    if "notify" not in job:
+        return False, []
+    changed = False
+    warnings: list[str] = []
+    job_name = _optional_cli_string(job.get("name")) or _optional_cli_string(job.get("id")) or (
+        "<unnamed>"
+    )
+    if job.get("notify") is not True:
+        job.pop("notify", None)
+        return True, warnings
+    delivery = _doctor_legacy_cron_delivery_record(job)
+    mode = _optional_cli_string(delivery.get("mode") if delivery else None)
+    to = _optional_cli_string(delivery.get("to") if delivery else None)
+    normalized_mode = mode.lower() if mode is not None else None
+    if normalized_mode == "webhook" and to is not None:
+        job.pop("notify", None)
+        return True, warnings
+    if normalized_mode in {None, "none", "webhook"} and legacy_webhook is not None:
+        next_delivery = dict(delivery or {})
+        next_delivery["mode"] = "webhook"
+        next_delivery["to"] = (
+            legacy_webhook if normalized_mode == "none" else (to or legacy_webhook)
+        )
+        job["delivery"] = next_delivery
+        job.pop("notify", None)
+        return True, warnings
+    if legacy_webhook is None:
+        warnings.append(
+            f'Cron job "{job_name}" still uses legacy notify fallback, but cron.webhook '
+            "is unset so doctor cannot migrate it automatically."
+        )
+        return changed, warnings
+    warnings.append(
+        f'Cron job "{job_name}" uses legacy notify fallback alongside delivery mode '
+        f'"{normalized_mode}". Migrate it manually so webhook delivery does not replace '
+        "existing announce behavior."
+    )
+    return changed, warnings
+
+
+def _doctor_legacy_cron_normalize_jobs(
+    jobs: Sequence[object],
+    *,
+    legacy_webhook: str | None,
+) -> tuple[bool, dict[str, int], list[str]]:
+    changed = False
+    issues: dict[str, int] = {}
+    warnings: list[str] = []
+    for item in jobs:
+        if not isinstance(item, dict):
+            continue
+        job = cast("dict[str, object]", item)
+        job_issue_keys: set[str] = set()
+
+        legacy_id = _optional_cli_string(job.get("jobId"))
+        if legacy_id is not None:
+            if _optional_cli_string(job.get("id")) is None:
+                job["id"] = legacy_id
+            job.pop("jobId", None)
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "jobId")
+
+        if not isinstance(job.get("state"), dict):
+            job["state"] = {}
+            changed = True
+
+        schedule = job.get("schedule")
+        if isinstance(schedule, str):
+            job["schedule"] = {"kind": "cron", "expr": schedule.strip()}
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyScheduleString")
+            schedule = job.get("schedule")
+        if isinstance(schedule, dict):
+            sched = cast("dict[str, object]", schedule)
+            legacy_cron = _optional_cli_string(sched.get("cron"))
+            if legacy_cron is not None:
+                if _optional_cli_string(sched.get("expr")) is None:
+                    sched["expr"] = legacy_cron
+                sched.pop("cron", None)
+                changed = True
+                _legacy_cron_track_issue(issues, job_issue_keys, "legacyScheduleCron")
+
+        if _doctor_legacy_cron_set_payload_from_top_level(job):
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyTopLevelPayloadFields")
+        payload = _doctor_legacy_cron_payload_record(job)
+        if payload is not None:
+            if _doctor_legacy_cron_normalize_payload_kind(payload):
+                changed = True
+                _legacy_cron_track_issue(issues, job_issue_keys, "legacyPayloadKind")
+            if _doctor_legacy_cron_copy_payload_fields(job, payload):
+                changed = True
+
+            payload_provider = _optional_cli_string(payload.get("provider"))
+            if payload_provider is not None:
+                job["delivery"] = {"mode": "announce", "channel": payload_provider.lower()}
+                payload.pop("provider", None)
+                changed = True
+                _legacy_cron_track_issue(issues, job_issue_keys, "legacyPayloadProvider")
+
+        top_level_payload_fields = (
+            "model",
+            "thinking",
+            "timeoutSeconds",
+            "allowUnsafeExternalContent",
+            "message",
+            "text",
+            "command",
+            "timeout",
+        )
+        if any(field in job for field in top_level_payload_fields):
+            _doctor_legacy_cron_strip_fields(job, top_level_payload_fields)
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyTopLevelPayloadFields")
+
+        top_level_delivery_fields = (
+            "deliver",
+            "channel",
+            "to",
+            "threadId",
+            "bestEffortDeliver",
+            "provider",
+        )
+        delivery = _doctor_legacy_cron_delivery_from_top_level(job)
+        if delivery is not None:
+            job["delivery"] = delivery
+            changed = True
+        if any(field in job for field in top_level_delivery_fields):
+            _doctor_legacy_cron_strip_fields(job, top_level_delivery_fields)
+            changed = True
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyTopLevelDeliveryFields")
+
+        if job.get("notify") is True:
+            _legacy_cron_track_issue(issues, job_issue_keys, "legacyNotify")
+        notify_changed, notify_warnings = _doctor_legacy_cron_migrate_notify(
+            job,
+            legacy_webhook=legacy_webhook,
+        )
+        changed = changed or notify_changed
+        warnings.extend(notify_warnings)
+    return changed, issues, warnings
+
+
+def _doctor_legacy_cron_preview_lines(
+    store_path: Path,
+    issues: dict[str, int],
+) -> list[str]:
+    if not issues:
+        return []
+    lines = [f"Legacy cron job storage detected at {store_path}."]
+    for key, label in _LEGACY_CRON_ISSUE_LABELS.items():
+        count = issues.get(key)
+        if not count:
+            continue
+        lines.append(f"- {_legacy_cron_plural(count, 'job')} {label}")
+    lines.append('Repair with "openzues doctor --fix" to normalize the store.')
+    return lines
+
+
+def _build_doctor_legacy_cron_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:legacy-cron",
+        "repairRequested": should_repair,
+        "repairAvailable": True,
+        "issues": {},
+        "warnings": [],
+    }
+    snapshot = _doctor_config_snapshot(config_service)
+    store_path = _doctor_cron_store_path(snapshot)
+    if store_path is None:
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "No legacy cron store configured.",
+            "repairAvailable": False,
+        }
+    raw_store = _read_cli_json_object(store_path)
+    if raw_store is None:
+        return {
+            **base_payload,
+            "status": "ok" if not store_path.exists() else "error",
+            "summary": (
+                "No legacy cron store found."
+                if not store_path.exists()
+                else f"Legacy cron store could not be read: {store_path}"
+            ),
+            "storePath": str(store_path),
+        }
+    jobs = _object_list(raw_store.get("jobs"))
+    changed, issues, migration_warnings = _doctor_legacy_cron_normalize_jobs(
+        jobs,
+        legacy_webhook=_doctor_cron_webhook(snapshot),
+    )
+    preview_lines = _doctor_legacy_cron_preview_lines(store_path, issues)
+    if should_repair:
+        changes: list[str] = []
+        errors: list[str] = []
+        if changed:
+            try:
+                store_path.parent.mkdir(parents=True, exist_ok=True)
+                next_store = {"version": raw_store.get("version", 1), "jobs": jobs}
+                store_path.write_text(
+                    f"{json.dumps(next_store, indent=2)}\n",
+                    encoding="utf-8",
+                )
+                changes.append(f"Cron store normalized at {store_path}.")
+            except OSError as exc:
+                errors.append(f"Failed to normalize legacy cron store at {store_path}: {exc}")
+        warnings = migration_warnings if errors else migration_warnings
+        return {
+            **base_payload,
+            "status": "error" if errors else ("ok" if changed or not issues else "warn"),
+            "summary": (
+                "Cron store normalized."
+                if changed and not errors
+                else (
+                    "Legacy cron store repair had errors."
+                    if errors
+                    else (
+                        "Legacy cron store still needs manual migration."
+                        if issues
+                        else "No legacy cron store issues found."
+                    )
+                )
+            ),
+            "changed": changed and not errors,
+            "changes": changes,
+            "errors": errors,
+            "issues": issues,
+            "warnings": warnings,
+            "storePath": str(store_path),
+        }
+    return {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Legacy cron job storage found." if issues else "No legacy cron store issues found."
+        ),
+        "issues": issues,
+        "warnings": [*preview_lines, *migration_warnings],
+        "storePath": str(store_path),
+    }
+
+
+def _with_doctor_legacy_cron_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    cron_payload = _build_doctor_legacy_cron_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["legacyCron"] = cron_payload
+    warnings = _object_list(cron_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
 def _build_doctor_security_payload() -> dict[str, object]:
     return {
         "status": "unavailable",
@@ -18523,6 +18943,11 @@ def doctor(
         if isinstance(data_dir, Path):
             payload = _with_doctor_state_directory_health(payload, data_dir)
             payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = _with_doctor_legacy_cron_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
         payload = await _with_doctor_gateway_health_payload(
             payload,
             services.settings,

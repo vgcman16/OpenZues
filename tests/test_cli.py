@@ -14413,6 +14413,114 @@ def test_doctor_json_warns_when_claude_cli_model_is_configured_but_unavailable(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_warns_about_legacy_cron_store(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    store_path.parent.mkdir()
+    legacy_store = {
+        "version": 1,
+        "jobs": [
+            {
+                "jobId": "legacy-job",
+                "name": "Legacy job",
+                "notify": True,
+                "createdAtMs": 1_770_000_000_000,
+                "updatedAtMs": 1_770_000_000_000,
+                "schedule": {"kind": "cron", "cron": "0 7 * * *", "tz": "UTC"},
+                "payload": {"kind": "systemEvent", "text": "Morning brief"},
+                "state": {},
+            }
+        ],
+    }
+    store_path.write_text(json.dumps(legacy_store), encoding="utf-8")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "cron": {
+                "store": str(store_path),
+                "webhook": "https://example.invalid/cron-finished",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyCron"]
+    assert contribution["status"] == "warn"
+    assert contribution["openClawContribution"] == "doctor:legacy-cron"
+    assert contribution["repairAvailable"] is True
+    assert any("Legacy cron job storage detected" in line for line in contribution["warnings"])
+    assert contribution["issues"]["jobId"] == 1
+    assert contribution["issues"]["legacyScheduleCron"] == 1
+    assert contribution["issues"]["legacyNotify"] == 1
+    assert json.loads(store_path.read_text(encoding="utf-8")) == legacy_store
+
+
+def test_doctor_fix_normalizes_legacy_cron_store(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    store_path.parent.mkdir()
+    store_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "jobs": [
+                    {
+                        "jobId": "legacy-job",
+                        "name": "Legacy job",
+                        "notify": True,
+                        "createdAtMs": 1_770_000_000_000,
+                        "updatedAtMs": 1_770_000_000_000,
+                        "schedule": {"kind": "cron", "cron": "0 7 * * *", "tz": "UTC"},
+                        "message": "Morning brief",
+                        "model": "openai/gpt-5.4",
+                        "state": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "cron": {
+                "store": str(store_path),
+                "webhook": "https://example.invalid/cron-finished",
+            }
+        },
+        args=["doctor", "--fix", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    contribution = payload["legacyCron"]
+    assert contribution["status"] == "ok"
+    assert contribution["changed"] is True
+    assert any("Cron store normalized" in line for line in contribution["changes"])
+    repaired = json.loads(store_path.read_text(encoding="utf-8"))
+    job = repaired["jobs"][0]
+    assert job["id"] == "legacy-job"
+    assert "jobId" not in job
+    assert job["schedule"] == {"kind": "cron", "tz": "UTC", "expr": "0 7 * * *"}
+    assert job["payload"] == {
+        "kind": "agentTurn",
+        "message": "Morning brief",
+        "model": "openai/gpt-5.4",
+    }
+    assert job["delivery"] == {
+        "mode": "webhook",
+        "to": "https://example.invalid/cron-finished",
+    }
+    assert "notify" not in job
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
