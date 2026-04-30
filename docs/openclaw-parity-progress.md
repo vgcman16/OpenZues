@@ -118,6 +118,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes_poll_human_output_calls_native_direct_poll_runtime or
   routes_poll_accepts_openclaw_thread_id_alias" -q` (`4 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Native `routes poll` now also accepts the OpenClaw poll option spellings:
+  `--poll-question`, repeatable `--poll-option`, `--poll-multi`,
+  `--poll-duration-seconds`, `--poll-duration-hours`, and
+  `--poll-anonymous` / `--poll-public`.
+- Verified the poll CLI alias slice with `python -m pytest tests\test_cli.py
+  -k "openclaw_poll_option_aliases" -q` (`1 passed`), adjacent route poll CLI
+  proof `python -m pytest tests\test_cli.py -k
+  "routes_poll_human_output_calls_native_direct_poll_runtime or
+  routes_poll_accepts_openclaw_thread_id_alias or
+  routes_poll_accepts_openclaw_poll_option_aliases" -q` (`3 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Matrix route-backed thread-bound subagent bindings now persist
   OpenClaw's bundled child-placement default in `sessionBinding.metadata`, and
   the gateway `sessions.spawn` path preserves that metadata on the child

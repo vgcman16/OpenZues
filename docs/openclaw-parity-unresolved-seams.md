@@ -353,7 +353,10 @@ delivery options. The CLI now exposes `routes send` and `routes poll` as thin
 JSON/human wrappers over the same native direct send/poll runtime owner,
 including reply/thread/media/silent/document/idempotency options, with
 OpenClaw-compatible `--media` and `--thread-id` aliases alongside the native
-`--media-url` / `--thread` spellings. Direct
+`--media-url` / `--thread` spellings, plus poll aliases for
+`--poll-question`, repeatable `--poll-option`, `--poll-multi`,
+`--poll-duration-seconds`, `--poll-duration-hours`, and
+`--poll-anonymous` / `--poll-public`. Direct
 provider-backed `gateway.send` calls with an explicit `sessionKey` now
 canonicalize and pass that key as the runtime/mirror session while keeping the
 saved delivery row attached to the channel-derived target session for history

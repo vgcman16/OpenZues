@@ -11405,6 +11405,68 @@ def test_routes_poll_accepts_openclaw_thread_id_alias(monkeypatch) -> None:
     ]
 
 
+def test_routes_poll_accepts_openclaw_poll_option_aliases(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 45,
+                "messageId": "discord-poll-45",
+                "pollId": "poll-45",
+                "channel": "discord",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "discord",
+            "--to",
+            "channel:deploy",
+            "--poll-question",
+            "Ship the release?",
+            "--poll-option",
+            "yes",
+            "--poll-option",
+            "no",
+            "--poll-multi",
+            "--poll-duration-hours",
+            "2",
+            "--poll-public",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "discord",
+            "to": "channel:deploy",
+            "question": "Ship the release?",
+            "options": ["yes", "no"],
+            "max_selections": 2,
+            "duration_seconds": None,
+            "duration_hours": 2,
+            "silent": None,
+            "is_anonymous": False,
+            "account_id": None,
+            "reply_to_id": None,
+            "thread_id": None,
+            "idempotency_key": None,
+        }
+    ]
+
+
 def test_routes_deliveries_json_surfaces_saved_outbound_deliveries(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch)

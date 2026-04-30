@@ -20680,12 +20680,13 @@ def routes_send_command(
 def routes_poll_command(
     channel: str = typer.Option(..., "--channel", help="Outbound provider channel."),
     to: str = typer.Option(..., "--to", help="Explicit provider target."),
-    question: str = typer.Option(..., "--question", help="Poll question."),
+    question: str = typer.Option(..., "--question", "--poll-question", help="Poll question."),
     options: Annotated[
         list[str] | None,
         typer.Option(
             "--option",
             "-o",
+            "--poll-option",
             help="Poll option. Repeat for each choice.",
         ),
     ] = None,
@@ -20698,14 +20699,21 @@ def routes_poll_command(
     duration_seconds: int | None = typer.Option(
         None,
         "--duration-seconds",
+        "--poll-duration-seconds",
         min=1,
         help="Poll duration in seconds.",
     ),
     duration_hours: int | None = typer.Option(
         None,
         "--duration-hours",
+        "--poll-duration-hours",
         min=1,
         help="Poll duration in hours.",
+    ),
+    poll_multi: bool = typer.Option(
+        False,
+        "--poll-multi",
+        help="Allow multiple poll selections.",
     ),
     silent: bool = typer.Option(
         False,
@@ -20715,6 +20723,7 @@ def routes_poll_command(
     is_anonymous: bool | None = typer.Option(
         None,
         "--anonymous/--named",
+        "--poll-anonymous/--poll-public",
         help="Request anonymous or named poll behavior when supported.",
     ),
     account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
@@ -20739,6 +20748,9 @@ def routes_poll_command(
     poll_options = [str(option).strip() for option in options or [] if str(option).strip()]
     if len(poll_options) < 2:
         raise typer.BadParameter("provide at least two --option values")
+    resolved_max_selections = max_selections
+    if resolved_max_selections is None and poll_multi:
+        resolved_max_selections = len(poll_options)
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await services.ops_mesh.send_direct_channel_poll(
@@ -20746,7 +20758,7 @@ def routes_poll_command(
             to=to,
             question=question,
             options=poll_options,
-            max_selections=max_selections,
+            max_selections=resolved_max_selections,
             duration_seconds=duration_seconds,
             duration_hours=duration_hours,
             silent=True if silent else None,
