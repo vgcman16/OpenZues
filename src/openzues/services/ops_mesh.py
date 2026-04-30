@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -1424,6 +1424,15 @@ DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_CHANNEL_TYPE_GUILD_PUBLIC_THREAD = 11
 DISCORD_CHANNEL_TYPE_GUILD_FORUM = 15
 DISCORD_CHANNEL_TYPE_GUILD_MEDIA = 16
+DISCORD_PRESENCE_ACTIVITY_TYPES = {
+    "playing": 0,
+    "streaming": 1,
+    "listening": 2,
+    "watching": 3,
+    "custom": 4,
+    "competing": 5,
+}
+DISCORD_PRESENCE_STATUSES = {"online", "dnd", "idle", "invisible"}
 DISCORD_APP_FLAG_GATEWAY_PRESENCE = 1 << 12
 DISCORD_APP_FLAG_GATEWAY_PRESENCE_LIMITED = 1 << 13
 DISCORD_APP_FLAG_GATEWAY_GUILD_MEMBERS = 1 << 14
@@ -1624,6 +1633,14 @@ def _discord_apply_permission_overwrite(
     denied = _discord_permission_bitfield(overwrite.get("deny"))
     allowed = _discord_permission_bitfield(overwrite.get("allow"))
     return (permissions & ~denied) | allowed
+
+
+class GatewayDiscordPresenceRuntime(Protocol):
+    def update_presence(
+        self,
+        account_id: str | None,
+        presence: dict[str, object],
+    ) -> None: ...
 
 
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
@@ -4820,6 +4837,7 @@ class OpsMeshService:
     parity_checkpoint_path: Path | None = None
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
+    discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
@@ -7383,6 +7401,11 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "discord" and action == "set-presence":
+            return await asyncio.to_thread(
+                self._dispatch_discord_set_presence_message_action,
+                request,
+            )
         if channel == "discord" and action in {
             "delete",
             "edit",
@@ -8482,6 +8505,81 @@ class OpsMeshService:
         if remove or not emoji:
             return {"ok": True, "removed": True}
         return {"ok": True, "added": emoji}
+
+    def _dispatch_discord_set_presence_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        account_id = _message_action_param_string(
+            request.params,
+            "accountId",
+        ) or request.account_id
+        runtime = self.discord_presence_runtime
+        if runtime is None:
+            suffix = f' for account "{account_id}"' if account_id else ""
+            raise GatewayOutboundRuntimeUnavailableError(
+                f"Discord gateway not available{suffix}. The bot may not be connected."
+            )
+        status = _message_action_param_string(request.params, "status") or "online"
+        if status not in DISCORD_PRESENCE_STATUSES:
+            raise RuntimeError(
+                f'Invalid status "{status}". Must be one of: '
+                f"{', '.join(sorted(DISCORD_PRESENCE_STATUSES))}"
+            )
+        activity_type_raw = _message_action_param_string(request.params, "activityType")
+        activity_name = _message_action_param_string(request.params, "activityName")
+        activities: list[dict[str, object]] = []
+        if activity_type_raw or activity_name is not None:
+            if not activity_type_raw:
+                raise RuntimeError(
+                    "activityType is required when activityName is provided. "
+                    f"Valid types: {', '.join(DISCORD_PRESENCE_ACTIVITY_TYPES)}"
+                )
+            activity_type = DISCORD_PRESENCE_ACTIVITY_TYPES.get(
+                activity_type_raw.strip().lower()
+            )
+            if activity_type is None:
+                raise RuntimeError(
+                    f'Invalid activityType "{activity_type_raw}". Must be one of: '
+                    f"{', '.join(DISCORD_PRESENCE_ACTIVITY_TYPES)}"
+                )
+            activity: dict[str, object] = {
+                "name": activity_name or "",
+                "type": activity_type,
+            }
+            if activity_type == DISCORD_PRESENCE_ACTIVITY_TYPES["streaming"]:
+                activity_url = _message_action_param_string(
+                    request.params,
+                    "activityUrl",
+                )
+                if activity_url:
+                    activity["url"] = activity_url
+            activity_state = _message_action_param_string(
+                request.params,
+                "activityState",
+            )
+            if activity_state:
+                activity["state"] = activity_state
+            activities.append(activity)
+        presence: dict[str, object] = {
+            "since": None,
+            "activities": activities,
+            "status": status,
+            "afk": False,
+        }
+        runtime.update_presence(account_id, presence)
+        return {
+            "ok": True,
+            "status": status,
+            "activities": [
+                {
+                    key: activity[key]
+                    for key in ("type", "name", "url", "state")
+                    if key in activity
+                }
+                for activity in activities
+            ],
+        }
 
     def _dispatch_discord_react_message_action(
         self,

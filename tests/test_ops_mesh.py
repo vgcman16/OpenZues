@@ -32,6 +32,7 @@ from openzues.services.gateway_outbound_runtime import (
     GatewayOutboundRuntimeMessageRequest,
     GatewayOutboundRuntimePollRequest,
     GatewayOutboundRuntimeService,
+    GatewayOutboundRuntimeUnavailableError,
 )
 from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.hermes_skills import configure_hermes_skill_catalog
@@ -6593,6 +6594,123 @@ async def test_ops_mesh_service_message_action_dispatches_discord_sticker_route(
             "Bot discord-bot-token",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_set_presence_runtime() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-presence"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    class FakeDiscordPresenceRuntime:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, dict[str, object]]] = []
+
+        def update_presence(
+            self,
+            account_id: str | None,
+            presence: dict[str, object],
+        ) -> None:
+            self.calls.append((account_id, presence))
+
+    presence_runtime = FakeDiscordPresenceRuntime()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        discord_presence_runtime=presence_runtime,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="set-presence",
+            params={
+                "status": "dnd",
+                "activityType": "streaming",
+                "activityName": "Parity stream",
+                "activityUrl": "https://twitch.tv/openzues",
+                "activityState": "Shipping parity",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-set-presence-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "status": "dnd",
+        "activities": [
+            {
+                "type": 1,
+                "name": "Parity stream",
+                "url": "https://twitch.tv/openzues",
+                "state": "Shipping parity",
+            }
+        ],
+    }
+    assert presence_runtime.calls == [
+        (
+            "discord-bot",
+            {
+                "since": None,
+                "activities": [
+                    {
+                        "name": "Parity stream",
+                        "type": 1,
+                        "url": "https://twitch.tv/openzues",
+                        "state": "Shipping parity",
+                    }
+                ],
+                "status": "dnd",
+                "afk": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_presence_unavailable() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-presence-missing"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(
+        GatewayOutboundRuntimeUnavailableError,
+        match='Discord gateway not available for account "discord-bot"',
+    ):
+        await service.dispatch_message_action(
+            GatewayMessageActionDispatchRequest(
+                channel="discord",
+                action="set-presence",
+                params={"status": "online"},
+                account_id="discord-bot",
+                requester_sender_id="1234",
+                sender_is_owner=True,
+                session_key="agent:main:discord:channel:987654321",
+                idempotency_key="idem-discord-set-presence-unavailable",
+            )
+        )
 
 
 @pytest.mark.asyncio

@@ -462,6 +462,10 @@ created thread.
 Discord `sticker` now dispatches through the same route-backed bot-token REST
 path, mapping upstream `stickerId` / `stickerIds` params into Discord
 `sticker_ids` channel-message sends with optional message content.
+Discord `set-presence` now follows OpenClaw's gateway-backed runtime shape
+through a fakeable native adapter, including status/activity validation,
+projected presence payloads, and the honest gateway-not-available error when
+no Discord Gateway adapter is registered.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
