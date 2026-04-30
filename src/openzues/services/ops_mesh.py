@@ -888,6 +888,22 @@ def _message_action_param_string_array(
     return None
 
 
+def _message_action_param_bool(
+    params: dict[str, Any],
+    key: str,
+) -> bool | None:
+    value = params.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return None
+
+
 def _message_action_param_string_or_number(
     params: dict[str, Any],
     key: str,
@@ -1445,6 +1461,8 @@ DISCORD_MAX_EMOJI_BYTES = 256 * 1024
 DISCORD_MAX_EVENT_COVER_BYTES = 8 * 1024 * 1024
 DISCORD_MAX_MESSAGE_MEDIA_BYTES = 100 * 1024 * 1024
 DISCORD_MAX_STICKER_BYTES = 512 * 1024
+DISCORD_POLL_LAYOUT_TYPE_DEFAULT = 1
+DISCORD_POLL_MAX_DURATION_HOURS = 32 * 24
 DISCORD_EMOJI_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_EVENT_COVER_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif"}
 DISCORD_STICKER_CONTENT_TYPES = {"image/png", "image/apng", "application/json"}
@@ -1905,11 +1923,34 @@ def _discord_channel_id(result: object, fallback: str) -> str:
 def _discord_poll_duration_hours(event: dict[str, Any]) -> int:
     duration_hours = _optional_int_payload_value(event, "durationHours")
     if duration_hours is not None:
-        return max(1, duration_hours)
+        return min(DISCORD_POLL_MAX_DURATION_HOURS, max(1, duration_hours))
     duration_seconds = _optional_int_payload_value(event, "durationSeconds")
     if duration_seconds is not None:
-        return max(1, (duration_seconds + 3599) // 3600)
+        return min(DISCORD_POLL_MAX_DURATION_HOURS, max(1, (duration_seconds + 3599) // 3600))
     return 24
+
+
+def _discord_poll_payload(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+    duration_hours: int | None,
+) -> dict[str, object]:
+    _validate_direct_channel_poll_shape(question, options)
+    _validate_direct_channel_poll_option_count("discord", options)
+    _validate_direct_channel_poll_max_selections(options, max_selections)
+    duration = min(
+        DISCORD_POLL_MAX_DURATION_HOURS,
+        max(1, duration_hours if duration_hours is not None else 24),
+    )
+    return {
+        "question": {"text": question},
+        "answers": [{"poll_media": {"text": option}} for option in options],
+        "duration": duration,
+        "allow_multiselect": (max_selections or 1) > 1,
+        "layout_type": DISCORD_POLL_LAYOUT_TYPE_DEFAULT,
+    }
 
 
 def _validate_telegram_poll_duration_options(
@@ -7500,6 +7541,7 @@ class OpsMeshService:
             "member-info",
             "permissions",
             "pin",
+            "poll",
             "read",
             "react",
             "reactions",
@@ -7579,6 +7621,13 @@ class OpsMeshService:
             if action == "permissions":
                 return await asyncio.to_thread(
                     self._dispatch_discord_permissions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "poll":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_poll_message_action,
                     route,
                     request,
                     secret_token,
@@ -10518,6 +10567,54 @@ class OpsMeshService:
             raise RuntimeError(str(result.get("error")))
         return {"ok": True}
 
+    def _dispatch_discord_poll_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord poll requires to.")
+        question = _message_action_param_string(
+            request.params,
+            "question",
+            required=True,
+        )
+        answers = _message_action_param_string_array(
+            request.params,
+            "answers",
+            required=True,
+            label="answers",
+        )
+        allow_multiselect = _message_action_param_bool(request.params, "allowMultiselect")
+        max_selections = len(answers or []) if allow_multiselect is True else 1
+        duration_hours = _message_action_param_integer(request.params, "durationHours")
+        payload: dict[str, object] = {
+            "poll": _discord_poll_payload(
+                question=question or "",
+                options=answers or [],
+                max_selections=max_selections,
+                duration_hours=duration_hours,
+            )
+        }
+        content = _message_action_param_string(request.params, "content", allow_empty=True)
+        if content is not None:
+            payload["content"] = content
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
     def _dispatch_discord_sticker_upload_message_action(
         self,
         route: dict[str, Any],
@@ -12987,26 +13084,18 @@ class OpsMeshService:
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
-            _validate_direct_channel_poll_shape(question, options)
-            _validate_direct_channel_poll_option_count("discord", options)
             max_selections = _optional_int_payload_value(event, "maxSelections")
-            _validate_direct_channel_poll_max_selections(options, max_selections)
             _validate_direct_channel_poll_duration_exclusivity(
                 duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
                 duration_hours=_optional_int_payload_value(event, "durationHours"),
             )
             payload: dict[str, Any] = {
-                "poll": {
-                    "question": {
-                        "text": question,
-                    },
-                    "answers": [
-                        {"poll_media": {"text": option}}
-                        for option in options
-                    ],
-                    "duration": _discord_poll_duration_hours(event),
-                    "allow_multiselect": (max_selections or 1) > 1,
-                }
+                "poll": _discord_poll_payload(
+                    question=question,
+                    options=options,
+                    max_selections=max_selections,
+                    duration_hours=_discord_poll_duration_hours(event),
+                )
             }
         else:
             raw_media_urls = event.get("mediaUrls")

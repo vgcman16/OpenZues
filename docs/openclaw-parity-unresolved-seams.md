@@ -462,6 +462,11 @@ created thread.
 Discord `sticker` now dispatches through the same route-backed bot-token REST
 path, mapping upstream `stickerId` / `stickerIds` params into Discord
 `sticker_ids` channel-message sends with optional message content.
+Discord `poll` now dispatches through the same route-backed bot-token REST
+path, mapping OpenClaw `to`, `content`, `question`, `answers`,
+`allowMultiselect`, and `durationHours` params into a Discord poll message
+body with `layout_type=1` and returning the upstream-shaped `{ok: true}`
+payload.
 Discord `set-presence` now follows OpenClaw's gateway-backed runtime shape
 through a fakeable native adapter, including status/activity validation,
 projected presence payloads, and the honest gateway-not-available error when

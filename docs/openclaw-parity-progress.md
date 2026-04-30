@@ -1425,11 +1425,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 ## Remaining Not-Fully-Complete Areas
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
-- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/permissions/thread-create/active+archived thread-list/core thread-reply/search/sticker/sticker-upload/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/category-create/category-edit/category-delete/voice-status/event-list/core event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, and Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters.
-- Discord scheduled-event cover image URL/path resolution remains open after
-  the core no-cover-image `event-create` payload slice.
-- Discord thread-reply media handling remains open after the core
-  thread-reply/search slices.
+- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, and Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters.
 - Remote marketplace clone/update breadth and deeper runtime plugin activation/import metadata beyond metadata-only config load-path discovery and the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
@@ -4746,6 +4742,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "message_action_dispatches_discord"` (`47 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Discord `message.action poll` now dispatches through the bot-token REST
+  path, preserving OpenClaw's `to`, `content`, `question`, `answers`,
+  string/boolean `allowMultiselect`, and `durationHours` handling. Native
+  Discord poll payloads now also include the upstream `layout_type=1` field.
+- Verified the Discord poll action seam with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_poll_route"` (`1 passed`), adjacent
+  direct Discord poll coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_discord_native_route"` (`1 passed`),
+  combined focused coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "discord_poll_route or send_direct_channel_poll_uses_discord_native_route"`
+  (`2 passed`), adjacent Discord action coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "message_action_dispatches_discord"` (`48
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
