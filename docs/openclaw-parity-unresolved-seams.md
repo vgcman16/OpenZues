@@ -269,7 +269,8 @@ creation breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
-`replyToMessageId`, `silent`, `forceDocument`, media, account, and thread)
+`replyToMessageId`, `silent`, `forceDocument`, media, `audioAsVoice`, account,
+and thread)
 through gateway `send`, `OpsMeshService`, shared outbound runtime requests,
 route-backed providers, and Telegram native document/reply/silent/thread
 payloads. The provider runtime result envelope now also persists `messageId`,
@@ -289,6 +290,10 @@ through the saved sandbox workspace root before dispatch, deduping equivalent
 container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+Direct audio-as-voice media sends now also preserve OpenClaw's
+`audioAsVoice` hint from gateway `send` through OpsMesh saved payloads,
+`GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
+provider-backed runtime delivery, and saved failed-send replay formatting.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,

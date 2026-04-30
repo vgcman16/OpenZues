@@ -5789,6 +5789,7 @@ class GatewayNodeMethodService:
                     "mediaUrl",
                     "mediaUrls",
                     "gifPlayback",
+                    "audioAsVoice",
                     "messageThreadId",
                     "replyToId",
                     "replyToMessageId",
@@ -5826,6 +5827,11 @@ class GatewayNodeMethodService:
             gif_playback = (
                 _optional_bool(payload.get("gifPlayback"), label="gifPlayback")
                 if "gifPlayback" in payload
+                else None
+            )
+            audio_as_voice = (
+                _optional_bool(payload.get("audioAsVoice"), label="audioAsVoice")
+                if "audioAsVoice" in payload
                 else None
             )
             resolved_channel = await self._resolve_gateway_outbound_channel(
@@ -5914,6 +5920,8 @@ class GatewayNodeMethodService:
                 send_payload["media_urls"] = normalized_media_urls
                 if gif_playback is not None:
                     send_payload["gif_playback"] = gif_playback
+                if audio_as_voice is not None:
+                    send_payload["audio_as_voice"] = audio_as_voice
             if reply_to_id is not None:
                 send_payload["reply_to_id"] = reply_to_id
             if silent is not None:

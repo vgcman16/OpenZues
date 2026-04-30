@@ -2688,6 +2688,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py`.
+- Provider-native direct media sends now preserve OpenClaw's `audioAsVoice`
+  hint from gateway `send` through `OpsMeshService`, saved outbound payloads,
+  `GatewayOutboundRuntimeMessageRequest`, route-backed provider events, and
+  saved failed-send replay formatting. Source anchor:
+  `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\outbound\deliver.test.ts`
+  and `payloads.ts`.
+- Verified the audio-as-voice send seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_preserves_audio_as_voice_for_media_payloads
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_audio_as_voice -q`
+  (`2 passed`), adjacent provider replay/send coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "send_direct_channel_message_preserves_provider_native_options
+  or send_direct_channel_message_preserves_audio_as_voice or
+  replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime"`
+  (`3 passed`), gateway send coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_send_"` (`17 passed`),
+  OpsMesh direct-send coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_message"` (`27 passed`), `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py`.
 - WhatsApp multi-media sends now report the final provider message id as the
   canonical `messageId` while preserving the full ordered `mediaIds` list,
   matching OpenClaw's outbound payload contract for iterated media sends.

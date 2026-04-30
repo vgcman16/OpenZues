@@ -3800,7 +3800,6 @@ async def test_tools_invoke_sessions_send_runs_announce_step_after_reply(
         }
     ]
 
-
 @pytest.mark.asyncio
 async def test_tools_invoke_sessions_send_zero_timeout_announces_after_later_reply(
     tmp_path,
@@ -39374,6 +39373,83 @@ async def test_send_uses_channel_message_runtime_for_media_payloads() -> None:
         "messageId": "77",
         "sessionKey": "launch:mode:workspace_affinity:channel:slack:peer:channel:channel:c123",
         "deliveryId": 9,
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_preserves_audio_as_voice_for_media_payloads() -> None:
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        media_urls: list[str] | None = None,
+        audio_as_voice: bool | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "media_urls": media_urls,
+                "audio_as_voice": audio_as_voice,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "voice-77",
+            "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+            "deliveryId": 11,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " chat:ops ",
+            "message": "voice caption",
+            "mediaUrl": " file:///tmp/clip.mp3 ",
+            "audioAsVoice": True,
+            "channel": "telegram",
+            "idempotencyKey": "idem-send-audio-as-voice",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "chat:ops",
+            "message": "voice caption",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": None,
+            "session_key": None,
+            "idempotency_key": "idem-send-audio-as-voice",
+            "media_urls": ["file:///tmp/clip.mp3"],
+            "audio_as_voice": True,
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "voice-77",
+        "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+        "deliveryId": 11,
     }
 
 

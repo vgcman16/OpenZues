@@ -122,6 +122,7 @@ class GatewayOutboundRuntimeMessageRequest:
     message: str
     media_urls: tuple[str, ...] = ()
     gif_playback: bool | None = None
+    audio_as_voice: bool | None = None
     reply_to_id: str | None = None
     silent: bool | None = None
     force_document: bool | None = None
@@ -307,6 +308,7 @@ class GatewayOutboundRuntimeService:
         target: str | None = None,
         media_urls: tuple[str, ...] = (),
         gif_playback: bool | None = None,
+        audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
@@ -337,6 +339,7 @@ class GatewayOutboundRuntimeService:
                         message=message,
                         media_urls=media_urls,
                         gif_playback=gif_playback,
+                        audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
                         silent=silent,
                         force_document=force_document,
@@ -400,6 +403,7 @@ class GatewayOutboundRuntimeService:
                         message=message,
                         media_urls=media_urls,
                         gif_playback=gif_playback,
+                        audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
                         silent=silent,
                         force_document=force_document,
