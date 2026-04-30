@@ -268,7 +268,9 @@ Route-backed thread-bound subagent spawns now persist an OpenClaw-shaped
 current-conversation `sessionBinding` record on the child session metadata,
 including `bindingId`, `targetSessionKey`, `targetKind`, `conversation`,
 `status`, `boundAt`, and `metadata.lastActivityAt` alongside the existing
-delivery metadata.
+delivery metadata. The production route-backed binder now also accepts LINE
+notification routes and stores LINE current-conversation ids without the
+provider/type prefix while preserving the original routable `to` target.
 Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields

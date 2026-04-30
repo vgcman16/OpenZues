@@ -25,6 +25,7 @@ NotificationRouteKind = Literal[
     "discord",
     "whatsapp",
     "zalo",
+    "line",
     "matrix",
 ]
 NotificationRouteViewKind = Literal[
@@ -34,6 +35,7 @@ NotificationRouteViewKind = Literal[
     "discord",
     "whatsapp",
     "zalo",
+    "line",
     "matrix",
     "session",
     "announce",

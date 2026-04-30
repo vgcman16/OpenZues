@@ -27,6 +27,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- Route-backed thread-bound spawn binding now includes LINE current-conversation
+  routes. The shared binder accepts LINE notification route views, keeps the
+  provider target for delivery, and stores normalized LINE conversation ids in
+  the persisted `sessionBinding` record.
+- Verified the LINE route-backed binder slice with `python -m pytest
+  tests\test_gateway_thread_binding.py -k "line_current_conversation" -q` (`1
+  passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
+  -q` (`5 passed`), adjacent route-backed spawn proof `python -m pytest
+  tests\test_gateway_node_methods.py -k "thread_mode_uses_route_backed_thread_binder
+  or thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_delivers_initial_child_run_to_bound_origin" -q` (`3 passed`),
+  `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\schemas.py tests\test_gateway_thread_binding.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py src\openzues\schemas.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies
