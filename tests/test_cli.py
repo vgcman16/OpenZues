@@ -19010,6 +19010,31 @@ def test_doctor_json_warns_when_heartbeat_direct_policy_is_implicit(
     )
 
 
+def test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"gateway": {"mode": "local", "bind": "lan", "auth": {"mode": "token"}}},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = next(
+        item
+        for item in payload["security"]["warnings"]
+        if "Gateway bound" in item
+    )
+    assert payload["security"]["status"] == "warning"
+    assert "CRITICAL: Gateway bound to" in warning
+    assert "without authentication" in warning
+    assert "Anyone on your network" in warning
+    assert "openclaw config set gateway.bind loopback" in warning
+    assert "ssh -N -L 18789:127.0.0.1:18789" in warning
+    assert "openclaw doctor --fix" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(
     tmp_path,
     monkeypatch,

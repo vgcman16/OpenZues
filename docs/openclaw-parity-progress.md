@@ -2836,6 +2836,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or security_and_shell_completion_surfaces or doctor_json_warns or gateway_auth
   or gateway_mode_is_unset"` (`38 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `doctor:security` now mirrors OpenClaw's gateway network-exposure warning
+  for canonical non-loopback binds without configured auth, including the
+  CRITICAL control warning, loopback fix, SSH tunnel guidance, remote docs link,
+  and token-generation hints while leaving legacy raw bind aliases under the
+  legacy-config migrator.
+- Verified the gateway exposure security slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth
+  -q` (`1 passed`), legacy ownership proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_gateway_bind_host_alias
+  tests\test_cli.py::test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth
+  -q` (`2 passed`), broader security/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "gateway_bind_is_exposed or heartbeat_direct_policy
+  or approvals_exec_forwarding or security_and_shell_completion_surfaces or
+  doctor_json_warns or gateway_auth or gateway_mode_is_unset"` (`39 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the

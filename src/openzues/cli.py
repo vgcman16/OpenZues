@@ -4078,6 +4078,95 @@ def _doctor_security_heartbeat_warnings(snapshot: dict[str, object]) -> list[str
     return warnings
 
 
+def _doctor_security_is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower().strip("[]")
+    return (
+        normalized == "localhost"
+        or normalized == "::1"
+        or normalized.startswith("127.")
+        or normalized in {"0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"}
+    )
+
+
+def _doctor_security_gateway_bind_host(gateway: dict[str, object]) -> tuple[str, str]:
+    bind = _optional_cli_string(gateway.get("bind")) or "loopback"
+    if bind == "loopback":
+        return bind, "127.0.0.1"
+    if bind == "custom":
+        return bind, _optional_cli_string(gateway.get("customBindHost")) or "0.0.0.0"
+    if bind == "tailnet":
+        return bind, "tailnet"
+    if bind in {"auto", "lan"}:
+        return bind, "0.0.0.0"
+    return bind, bind
+
+
+def _doctor_security_gateway_has_auth(gateway: dict[str, object]) -> bool:
+    auth = _dict_config(gateway.get("auth"))
+    mode = _optional_cli_string(auth.get("mode")) or "token"
+    token_configured = _has_configured_secret_input(
+        auth.get("token")
+    ) or _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_TOKEN")) is not None
+    password_configured = _has_configured_secret_input(
+        auth.get("password")
+    ) or _optional_cli_string(os.environ.get("OPENCLAW_GATEWAY_PASSWORD")) is not None
+    if mode == "password":
+        return password_configured
+    if mode == "token":
+        return token_configured
+    return token_configured or password_configured
+
+
+def _doctor_security_gateway_exposure_warnings(
+    snapshot: dict[str, object],
+) -> list[str]:
+    gateway = _dict_config(snapshot.get("gateway"))
+    raw_bind = _optional_cli_string(gateway.get("bind"))
+    if raw_bind is not None and raw_bind not in {
+        "auto",
+        "lan",
+        "loopback",
+        "custom",
+        "tailnet",
+    }:
+        return []
+    bind, resolved_host = _doctor_security_gateway_bind_host(gateway)
+    if _doctor_security_is_loopback_host(resolved_host):
+        return []
+    bind_descriptor = f'"{bind}" ({resolved_host})'
+    safer_remote_access = [
+        "  Safer remote access: keep bind loopback and use Tailscale Serve/Funnel "
+        "or an SSH tunnel.",
+        "  Example tunnel: ssh -N -L 18789:127.0.0.1:18789 user@gateway-host",
+        "  Docs: https://docs.openclaw.ai/gateway/remote",
+    ]
+    if not _doctor_security_gateway_has_auth(gateway):
+        return [
+            "\n".join(
+                [
+                    f"- CRITICAL: Gateway bound to {bind_descriptor} without authentication.",
+                    (
+                        "  Anyone on your network (or internet if port-forwarded) can "
+                        "fully control your agent."
+                    ),
+                    "  Fix: openclaw config set gateway.bind loopback",
+                    *safer_remote_access,
+                    "  Fix: openclaw doctor --fix to generate a token",
+                    "  Or set token directly: openclaw config set gateway.auth.mode token",
+                ]
+            )
+        ]
+    return [
+        "\n".join(
+            [
+                f"- WARNING: Gateway bound to {bind_descriptor} (network-accessible).",
+                "  Ensure your auth credentials are strong and not exposed.",
+                *safer_remote_access,
+            ]
+        )
+    ]
+
+
 def _build_doctor_security_payload(
     config_service: object | None = None,
 ) -> dict[str, object]:
@@ -4097,6 +4186,7 @@ def _build_doctor_security_payload(
     warnings = [
         *_doctor_security_approvals_warnings(snapshot),
         *_doctor_security_heartbeat_warnings(snapshot),
+        *_doctor_security_gateway_exposure_warnings(snapshot),
     ]
     return {
         "status": "warning" if warnings else "ok",
