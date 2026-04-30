@@ -90,6 +90,7 @@ from openzues.services.projects import ProjectService
 from openzues.services.recall import RecallService
 from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.runtime_updates import RuntimeUpdateService
+from openzues.services.session_keys import DEFAULT_ACCOUNT_ID
 from openzues.services.setup import SetupService
 from openzues.services.swarm import SWARM_COLLABORATION_MODE
 from openzues.services.vault import VaultService
@@ -1932,6 +1933,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "security",
         "shellCompletion",
         "sandbox",
+        "gatewayHealth",
         "memorySearch",
         "bundledPluginRuntimeDependencies",
         "startupChannelMaintenance",
@@ -2445,6 +2447,157 @@ def _with_doctor_bundled_plugin_runtime_dependencies(
     next_payload = dict(payload)
     next_payload["bundledPluginRuntimeDependencies"] = (
         _build_doctor_bundled_plugin_runtime_dependency_payload(config_service)
+    )
+    return next_payload
+
+
+def _collect_doctor_channel_status_warnings(
+    channel_status_payload: dict[str, object],
+) -> list[dict[str, object]]:
+    accounts_by_channel = channel_status_payload.get("channelAccounts")
+    if not isinstance(accounts_by_channel, dict):
+        return []
+    warnings: list[dict[str, object]] = []
+    for raw_channel, raw_accounts in accounts_by_channel.items():
+        channel = str(raw_channel or "").strip()
+        if not channel or not isinstance(raw_accounts, list):
+            continue
+        for raw_account in raw_accounts:
+            if not isinstance(raw_account, dict):
+                continue
+            probe = raw_account.get("probe")
+            if not isinstance(probe, dict):
+                continue
+            reason = _optional_cli_string(probe.get("reason"))
+            status = _optional_cli_string(probe.get("status"))
+            if reason == "native_provider_probe_unsupported" or status == "unsupported":
+                continue
+            is_issue = probe.get("ok") is False or status in {
+                "degraded",
+                "error",
+                "fail",
+                "failed",
+                "unavailable",
+                "warn",
+                "warning",
+            }
+            if not is_issue:
+                continue
+            account_id = _optional_cli_string(raw_account.get("accountId"))
+            if account_id is None:
+                account_id = _optional_cli_string(raw_account.get("account_id"))
+            message = (
+                _optional_cli_string(probe.get("summary"))
+                or _optional_cli_string(probe.get("error"))
+                or reason
+                or "Channel account probe is not ready."
+            )
+            warning: dict[str, object] = {
+                "channel": channel,
+                "accountId": account_id or DEFAULT_ACCOUNT_ID,
+                "status": status or "warn",
+                "message": message,
+            }
+            if reason is not None:
+                warning["reason"] = reason
+            fix = _optional_cli_string(probe.get("fix"))
+            if fix is not None:
+                warning["fix"] = fix
+            warnings.append(warning)
+    return warnings
+
+
+async def _build_doctor_gateway_health_payload(
+    app_settings: object,
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-health",
+        "repairAvailable": False,
+        "timeoutMs": 3000,
+        "channelProbeTimeoutMs": 5000,
+    }
+    try:
+        health_payload = await _build_live_health_payload(
+            cast(Settings, app_settings),
+            timeout_ms=3000,
+        )
+    except Exception as exc:  # pragma: no cover - defensive local runtime boundary
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": f"Gateway health probe is unavailable: {exc}",
+            "healthOk": False,
+            "health": None,
+            "channelWarnings": [],
+        }
+
+    health_ok = health_payload.get("ok") is True or health_payload.get("status") == "ok"
+    channel_status: dict[str, object] | None = None
+    channel_warnings: list[dict[str, object]] = []
+    if health_ok:
+        call = getattr(gateway_node_methods, "call", None)
+        if callable(call):
+            try:
+                raw_channel_status = await call(
+                    "channels.status",
+                    {"probe": True, "timeoutMs": 5000},
+                )
+            except Exception as exc:  # pragma: no cover - upstream ignores this branch
+                channel_status = {
+                    "status": "unavailable",
+                    "error": str(exc),
+                }
+            else:
+                if isinstance(raw_channel_status, dict):
+                    channel_status = raw_channel_status
+                    channel_warnings = _collect_doctor_channel_status_warnings(
+                        raw_channel_status
+                    )
+                else:
+                    channel_status = {
+                        "status": "unavailable",
+                        "error": "channels.status response was not an object",
+                    }
+        else:
+            channel_status = {
+                "status": "unavailable",
+                "reason": "native_gateway_method_runtime_unavailable",
+            }
+
+    if not health_ok:
+        status = "error"
+        summary = "Gateway health probe did not pass."
+    elif channel_warnings:
+        status = "warn"
+        summary = "Gateway health probe passed with channel warnings."
+    else:
+        status = "ok"
+        summary = "Gateway health probe passed."
+
+    payload: dict[str, object] = {
+        **base_payload,
+        "status": status,
+        "summary": summary,
+        "healthOk": health_ok,
+        "health": health_payload,
+        "channelWarnings": channel_warnings,
+    }
+    if channel_status is not None:
+        payload["channelStatus"] = channel_status
+    return payload
+
+
+async def _with_doctor_gateway_health_payload(
+    payload: dict[str, object],
+    app_settings: object,
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["gatewayHealth"] = await _build_doctor_gateway_health_payload(
+        app_settings,
+        gateway_node_methods,
     )
     return next_payload
 
@@ -16521,6 +16674,11 @@ def doctor(
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
             payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = await _with_doctor_gateway_health_payload(
+            payload,
+            services.settings,
+            getattr(services, "gateway_node_methods", None),
+        )
         payload = await _with_doctor_memory_search_payload(
             payload,
             getattr(services, "gateway_node_methods", None),

@@ -2502,6 +2502,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and
   `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\control_chat.py src\openzues\app.py`.
+- `doctor --json` now includes the OpenClaw `doctor:gateway-health`
+  contribution: it runs the bounded native health probe, calls
+  `channels.status` with provider probes when health is up, and projects
+  route-backed channel account probe failures into structured channel warnings
+  while preserving unsupported provider hooks as non-degraded.
+- Verified the gateway-health doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_gateway_health_contribution_and_channel_warnings -q`
+  (`1 passed`), adjacent doctor/channel coverage `python -m pytest
+  tests\test_cli.py -q -k "doctor_json_includes_gateway_health_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  startup_channel_maintenance or
+  channels_status_json_calls_gateway_method_owner_with_probe"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 

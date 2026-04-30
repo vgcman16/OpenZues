@@ -2503,6 +2503,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
   root_openclaw_compat"`, `ruff check src\openzues\cli.py tests\test_cli.py`,
   and `mypy src\openzues\cli.py`.
+- Closed the structured `doctor:gateway-health` contribution seam from
+  OpenClaw `doctor-gateway-health.ts` / `doctor-health-contributions.ts`:
+  `doctor --json` now runs the native bounded health probe, calls
+  `channels.status` with OpenClaw-shaped probe options when health is up, and
+  returns channel warning metadata for degraded provider accounts without
+  treating unsupported provider probe hooks as warnings. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_gateway_health_contribution_and_channel_warnings
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_gateway_health_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  startup_channel_maintenance or
+  channels_status_json_calls_gateway_method_owner_with_probe"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

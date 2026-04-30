@@ -14010,6 +14010,122 @@ def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> 
     }
 
 
+def test_doctor_json_includes_gateway_health_contribution_and_channel_warnings(
+    monkeypatch,
+) -> None:
+    health_calls: list[int] = []
+    gateway_calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    class FakeGatewayNodeMethods:
+        async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            gateway_calls.append((method, params))
+            if method == "channels.status":
+                return {
+                    "channelAccounts": {
+                        "slack": [
+                            {
+                                "accountId": "workspace-bot",
+                                "probe": {
+                                    "ok": False,
+                                    "status": "unavailable",
+                                    "reason": "native_provider_secret_unavailable",
+                                    "summary": (
+                                        "Native provider route is missing a credential secret."
+                                    ),
+                                },
+                            }
+                        ],
+                        "whatsapp": [
+                            {
+                                "accountId": "business",
+                                "probe": {
+                                    "status": "unsupported",
+                                    "reason": "native_provider_probe_unsupported",
+                                    "summary": (
+                                        "This channel does not expose an upstream account probe "
+                                        "hook."
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                    "probeStatus": {"status": "degraded", "timeoutMs": 5000},
+                }
+            if method == "doctor.memory.status":
+                return {"embedding": {"ok": True, "provider": "local"}}
+            raise AssertionError(method)
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_live_health(
+        _settings: object,
+        *,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        health_calls.append(timeout_ms)
+        return {
+            "ok": True,
+            "status": "ok",
+            "controlPlane": "leader",
+            "readiness": {"ready": True, "failing": []},
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=FakeGatewayNodeMethods(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_build_live_health_payload", fake_live_health)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert health_calls == [3000]
+    assert gateway_calls == [
+        ("channels.status", {"probe": True, "timeoutMs": 5000}),
+        ("doctor.memory.status", {}),
+    ]
+    assert payload["gatewayHealth"]["openClawContribution"] == "doctor:gateway-health"
+    assert payload["gatewayHealth"]["status"] == "warn"
+    assert payload["gatewayHealth"]["healthOk"] is True
+    assert payload["gatewayHealth"]["health"]["status"] == "ok"
+    assert payload["gatewayHealth"]["channelWarnings"] == [
+        {
+            "channel": "slack",
+            "accountId": "workspace-bot",
+            "status": "unavailable",
+            "reason": "native_provider_secret_unavailable",
+            "message": "Native provider route is missing a credential secret.",
+        }
+    ]
+
+
 def test_doctor_fix_runs_startup_channel_maintenance_adapter(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
