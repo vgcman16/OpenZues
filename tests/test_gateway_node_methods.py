@@ -38684,6 +38684,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
         silent: bool | None,
         is_anonymous: bool | None,
         account_id: str | None,
+        reply_to_id: str | None,
         thread_id: str | None,
         idempotency_key: str,
     ) -> dict[str, object]:
@@ -38699,6 +38700,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
                 "silent": silent,
                 "is_anonymous": is_anonymous,
                 "account_id": account_id,
+                "reply_to_id": reply_to_id,
                 "thread_id": thread_id,
                 "idempotency_key": idempotency_key,
             }
@@ -38726,6 +38728,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "isAnonymous": False,
             "channel": "telegram",
             "accountId": " default ",
+            "replyToId": " 41 ",
             "threadId": " 1710000000.9999 ",
             "idempotencyKey": "idem-poll-runtime",
         },
@@ -38743,6 +38746,7 @@ async def test_poll_uses_channel_poll_runtime() -> None:
             "silent": True,
             "is_anonymous": False,
             "account_id": "default",
+            "reply_to_id": "41",
             "thread_id": "1710000000.9999",
             "idempotency_key": "idem-poll-runtime",
         }

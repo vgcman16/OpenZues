@@ -181,6 +181,9 @@ Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
 silent, and topic-thread options.
+Telegram poll delivery now also carries OpenClaw-style reply context through
+gateway `poll`, the shared outbound runtime, direct route sends, replay, CLI
+`routes poll --reply-to`, and native Bot API `reply_to_message_id` payloads.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery

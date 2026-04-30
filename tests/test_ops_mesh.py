@@ -6558,6 +6558,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
         silent=False,
         is_anonymous=True,
         account_id="workspace-bot",
+        reply_to_id="message-42",
         thread_id="1710000000.9999",
         gateway_client_scopes=[],
         idempotency_key="idem-provider-runtime-poll",
@@ -6608,6 +6609,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
             silent=False,
             is_anonymous=True,
             account_id="workspace-bot",
+            reply_to_id="message-42",
             thread_id="1710000000.9999",
             session_key=expected_session_key,
             gateway_client_scopes=(),
@@ -6960,6 +6962,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         silent=True,
         is_anonymous=False,
         account_id="telegram-bot",
+        reply_to_id="41",
         idempotency_key="idem-native-telegram-poll",
     )
 
@@ -7008,6 +7011,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
                 "is_anonymous": False,
                 "open_period": 60,
                 "disable_notification": True,
+                "reply_to_message_id": "41",
             },
         )
     ]

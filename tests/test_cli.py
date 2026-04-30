@@ -11097,6 +11097,8 @@ def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) 
             "--anonymous",
             "--account",
             "ops",
+            "--reply-to",
+            "122",
             "--thread",
             "123",
             "--idempotency-key",
@@ -11121,6 +11123,7 @@ def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) 
             "silent": True,
             "is_anonymous": True,
             "account_id": "ops",
+            "reply_to_id": "122",
             "thread_id": "123",
             "idempotency_key": "cli-poll-1",
         }

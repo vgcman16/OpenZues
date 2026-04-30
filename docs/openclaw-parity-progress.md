@@ -2831,6 +2831,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   provider_option_caps"` (`11 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Provider-native poll delivery now preserves OpenClaw-style reply context:
+  gateway `poll` accepts `replyToId` / `replyToMessageId`, OpsMesh persists
+  and replays the field, shared outbound runtime poll requests carry
+  `reply_to_id`, CLI `routes poll --reply-to` forwards it, and Telegram native
+  poll sends emit Bot API `reply_to_message_id`.
+- Verified the poll reply-context seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_poll_uses_channel_poll_runtime -q`
+  (`1 passed`), `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtime -q`
+  (`1 passed`), `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_route -q`
+  (`1 passed`), `python -m pytest
+  tests\test_cli.py::test_routes_poll_human_output_calls_native_direct_poll_runtime -q`
+  (`1 passed`), adjacent gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "poll_uses_channel_poll_runtime or
+  poll_allows_thread_id or poll_rejects"` (`14 passed`), adjacent OpsMesh
+  coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_prefers_provider_runtime or telegram_native_route
+  or telegram_topic or replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_provider_runtime"`
+  (`7 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py src\openzues\cli.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py tests\test_cli.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py src\openzues\cli.py`.
 
 ## References
 

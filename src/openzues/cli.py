@@ -16337,6 +16337,11 @@ def routes_poll_command(
         help="Request anonymous or named poll behavior when supported.",
     ),
     account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
+    reply_to_id: str | None = typer.Option(
+        None,
+        "--reply-to",
+        help="Provider message id to reply to.",
+    ),
     thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
     idempotency_key: str | None = typer.Option(
         None,
@@ -16361,6 +16366,7 @@ def routes_poll_command(
             silent=True if silent else None,
             is_anonymous=is_anonymous,
             account_id=account_id,
+            reply_to_id=reply_to_id,
             thread_id=thread_id,
             idempotency_key=idempotency_key,
         )

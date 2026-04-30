@@ -5851,6 +5851,8 @@ class GatewayNodeMethodService:
                     "isAnonymous",
                     "channel",
                     "accountId",
+                    "replyToId",
+                    "replyToMessageId",
                     "threadId",
                     "idempotencyKey",
                 ),
@@ -5889,6 +5891,10 @@ class GatewayNodeMethodService:
             )
             silent = _optional_bool(payload.get("silent"), label="silent")
             is_anonymous = _optional_bool(payload.get("isAnonymous"), label="isAnonymous")
+            reply_to_id = _optional_normalized_string(
+                payload.get("replyToId") or payload.get("replyToMessageId"),
+                label="replyToId",
+            )
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
@@ -5941,6 +5947,7 @@ class GatewayNodeMethodService:
                 silent=silent,
                 is_anonymous=is_anonymous,
                 account_id=account_id,
+                reply_to_id=reply_to_id,
                 thread_id=thread_id,
                 idempotency_key=idempotency_key,
             )

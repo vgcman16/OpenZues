@@ -150,6 +150,7 @@ class GatewayOutboundRuntimePollRequest:
     silent: bool | None = None
     is_anonymous: bool | None = None
     account_id: str | None = None
+    reply_to_id: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
     gateway_client_scopes: tuple[str, ...] = ()
@@ -475,6 +476,7 @@ class GatewayOutboundRuntimeService:
         silent: bool | None = None,
         is_anonymous: bool | None = None,
         account_id: str | None = None,
+        reply_to_id: str | None = None,
         thread_id: str | None = None,
         gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
     ) -> GatewayOutboundRuntimeDeliveryResult:
@@ -500,6 +502,7 @@ class GatewayOutboundRuntimeService:
                         silent=silent,
                         is_anonymous=is_anonymous,
                         account_id=_normalize_optional_string(account_id),
+                        reply_to_id=_normalize_optional_string(reply_to_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
                         gateway_client_scopes=normalized_gateway_client_scopes,
@@ -542,6 +545,7 @@ class GatewayOutboundRuntimeService:
                         silent=silent,
                         is_anonymous=is_anonymous,
                         account_id=_normalize_optional_string(account_id),
+                        reply_to_id=_normalize_optional_string(reply_to_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
                         gateway_client_scopes=normalized_gateway_client_scopes,
@@ -569,6 +573,7 @@ class GatewayOutboundRuntimeService:
             channel=channel,
             target=target,
             account_id=account_id,
+            reply_to_id=reply_to_id,
             thread_id=thread_id,
             gateway_client_scopes=normalized_gateway_client_scopes,
         )
