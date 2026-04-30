@@ -46,14 +46,21 @@ ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
 parent completion announcements still fire, and `streamLogPath` / `note`
-fields are preserved in the spawn response. Remaining ACP parity is the
-standalone ACP bridge server/client harness and deeper protocol session
-presentation, permission, replay, and parent-stream relay breadth.
+fields are preserved in the spawn response. The RuntimeManager ACP adapter now
+also rejects `streamTo="parent"` without a requester session before starting a
+thread, matching OpenClaw's `requester_session_required` guard. Remaining ACP
+parity is the standalone ACP bridge server/client harness and deeper protocol
+session presentation, permission, replay, and parent-stream relay breadth.
 RuntimeManager-backed ACP prompt dispatch now also mirrors OpenClaw's prompt
 presentation prefix: when a child turn has `cwd`, the adapter sends
 `[Working directory: ...]` before the task text and redacts the user home to
 `~` while preserving Windows backslash separators. Remaining ACP presentation
 parity is deeper bridge server/client protocol metadata and replay behavior.
+ACP spawns that omit `cwd` now also inherit the target custom agent workspace
+before runtime dispatch, drop that inherited cwd when the workspace no longer
+exists so the backend can choose its default, and return
+`errorCode="cwd_resolution_failed"` for non-missing workspace access failures
+without starting the ACP runtime.
 RuntimeManager-backed ACP accepted responses now also include OpenClaw's
 mode-specific accepted notes for ordinary run spawns and persistent
 thread-bound session spawns. Remaining ACP presentation parity is deeper
@@ -63,8 +70,29 @@ RuntimeManager-backed ACP `thread=true` spawns now also match OpenClaw's
 provider-context preflight: persistent thread-bound ACP sessions require a
 requester channel context and return `errorCode="thread_binding_invalid"`
 before any RuntimeManager thread or turn is started when that context is
-missing. Remaining ACP binding parity is provider-adapter capability/placement
-policy, persistent session binding records, unbind lifecycle breadth, and the
+missing. RuntimeManager-backed current-placement ACP sessions now also synthesize
+OpenClaw-shaped current-conversation binding metadata from requester provider
+context: LINE-style targets normalize into a persistent `sessionBinding`
+(`targetKind="session"`, `placement="current"`), while `threadBinding` and
+`completionDelivery` keep the routable account/channel/target fields for
+wait-time completion delivery. LINE group/current contexts now also preserve
+OpenClaw's fallback precedence by binding and delivering to `agentGroupId`
+when it is present, and the gateway method owner now forwards that group
+context to the production ACP spawn adapter instead of dropping LINE at channel
+normalization. RuntimeManager-backed Matrix ACP `thread=true` sessions now also
+synthesize child-placement binding metadata from requester context, preserving
+canonical Matrix room casing in `sessionBinding.conversation.parentConversationId`
+and using the native ACP runtime thread id as OpenZues' local child-thread
+handle for `threadBinding`, `completionDelivery`, and
+`sessionBinding.metadata`. Matrix top-level `channel:<room>` requester targets
+now also format bound delivery as `room:<room>` the way OpenClaw's Matrix
+delivery resolver does, and Discord child-placement delivery now targets
+`channel:<child-runtime-thread>` instead of the requester parent channel.
+RuntimeManager-backed ACP thread-binding records now also include OpenClaw-style
+thread intro metadata, including `threadName`, optional `label`, and the
+runtime cwd line when `cwd` is present.
+Remaining ACP binding parity is real provider-native child-thread
+creation/store breadth, unbind lifecycle breadth, and the
 standalone ACP bridge server/client runtime.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
@@ -224,8 +252,8 @@ are projected even before a sandbox runtime has been spawned.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
-construction. Supported Slack, Telegram, Discord, WhatsApp, and Matrix route
-contexts create persistent child sessions, force cleanup to `keep`, store
+construction. Supported Slack, Telegram, Discord, WhatsApp, LINE, and Matrix
+route contexts create persistent child sessions, force cleanup to `keep`, store
 thread/account/channel binding metadata, and route completion delivery through
 the bound thread. Binder results must now report both `status="ok"` and
 `threadBindingReady=true`; unsupported, unconfigured, or not-ready channels
@@ -235,6 +263,11 @@ ACP/session binding policy breadth.
 Initial thread-bound child runs now dispatch through the chat-send adapter with
 the bound `channel`, `to`, `account_id`, and `thread_id` kwargs instead of
 starting as an unbound control-chat-only turn.
+Thread-bound child runs whose binding hook reports readiness without a
+routable delivery origin now also follow OpenClaw's generic-binding fallback:
+the initial child turn receives the requester channel context with
+`deliver=false`, stays persistent with `cleanup="keep"`, and keeps parent
+completion announcements enabled.
 Terminal `agent.wait` completion announcements now also use the saved
 `completionDelivery` route through the direct channel-send service and persist
 the provider delivery result/error on the child session metadata.
@@ -247,11 +280,31 @@ Route-backed thread-bound subagent spawns now persist an OpenClaw-shaped
 current-conversation `sessionBinding` record on the child session metadata,
 including `bindingId`, `targetSessionKey`, `targetKind`, `conversation`,
 `status`, `boundAt`, and `metadata.lastActivityAt` alongside the existing
-delivery metadata.
+delivery metadata. The production route-backed binder now also accepts LINE
+notification routes and stores LINE current-conversation ids without the
+provider/type prefix while preserving the original routable `to` target. The
+native CLI can now create `--kind line` routes with default `gateway/send` and
+`gateway/poll` subscriptions, so route-backed LINE current-conversation binders
+are operator-configurable without direct database edits. The native web/API
+operator surface now also classifies LINE as a first-class route channel with
+the upstream `LINE` label and offers LINE in the notification-route form with
+the same default gateway send/poll subscriptions. Matrix route-backed child
+thread binders are now operator-configurable through the same surfaces:
+`routes create --kind matrix`, `/api/gateway/channels`, and the web
+notification-route form all classify Matrix as a native gateway send/poll
+route. Native Zalo direct/media send routes are now operator-configurable
+through matching `routes create --kind zalo`, channel inventory, and web
+notification-route form surfaces, so the already-landed Zalo provider runtime
+no longer needs manual route insertion for setup.
 Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
 from the preserved session entry.
+Matrix route-backed thread-bound subagent bindings now also persist
+OpenClaw's bundled `placement="child"` default in the `sessionBinding`
+metadata instead of treating Matrix as a current-conversation channel. Remaining
+thread-binding parity is deeper provider-native child-thread creation and
+provider-owned binding stores for ACP/session runtimes.
 Reset/delete lifecycle now also emits the OpenClaw-shaped `subagent_ended`
 event through a fakeable native lifecycle service after session mutation,
 including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;
@@ -298,7 +351,12 @@ reply and silent flags, and saved failed `gateway/send` / `gateway/poll` rows
 replay through provider-native runtime calls with their original OpenClaw-style
 delivery options. The CLI now exposes `routes send` and `routes poll` as thin
 JSON/human wrappers over the same native direct send/poll runtime owner,
-including reply/thread/media/silent/document/idempotency options. Direct
+including reply/thread/media/silent/document/idempotency options, with
+OpenClaw-compatible `--media` and `--thread-id` aliases alongside the native
+`--media-url` / `--thread` spellings, plus poll aliases for
+`--poll-question`, repeatable `--poll-option`, `--poll-multi`,
+`--poll-duration-seconds`, `--poll-duration-hours`, and
+`--poll-anonymous` / `--poll-public`. Direct
 provider-backed `gateway.send` calls with an explicit `sessionKey` now
 canonicalize and pass that key as the runtime/mirror session while keeping the
 saved delivery row attached to the channel-derived target session for history

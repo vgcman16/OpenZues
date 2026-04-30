@@ -11,10 +11,20 @@ NO_THREAD_BINDING_HOOK_ERROR = (
     "thread=true is unavailable because no channel plugin registered subagent_spawning hooks."
 )
 SUPPORTED_THREAD_BINDING_CHANNELS = frozenset(
-    {"slack", "telegram", "discord", "whatsapp", "matrix"}
+    {"slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"}
 )
 _CURRENT_BINDINGS_ID_PREFIX = "generic:"
 _CONVERSATION_KEY_SEPARATOR = "\u241f"
+_CHILD_SESSION_BINDING_PLACEMENT_CHANNELS = frozenset({"matrix"})
+_LINE_CONVERSATION_TARGET_PREFIXES = (
+    "line:",
+    "channel:",
+    "conversation:",
+    "group:",
+    "room:",
+    "dm:",
+    "user:",
+)
 
 
 class GatewaySubagentThreadBinder(Protocol):
@@ -57,6 +67,27 @@ def _route_target_to(route: NotificationRouteView) -> str | None:
     return _optional_string(target.peer_id)
 
 
+def _line_conversation_id(target: str) -> str:
+    value = target.strip()
+    for _ in range(4):
+        normalized = value.lower()
+        matched = False
+        for prefix in _LINE_CONVERSATION_TARGET_PREFIXES:
+            if normalized.startswith(prefix):
+                value = value[len(prefix) :].strip()
+                matched = True
+                break
+        if not matched:
+            break
+    return value or target
+
+
+def _session_binding_conversation_id(*, channel: str, target: str) -> str:
+    if channel == "line":
+        return _line_conversation_id(target)
+    return target
+
+
 def _session_binding_record(
     *,
     child: dict[str, object],
@@ -74,8 +105,11 @@ def _session_binding_record(
         "accountId": account_id,
         "conversationId": conversation_id,
     }
+    placement = (
+        "child" if channel in _CHILD_SESSION_BINDING_PLACEMENT_CHANNELS else "current"
+    )
     metadata: dict[str, object] = {
-        "placement": "current",
+        "placement": placement,
         "lastActivityAt": bound_at,
     }
     if thread_id is not None:
@@ -183,11 +217,15 @@ class GatewaySubagentThreadBinderRegistry:
         }
         if thread_id is not None:
             binding["threadId"] = thread_id
+        conversation_id = _session_binding_conversation_id(
+            channel=channel,
+            target=resolved_to,
+        )
         session_binding = _session_binding_record(
             child=child,
             channel=channel,
             account_id=account_id,
-            conversation_id=resolved_to,
+            conversation_id=conversation_id,
             thread_id=thread_id,
         )
         result: dict[str, object] = {

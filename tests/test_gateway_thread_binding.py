@@ -44,7 +44,8 @@ def _assert_session_binding_record(
     channel: str,
     account_id: str,
     conversation_id: str,
-    thread_id: str,
+    thread_id: str | None,
+    placement: str = "current",
 ) -> None:
     assert isinstance(value, dict)
     record_separator = "\u241f"
@@ -63,8 +64,11 @@ def _assert_session_binding_record(
     assert isinstance(value["boundAt"], int)
     metadata = value["metadata"]
     assert isinstance(metadata, dict)
-    assert metadata["placement"] == "current"
-    assert metadata["threadId"] == thread_id
+    assert metadata["placement"] == placement
+    if thread_id is None:
+        assert "threadId" not in metadata
+    else:
+        assert metadata["threadId"] == thread_id
     assert metadata["lastActivityAt"] == value["boundAt"]
 
 
@@ -155,6 +159,52 @@ async def test_thread_binder_registry_resolves_matrix_provider_thread() -> None:
         account_id="bot-alpha",
         conversation_id="room:!room:example.org",
         thread_id="$thread-root",
+        placement="child",
+    )
+
+
+@pytest.mark.asyncio
+async def test_thread_binder_registry_resolves_line_current_conversation() -> None:
+    async def list_routes() -> list[NotificationRouteView]:
+        return [
+            _route(
+                channel="line",
+                account_id="default",
+                peer_id="line:user:U1234567890abcdef1234567890abcdef",
+            )
+        ]
+
+    binder = GatewaySubagentThreadBinderRegistry(list_notification_route_views=list_routes)
+
+    result = await binder(
+        {"sessionKey": "agent:main:main", "agentId": "main"},
+        {"sessionKey": "agent:main:subagent:child", "agentId": "main"},
+        {
+            "channel": "line",
+            "accountId": "default",
+            "to": "line:user:U1234567890abcdef1234567890abcdef",
+        },
+    )
+
+    session_binding = result.pop("sessionBinding")
+    assert result == {
+        "status": "ok",
+        "threadBindingReady": True,
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:user:U1234567890abcdef1234567890abcdef",
+        "deliveryOrigin": {
+            "channel": "line",
+            "accountId": "default",
+            "to": "line:user:U1234567890abcdef1234567890abcdef",
+        },
+    }
+    _assert_session_binding_record(
+        session_binding,
+        channel="line",
+        account_id="default",
+        conversation_id="U1234567890abcdef1234567890abcdef",
+        thread_id=None,
     )
 
 

@@ -20488,7 +20488,10 @@ def routes_create_command(
     kind: str = typer.Option(
         "webhook",
         "--kind",
-        help="Route kind: webhook, slack, telegram, discord, or whatsapp.",
+        help=(
+            "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, line, "
+            "or matrix."
+        ),
     ),
     target: str = typer.Option(
         ...,
@@ -20539,21 +20542,41 @@ def routes_create_command(
     json_output: bool = typer.Option(False, "--json", help="Emit the route as JSON."),
 ) -> None:
     route_kind = str(kind or "").strip().lower()
-    if route_kind not in {"webhook", "slack", "telegram", "discord", "whatsapp"}:
+    if route_kind not in {
+        "webhook",
+        "slack",
+        "telegram",
+        "discord",
+        "whatsapp",
+        "zalo",
+        "line",
+        "matrix",
+    }:
         raise typer.BadParameter(
-            "--kind must be one of: webhook, slack, telegram, discord, whatsapp."
+            "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
+            "zalo, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
         route_events = (
             ["gateway/send", "gateway/poll"]
-            if route_kind in {"slack", "telegram", "discord", "whatsapp"}
+            if route_kind
+            in {"slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"}
             else ["mission/completed", "mission/failed"]
         )
     payload = NotificationRouteCreate(
         name=name,
         kind=cast(
-            Literal["webhook", "slack", "telegram", "discord", "whatsapp"],
+            Literal[
+                "webhook",
+                "slack",
+                "telegram",
+                "discord",
+                "whatsapp",
+                "zalo",
+                "line",
+                "matrix",
+            ],
             route_kind,
         ),
         target=target,
@@ -20588,6 +20611,7 @@ def routes_send_command(
         list[str] | None,
         typer.Option(
             "--media-url",
+            "--media",
             help="Media URL to attach. Repeat for multiple media items.",
         ),
     ] = None,
@@ -20613,7 +20637,12 @@ def routes_send_command(
     ),
     account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
     agent_id: str | None = typer.Option(None, "--agent-id", help="Originating agent id."),
-    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    thread_id: str | None = typer.Option(
+        None,
+        "--thread",
+        "--thread-id",
+        help="Provider thread/topic id.",
+    ),
     session_key: str | None = typer.Option(
         None,
         "--session-key",
@@ -20651,12 +20680,13 @@ def routes_send_command(
 def routes_poll_command(
     channel: str = typer.Option(..., "--channel", help="Outbound provider channel."),
     to: str = typer.Option(..., "--to", help="Explicit provider target."),
-    question: str = typer.Option(..., "--question", help="Poll question."),
+    question: str = typer.Option(..., "--question", "--poll-question", help="Poll question."),
     options: Annotated[
         list[str] | None,
         typer.Option(
             "--option",
             "-o",
+            "--poll-option",
             help="Poll option. Repeat for each choice.",
         ),
     ] = None,
@@ -20669,14 +20699,21 @@ def routes_poll_command(
     duration_seconds: int | None = typer.Option(
         None,
         "--duration-seconds",
+        "--poll-duration-seconds",
         min=1,
         help="Poll duration in seconds.",
     ),
     duration_hours: int | None = typer.Option(
         None,
         "--duration-hours",
+        "--poll-duration-hours",
         min=1,
         help="Poll duration in hours.",
+    ),
+    poll_multi: bool = typer.Option(
+        False,
+        "--poll-multi",
+        help="Allow multiple poll selections.",
     ),
     silent: bool = typer.Option(
         False,
@@ -20686,6 +20723,7 @@ def routes_poll_command(
     is_anonymous: bool | None = typer.Option(
         None,
         "--anonymous/--named",
+        "--poll-anonymous/--poll-public",
         help="Request anonymous or named poll behavior when supported.",
     ),
     account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
@@ -20694,7 +20732,12 @@ def routes_poll_command(
         "--reply-to",
         help="Provider message id to reply to.",
     ),
-    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    thread_id: str | None = typer.Option(
+        None,
+        "--thread",
+        "--thread-id",
+        help="Provider thread/topic id.",
+    ),
     idempotency_key: str | None = typer.Option(
         None,
         "--idempotency-key",
@@ -20705,6 +20748,9 @@ def routes_poll_command(
     poll_options = [str(option).strip() for option in options or [] if str(option).strip()]
     if len(poll_options) < 2:
         raise typer.BadParameter("provide at least two --option values")
+    resolved_max_selections = max_selections
+    if resolved_max_selections is None and poll_multi:
+        resolved_max_selections = len(poll_options)
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await services.ops_mesh.send_direct_channel_poll(
@@ -20712,7 +20758,7 @@ def routes_poll_command(
             to=to,
             question=question,
             options=poll_options,
-            max_selections=max_selections,
+            max_selections=resolved_max_selections,
             duration_seconds=duration_seconds,
             duration_hours=duration_hours,
             silent=True if silent else None,

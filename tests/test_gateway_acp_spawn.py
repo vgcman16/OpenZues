@@ -197,6 +197,32 @@ async def test_runtime_manager_acp_spawn_rejects_thread_session_without_channel_
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_rejects_parent_stream_without_requester() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Relay progress back to the requester.",
+            "agentId": "codex",
+            "streamTo": "parent",
+        },
+        {},
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "requester_session_required",
+        "error": (
+            'sessions_spawn streamTo="parent" requires an active requester '
+            "session context."
+        ),
+    }
+    assert manager.start_thread_calls == []
+    assert manager.start_turn_calls == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_session_mode() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)
@@ -216,6 +242,270 @@ async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_sess
         "thread-bound ACP session stays active after this task; "
         "continue in-thread for follow-ups."
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_binds_line_current_conversation() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:line:direct:U1234567890abcdef1234567890abcdef"
+            ),
+            "requesterChannel": "line",
+            "requesterAccountId": "default",
+            "requesterTo": "line:user:U1234567890abcdef1234567890abcdef",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:user:U1234567890abcdef1234567890abcdef",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:user:U1234567890abcdef1234567890abcdef",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["targetSessionKey"] == "agent:codex:acp:thread-acp-new"
+    assert session_binding["targetKind"] == "session"
+    assert session_binding["conversation"] == {
+        "channel": "line",
+        "accountId": "default",
+        "conversationId": "U1234567890abcdef1234567890abcdef",
+    }
+    assert session_binding["status"] == "active"
+    assert isinstance(session_binding["boundAt"], int)
+    assert session_binding["metadata"]["placement"] == "current"
+    assert session_binding["metadata"]["agentId"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_prefers_line_group_current_conversation() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky group tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:line:direct:R1234567890abcdef1234567890abcdef"
+            ),
+            "requesterChannel": "line",
+            "requesterAccountId": "default",
+            "requesterTo": "line:user:U1234567890abcdef1234567890abcdef",
+            "agentGroupId": "line:room:R1234567890abcdef1234567890abcdef",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:room:R1234567890abcdef1234567890abcdef",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "line",
+        "accountId": "default",
+        "to": "line:room:R1234567890abcdef1234567890abcdef",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "line",
+        "accountId": "default",
+        "conversationId": "R1234567890abcdef1234567890abcdef",
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_binds_matrix_child_thread_metadata() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Matrix child thread tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:matrix:channel:!room:example.org:thread:$thread-root"
+            ),
+            "requesterChannel": "matrix",
+            "requesterAccountId": "default",
+            "requesterTo": "room:!Room:Example.org",
+            "requesterThreadId": "$thread-root",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!Room:Example.org",
+        "threadId": "thread-acp-new",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!Room:Example.org",
+        "threadId": "thread-acp-new",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["targetSessionKey"] == "agent:codex:acp:thread-acp-new"
+    assert session_binding["targetKind"] == "session"
+    assert session_binding["conversation"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "conversationId": "thread-acp-new",
+        "parentConversationId": "!Room:Example.org",
+    }
+    assert session_binding["metadata"]["placement"] == "child"
+    assert session_binding["metadata"]["threadId"] == "thread-acp-new"
+    assert session_binding["metadata"]["parentThreadId"] == "$thread-root"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_formats_matrix_top_level_delivery_target() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Matrix top-level thread tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:matrix:channel:!room:example",
+            "requesterChannel": "matrix",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:!room:example",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example",
+        "threadId": "thread-acp-new",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example",
+        "threadId": "thread-acp-new",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "conversationId": "thread-acp-new",
+        "parentConversationId": "!room:example",
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_formats_discord_child_delivery_target() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Discord child thread tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:discord:channel:parent-channel",
+            "requesterChannel": "discord",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:parent-channel",
+            "requesterThreadId": "requester-thread",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "discord",
+        "accountId": "default",
+        "to": "channel:thread-acp-new",
+        "threadId": "thread-acp-new",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "discord",
+        "accountId": "default",
+        "to": "channel:thread-acp-new",
+        "threadId": "thread-acp-new",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "discord",
+        "accountId": "default",
+        "conversationId": "thread-acp-new",
+        "parentConversationId": "parent-channel",
+    }
+    assert session_binding["metadata"]["parentThreadId"] == "requester-thread"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_includes_cwd_in_thread_binding_intro() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Check workspace",
+            "agentId": "codex",
+            "cwd": "/home/bob/clawd",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:discord:channel:parent-channel",
+            "requesterChannel": "discord",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:parent-channel",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    metadata = session_binding["metadata"]
+    assert isinstance(metadata, dict)
+    assert "cwd: /home/bob/clawd" in metadata["introText"]
 
 
 @pytest.mark.asyncio

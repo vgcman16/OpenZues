@@ -27,14 +27,135 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- Route-backed thread-bound spawn binding now includes LINE current-conversation
+  routes. The shared binder accepts LINE notification route views, keeps the
+  provider target for delivery, and stores normalized LINE conversation ids in
+  the persisted `sessionBinding` record. The native CLI now accepts
+  `routes create --kind line`, applies default `gateway/send` and
+  `gateway/poll` subscriptions, and persists LINE conversation targets for that
+  route-backed binder path. The native gateway channel API now classifies LINE
+  as a known route channel with the upstream `LINE` label, and the web
+  notification-route form exposes LINE with gateway send/poll default events.
+  Matrix route-backed child-thread binders are now configurable through the
+  native CLI and web/API operator surfaces as native gateway send/poll routes.
+  Native Zalo direct/media send routes are now configurable through the same
+  CLI and web/API route setup surfaces.
+- Verified the LINE route-backed binder slice with `python -m pytest
+  tests\test_gateway_thread_binding.py -k "line_current_conversation" -q` (`1
+  passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
+  -q` (`5 passed`), adjacent route-backed spawn proof `python -m pytest
+  tests\test_gateway_node_methods.py -k "thread_mode_uses_route_backed_thread_binder
+  or thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_delivers_initial_child_run_to_bound_origin" -q` (`3 passed`),
+  `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\schemas.py tests\test_gateway_thread_binding.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py src\openzues\schemas.py`.
+- Verified the LINE route-create CLI slice with `python -m pytest
+  tests\test_cli.py -k
+  "routes_create_command_accepts_line_current_conversation_route" -q` (`1
+  passed`), adjacent route-create proof `python -m pytest tests\test_cli.py -k
+  "routes_create_command_productizes_native_provider_routes or
+  routes_create_command_accepts_line_current_conversation_route" -q` (`2
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Verified the LINE web/API operator-surface slice with `python -m pytest
+  tests\test_app.py -k
+  "gateway_channels_endpoint_classifies_line_native_route or
+  notification_route_operator_form_offers_line_native_routes" -q` (`2
+  passed`), adjacent channel endpoint proof `python -m pytest tests\test_app.py
+  -k "gateway_channels_endpoint or
+  notification_route_operator_form_offers_line_native_routes" -q` (`3
+  passed`), `ruff check src\openzues\services\gateway_channels.py
+  tests\test_app.py`, and `mypy src\openzues\services\gateway_channels.py`.
+- Verified the Matrix route setup slice with `python -m pytest
+  tests\test_cli.py -k "routes_create_command_accepts_matrix_thread_route" -q`
+  (`1 passed`), `python -m pytest tests\test_app.py -k
+  "gateway_channels_endpoint_classifies_matrix_native_route or
+  notification_route_operator_form_offers_matrix_native_routes" -q` (`2
+  passed`), adjacent route/channel/binder proof `python -m pytest
+  tests\test_cli.py -k "routes_create_command_productizes_native_provider_routes
+  or routes_create_command_accepts_line_current_conversation_route or
+  routes_create_command_accepts_matrix_thread_route" -q` (`3 passed`),
+  `python -m pytest tests\test_app.py -k "gateway_channels_endpoint or
+  notification_route_operator_form_offers_line_native_routes or
+  notification_route_operator_form_offers_matrix_native_routes" -q` (`5
+  passed`), `python -m pytest tests\test_gateway_thread_binding.py -k
+  "matrix_provider_thread or line_current_conversation" -q` (`2 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_channels.py
+  tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_channels.py`.
+- Verified the Zalo route setup slice with `python -m pytest
+  tests\test_cli.py -k "routes_create_command_accepts_zalo_native_route" -q`
+  (`1 passed`), `python -m pytest tests\test_app.py -k
+  "gateway_channels_endpoint_classifies_zalo_native_route or
+  notification_route_operator_form_offers_zalo_native_routes" -q` (`2
+  passed`), adjacent route/channel/runtime proof `python -m pytest
+  tests\test_cli.py -k "routes_create_command_productizes_native_provider_routes
+  or routes_create_command_accepts_line_current_conversation_route or
+  routes_create_command_accepts_matrix_thread_route or
+  routes_create_command_accepts_zalo_native_route or
+  channels_capabilities_json_reports_zalo_support" -q` (`5 passed`),
+  `python -m pytest tests\test_app.py -k "gateway_channels_endpoint or
+  notification_route_operator_form_offers_line_native_routes or
+  notification_route_operator_form_offers_matrix_native_routes or
+  notification_route_operator_form_offers_zalo_native_routes" -q` (`7
+  passed`), `python -m pytest tests\test_ops_mesh.py -k
+  "notification_route_create_accepts_zalo_native_route or
+  uses_zalo_native_route or splits_zalo_media" -q` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_channels.py
+  tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_channels.py`.
+- Native `routes send` / `routes poll` now accept OpenClaw-compatible outbound
+  CLI aliases: `routes send --media` maps to the same native media list as
+  `--media-url`, and both send/poll accept `--thread-id` alongside
+  `--thread`.
+- Verified the provider CLI alias slice with `python -m pytest
+  tests\test_cli.py -k "openclaw_media_and_thread_id_aliases or
+  openclaw_thread_id_alias" -q` (`2 passed`), adjacent route send/poll CLI
+  proof `python -m pytest tests\test_cli.py -k
+  "routes_send_json_calls_native_direct_send_runtime or
+  routes_send_accepts_openclaw_media_and_thread_id_aliases or
+  routes_poll_human_output_calls_native_direct_poll_runtime or
+  routes_poll_accepts_openclaw_thread_id_alias" -q` (`4 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Native `routes poll` now also accepts the OpenClaw poll option spellings:
+  `--poll-question`, repeatable `--poll-option`, `--poll-multi`,
+  `--poll-duration-seconds`, `--poll-duration-hours`, and
+  `--poll-anonymous` / `--poll-public`.
+- Verified the poll CLI alias slice with `python -m pytest tests\test_cli.py
+  -k "openclaw_poll_option_aliases" -q` (`1 passed`), adjacent route poll CLI
+  proof `python -m pytest tests\test_cli.py -k
+  "routes_poll_human_output_calls_native_direct_poll_runtime or
+  routes_poll_accepts_openclaw_thread_id_alias or
+  routes_poll_accepts_openclaw_poll_option_aliases" -q` (`3 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Matrix route-backed thread-bound subagent bindings now persist
+  OpenClaw's bundled child-placement default in `sessionBinding.metadata`, and
+  the gateway `sessions.spawn` path preserves that metadata on the child
+  session.
+- Verified the Matrix child-placement metadata slice with `python -m pytest
+  tests\test_gateway_thread_binding.py -k "matrix_provider_thread" -q` (`1
+  passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
+  -q` (`5 passed`), adjacent gateway spawn proof `python -m pytest
+  tests\test_gateway_node_methods.py -k
+  "thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_route_backed_thread_binder or
+  thread_mode_delivers_initial_child_run_to_bound_origin" -q` (`3 passed`),
+  `ruff check src\openzues\services\gateway_thread_binding.py
+  tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`, and
+  `mypy src\openzues\services\gateway_thread_binding.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies
   terminal cleanup, and preserves the parent completion announcement while
-  returning the stream log/note envelope.
+  returning the stream log/note envelope. The RuntimeManager ACP adapter now
+  also rejects `streamTo="parent"` without requester session context before
+  starting any runtime thread.
 - Verified the ACP parent-stream tracking slice with `python -m pytest
   tests\test_gateway_node_methods.py -q -k
-  "sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`1 passed`),
+  "sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`1 passed`) and
+  `python -m pytest tests\test_gateway_acp_spawn.py -k
+  "rejects_parent_stream_without_requester" -q` (`1 passed`),
   adjacent ACP pack `python -m pytest tests\test_gateway_node_methods.py
   tests\test_gateway_acp_spawn.py -q -k "sessions_spawn_acp or acp_spawn or
   agent_wait_applies_spawn_cleanup_delete_on_terminal_child_run or
@@ -67,6 +188,123 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP `thread=true` session spawns now synthesize
+  OpenClaw-shaped current-conversation binding metadata for current-placement
+  provider contexts such as LINE: accepted responses include `threadBinding`,
+  `sessionBinding` with `targetKind="session"` / `placement="current"`, and
+  `completionDelivery` for the bound provider target. LINE group/current
+  contexts now also prefer `agentGroupId` over the direct sender target, so
+  group replies bind and deliver to the current group conversation. The
+  gateway method owner now preserves LINE as a routable channel context and
+  forwards requester group ids into the production ACP adapter only when present.
+- Verified the ACP current-conversation binding slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "binds_line_current_conversation or
+  prefers_line_group_current_conversation" -q` (`2 passed`), full ACP adapter
+  proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`11 passed`), adjacent gateway ACP
+  proof `python -m pytest tests\test_gateway_node_methods.py -k
+  "acp_thread_mode_passes_group_context or
+  sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`5
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP `thread=true` session spawns now also synthesize
+  OpenClaw-shaped child-placement binding metadata for Matrix requester
+  contexts. Accepted responses include `threadBinding`, `completionDelivery`,
+  and `sessionBinding` records with `placement="child"`, the native ACP runtime
+  thread id as the local child-thread handle, the parent Matrix room preserved
+  with canonical casing, and the requester thread id recorded as
+  `parentThreadId`.
+- Verified the ACP Matrix child-thread metadata slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "matrix_child_thread_metadata" -q` (`1
+  passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`13 passed`), adjacent gateway ACP
+  proof `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
+- Matrix ACP child-placement delivery now mirrors OpenClaw's Matrix delivery
+  resolver for top-level room targets: requester `channel:<room>` contexts are
+  delivered back as `room:<room>` while the child ACP runtime thread id remains
+  the local thread handle in `threadBinding` and `completionDelivery`.
+- Verified the Matrix ACP top-level delivery target slice with `python -m
+  pytest tests\test_gateway_acp_spawn.py -k "matrix_top_level_delivery_target"
+  -q` (`1 passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`14 passed`), adjacent gateway ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
+- Discord ACP child-placement delivery now mirrors OpenClaw's child-channel
+  fallback for newly bound threads: accepted `threadBinding` and
+  `completionDelivery` target `channel:<child-runtime-thread>` instead of the
+  requester parent channel, while the parent channel remains on the
+  `sessionBinding` conversation as context.
+- Verified the Discord ACP child delivery target slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "discord_child_delivery_target" -q` (`1
+  passed`), adjacent ACP child-target proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "matrix_child_thread_metadata or
+  matrix_top_level_delivery_target or discord_child_delivery_target" -q` (`3
+  passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`15 passed`), adjacent gateway ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP thread-binding records now carry OpenClaw-shaped
+  intro metadata. `sessionBinding.metadata` includes `threadName`,
+  `introText`, optional `label`, and the runtime cwd line when `cwd` is present,
+  matching the upstream thread intro banner contract while staying native to the
+  Codex app-server runtime.
+- Verified the ACP cwd intro metadata slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "cwd_in_thread_binding_intro" -q` (`1
+  passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`16 passed`), adjacent gateway ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
+- Gateway ACP spawns now inherit the target custom agent workspace when `cwd`
+  is omitted, matching OpenClaw's cross-agent ACP workspace resolution. Missing
+  inherited workspaces fall back to the ACP backend default cwd, while
+  non-missing access failures return `errorCode="cwd_resolution_failed"` before
+  runtime dispatch.
+- Verified the ACP cwd inheritance seam with `python -m pytest
+  tests\test_gateway_node_methods.py -k "acp_inherits_target_agent_workspace
+  or acp_omits_missing_inherited_target_workspace or
+  acp_reports_inherited_workspace_access_failure" -q` (`3 passed`), adjacent
+  ACP gateway coverage `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_inherits_target_agent_workspace or
+  sessions_spawn_acp_omits_missing_inherited_target_workspace or
+  sessions_spawn_acp_reports_inherited_workspace_access_failure or
+  sessions_spawn_acp_uses_configured_default_agent or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run" -q` (`8 passed`),
+  `python -m pytest tests\test_gateway_acp_spawn.py -q` (`9 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Top-level `doctor` now reports OpenClaw-style session lock health for
   `agents/*/sessions/*.jsonl.lock` files in human and JSON output, including
   pid liveness, age labels, stale posture, and read-only guidance.
@@ -3872,6 +4110,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Thread-bound `sessions.spawn` now also mirrors OpenClaw's generic-binding
+  fallback: when a hook reports `threadBindingReady=true` but supplies no
+  routable delivery origin, the initial child run is queued with
+  `deliver=false` while carrying the requester channel/account target and
+  leaving completion announcements enabled.
+- Verified the generic thread-binding fallback seam with `python -m pytest
+  tests\test_gateway_node_methods.py -k
+  "thread_mode_without_delivery_origin_keeps_completion" -q` (`1 passed`),
+  adjacent thread/completion coverage `python -m pytest
+  tests\test_gateway_node_methods.py -k "thread_mode_without_delivery_origin_keeps_completion
+  or thread_mode_delivers_initial_child_run_to_bound_origin or
+  thread_mode_cleans_up_binding_when_runtime_start_fails or
+  thread_mode_uses_route_backed_thread_binder or
+  thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_target_agent_bound_account or
+  agent_wait_thread_bound_completion_uses_completion_delivery_route or
+  agent_wait_announces_spawn_completion_to_parent_session or
+  agent_wait_skips_spawn_completion_announcement_when_not_expected" -q` (`10
+  passed`), `python -m pytest tests\test_gateway_thread_binding.py -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses that
   same OpenClaw `resolveRequesterOriginForChild` account selection before
   native thread-binding policy checks and ACP runtime dispatch, so

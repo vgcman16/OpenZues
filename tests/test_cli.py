@@ -10976,6 +10976,164 @@ def test_routes_create_command_productizes_native_provider_routes(tmp_path, monk
     assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
 
 
+def test_routes_create_command_accepts_line_current_conversation_route(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "LINE Current Conversation",
+            "--kind",
+            "line",
+            "--target",
+            "https://api.line.me/v2/bot/message/push",
+            "--conversation-channel",
+            "line",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "direct",
+            "--conversation-peer-id",
+            "line:user:U123456789",
+            "--secret-token",
+            "line-channel-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "LINE Current Conversation"
+    assert payload["kind"] == "line"
+    assert payload["target"] == "https://api.line.me/v2/bot/message/push"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "line"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "direct"
+    assert conversation_target["peer_id"] == "line:user:U123456789"
+    assert "line:user:U123456789" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "line"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "line"
+
+
+def test_routes_create_command_accepts_matrix_thread_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Matrix Thread Gateway",
+            "--kind",
+            "matrix",
+            "--target",
+            "https://matrix.example.org",
+            "--conversation-channel",
+            "matrix",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "room:!ops:matrix.example",
+            "--secret-token",
+            "matrix-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Matrix Thread Gateway"
+    assert payload["kind"] == "matrix"
+    assert payload["target"] == "https://matrix.example.org"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "matrix"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "room:!ops:matrix.example"
+    assert "room:!ops:matrix.example" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "matrix"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "matrix"
+
+
+def test_routes_create_command_accepts_zalo_native_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Zalo Native Gateway",
+            "--kind",
+            "zalo",
+            "--target",
+            "https://bot-api.zaloplatforms.test",
+            "--conversation-channel",
+            "zalo",
+            "--conversation-account",
+            "zalo-bot",
+            "--conversation-peer-kind",
+            "direct",
+            "--conversation-peer-id",
+            "zalo:123456",
+            "--secret-token",
+            "zalo-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Zalo Native Gateway"
+    assert payload["kind"] == "zalo"
+    assert payload["target"] == "https://bot-api.zaloplatforms.test"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "zalo"
+    assert conversation_target["account_id"] == "zalo-bot"
+    assert conversation_target["peer_kind"] == "direct"
+    assert conversation_target["peer_id"] == "zalo:123456"
+    assert "zalo:123456" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "zalo"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "zalo"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -11053,6 +11211,63 @@ def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     ]
 
 
+def test_routes_send_accepts_openclaw_media_and_thread_id_aliases(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 43,
+                "messageId": "matrix-43",
+                "channel": "matrix",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "send",
+            "--channel",
+            "matrix",
+            "--to",
+            "room:!ops:example.org",
+            "--message",
+            "Threaded media update.",
+            "--media",
+            "https://example.invalid/photo.png",
+            "--thread-id",
+            "$thread-root",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "matrix",
+            "to": "room:!ops:example.org",
+            "message": "Threaded media update.",
+            "media_urls": ["https://example.invalid/photo.png"],
+            "gif_playback": None,
+            "reply_to_id": None,
+            "silent": None,
+            "force_document": None,
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": "$thread-root",
+            "session_key": None,
+            "idempotency_key": None,
+        }
+    ]
+
+
 def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -11126,6 +11341,128 @@ def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) 
             "reply_to_id": "122",
             "thread_id": "123",
             "idempotency_key": "cli-poll-1",
+        }
+    ]
+
+
+def test_routes_poll_accepts_openclaw_thread_id_alias(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 44,
+                "messageId": "telegram-poll-44",
+                "pollId": "poll-44",
+                "channel": "telegram",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "telegram",
+            "--to",
+            "channel:deploy",
+            "--question",
+            "Ship the release?",
+            "--option",
+            "yes",
+            "--option",
+            "no",
+            "--thread-id",
+            "topic-123",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "channel:deploy",
+            "question": "Ship the release?",
+            "options": ["yes", "no"],
+            "max_selections": None,
+            "duration_seconds": None,
+            "duration_hours": None,
+            "silent": None,
+            "is_anonymous": None,
+            "account_id": None,
+            "reply_to_id": None,
+            "thread_id": "topic-123",
+            "idempotency_key": None,
+        }
+    ]
+
+
+def test_routes_poll_accepts_openclaw_poll_option_aliases(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 45,
+                "messageId": "discord-poll-45",
+                "pollId": "poll-45",
+                "channel": "discord",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "discord",
+            "--to",
+            "channel:deploy",
+            "--poll-question",
+            "Ship the release?",
+            "--poll-option",
+            "yes",
+            "--poll-option",
+            "no",
+            "--poll-multi",
+            "--poll-duration-hours",
+            "2",
+            "--poll-public",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "discord",
+            "to": "channel:deploy",
+            "question": "Ship the release?",
+            "options": ["yes", "no"],
+            "max_selections": 2,
+            "duration_seconds": None,
+            "duration_hours": 2,
+            "silent": None,
+            "is_anonymous": False,
+            "account_id": None,
+            "reply_to_id": None,
+            "thread_id": None,
+            "idempotency_key": None,
         }
     ]
 

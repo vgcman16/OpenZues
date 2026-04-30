@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -18,6 +19,20 @@ _ACP_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound ACP session stays active after this task; continue in-thread for follow-ups."
 )
 _ACP_THREAD_CONTEXT_REQUIRED_ERROR = "thread=true for ACP sessions requires a channel context."
+_ACP_STREAM_PARENT_SESSION_REQUIRED_ERROR = (
+    'sessions_spawn streamTo="parent" requires an active requester session context.'
+)
+_CURRENT_BINDINGS_ID_PREFIX = "generic:"
+_CONVERSATION_KEY_SEPARATOR = "\u241f"
+_CHILD_THREAD_PLACEMENT_CHANNELS = frozenset({"discord", "matrix"})
+_CONVERSATION_TARGET_PREFIXES = (
+    "channel:",
+    "conversation:",
+    "group:",
+    "room:",
+    "dm:",
+    "user:",
+)
 
 
 class GatewayAcpSpawnService(Protocol):
@@ -72,6 +87,46 @@ def _requester_channel_from_context(context: Mapping[str, object]) -> str | None
     return None
 
 
+def _requester_session_key_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterSessionKey", "agentSessionKey", "sessionKey"):
+        session_key = _optional_string(context.get(key))
+        if session_key is not None:
+            return session_key
+    return None
+
+
+def _requester_account_id_from_context(context: Mapping[str, object]) -> str:
+    for key in ("requesterAccountId", "accountId", "agentAccountId"):
+        account_id = _optional_string(context.get(key))
+        if account_id is not None:
+            return account_id
+    return "default"
+
+
+def _requester_to_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterTo", "to", "agentTo"):
+        target = _optional_string(context.get(key))
+        if target is not None:
+            return target
+    return None
+
+
+def _requester_thread_id_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterThreadId", "threadId", "agentThreadId"):
+        thread_id = _optional_string(context.get(key))
+        if thread_id is not None:
+            return thread_id
+    return None
+
+
+def _requester_group_id_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterGroupId", "groupId", "agentGroupId"):
+        group_id = _optional_string(context.get(key))
+        if group_id is not None:
+            return group_id
+    return None
+
+
 def _read_thread_id(result: object) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -104,6 +159,300 @@ def _prefix_acp_prompt_cwd(task: str, cwd: str | None) -> str:
     return f"[Working directory: {_display_cwd_for_prompt(cwd)}]\n\n{task}"
 
 
+def _strip_conversation_target_prefixes(channel: str, target: str) -> str | None:
+    value = target.strip()
+    channel_prefix = f"{channel}:"
+    for _ in range(4):
+        normalized = value.lower()
+        if normalized.startswith(channel_prefix):
+            value = value[len(channel_prefix) :].strip()
+            continue
+        matched = False
+        for prefix in _CONVERSATION_TARGET_PREFIXES:
+            if normalized.startswith(prefix):
+                value = value[len(prefix) :].strip()
+                matched = True
+                break
+        if not matched:
+            break
+    if not value or ":" in value:
+        return None
+    return value
+
+
+def _strip_child_parent_conversation_target(channel: str, target: str) -> str | None:
+    value = target.strip()
+    channel_prefix = f"{channel}:"
+    for _ in range(4):
+        normalized = value.lower()
+        if normalized.startswith(channel_prefix):
+            value = value[len(channel_prefix) :].strip()
+            continue
+        matched = False
+        for prefix in _CONVERSATION_TARGET_PREFIXES:
+            if normalized.startswith(prefix):
+                value = value[len(prefix) :].strip()
+                matched = True
+                break
+        if not matched:
+            break
+    return value or None
+
+
+def _child_thread_delivery_target(
+    *,
+    channel: str,
+    to: str,
+    child_thread_id: str,
+    parent_conversation_id: str | None,
+) -> str:
+    if channel == "matrix" and parent_conversation_id is not None:
+        return f"room:{parent_conversation_id}"
+    if channel == "discord":
+        return f"channel:{child_thread_id}"
+    return to
+
+
+def _thread_binding_display_name(*, target_agent_id: str, label: str | None) -> str:
+    base = label or target_agent_id or "agent"
+    return " ".join(base.split())[:100] or "agent"
+
+
+def _thread_binding_intro_text(
+    *,
+    target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
+) -> str:
+    base = _thread_binding_display_name(target_agent_id=target_agent_id, label=label)
+    intro = f"{base} session active. Messages here go directly to this session."
+    if cwd is None:
+        return intro
+    return f"{intro}\ncwd: {cwd}"
+
+
+def _current_conversation_ref(
+    *,
+    channel: str,
+    to: str,
+    thread_id: str | None,
+) -> dict[str, str] | None:
+    parent_conversation_id = _strip_conversation_target_prefixes(channel, to)
+    if thread_id is not None:
+        conversation: dict[str, str] = {"conversationId": thread_id}
+        if parent_conversation_id is not None and parent_conversation_id != thread_id:
+            conversation["parentConversationId"] = parent_conversation_id
+        return conversation
+    if parent_conversation_id is None:
+        return None
+    return {"conversationId": parent_conversation_id}
+
+
+def _current_session_binding_record(
+    *,
+    child_session_key: str,
+    target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
+    channel: str,
+    account_id: str,
+    conversation: Mapping[str, str],
+    thread_id: str | None,
+) -> dict[str, object]:
+    bound_at = int(time.time() * 1000)
+    conversation_id = conversation["conversationId"]
+    binding_key = _CONVERSATION_KEY_SEPARATOR.join(
+        [channel, account_id, "", conversation_id]
+    )
+    conversation_payload: dict[str, object] = {
+        "channel": channel,
+        "accountId": account_id,
+        "conversationId": conversation_id,
+    }
+    parent_conversation_id = conversation.get("parentConversationId")
+    if parent_conversation_id is not None:
+        conversation_payload["parentConversationId"] = parent_conversation_id
+    metadata: dict[str, object] = {
+        "placement": "current",
+        "lastActivityAt": bound_at,
+        "agentId": target_agent_id,
+        "threadName": _thread_binding_display_name(
+            target_agent_id=target_agent_id,
+            label=label,
+        ),
+        "introText": _thread_binding_intro_text(
+            target_agent_id=target_agent_id,
+            label=label,
+            cwd=cwd,
+        ),
+        "boundBy": "system",
+    }
+    if label is not None:
+        metadata["label"] = label
+    if thread_id is not None:
+        metadata["threadId"] = thread_id
+    return {
+        "bindingId": f"{_CURRENT_BINDINGS_ID_PREFIX}{binding_key}",
+        "targetSessionKey": child_session_key,
+        "targetKind": "session",
+        "conversation": conversation_payload,
+        "status": "active",
+        "boundAt": bound_at,
+        "metadata": metadata,
+    }
+
+
+def _current_acp_thread_binding_metadata(
+    *,
+    context: Mapping[str, object],
+    child_session_key: str,
+    target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
+) -> dict[str, object] | None:
+    channel = _requester_channel_from_context(context)
+    if channel is None or channel in _CHILD_THREAD_PLACEMENT_CHANNELS:
+        return None
+    to = _requester_to_from_context(context)
+    if to is None:
+        return None
+    group_id = _requester_group_id_from_context(context)
+    current_conversation_target = group_id or to
+    account_id = _requester_account_id_from_context(context)
+    requester_thread_id = _requester_thread_id_from_context(context)
+    conversation = _current_conversation_ref(
+        channel=channel,
+        to=current_conversation_target,
+        thread_id=requester_thread_id,
+    )
+    if conversation is None:
+        return None
+    thread_binding: dict[str, object] = {
+        "channel": channel,
+        "accountId": account_id,
+        "to": current_conversation_target,
+    }
+    if requester_thread_id is not None:
+        thread_binding["threadId"] = requester_thread_id
+    session_binding = _current_session_binding_record(
+        child_session_key=child_session_key,
+        target_agent_id=target_agent_id,
+        label=label,
+        cwd=cwd,
+        channel=channel,
+        account_id=account_id,
+        conversation=conversation,
+        thread_id=requester_thread_id,
+    )
+    return {
+        "threadBinding": thread_binding,
+        "sessionBinding": session_binding,
+        "completionDelivery": {"mode": "thread", **thread_binding},
+    }
+
+
+def _child_session_binding_record(
+    *,
+    child_session_key: str,
+    target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
+    channel: str,
+    account_id: str,
+    child_thread_id: str,
+    parent_conversation_id: str | None,
+    parent_thread_id: str | None,
+) -> dict[str, object]:
+    bound_at = int(time.time() * 1000)
+    binding_key = _CONVERSATION_KEY_SEPARATOR.join(
+        [channel, account_id, "", child_thread_id]
+    )
+    conversation_payload: dict[str, object] = {
+        "channel": channel,
+        "accountId": account_id,
+        "conversationId": child_thread_id,
+    }
+    if parent_conversation_id is not None and parent_conversation_id != child_thread_id:
+        conversation_payload["parentConversationId"] = parent_conversation_id
+    metadata: dict[str, object] = {
+        "placement": "child",
+        "threadId": child_thread_id,
+        "lastActivityAt": bound_at,
+        "agentId": target_agent_id,
+        "threadName": _thread_binding_display_name(
+            target_agent_id=target_agent_id,
+            label=label,
+        ),
+        "introText": _thread_binding_intro_text(
+            target_agent_id=target_agent_id,
+            label=label,
+            cwd=cwd,
+        ),
+        "boundBy": "system",
+    }
+    if label is not None:
+        metadata["label"] = label
+    if parent_thread_id is not None and parent_thread_id != child_thread_id:
+        metadata["parentThreadId"] = parent_thread_id
+    return {
+        "bindingId": f"{_CURRENT_BINDINGS_ID_PREFIX}{binding_key}",
+        "targetSessionKey": child_session_key,
+        "targetKind": "session",
+        "conversation": conversation_payload,
+        "status": "active",
+        "boundAt": bound_at,
+        "metadata": metadata,
+    }
+
+
+def _child_acp_thread_binding_metadata(
+    *,
+    context: Mapping[str, object],
+    child_session_key: str,
+    target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
+    child_thread_id: str,
+) -> dict[str, object] | None:
+    channel = _requester_channel_from_context(context)
+    if channel is None or channel not in _CHILD_THREAD_PLACEMENT_CHANNELS:
+        return None
+    to = _requester_to_from_context(context)
+    if to is None:
+        return None
+    account_id = _requester_account_id_from_context(context)
+    requester_thread_id = _requester_thread_id_from_context(context)
+    parent_conversation_id = _strip_child_parent_conversation_target(channel, to)
+    delivery_to = _child_thread_delivery_target(
+        channel=channel,
+        to=to,
+        child_thread_id=child_thread_id,
+        parent_conversation_id=parent_conversation_id,
+    )
+    thread_binding = {
+        "channel": channel,
+        "accountId": account_id,
+        "to": delivery_to,
+        "threadId": child_thread_id,
+    }
+    session_binding = _child_session_binding_record(
+        child_session_key=child_session_key,
+        target_agent_id=target_agent_id,
+        label=label,
+        cwd=cwd,
+        channel=channel,
+        account_id=account_id,
+        child_thread_id=child_thread_id,
+        parent_conversation_id=parent_conversation_id,
+        parent_thread_id=requester_thread_id,
+    )
+    return {
+        "threadBinding": thread_binding,
+        "sessionBinding": session_binding,
+        "completionDelivery": {"mode": "thread", **thread_binding},
+    }
+
+
 class RuntimeManagerAcpSpawnService:
     def __init__(
         self,
@@ -127,6 +476,15 @@ class RuntimeManagerAcpSpawnService:
         mode = requested_mode if requested_mode in {"run", "session"} else (
             "session" if thread_requested else "run"
         )
+        if (
+            _optional_string(params.get("streamTo")) == "parent"
+            and _requester_session_key_from_context(context) is None
+        ):
+            return {
+                "status": "error",
+                "errorCode": "requester_session_required",
+                "error": _ACP_STREAM_PARENT_SESSION_REQUIRED_ERROR,
+            }
         if mode == "session" and not thread_requested:
             return {
                 "status": "error",
@@ -155,6 +513,7 @@ class RuntimeManagerAcpSpawnService:
                 "status": "error",
                 "error": "runtime=acp sessions_spawn requires a connected Codex instance.",
             }
+        label = _optional_string(params.get("label"))
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
         try:
@@ -192,7 +551,7 @@ class RuntimeManagerAcpSpawnService:
 
         run_id = extract_turn_id(turn_result) or thread_id
         child_session_key = f"agent:{target_agent_id}:acp:{thread_id}"
-        return {
+        payload: dict[str, object] = {
             "status": "accepted",
             "childSessionKey": child_session_key,
             "runId": run_id,
@@ -205,6 +564,26 @@ class RuntimeManagerAcpSpawnService:
                 else _ACP_SPAWN_ACCEPTED_NOTE
             ),
         }
+        if thread_requested:
+            binding_metadata = _current_acp_thread_binding_metadata(
+                context=context,
+                child_session_key=child_session_key,
+                target_agent_id=target_agent_id,
+                label=label,
+                cwd=cwd,
+            )
+            if binding_metadata is None:
+                binding_metadata = _child_acp_thread_binding_metadata(
+                    context=context,
+                    child_session_key=child_session_key,
+                    target_agent_id=target_agent_id,
+                    label=label,
+                    cwd=cwd,
+                    child_thread_id=thread_id,
+                )
+            if binding_metadata is not None:
+                payload.update(binding_metadata)
+        return payload
 
     async def _select_instance_id(self) -> int | None:
         views = await self._manager.list_views()

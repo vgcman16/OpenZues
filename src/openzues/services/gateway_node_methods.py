@@ -154,6 +154,7 @@ _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = (
     "telegram",
     "whatsapp",
     "zalo",
+    "line",
     "matrix",
 )
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
@@ -448,6 +449,7 @@ class GatewayNodeMethodRequester:
     message_account_id: str | None = None
     message_to: str | None = None
     message_thread_id: str | None = None
+    message_group_id: str | None = None
 
 
 _SESSION_MUTATION_CONTROL_CLIENT_IDS = frozenset(
@@ -7767,6 +7769,14 @@ class GatewayNodeMethodService:
                     requester_agent_id=requester_agent_id,
                     target_agent_id=acp_agent_id,
                 )
+                explicit_cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
+                acp_cwd, acp_cwd_error = await _sessions_spawn_resolve_acp_runtime_cwd(
+                    self._agents_service,
+                    target_agent_id=acp_agent_id,
+                    explicit_cwd=explicit_cwd,
+                )
+                if acp_cwd_error is not None:
+                    return {**acp_cwd_error, **role_context}
                 if thread:
                     requester_origin = _sessions_spawn_origin_with_channel_default_account(
                         self._config_service,
@@ -7784,42 +7794,46 @@ class GatewayNodeMethodService:
                             "error": acp_thread_policy_error,
                             **role_context,
                         }
+                acp_context: dict[str, object] = {
+                    "requesterSessionKey": spawn_parent_session_key,
+                    "requesterChannel": (
+                        requester_origin.get("channel")
+                        if requester_origin is not None
+                        else None
+                    ),
+                    "requesterAccountId": (
+                        requester_origin.get("accountId")
+                        if requester_origin is not None
+                        else None
+                    ),
+                    "requesterTo": (
+                        requester_origin.get("to")
+                        if requester_origin is not None
+                        else None
+                    ),
+                    "requesterThreadId": (
+                        requester_origin.get("threadId")
+                        if requester_origin is not None
+                        else None
+                    ),
+                }
+                requester_group_id = _string_or_none(resolved_requester.message_group_id)
+                if requester_group_id is not None:
+                    acp_context["requesterGroupId"] = requester_group_id
                 acp_result = await self._acp_spawn_service.spawn(
                     {
                         "task": task,
                         "label": _optional_session_label(payload.get("label"), label="label"),
                         "agentId": acp_agent_id,
                         "resumeSessionId": resume_session_id,
-                        "cwd": _optional_non_empty_string(payload.get("cwd"), label="cwd"),
+                        "cwd": acp_cwd,
                         "mode": mode,
                         "thread": thread,
                         "sandbox": sandbox,
                         "streamTo": stream_to,
                         "runTimeoutSeconds": run_timeout_seconds,
                     },
-                    {
-                        "requesterSessionKey": spawn_parent_session_key,
-                        "requesterChannel": (
-                            requester_origin.get("channel")
-                            if requester_origin is not None
-                            else None
-                        ),
-                        "requesterAccountId": (
-                            requester_origin.get("accountId")
-                            if requester_origin is not None
-                            else None
-                        ),
-                        "requesterTo": (
-                            requester_origin.get("to")
-                            if requester_origin is not None
-                            else None
-                        ),
-                        "requesterThreadId": (
-                            requester_origin.get("threadId")
-                            if requester_origin is not None
-                            else None
-                        ),
-                    },
+                    acp_context,
                 )
                 if str(acp_result.get("status") or "").strip().lower() != "accepted":
                     acp_error_response = dict(acp_result)
@@ -7873,6 +7887,8 @@ class GatewayNodeMethodService:
                         acp_metadata["lastAccountId"] = requester_origin["accountId"]
                     if "threadId" in requester_origin:
                         acp_metadata["lastThreadId"] = requester_origin["threadId"]
+                if acp_cwd is not None:
+                    acp_metadata["spawnedWorkspaceDir"] = acp_cwd
                 raw_acp_thread_binding = acp_result.get("threadBinding")
                 acp_thread_binding: dict[str, Any] | None = None
                 if isinstance(raw_acp_thread_binding, Mapping):
@@ -8398,13 +8414,16 @@ class GatewayNodeMethodService:
                     if child_sandbox_status.sandboxed
                     else {}
                 )
-                delivery_kwargs: dict[str, object] = {"deliver": None}
+                delivery_kwargs: dict[str, object] = {
+                    "deliver": False if thread_binding is not None else None
+                }
                 if thread_binding:
-                    delivery_kwargs["deliver"] = True
                     bound_channel = _string_or_none(thread_binding.get("channel"))
                     bound_to = _string_or_none(thread_binding.get("to"))
                     bound_account_id = _string_or_none(thread_binding.get("accountId"))
                     bound_thread_id = _string_or_none(thread_binding.get("threadId"))
+                    if bound_channel is not None and bound_to is not None:
+                        delivery_kwargs["deliver"] = True
                     if bound_channel is not None:
                         delivery_kwargs["channel"] = bound_channel
                     if bound_to is not None:
@@ -8413,6 +8432,19 @@ class GatewayNodeMethodService:
                         delivery_kwargs["account_id"] = bound_account_id
                     if bound_thread_id is not None:
                         delivery_kwargs["thread_id"] = bound_thread_id
+                elif thread_binding is not None and requester_origin is not None:
+                    origin_channel = _string_or_none(requester_origin.get("channel"))
+                    origin_to = _string_or_none(requester_origin.get("to"))
+                    origin_account_id = _string_or_none(requester_origin.get("accountId"))
+                    origin_thread_id = _string_or_none(requester_origin.get("threadId"))
+                    if origin_channel is not None:
+                        delivery_kwargs["channel"] = origin_channel
+                    if origin_to is not None:
+                        delivery_kwargs["to"] = origin_to
+                    if origin_account_id is not None:
+                        delivery_kwargs["account_id"] = origin_account_id
+                    if origin_thread_id is not None:
+                        delivery_kwargs["thread_id"] = origin_thread_id
                 send_result = await effective_chat_send_service(
                     session_key=canonical_key,
                     message=(
@@ -13350,6 +13382,44 @@ def _sessions_spawn_acp_target_agent_id(
         _sessions_spawn_acp_config(config_service).get("defaultAgent")
     )
     return normalize_agent_id(configured_default) if configured_default is not None else None
+
+
+async def _sessions_spawn_resolve_acp_runtime_cwd(
+    agents_service: GatewayAgentsService,
+    *,
+    target_agent_id: str,
+    explicit_cwd: str | None,
+) -> tuple[str | None, dict[str, str] | None]:
+    if explicit_cwd is not None:
+        return explicit_cwd, None
+    agents_payload = await agents_service.list_agents()
+    agents = agents_payload.get("agents")
+    if not isinstance(agents, list):
+        return None, None
+    target_workspace: str | None = None
+    normalized_target = normalize_agent_id(target_agent_id)
+    for agent in agents:
+        if not isinstance(agent, Mapping):
+            continue
+        agent_id = _string_or_none(agent.get("id"))
+        if agent_id is None or normalize_agent_id(agent_id) != normalized_target:
+            continue
+        target_workspace = _string_or_none(agent.get("workspace"))
+        break
+    if target_workspace is None:
+        return None, None
+    workspace_path = Path(target_workspace).expanduser()
+    try:
+        workspace_path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None, None
+    except OSError as exc:
+        return None, {
+            "status": "error",
+            "errorCode": "cwd_resolution_failed",
+            "error": str(exc).strip() or type(exc).__name__,
+        }
+    return str(workspace_path), None
 
 
 def _sessions_spawn_acp_agent_policy_error(
