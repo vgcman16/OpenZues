@@ -908,6 +908,29 @@ def _message_action_param_positive_int(
     return None
 
 
+def _message_action_param_integer(
+    params: dict[str, Any],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        value = params.get(key)
+        if value is None:
+            continue
+        parsed: float | None = None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = float(value)
+        elif isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                continue
+            match = re.match(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)", trimmed)
+            if match:
+                parsed = float(match.group(0))
+        if parsed is not None and math.isfinite(parsed):
+            return math.trunc(parsed)
+    return None
+
+
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
     if normalized.startswith(("direct:", "dm:")):
@@ -7256,6 +7279,7 @@ class OpsMeshService:
             "edit",
             "list-pins",
             "pin",
+            "read",
             "react",
             "reactions",
             "send",
@@ -7309,6 +7333,13 @@ class OpsMeshService:
             if action == "list-pins":
                 return await asyncio.to_thread(
                     self._dispatch_discord_list_pins_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "read":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_read_message_action,
                     route,
                     request,
                     secret_token,
@@ -8677,6 +8708,48 @@ class OpsMeshService:
         return {
             "ok": True,
             "pins": [
+                _discord_message_with_normalized_timestamp(message)
+                for message in result
+            ],
+        }
+
+    def _dispatch_discord_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord read requires channelId.")
+        query: dict[str, str | int] = {}
+        limit = _message_action_param_integer(request.params, "limit")
+        if limit is not None:
+            query["limit"] = min(max(limit, 1), 100)
+        for key in ("before", "after", "around"):
+            value = _message_action_param_string(request.params, key)
+            if value is not None:
+                query[key] = value
+        endpoint_path = f"channels/{channel_id}/messages"
+        if query:
+            endpoint_path = f"{endpoint_path}?{urlencode(query)}"
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(endpoint_path),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if not isinstance(result, list):
+            raise RuntimeError("Discord API returned a non-JSON messages response.")
+        return {
+            "ok": True,
+            "messages": [
                 _discord_message_with_normalized_timestamp(message)
                 for message in result
             ],
