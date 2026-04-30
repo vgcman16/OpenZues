@@ -36502,6 +36502,65 @@ async def test_message_action_dispatches_registered_native_action_runtime() -> N
 
 
 @pytest.mark.asyncio
+async def test_message_action_dispatches_zalo_send_runtime() -> None:
+    calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        calls.append(request)
+        return {
+            "ok": True,
+            "to": "direct:dm-chat-1",
+            "messageId": "zalo-action-1",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        message_action_dispatcher=fake_message_action_dispatcher,
+    )
+
+    result = await service.call(
+        "message.action",
+        {
+            "channel": "zalo",
+            "action": "send",
+            "params": {
+                "to": "direct:dm-chat-1",
+                "message": "Ship Zalo action parity.",
+            },
+            "accountId": "zalo-bot",
+            "requesterSenderId": "zalo-user-1",
+            "senderIsOwner": True,
+            "sessionKey": "agent:main:zalo:direct:dm-chat-1",
+            "idempotencyKey": "idem-zalo-send-action",
+        },
+        requester=GatewayNodeMethodRequester(
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert result == {
+        "ok": True,
+        "to": "direct:dm-chat-1",
+        "messageId": "zalo-action-1",
+    }
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.channel == "zalo"
+    assert request.action == "send"
+    assert request.params == {
+        "to": "direct:dm-chat-1",
+        "message": "Ship Zalo action parity.",
+    }
+    assert request.account_id == "zalo-bot"
+    assert request.requester_sender_id == "zalo-user-1"
+    assert request.sender_is_owner is True
+    assert request.session_key == "agent:main:zalo:direct:dm-chat-1"
+    assert request.idempotency_key == "idem-zalo-send-action"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "extra_params"),
     [

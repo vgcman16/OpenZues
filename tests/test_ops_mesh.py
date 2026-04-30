@@ -19,6 +19,7 @@ from openzues.schemas import (
     IntegrationView,
     MissionStatus,
     MissionView,
+    NotificationRouteCreate,
     PlaybookView,
     ProjectView,
     SkillPinView,
@@ -3640,6 +3641,208 @@ async def test_ops_mesh_service_message_action_rejects_whatsapp_cross_chat_conte
         )
 
     assert whatsapp_posts == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-zalo-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Action Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": "zalo-action-1",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="zalo",
+            action="send",
+            params={
+                "to": "direct:dm-chat-1",
+                "message": "Ship Zalo action parity.",
+            },
+            account_id="zalo-bot",
+            requester_sender_id="zalo-user-1",
+            sender_is_owner=True,
+            session_key="agent:main:zalo:direct:dm-chat-1",
+            idempotency_key="idem-zalo-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "to": "direct:dm-chat-1",
+        "messageId": "zalo-action-1",
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendMessage",
+            {
+                "chat_id": "dm-chat-1",
+                "text": "Ship Zalo action parity.",
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_zalo_send_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-zalo-send-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Action Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": "zalo-photo-action-1",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="zalo",
+            action="send",
+            params={
+                "to": "direct:dm-chat-1",
+                "message": "Caption",
+                "media": "https://example.com/zalo.jpg",
+            },
+            account_id="zalo-bot",
+            requester_sender_id="zalo-user-1",
+            sender_is_owner=True,
+            session_key="agent:main:zalo:direct:dm-chat-1",
+            idempotency_key="idem-zalo-send-media-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "to": "direct:dm-chat-1",
+        "messageId": "zalo-photo-action-1",
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendPhoto",
+            {
+                "chat_id": "dm-chat-1",
+                "photo": "https://example.com/zalo.jpg",
+                "caption": "Caption",
+            },
+            None,
+            None,
+        )
+    ]
+
+
+def test_notification_route_create_accepts_zalo_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Zalo Native Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="zalo",
+            account_id="zalo-bot",
+            peer_kind="direct",
+            peer_id="direct:dm-chat-1",
+        ),
+        secret_token="zalo-access-token",
+    )
+
+    assert route.kind == "zalo"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "zalo"
 
 
 @pytest.mark.asyncio

@@ -146,7 +146,7 @@ _SESSION_PATCH_SPAWN_LINEAGE_FIELDS = {
 }
 _INPUT_PROVENANCE_KIND_VALUES = {"external_user", "inter_session", "internal_system"}
 _DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp")
+_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp", "zalo")
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
 _NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")

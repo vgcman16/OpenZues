@@ -18,9 +18,9 @@ ScopeDriftLevel = Literal["aligned", "watch", "drifting", "critical"]
 DreamStatus = Literal["forming", "ready", "fresh"]
 EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
-NotificationRouteKind = Literal["webhook", "slack", "telegram", "discord", "whatsapp"]
+NotificationRouteKind = Literal["webhook", "slack", "telegram", "discord", "whatsapp", "zalo"]
 NotificationRouteViewKind = Literal[
-    "webhook", "slack", "telegram", "discord", "whatsapp", "session", "announce"
+    "webhook", "slack", "telegram", "discord", "whatsapp", "zalo", "session", "announce"
 ]
 GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
 GatewayRouteBindingMode = Literal["saved_lane", "workspace_affinity"]

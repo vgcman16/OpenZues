@@ -6965,6 +6965,8 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
+        if channel == "zalo" and action == "send":
+            return await self._dispatch_zalo_send_message_action(request)
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -7044,6 +7046,63 @@ class OpsMeshService:
             request,
             secret_token,
         )
+
+    async def _dispatch_zalo_send_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        if target is None:
+            raise RuntimeError("Zalo send requires to.")
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        conversation_target = _normalize_conversation_target(
+            ConversationTargetView(
+                channel="zalo",
+                account_id=request.account_id,
+                peer_kind=_provider_peer_kind_from_target(target),
+                peer_id=target,
+            )
+        )
+        if conversation_target is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "gateway outbound provider route is missing a conversation target"
+            )
+        payload: dict[str, Any] = {
+            "channel": "zalo",
+            "to": target,
+            "message": message,
+        }
+        media = request.params.get("media")
+        if media is not None:
+            if not isinstance(media, str):
+                raise RuntimeError("media must be a string.")
+            if media.strip():
+                payload["mediaUrl"] = media
+        if request.account_id is not None:
+            payload["accountId"] = request.account_id
+        if request.session_key is not None:
+            payload["sessionKey"] = request.session_key
+        if request.agent_id is not None:
+            payload["agentId"] = request.agent_id
+        result = await self._post_provider_route_event(
+            event_type="gateway/send",
+            conversation_target=conversation_target,
+            payload=payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Zalo API returned a non-JSON response.")
+        message_id = str(result.get("messageId") or "").strip()
+        if not message_id:
+            raise RuntimeError("Zalo API response did not include a message id.")
+        return {"ok": True, "to": target, "messageId": message_id}
 
     def _dispatch_whatsapp_react_message_action(
         self,
