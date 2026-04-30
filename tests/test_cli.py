@@ -14010,6 +14010,147 @@ def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> 
     }
 
 
+def test_doctor_fix_runs_startup_channel_maintenance_adapter(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"channels": {"matrix": {"homeserver": "https://matrix.example.org"}}}
+
+    class FakeChannelStartupMaintenance:
+        async def run(
+            self,
+            *,
+            config: dict[str, object],
+            trigger: str,
+            log_prefix: str,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "config": config,
+                    "trigger": trigger,
+                    "logPrefix": log_prefix,
+                }
+            )
+            return {"changed": True, "summary": "Matrix startup migration ran."}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=None,
+                channel_startup_maintenance=FakeChannelStartupMaintenance(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert calls == [
+        {
+            "config": {"channels": {"matrix": {"homeserver": "https://matrix.example.org"}}},
+            "trigger": "doctor-fix",
+            "logPrefix": "doctor",
+        }
+    ]
+    assert payload["startupChannelMaintenance"] == {
+        "status": "ok",
+        "summary": "Matrix startup migration ran.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-channel-maintenance",
+        "repairRequested": True,
+        "trigger": "doctor-fix",
+        "logPrefix": "doctor",
+        "result": {"changed": True, "summary": "Matrix startup migration ran."},
+    }
+
+
+def test_doctor_skips_startup_channel_maintenance_without_fix(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"channels": {"matrix": {}}}
+
+    class FakeChannelStartupMaintenance:
+        async def run(
+            self,
+            *,
+            config: dict[str, object],
+            trigger: str,
+            log_prefix: str,
+        ) -> dict[str, object]:
+            calls.append({"config": config, "trigger": trigger, "logPrefix": log_prefix})
+            return {"changed": True}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=None,
+                channel_startup_maintenance=FakeChannelStartupMaintenance(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert calls == []
+    assert payload["startupChannelMaintenance"] == {
+        "status": "skipped",
+        "summary": "Startup channel maintenance only runs during doctor --fix.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-channel-maintenance",
+        "repairRequested": False,
+        "trigger": "doctor-fix",
+        "logPrefix": "doctor",
+    }
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

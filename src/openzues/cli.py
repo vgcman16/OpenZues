@@ -1934,6 +1934,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "sandbox",
         "memorySearch",
         "bundledPluginRuntimeDependencies",
+        "startupChannelMaintenance",
         "acp",
         "extras",
     ):
@@ -2527,6 +2528,85 @@ async def _with_doctor_memory_search_payload(
     next_payload = dict(payload)
     probe = await _build_doctor_gateway_memory_probe(gateway_node_methods)
     next_payload["memorySearch"] = _build_doctor_memory_search_payload(probe)
+    return next_payload
+
+
+def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {}
+    try:
+        snapshot = build_snapshot()
+    except Exception:
+        return {}
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+async def _build_doctor_startup_channel_maintenance_payload(
+    config_service: object | None,
+    maintenance_adapter: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-channel-maintenance",
+        "repairRequested": should_repair,
+        "trigger": "doctor-fix",
+        "logPrefix": "doctor",
+    }
+    if not should_repair:
+        return {
+            **base_payload,
+            "status": "skipped",
+            "summary": "Startup channel maintenance only runs during doctor --fix.",
+        }
+    run = getattr(maintenance_adapter, "run", None)
+    if not callable(run):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Channel startup maintenance runtime is unavailable.",
+        }
+    try:
+        result = await run(
+            config=_doctor_config_snapshot(config_service),
+            trigger="doctor-fix",
+            log_prefix="doctor",
+        )
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Channel startup maintenance failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    summary = _optional_cli_string(result_payload.get("summary")) or (
+        "Channel startup maintenance completed."
+    )
+    return {
+        **base_payload,
+        "status": "ok",
+        "summary": summary,
+        "result": result_payload,
+    }
+
+
+async def _with_doctor_startup_channel_maintenance_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    maintenance_adapter: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["startupChannelMaintenance"] = (
+        await _build_doctor_startup_channel_maintenance_payload(
+            config_service,
+            maintenance_adapter,
+            should_repair=should_repair,
+        )
+    )
     return next_payload
 
 
@@ -16422,6 +16502,12 @@ def doctor(
         "--json",
         help="Emit the Hermes parity doctor view as JSON.",
     ),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        "--repair",
+        help="Run repair-mode doctor checks where native adapters are available.",
+    ),
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
         view = await _try_live_hermes_doctor_view(services.settings)
@@ -16438,6 +16524,12 @@ def doctor(
         payload = await _with_doctor_memory_search_payload(
             payload,
             getattr(services, "gateway_node_methods", None),
+        )
+        payload = await _with_doctor_startup_channel_maintenance_payload(
+            payload,
+            services.gateway_config,
+            getattr(services, "channel_startup_maintenance", None),
+            should_repair=fix,
         )
         payload = _with_doctor_bundled_plugin_runtime_dependencies(
             payload,

@@ -2488,6 +2488,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_json_includes_sandbox_contribution or
   health_json_surfaces_gateway_health_snapshot"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the repair-mode `doctor:startup-channel-maintenance` seam from
+  OpenClaw `doctor-startup-channel-maintenance.ts`: `doctor --fix` / `--repair`
+  now calls a fakeable native channel startup maintenance adapter with
+  `trigger="doctor-fix"` and `logPrefix="doctor"`, while non-repair doctor
+  reports the contribution as skipped and repair mode without an adapter keeps
+  an honest unavailable boundary. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_startup_channel_maintenance_adapter
+  tests\test_cli.py::test_doctor_skips_startup_channel_maintenance_without_fix
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "startup_channel_maintenance or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  root_openclaw_compat"`, `ruff check src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

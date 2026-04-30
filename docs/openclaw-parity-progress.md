@@ -190,6 +190,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_includes_sandbox_contribution or
   health_json_surfaces_gateway_health_snapshot"` (`3 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --fix` now exposes the OpenClaw
+  `doctor:startup-channel-maintenance` repair-mode contribution: normal doctor
+  marks it skipped, while repair mode calls a fakeable native adapter with
+  `trigger="doctor-fix"` and `logPrefix="doctor"` and reports the adapter
+  result or unavailable boundary.
+- Verified the startup-channel maintenance doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_startup_channel_maintenance_adapter
+  tests\test_cli.py::test_doctor_skips_startup_channel_maintenance_without_fix
+  -q` (`2 passed`), adjacent doctor/CLI proof `python -m pytest
+  tests\test_cli.py -q -k "startup_channel_maintenance or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  root_openclaw_compat"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Native WhatsApp route sends now split text-only payloads into OpenClaw-style
   4000-character chunks instead of truncating at 4096 characters, and return
   the last provider message id from the chunked send sequence.
@@ -515,6 +530,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "root_option or doctor_json_includes_gateway_memory_probe_contribution or doctor_json_includes_sandbox_contribution or health_json_surfaces_gateway_health_snapshot"`: 3 passed after rechecking adjacent CLI parser/doctor smoke.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the root option compatibility slice.
 - `mypy src\openzues\cli.py`: clean after the root option compatibility slice.
+- `python -m pytest tests\test_cli.py::test_doctor_fix_runs_startup_channel_maintenance_adapter tests\test_cli.py::test_doctor_skips_startup_channel_maintenance_without_fix -q`: 2 passed after adding repair-mode startup channel maintenance doctor wiring.
+- `python -m pytest tests\test_cli.py -q -k "startup_channel_maintenance or doctor_json_includes_gateway_memory_probe_contribution or doctor_json_includes_sandbox_contribution or doctor_json_includes_bundled_plugin_runtime_dependency_contribution or root_openclaw_compat"`: 6 passed after rechecking adjacent doctor/CLI surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the startup channel maintenance doctor slice.
+- `mypy src\openzues\cli.py`: clean after the startup channel maintenance doctor slice.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain_json_projects_config_sandbox_tool_policy"`: 1 passed after adding config-backed `sandbox explain` mode/scope/workspace/tool-policy projection.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`: 8 passed after rechecking adjacent sandbox CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the config-backed sandbox explain slice.
