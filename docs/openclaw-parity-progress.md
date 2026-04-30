@@ -142,6 +142,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   preserves_whatsapp_reply_document or uses_whatsapp_gif_video_payload"` (`5
   passed`), `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py`.
+- Native Zalo route sends now use OpenClaw's Bot API shape
+  (`/bot{token}/sendMessage`) and split text-only payloads into
+  2000-character chunks instead of treating Zalo as an unsupported webhook-only
+  route kind.
+- Verified the Zalo native-route slice with `pytest tests/test_ops_mesh.py::
+  test_ops_mesh_service_send_direct_channel_message_uses_zalo_native_route -q`
+  (`1 passed`), adjacent provider-native proof `pytest tests/test_ops_mesh.py
+  -q -k "native_route or native_provider or provider_runtime or
+  provider_native_options or provider_result_persistence or
+  chunks_whatsapp_long_text or splits_whatsapp_media or whatsapp_document_reply
+  or whatsapp_gif_video or discord_reply_silent or telegram_media_group or
+  telegram_force_document"` (`20 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - Gateway `poll` now rejects `durationSeconds` for non-Telegram channels before
   dispatch, matching OpenClaw's `supportsPollDurationSeconds` adapter opt-in
   guard while preserving `durationHours` for Slack/Discord-style poll paths.

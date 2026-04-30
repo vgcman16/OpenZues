@@ -133,6 +133,11 @@ payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
 saved delivery metadata path.
+Zalo native route-backed direct text sends now use OpenClaw's Bot API
+`/bot{token}/sendMessage` shape and 2000-character split behavior, with native
+provider result metadata persisted through the direct-send delivery path.
+Remaining Zalo provider parity is media send/photo payload handling and any
+deeper provider-specific edge cases surfaced by the upstream outbound contract.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels

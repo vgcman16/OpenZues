@@ -3814,6 +3814,133 @@ async def test_ops_mesh_service_send_direct_channel_message_chunks_whatsapp_long
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_zalo_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-zalo-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Send Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": f"zalo-msg-{len(zalo_posts)}",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    long_text = "z" * 3000
+
+    result = await service.send_direct_channel_message(
+        channel="zalo",
+        to="direct:dm-chat-1",
+        message=long_text,
+        account_id="zalo-bot",
+        idempotency_key="idem-native-zalo-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="zalo",
+            account_id="zalo-bot",
+            peer_kind="direct",
+            peer_id="direct:dm-chat-1",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-zalo-send",
+        "channel": "zalo",
+        "messageId": "zalo-msg-2",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "zalo",
+            "target": "direct:dm-chat-1",
+            "accountId": "zalo-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "dm-chat-1",
+        "channelId": "dm-chat-1",
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendMessage",
+            {
+                "chat_id": "dm-chat-1",
+                "text": "z" * 2000,
+            },
+            None,
+            None,
+        ),
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendMessage",
+            {
+                "chat_id": "dm-chat-1",
+                "text": "z" * 1000,
+            },
+            None,
+            None,
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "zalo-msg-2",
+        "chatId": "dm-chat-1",
+        "channelId": "dm-chat-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

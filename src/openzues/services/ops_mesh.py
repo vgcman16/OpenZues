@@ -135,7 +135,8 @@ OUTBOUND_DELIVERY_MAX_RETRIES = 5
 OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
-NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
+ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
+NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp", "zalo"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
@@ -1519,11 +1520,72 @@ def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> 
         payload["context"] = {"message_id": normalized_reply_to_id}
 
 
-def _whatsapp_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
+def _fixed_text_chunks(text: str, *, limit: int) -> list[str]:
     if not text:
         return [""]
     safe_limit = max(1, limit)
     return [text[index : index + safe_limit] for index in range(0, len(text), safe_limit)]
+
+
+def _whatsapp_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
+    return _fixed_text_chunks(text, limit=limit)
+
+
+def _zalo_text_chunks(text: str, *, limit: int = 2000) -> list[str]:
+    return _fixed_text_chunks(text, limit=limit)
+
+
+def _zalo_bot_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Zalo route is missing a bot token secret.")
+    return token
+
+
+def _zalo_api_endpoint(target: str | None, token: str, method: str) -> str:
+    base_url = str(target or "").strip() or ZALO_API_BASE_URL
+    if f"/bot{token}/" in base_url:
+        endpoint = f"{base_url.rstrip('/')}/{method}"
+    else:
+        endpoint = f"{base_url.rstrip('/')}/bot{token}/{method}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Zalo route target must be an http(s) Bot API base URL.")
+    return endpoint
+
+
+def _zalo_chat_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while ":" in normalized:
+        prefix, suffix = normalized.split(":", 1)
+        if prefix.strip().lower() in {"channel", "group", "dm", "direct", "zalo"}:
+            normalized = suffix.strip()
+            continue
+        break
+    return normalized or None
+
+
+def _zalo_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        return None
+    candidate = payload.get("message_id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _zalo_chat_from_result(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            chat = payload.get("chat")
+            if isinstance(chat, dict):
+                candidate = str(chat.get("id") or "").strip()
+                if candidate:
+                    return candidate
+    return fallback
 
 
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
@@ -6734,6 +6796,8 @@ class OpsMeshService:
             return self._post_discord_provider_event
         if route_kind == "whatsapp":
             return self._post_whatsapp_provider_event
+        if route_kind == "zalo":
+            return self._post_zalo_provider_event
         return self._post_webhook
 
     async def _post_provider_route_event(
@@ -9037,6 +9101,51 @@ class OpsMeshService:
             if media_urls:
                 native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _post_zalo_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Zalo native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        chat_id = _zalo_chat_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if chat_id is None:
+            raise RuntimeError("Zalo route is missing a chat target.")
+        token = _zalo_bot_token(secret_token)
+        endpoint = _zalo_api_endpoint(str(route.get("target") or ""), token, "sendMessage")
+        text = str(event.get("message") or "").strip()
+        message_id = ""
+        delivered_chat = chat_id
+        for chunk in _zalo_text_chunks(text):
+            result = self._post_json_webhook(
+                endpoint,
+                {
+                    "chat_id": chat_id,
+                    "text": chunk,
+                },
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Zalo API returned a non-JSON response.")
+            if result.get("ok") is False:
+                error = str(result.get("description") or result.get("error_code") or "unknown")
+                raise RuntimeError(f"Zalo API returned {error}.")
+            chunk_message_id = _zalo_message_id(result)
+            if chunk_message_id is None:
+                raise RuntimeError("Zalo API response did not include a message id.")
+            message_id = chunk_message_id
+            delivered_chat = _zalo_chat_from_result(result, delivered_chat)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
 
     def _post_webhook(
         self,
