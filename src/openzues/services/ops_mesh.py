@@ -7419,7 +7419,9 @@ class OpsMeshService:
             "read",
             "react",
             "reactions",
+            "role-add",
             "role-info",
+            "role-remove",
             "send",
             "sticker",
             "thread-create",
@@ -7504,6 +7506,14 @@ class OpsMeshService:
                     route,
                     request,
                     secret_token,
+                )
+            if action in {"role-add", "role-remove"}:
+                return await asyncio.to_thread(
+                    self._dispatch_discord_role_mutation_message_action,
+                    route,
+                    request,
+                    secret_token,
+                    cast(Literal["role-add", "role-remove"], action),
                 )
             if action == "emoji-list":
                 return await asyncio.to_thread(
@@ -9211,6 +9221,39 @@ class OpsMeshService:
         if not isinstance(roles, list):
             raise RuntimeError("Discord API returned a non-JSON roles response.")
         return {"ok": True, "roles": roles}
+
+    def _dispatch_discord_role_mutation_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+        action: Literal["role-add", "role-remove"],
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        role_id = _message_action_param_string(
+            request.params,
+            "roleId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}/roles/{role_id}"),
+            method="PUT" if action == "role-add" else "DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     def _dispatch_discord_emoji_list_message_action(
         self,
