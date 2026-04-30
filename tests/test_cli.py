@@ -14413,6 +14413,51 @@ def test_doctor_json_warns_when_claude_cli_model_is_configured_but_unavailable(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_warns_when_openai_codex_oauth_tls_preflight_fails(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    def fake_preflight(*, timeout_seconds: float = 4.0) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        assert timeout_seconds == 4.0
+        return {
+            "ok": False,
+            "kind": "tls-cert",
+            "code": "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+            "message": "unable to get local issuer certificate",
+        }
+
+    monkeypatch.setattr(cli_module, "_run_openai_oauth_tls_preflight", fake_preflight)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "auth": {
+                "profiles": {
+                    "openai-codex:user@example.com": {
+                        "provider": "openai-codex",
+                        "mode": "oauth",
+                        "email": "user@example.com",
+                    }
+                }
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["oauthTls"]["warnings"][0]
+    assert calls == 1
+    assert payload["oauthTls"]["status"] == "warning"
+    assert payload["oauthTls"]["openClawContribution"] == "doctor:oauth-tls"
+    assert "OpenAI OAuth prerequisites check failed" in warning
+    assert "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" in warning
+    assert "brew postinstall ca-certificates" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_warns_about_legacy_cron_store(
     tmp_path,
     monkeypatch,

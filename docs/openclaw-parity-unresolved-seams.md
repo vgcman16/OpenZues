@@ -475,6 +475,11 @@ Top-level doctor output now also includes the upstream `doctor:security` and
 `doctor:shell-completion` contribution surfaces as stable native read models,
 currently marked honest unavailable/partial until production security and shell
 completion repair adapters are wired.
+Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
+contribution for configured Codex OAuth profiles: the native preflight probes
+the OpenAI auth endpoint through a fakeable boundary, classifies TLS
+certificate trust failures, and reports the upstream CA-certificate remediation
+guidance without importing the TypeScript runtime.
 The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining

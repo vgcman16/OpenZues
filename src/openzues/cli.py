@@ -4846,6 +4846,148 @@ async def _with_doctor_browser_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+_OPENAI_AUTH_PROBE_URL = (
+    "https://auth.openai.com/oauth/authorize?response_type=code"
+    "&client_id=openclaw-preflight"
+    "&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+    "&scope=openid+profile+email"
+)
+_OAUTH_TLS_CERT_ERROR_CODES = {
+    "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+}
+_OAUTH_TLS_CERT_ERROR_PATTERNS = (
+    "unable to get local issuer certificate",
+    "unable to verify the first certificate",
+    "self-signed certificate",
+    "self signed certificate",
+    "certificate has expired",
+    "certificate verify failed",
+)
+
+
+def _classify_openai_oauth_tls_error(error: BaseException) -> dict[str, object]:
+    reason = getattr(error, "reason", None)
+    root = reason if reason is not None else error
+    raw_code = getattr(root, "code", None)
+    code = str(raw_code).strip() if raw_code is not None else None
+    message = str(root or error)
+    message_lower = message.lower()
+    is_tls_cert = (
+        code in _OAUTH_TLS_CERT_ERROR_CODES
+        if code is not None
+        else False
+    ) or any(pattern in message_lower for pattern in _OAUTH_TLS_CERT_ERROR_PATTERNS)
+    return {
+        "ok": False,
+        "kind": "tls-cert" if is_tls_cert else "network",
+        "code": code,
+        "message": message,
+    }
+
+
+def _run_openai_oauth_tls_preflight(
+    *,
+    timeout_seconds: float = 4.0,
+) -> dict[str, object]:
+    request = Request(_OPENAI_AUTH_PROBE_URL, method="GET")
+    try:
+        with urlopen(request, timeout=timeout_seconds):
+            return {"ok": True}
+    except HTTPError:
+        return {"ok": True}
+    except URLError as exc:
+        return _classify_openai_oauth_tls_error(exc)
+    except OSError as exc:
+        return _classify_openai_oauth_tls_error(exc)
+
+
+def _format_openai_oauth_tls_preflight_fix(result: dict[str, object]) -> str:
+    message = _optional_cli_string(result.get("message")) or "unknown TLS failure"
+    code = _optional_cli_string(result.get("code"))
+    if _optional_cli_string(result.get("kind")) != "tls-cert":
+        return "\n".join(
+            [
+                (
+                    "OpenAI OAuth prerequisites check failed due to a network "
+                    "error before the browser flow."
+                ),
+                f"Cause: {message}",
+                "Verify DNS/firewall/proxy access to auth.openai.com and retry.",
+            ]
+        )
+    cause = f"{code} ({message})" if code is not None else message
+    return "\n".join(
+        [
+            (
+                "OpenAI OAuth prerequisites check failed: Node/OpenSSL cannot "
+                "validate TLS certificates."
+            ),
+            f"Cause: {cause}",
+            "",
+            "Fix (Homebrew Node/OpenSSL):",
+            "- brew postinstall ca-certificates",
+            "- brew postinstall openssl@3",
+            "- Retry the OAuth login flow.",
+        ]
+    )
+
+
+def _build_doctor_oauth_tls_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:oauth-tls",
+        "repairAvailable": False,
+        "warnings": [],
+    }
+    snapshot = _doctor_config_snapshot(config_service)
+    if not _config_has_codex_oauth_profile(snapshot):
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "OpenAI Codex OAuth TLS preflight skipped.",
+            "checked": False,
+        }
+    result = _run_openai_oauth_tls_preflight(timeout_seconds=4.0)
+    warning = (
+        _format_openai_oauth_tls_preflight_fix(result)
+        if result.get("ok") is not True and result.get("kind") == "tls-cert"
+        else None
+    )
+    return {
+        **base_payload,
+        "status": "warning" if warning else "ok",
+        "summary": (
+            "OpenAI OAuth TLS prerequisites need attention."
+            if warning
+            else "OpenAI OAuth TLS prerequisites passed or had no certificate warning."
+        ),
+        "checked": True,
+        "result": result,
+        "warnings": [warning] if warning else [],
+    }
+
+
+def _with_doctor_oauth_tls_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    oauth_tls = _build_doctor_oauth_tls_payload(config_service)
+    next_payload = dict(payload)
+    next_payload["oauthTls"] = oauth_tls
+    warnings = [
+        str(warning)
+        for warning in _object_list(oauth_tls.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
     data_dir: Path | None = None,
@@ -18932,6 +19074,10 @@ def doctor(
             payload,
             services.gateway_config,
             getattr(services, "browser_doctor", None),
+        )
+        payload = _with_doctor_oauth_tls_payload(
+            payload,
+            services.gateway_config,
         )
         data_dir = getattr(services.settings, "data_dir", None)
         payload = _with_doctor_provider_override_warnings(
