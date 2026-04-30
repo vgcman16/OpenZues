@@ -244,8 +244,13 @@ through OpenClaw-style route `bindings`: when the target agent has a configured
 route binding for the requester channel/peer, the binder context and initial
 child run use the target agent's bound account instead of the caller's inbound
 account.
+Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses the same
+target-agent route-bound requester origin before thread-binding policy checks
+and RuntimeManager dispatch, so account-scoped ACP spawn policy and ACP
+requester context use the target agent account instead of the caller account.
 Remaining lifecycle parity is deeper provider-native binding record stores,
-provider-native child-thread creation, and ACP/session binding policy breadth.
+provider-native child-thread creation, and ACP persistent session binding
+record breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,

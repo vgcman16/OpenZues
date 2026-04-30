@@ -7693,7 +7693,14 @@ class GatewayNodeMethodService:
                     if run_timeout_seconds_value is not None
                     else _sessions_spawn_default_run_timeout_seconds(self._config_service)
                 )
+                requester_agent_id = resolve_agent_id_from_session_key(spawn_parent_session_key)
                 requester_origin = _requester_route_context(resolved_requester)
+                requester_origin = _sessions_spawn_origin_for_target_agent(
+                    self._config_service,
+                    requester_origin=requester_origin,
+                    requester_agent_id=requester_agent_id,
+                    target_agent_id=acp_agent_id,
+                )
                 if thread:
                     acp_thread_policy_error = _sessions_spawn_thread_policy_error(
                         self._config_service,

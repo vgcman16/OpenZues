@@ -3389,6 +3389,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses that
+  same OpenClaw `resolveRequesterOriginForChild` account selection before
+  native thread-binding policy checks and ACP runtime dispatch, so
+  account-scoped Matrix ACP spawn config can authorize the target agent's
+  bound account even when the caller arrives from a different account.
+- Verified the ACP target-agent bound-account seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_uses_target_agent_bound_account
+  -q` (`1 passed`), adjacent ACP coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`5 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the

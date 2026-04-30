@@ -17480,6 +17480,124 @@ async def test_sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_pl
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_uses_target_agent_bound_account(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-bound-account.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["bot-alpha"],
+                },
+                "bindings": [
+                    {
+                        "type": "route",
+                        "agentId": "bot-alpha",
+                        "match": {
+                            "channel": "matrix",
+                            "accountId": "bot-alpha",
+                            "peer": {
+                                "kind": "channel",
+                                "id": "!room:example.org",
+                            },
+                        },
+                    },
+                ],
+                "channels": {
+                    "matrix": {
+                        "accounts": {
+                            "bot-alpha": {
+                                "threadBindings": {
+                                    "enabled": True,
+                                    "spawnAcpSessions": True,
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:bot-alpha:acp:thread-bound-account",
+                "runId": "run-acp-bound-account-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-bound-account",
+                "runtimeSessionId": "thread-bound-account",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay bound to the target agent's Matrix account.",
+            "runtime": "acp",
+            "agentId": "bot-alpha",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_account_id="bot-beta",
+            message_to="room:!room:example.org",
+            message_thread_id="$thread-root",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    assert calls[0]["context"] == {
+        "requesterSessionKey": "launch:mode:workspace_affinity",
+        "requesterChannel": "matrix",
+        "requesterAccountId": "bot-alpha",
+        "requesterTo": "room:!room:example.org",
+        "requesterThreadId": "$thread-root",
+    }
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:bot-alpha:acp:thread-bound-account"
+    )
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["requesterOrigin"]["accountId"] == "bot-alpha"
+    assert metadata["deliveryContext"]["accountId"] == "bot-alpha"
+    assert metadata["lastAccountId"] == "bot-alpha"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:
