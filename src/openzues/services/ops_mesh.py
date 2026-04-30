@@ -7454,6 +7454,7 @@ class OpsMeshService:
             "send",
             "sticker",
             "thread-create",
+            "thread-list",
             "timeout",
             "unpin",
             "voice-status",
@@ -7661,6 +7662,13 @@ class OpsMeshService:
             if action == "thread-create":
                 return await asyncio.to_thread(
                     self._dispatch_discord_thread_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "thread-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_thread_list_message_action,
                     route,
                     request,
                     secret_token,
@@ -10057,6 +10065,30 @@ class OpsMeshService:
             if isinstance(result, dict) and result.get("error"):
                 raise RuntimeError(str(result.get("error")))
         return {"ok": True, "thread": thread}
+
+    def _dispatch_discord_thread_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        threads = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/threads/active"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(threads, dict):
+            raise RuntimeError("Discord API returned a non-JSON threads response.")
+        if threads.get("error"):
+            raise RuntimeError(str(threads.get("error")))
+        return {"ok": True, "threads": threads}
 
     def _dispatch_discord_sticker_message_action(
         self,
