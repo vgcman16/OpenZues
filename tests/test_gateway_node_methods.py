@@ -18574,6 +18574,58 @@ async def test_sessions_spawn_acp_thread_mode_uses_channel_default_account(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_passes_group_context(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-group-context.db")
+    await database.initialize()
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-group-context",
+                "runId": "run-acp-group-context-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-group-context",
+                "runtimeSessionId": "thread-group-context",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind ACP to the current LINE group.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="line",
+            message_account_id="default",
+            message_to="line:user:U1234567890abcdef1234567890abcdef",
+            message_group_id="line:room:R1234567890abcdef1234567890abcdef",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    assert calls[0]["context"]["requesterGroupId"] == (
+        "line:room:R1234567890abcdef1234567890abcdef"
+    )
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion(
     tmp_path,
 ) -> None:

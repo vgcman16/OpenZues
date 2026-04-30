@@ -77,7 +77,9 @@ context: LINE-style targets normalize into a persistent `sessionBinding`
 `completionDelivery` keep the routable account/channel/target fields for
 wait-time completion delivery. LINE group/current contexts now also preserve
 OpenClaw's fallback precedence by binding and delivering to `agentGroupId`
-when it is present. Remaining ACP binding parity is child-thread creation for
+when it is present, and the gateway method owner now forwards that group
+context to the production ACP spawn adapter instead of dropping LINE at channel
+normalization. Remaining ACP binding parity is child-thread creation for
 child-placement providers, provider-adapter capability/store breadth, unbind
 lifecycle breadth, and the standalone ACP bridge server/client runtime.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel

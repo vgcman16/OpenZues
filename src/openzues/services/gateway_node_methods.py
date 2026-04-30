@@ -154,6 +154,7 @@ _KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = (
     "telegram",
     "whatsapp",
     "zalo",
+    "line",
     "matrix",
 )
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
@@ -448,6 +449,7 @@ class GatewayNodeMethodRequester:
     message_account_id: str | None = None
     message_to: str | None = None
     message_thread_id: str | None = None
+    message_group_id: str | None = None
 
 
 _SESSION_MUTATION_CONTROL_CLIENT_IDS = frozenset(
@@ -7792,6 +7794,32 @@ class GatewayNodeMethodService:
                             "error": acp_thread_policy_error,
                             **role_context,
                         }
+                acp_context: dict[str, object] = {
+                    "requesterSessionKey": spawn_parent_session_key,
+                    "requesterChannel": (
+                        requester_origin.get("channel")
+                        if requester_origin is not None
+                        else None
+                    ),
+                    "requesterAccountId": (
+                        requester_origin.get("accountId")
+                        if requester_origin is not None
+                        else None
+                    ),
+                    "requesterTo": (
+                        requester_origin.get("to")
+                        if requester_origin is not None
+                        else None
+                    ),
+                    "requesterThreadId": (
+                        requester_origin.get("threadId")
+                        if requester_origin is not None
+                        else None
+                    ),
+                }
+                requester_group_id = _string_or_none(resolved_requester.message_group_id)
+                if requester_group_id is not None:
+                    acp_context["requesterGroupId"] = requester_group_id
                 acp_result = await self._acp_spawn_service.spawn(
                     {
                         "task": task,
@@ -7805,29 +7833,7 @@ class GatewayNodeMethodService:
                         "streamTo": stream_to,
                         "runTimeoutSeconds": run_timeout_seconds,
                     },
-                    {
-                        "requesterSessionKey": spawn_parent_session_key,
-                        "requesterChannel": (
-                            requester_origin.get("channel")
-                            if requester_origin is not None
-                            else None
-                        ),
-                        "requesterAccountId": (
-                            requester_origin.get("accountId")
-                            if requester_origin is not None
-                            else None
-                        ),
-                        "requesterTo": (
-                            requester_origin.get("to")
-                            if requester_origin is not None
-                            else None
-                        ),
-                        "requesterThreadId": (
-                            requester_origin.get("threadId")
-                            if requester_origin is not None
-                            else None
-                        ),
-                    },
+                    acp_context,
                 )
                 if str(acp_result.get("status") or "").strip().lower() != "accepted":
                     acp_error_response = dict(acp_result)

@@ -77,17 +77,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `sessionBinding` with `targetKind="session"` / `placement="current"`, and
   `completionDelivery` for the bound provider target. LINE group/current
   contexts now also prefer `agentGroupId` over the direct sender target, so
-  group replies bind and deliver to the current group conversation.
+  group replies bind and deliver to the current group conversation. The
+  gateway method owner now preserves LINE as a routable channel context and
+  forwards requester group ids into the production ACP adapter only when present.
 - Verified the ACP current-conversation binding slice with `python -m pytest
   tests\test_gateway_acp_spawn.py -k "binds_line_current_conversation or
   prefers_line_group_current_conversation" -q` (`2 passed`), full ACP adapter
   proof `python -m pytest
   tests\test_gateway_acp_spawn.py -q` (`11 passed`), adjacent gateway ACP
   proof `python -m pytest tests\test_gateway_node_methods.py -k
-  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  "acp_thread_mode_passes_group_context or
+  sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
   sessions_spawn_acp_thread_mode_uses_channel_default_account or
   sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
-  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`5
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
