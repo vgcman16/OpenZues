@@ -2287,6 +2287,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- `status --json` now always emits OpenClaw-shaped `gatewayService` and
+  `nodeService` summaries for the native OpenZues runtime, with honest
+  unmanaged status instead of dropping those top-level fields.
+- Verified the CLI status managed-service summary seam with `python -m pytest
+  tests\test_cli.py::test_status_json_includes_managed_service_summaries -q`
+  (`1 passed`), adjacent status JSON/all coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "status_json_includes_managed_service_summaries or
+  status_json_breadth_flags_add_runtime_sections_with_timeout or
+  status_json_uses_registered_usage_and_security_runtime_adapters or
+  status_all_human_output_renders_pasteable_diagnosis"` (`4 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 

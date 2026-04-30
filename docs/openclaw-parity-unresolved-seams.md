@@ -250,7 +250,10 @@ Top-level
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
 sections for provider usage and security-audit runtime adapters that do not
-yet exist. Text-mode `status --all` now renders the OpenClaw-shaped
+yet exist. Plain `status --json` now also includes OpenClaw-shaped
+`gatewayService` and `nodeService` summaries with truthful native OpenZues
+unmanaged status instead of omitting the managed-service read model. Text-mode
+`status --all` now renders the OpenClaw-shaped
 pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model

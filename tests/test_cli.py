@@ -10318,6 +10318,40 @@ def test_status_json_prefers_live_status_payload_when_available(tmp_path, monkey
     assert payload["instance_summary"]["connected_count"] == 1
 
 
+def test_status_json_includes_managed_service_summaries(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {"headline": "Live dashboard headline", "summary": "Live dashboard summary"}
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayService"] == {
+        "label": "OpenZues gateway service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed gateway service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+    assert payload["nodeService"] == {
+        "label": "OpenZues node service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed node service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+
+
 def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
     tmp_path, monkeypatch
 ) -> None:

@@ -719,6 +719,32 @@ async def _build_status_security_audit_payload(
     return _build_status_security_audit_unavailable_payload()
 
 
+def _build_status_gateway_service_payload() -> dict[str, object]:
+    return {
+        "label": "OpenZues gateway service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed gateway service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+
+
+def _build_status_node_service_payload() -> dict[str, object]:
+    return {
+        "label": "OpenZues node service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed node service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+
+
 async def _build_status_runtime_sections(
     app_settings: Settings,
     *,
@@ -728,7 +754,10 @@ async def _build_status_runtime_sections(
     timeout_ms: int,
     services: object | None = None,
 ) -> dict[str, object]:
-    sections: dict[str, object] = {}
+    sections: dict[str, object] = {
+        "gatewayService": _build_status_gateway_service_payload(),
+        "nodeService": _build_status_node_service_payload(),
+    }
     if deep:
         try:
             sections["health"] = await _build_live_health_payload(
