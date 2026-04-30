@@ -7430,6 +7430,7 @@ class OpsMeshService:
             "delete",
             "edit",
             "emoji-list",
+            "event-create",
             "event-list",
             "list-pins",
             "member-info",
@@ -7566,6 +7567,13 @@ class OpsMeshService:
             if action == "event-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_event_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "event-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_event_create_message_action,
                     route,
                     request,
                     secret_token,
@@ -9466,6 +9474,63 @@ class OpsMeshService:
         if not isinstance(events, list):
             raise RuntimeError("Discord API returned a non-JSON events response.")
         return {"ok": True, "events": events}
+
+    def _dispatch_discord_event_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(
+            request.params,
+            "name",
+            required=True,
+        )
+        start_time = _message_action_param_string(
+            request.params,
+            "startTime",
+            required=True,
+        )
+        entity_type_raw = (
+            _message_action_param_string(request.params, "entityType") or ""
+        ).lower()
+        entity_type = 1 if entity_type_raw == "stage" else 3 if entity_type_raw == "external" else 2
+        payload: dict[str, object] = {
+            "name": name or "",
+            "scheduled_start_time": start_time or "",
+            "entity_type": entity_type,
+            "privacy_level": 2,
+        }
+        description = _message_action_param_string(request.params, "description")
+        if description is not None:
+            payload["description"] = description
+        end_time = _message_action_param_string(request.params, "endTime")
+        if end_time is not None:
+            payload["scheduled_end_time"] = end_time
+        channel_id = _message_action_param_string(request.params, "channelId")
+        if channel_id is not None:
+            payload["channel_id"] = channel_id
+        location = _message_action_param_string(request.params, "location")
+        if entity_type == 3 and location:
+            payload["entity_metadata"] = {"location": location}
+        event = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/scheduled-events"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(event, dict):
+            raise RuntimeError("Discord API returned a non-JSON event response.")
+        if event.get("error"):
+            raise RuntimeError(str(event.get("error")))
+        return {"ok": True, "event": event}
 
     def _dispatch_discord_channel_create_message_action(
         self,
