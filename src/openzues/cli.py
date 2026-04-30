@@ -3906,6 +3906,133 @@ def _with_doctor_gateway_config_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+_CLAUDE_CLI_PROVIDER_ID = "claude-cli"
+_CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli"
+
+
+def _doctor_claude_cli_command(snapshot: dict[str, object]) -> str:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    cli_backends = _dict_config(defaults.get("cliBackends"))
+    claude_backend = _dict_config(cli_backends.get(_CLAUDE_CLI_PROVIDER_ID))
+    return _optional_cli_string(claude_backend.get("command")) or "claude"
+
+
+def _doctor_model_primary(snapshot: dict[str, object]) -> str | None:
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    model = defaults.get("model")
+    if isinstance(model, str):
+        return _optional_cli_string(model)
+    if isinstance(model, dict):
+        return _optional_cli_string(model.get("primary"))
+    return None
+
+
+def _doctor_claude_cli_configured(snapshot: dict[str, object]) -> bool:
+    primary = _doctor_model_primary(snapshot)
+    if primary is not None and primary.lower().startswith(f"{_CLAUDE_CLI_PROVIDER_ID}/"):
+        return True
+    agents = _dict_config(snapshot.get("agents"))
+    defaults = _dict_config(agents.get("defaults"))
+    raw_models = defaults.get("models")
+    if isinstance(raw_models, dict) and any(
+        str(key).lower().startswith(f"{_CLAUDE_CLI_PROVIDER_ID}/")
+        for key in raw_models
+    ):
+        return True
+    cli_backends = _dict_config(defaults.get("cliBackends"))
+    if any(str(key).lower() == _CLAUDE_CLI_PROVIDER_ID for key in cli_backends):
+        return True
+    auth = _dict_config(snapshot.get("auth"))
+    raw_profiles = auth.get("profiles")
+    profiles = raw_profiles.values() if isinstance(raw_profiles, dict) else []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("provider")) == _CLAUDE_CLI_PROVIDER_ID
+        for profile in profiles
+    )
+
+
+def _config_has_claude_cli_profile(snapshot: dict[str, object]) -> bool:
+    auth = _dict_config(snapshot.get("auth"))
+    raw_profiles = auth.get("profiles")
+    if not isinstance(raw_profiles, dict):
+        return False
+    profile = raw_profiles.get(_CLAUDE_CLI_PROFILE_ID)
+    if isinstance(profile, dict):
+        return True
+    return any(
+        isinstance(item, dict)
+        and _optional_cli_string(item.get("provider")) == _CLAUDE_CLI_PROVIDER_ID
+        for item in raw_profiles.values()
+    )
+
+
+def _build_doctor_claude_cli_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    if not _doctor_claude_cli_configured(snapshot):
+        return None
+    command = _doctor_claude_cli_command(snapshot)
+    command_path = shutil.which(command)
+    lines: list[str] = []
+    fix_hints: list[str] = []
+    if command_path:
+        lines.append(f"- Binary: {command_path}.")
+    else:
+        lines.append(f'- Binary: command "{command}" was not found on PATH.')
+        fix_hints.append(
+            "- Fix: install Claude CLI or set agents.defaults.cliBackends.claude-cli.command "
+            "to the real binary path."
+        )
+    lines.append("- Headless Claude auth: unavailable without interactive prompting.")
+    fix_hints.append(
+        "- Fix: run claude auth login, then openclaw models auth login --provider "
+        "anthropic --method cli --set-default."
+    )
+    if _config_has_claude_cli_profile(snapshot):
+        lines.append(
+            f"- OpenClaw auth profile: {_CLAUDE_CLI_PROFILE_ID} "
+            f"(provider {_CLAUDE_CLI_PROVIDER_ID})."
+        )
+    else:
+        lines.append(f"- OpenClaw auth profile: missing ({_CLAUDE_CLI_PROFILE_ID}).")
+        fix_hints.append(
+            "- Fix: run openclaw models auth login --provider anthropic --method cli "
+            "--set-default."
+        )
+    warning = "\n".join([*lines, *fix_hints])
+    return {
+        "status": "warning",
+        "summary": "Claude CLI health needs attention.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:claude-cli",
+        "provider": _CLAUDE_CLI_PROVIDER_ID,
+        "command": command,
+        "commandPath": command_path,
+        "profileId": _CLAUDE_CLI_PROFILE_ID,
+        "warnings": [warning],
+    }
+
+
+def _with_doctor_claude_cli_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    claude_cli = _build_doctor_claude_cli_payload(config_service)
+    if claude_cli is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["claudeCli"] = claude_cli
+    warnings = [
+        str(warning)
+        for warning in _object_list(claude_cli.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _is_secret_ref(value: object) -> bool:
     return (
         isinstance(value, dict)
@@ -18163,6 +18290,10 @@ def doctor(
             services.gateway_config,
         )
         payload = _with_doctor_gateway_config_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_claude_cli_payload(
             payload,
             services.gateway_config,
         )
