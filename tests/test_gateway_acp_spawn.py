@@ -480,6 +480,35 @@ async def test_runtime_manager_acp_spawn_formats_discord_child_delivery_target()
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_includes_cwd_in_thread_binding_intro() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Check workspace",
+            "agentId": "codex",
+            "cwd": "/home/bob/clawd",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:discord:channel:parent-channel",
+            "requesterChannel": "discord",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:parent-channel",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    metadata = session_binding["metadata"]
+    assert isinstance(metadata, dict)
+    assert "cwd: /home/bob/clawd" in metadata["introText"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

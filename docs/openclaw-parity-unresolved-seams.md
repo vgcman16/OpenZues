@@ -88,6 +88,9 @@ handle for `threadBinding`, `completionDelivery`, and
 now also format bound delivery as `room:<room>` the way OpenClaw's Matrix
 delivery resolver does, and Discord child-placement delivery now targets
 `channel:<child-runtime-thread>` instead of the requester parent channel.
+RuntimeManager-backed ACP thread-binding records now also include OpenClaw-style
+thread intro metadata, including `threadName`, optional `label`, and the
+runtime cwd line when `cwd` is present.
 Remaining ACP binding parity is real provider-native child-thread
 creation/store breadth, unbind lifecycle breadth, and the
 standalone ACP bridge server/client runtime.

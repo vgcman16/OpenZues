@@ -213,6 +213,24 @@ def _child_thread_delivery_target(
     return to
 
 
+def _thread_binding_display_name(*, target_agent_id: str, label: str | None) -> str:
+    base = label or target_agent_id or "agent"
+    return " ".join(base.split())[:100] or "agent"
+
+
+def _thread_binding_intro_text(
+    *,
+    target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
+) -> str:
+    base = _thread_binding_display_name(target_agent_id=target_agent_id, label=label)
+    intro = f"{base} session active. Messages here go directly to this session."
+    if cwd is None:
+        return intro
+    return f"{intro}\ncwd: {cwd}"
+
+
 def _current_conversation_ref(
     *,
     channel: str,
@@ -234,6 +252,8 @@ def _current_session_binding_record(
     *,
     child_session_key: str,
     target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
     channel: str,
     account_id: str,
     conversation: Mapping[str, str],
@@ -256,8 +276,19 @@ def _current_session_binding_record(
         "placement": "current",
         "lastActivityAt": bound_at,
         "agentId": target_agent_id,
+        "threadName": _thread_binding_display_name(
+            target_agent_id=target_agent_id,
+            label=label,
+        ),
+        "introText": _thread_binding_intro_text(
+            target_agent_id=target_agent_id,
+            label=label,
+            cwd=cwd,
+        ),
         "boundBy": "system",
     }
+    if label is not None:
+        metadata["label"] = label
     if thread_id is not None:
         metadata["threadId"] = thread_id
     return {
@@ -276,6 +307,8 @@ def _current_acp_thread_binding_metadata(
     context: Mapping[str, object],
     child_session_key: str,
     target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
 ) -> dict[str, object] | None:
     channel = _requester_channel_from_context(context)
     if channel is None or channel in _CHILD_THREAD_PLACEMENT_CHANNELS:
@@ -304,6 +337,8 @@ def _current_acp_thread_binding_metadata(
     session_binding = _current_session_binding_record(
         child_session_key=child_session_key,
         target_agent_id=target_agent_id,
+        label=label,
+        cwd=cwd,
         channel=channel,
         account_id=account_id,
         conversation=conversation,
@@ -320,6 +355,8 @@ def _child_session_binding_record(
     *,
     child_session_key: str,
     target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
     channel: str,
     account_id: str,
     child_thread_id: str,
@@ -342,8 +379,19 @@ def _child_session_binding_record(
         "threadId": child_thread_id,
         "lastActivityAt": bound_at,
         "agentId": target_agent_id,
+        "threadName": _thread_binding_display_name(
+            target_agent_id=target_agent_id,
+            label=label,
+        ),
+        "introText": _thread_binding_intro_text(
+            target_agent_id=target_agent_id,
+            label=label,
+            cwd=cwd,
+        ),
         "boundBy": "system",
     }
+    if label is not None:
+        metadata["label"] = label
     if parent_thread_id is not None and parent_thread_id != child_thread_id:
         metadata["parentThreadId"] = parent_thread_id
     return {
@@ -362,6 +410,8 @@ def _child_acp_thread_binding_metadata(
     context: Mapping[str, object],
     child_session_key: str,
     target_agent_id: str,
+    label: str | None,
+    cwd: str | None,
     child_thread_id: str,
 ) -> dict[str, object] | None:
     channel = _requester_channel_from_context(context)
@@ -388,6 +438,8 @@ def _child_acp_thread_binding_metadata(
     session_binding = _child_session_binding_record(
         child_session_key=child_session_key,
         target_agent_id=target_agent_id,
+        label=label,
+        cwd=cwd,
         channel=channel,
         account_id=account_id,
         child_thread_id=child_thread_id,
@@ -461,6 +513,7 @@ class RuntimeManagerAcpSpawnService:
                 "status": "error",
                 "error": "runtime=acp sessions_spawn requires a connected Codex instance.",
             }
+        label = _optional_string(params.get("label"))
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
         try:
@@ -516,12 +569,16 @@ class RuntimeManagerAcpSpawnService:
                 context=context,
                 child_session_key=child_session_key,
                 target_agent_id=target_agent_id,
+                label=label,
+                cwd=cwd,
             )
             if binding_metadata is None:
                 binding_metadata = _child_acp_thread_binding_metadata(
                     context=context,
                     child_session_key=child_session_key,
                     target_agent_id=target_agent_id,
+                    label=label,
+                    cwd=cwd,
                     child_thread_id=thread_id,
                 )
             if binding_metadata is not None:

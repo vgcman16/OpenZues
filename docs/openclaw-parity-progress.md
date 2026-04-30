@@ -242,6 +242,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP thread-binding records now carry OpenClaw-shaped
+  intro metadata. `sessionBinding.metadata` includes `threadName`,
+  `introText`, optional `label`, and the runtime cwd line when `cwd` is present,
+  matching the upstream thread intro banner contract while staying native to the
+  Codex app-server runtime.
+- Verified the ACP cwd intro metadata slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "cwd_in_thread_binding_intro" -q` (`1
+  passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`16 passed`), adjacent gateway ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 - Gateway ACP spawns now inherit the target custom agent workspace when `cwd`
   is omitted, matching OpenClaw's cross-agent ACP workspace resolution. Missing
   inherited workspaces fall back to the ACP backend default cwd, while
