@@ -9635,9 +9635,10 @@ class OpsMeshService:
             options = [option for option in options if option]
             _validate_direct_channel_poll_shape(question, options)
             _validate_direct_channel_poll_option_count("telegram", options)
+            max_selections = _optional_int_payload_value(event, "maxSelections")
             _validate_direct_channel_poll_max_selections(
                 options,
-                _optional_int_payload_value(event, "maxSelections"),
+                max_selections,
             )
             duration_seconds = _optional_int_payload_value(event, "durationSeconds")
             duration_hours = _optional_int_payload_value(event, "durationHours")
@@ -9653,6 +9654,7 @@ class OpsMeshService:
                 "chat_id": chat_id,
                 "question": question,
                 "options": options,
+                "allows_multiple_answers": (max_selections or 1) > 1,
             }
             if _optional_bool_payload_value(event, "isAnonymous") is not None:
                 payload["is_anonymous"] = _optional_bool_payload_value(

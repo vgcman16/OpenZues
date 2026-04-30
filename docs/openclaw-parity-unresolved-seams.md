@@ -177,6 +177,10 @@ through the saved sandbox workspace root before dispatch, deduping equivalent
 container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+Telegram native poll route sends now also forward OpenClaw's multi-select
+intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
+multi-select and default single-choice behavior alongside anonymous, duration,
+silent, and topic-thread options.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery

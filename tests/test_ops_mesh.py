@@ -6955,6 +6955,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         to="channel:-100123",
         question="Ship native Telegram poll?",
         options=[" Yes ", "   ", "No"],
+        max_selections=2,
         duration_seconds=60,
         silent=True,
         is_anonymous=False,
@@ -7003,6 +7004,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
                 "chat_id": "-100123",
                 "question": "Ship native Telegram poll?",
                 "options": ["Yes", "No"],
+                "allows_multiple_answers": True,
                 "is_anonymous": False,
                 "open_period": 60,
                 "disable_notification": True,
@@ -7337,6 +7339,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_parses_telegram_topic_t
                 "chat_id": "-100123",
                 "question": "Ship native Telegram topic poll?",
                 "options": ["Yes", "No"],
+                "allows_multiple_answers": False,
                 "message_thread_id": "77",
             },
         )

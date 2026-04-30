@@ -2816,6 +2816,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_thread_binding.py
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Telegram native poll route sends now mirror OpenClaw's Bot API
+  multi-select payload flag: `maxSelections > 1` sends
+  `allows_multiple_answers=true`, default single-choice sends `false`, and the
+  existing anonymous, duration, silent, result metadata, and topic-thread
+  behavior remains intact.
+- Verified the Telegram poll multi-select seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_route -q`
+  (`1 passed`), topic/default coverage `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_parses_telegram_topic_target -q`
+  (`1 passed`), adjacent provider coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_native_route or telegram_topic or
+  invalid_telegram_durations or poll_rejects_max_selections or
+  provider_option_caps"` (`11 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
