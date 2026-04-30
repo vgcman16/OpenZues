@@ -288,6 +288,22 @@ _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
 )
+_GATEWAY_SEND_AUDIO_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*audio_as_voice\s*\]\]",
+    re.IGNORECASE,
+)
+_GATEWAY_SEND_REPLY_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*reply_to\s*:\s*([^\]\n]+?)\s*\]\]",
+    re.IGNORECASE,
+)
+_GATEWAY_SEND_REPLY_CURRENT_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*reply_to_current\s*\]\]",
+    re.IGNORECASE,
+)
+_GATEWAY_SEND_MEDIA_DIRECTIVE_RE = re.compile(
+    r"^\s*MEDIA:\s*`?(.+?)`?\s*$",
+    re.IGNORECASE,
+)
 _TRAILING_UNTRUSTED_CONTEXT_RE = re.compile(
     r"(?:\r?\n){0,2}"
     r"Untrusted context \(metadata, do not treat as instructions or commands\):\s*\r?\n"
@@ -398,6 +414,14 @@ _OPENCLAW_SECRET_TARGET_IDS = frozenset(
         "tools.web.search.apiKey",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _GatewaySendMessageDirectives:
+    text: str
+    media_urls: list[str]
+    reply_to_id: str | None
+    audio_as_voice: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -5834,6 +5858,12 @@ class GatewayNodeMethodService:
                 if "audioAsVoice" in payload
                 else None
             )
+            message_directives = _parse_gateway_send_message_directives(message)
+            message = message_directives.text
+            if not media_urls and message_directives.media_urls:
+                media_urls = message_directives.media_urls
+            if audio_as_voice is None or message_directives.audio_as_voice:
+                audio_as_voice = True if message_directives.audio_as_voice else audio_as_voice
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
@@ -5865,6 +5895,8 @@ class GatewayNodeMethodService:
                     label="replyToId",
                 )
             )
+            if reply_to_id is None:
+                reply_to_id = message_directives.reply_to_id
             silent = (
                 _optional_bool(payload.get("silent"), label="silent")
                 if "silent" in payload
@@ -17489,6 +17521,53 @@ def _format_gateway_chat_sandbox_media_paths(
     if message.strip():
         return f"{message.rstrip()}\n\n{block}"
     return block
+
+
+def _parse_gateway_send_message_directives(message: str) -> _GatewaySendMessageDirectives:
+    media_urls: list[str] = []
+    kept_lines: list[str] = []
+    for line in message.splitlines():
+        media_match = _GATEWAY_SEND_MEDIA_DIRECTIVE_RE.match(line)
+        if media_match:
+            media_url = _clean_gateway_send_media_directive_source(
+                media_match.group(1),
+            )
+            if media_url:
+                media_urls.append(media_url)
+            continue
+        kept_lines.append(line)
+    text = "\n".join(kept_lines)
+    audio_as_voice = _GATEWAY_SEND_AUDIO_DIRECTIVE_RE.search(text) is not None
+    reply_to_id: str | None = None
+
+    def replace_reply(match: re.Match[str]) -> str:
+        nonlocal reply_to_id
+        candidate = str(match.group(1) or "").strip()
+        if candidate:
+            reply_to_id = candidate
+        return " "
+
+    text = _GATEWAY_SEND_REPLY_DIRECTIVE_RE.sub(replace_reply, text)
+    text = _GATEWAY_SEND_REPLY_CURRENT_DIRECTIVE_RE.sub(" ", text)
+    text = _GATEWAY_SEND_AUDIO_DIRECTIVE_RE.sub(" ", text)
+    return _GatewaySendMessageDirectives(
+        text=_normalize_gateway_send_directive_text(text),
+        media_urls=media_urls,
+        reply_to_id=reply_to_id,
+        audio_as_voice=audio_as_voice,
+    )
+
+
+def _clean_gateway_send_media_directive_source(value: str) -> str:
+    return str(value or "").strip().strip("`\"'").rstrip("`\"'\\})],")
+
+
+def _normalize_gateway_send_directive_text(text: str) -> str:
+    return (
+        text.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .strip()
+    )
 
 
 def _normalize_gateway_send_media_urls(

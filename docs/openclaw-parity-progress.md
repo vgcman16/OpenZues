@@ -2712,6 +2712,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_node_methods.py`.
+- Gateway `send` now runs the bounded OpenClaw outbound payload directive
+  normalization for message-body `[[reply_to:...]]`, `[[reply_to_current]]`,
+  `[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel
+  delivery, matching the upstream `createOutboundPayloadPlan` path in
+  `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  and `infra\outbound\payloads.ts`.
+- Verified the inline send-directive seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_parses_inline_reply_audio_and_media_directives -q`
+  (`1 passed`), adjacent gateway send coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_send_"` (`18 passed`),
+  adjacent OpsMesh direct-send coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "send_direct_channel_message"` (`27 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - WhatsApp multi-media sends now report the final provider message id as the
   canonical `messageId` while preserving the full ordered `mediaIds` list,
   matching OpenClaw's outbound payload contract for iterated media sends.

@@ -294,6 +294,10 @@ Direct audio-as-voice media sends now also preserve OpenClaw's
 `audioAsVoice` hint from gateway `send` through OpsMesh saved payloads,
 `GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
 provider-backed runtime delivery, and saved failed-send replay formatting.
+Gateway `send` message bodies now also run the bounded OpenClaw outbound
+payload directive normalization for `[[reply_to:...]]`, `[[reply_to_current]]`,
+`[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel delivery,
+so directive markers do not leak as visible outbound text.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
