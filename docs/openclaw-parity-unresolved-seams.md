@@ -481,6 +481,9 @@ metadata payloads.
 Discord guild-admin `role-add` and `role-remove` now dispatch through the same
 route-backed bot-token REST path and return the upstream-shaped `{ok: true}`
 payloads.
+Discord guild-admin `channel-create` now dispatches through the same
+route-backed bot-token REST path, mapping OpenClaw's channel creation fields
+into the Discord channel body and returning `{ok: true, channel}`.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

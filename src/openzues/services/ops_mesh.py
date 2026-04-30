@@ -7407,6 +7407,7 @@ class OpsMeshService:
                 request,
             )
         if channel == "discord" and action in {
+            "channel-create",
             "channel-info",
             "channel-list",
             "delete",
@@ -7532,6 +7533,13 @@ class OpsMeshService:
             if action == "channel-list":
                 return await asyncio.to_thread(
                     self._dispatch_discord_channel_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_create_message_action,
                     route,
                     request,
                     secret_token,
@@ -9330,6 +9338,52 @@ class OpsMeshService:
         if not isinstance(channels, list):
             raise RuntimeError("Discord API returned a non-JSON channels response.")
         return {"ok": True, "channels": channels}
+
+    def _dispatch_discord_channel_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(
+            request.params,
+            "name",
+            required=True,
+        )
+        payload: dict[str, object] = {"name": name or ""}
+        channel_type = _message_action_param_integer(request.params, "type")
+        if channel_type is not None:
+            payload["type"] = channel_type
+        parent_id = _message_action_param_string(request.params, "parentId")
+        if parent_id:
+            payload["parent_id"] = parent_id
+        topic = _message_action_param_string(request.params, "topic")
+        if topic:
+            payload["topic"] = topic
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        nsfw = request.params.get("nsfw")
+        if isinstance(nsfw, bool):
+            payload["nsfw"] = nsfw
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        return {"ok": True, "channel": channel}
 
     def _dispatch_discord_thread_create_message_action(
         self,
