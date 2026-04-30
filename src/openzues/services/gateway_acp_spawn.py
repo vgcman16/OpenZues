@@ -199,6 +199,17 @@ def _strip_child_parent_conversation_target(channel: str, target: str) -> str | 
     return value or None
 
 
+def _child_thread_delivery_target(
+    *,
+    channel: str,
+    to: str,
+    parent_conversation_id: str | None,
+) -> str:
+    if channel == "matrix" and parent_conversation_id is not None:
+        return f"room:{parent_conversation_id}"
+    return to
+
+
 def _current_conversation_ref(
     *,
     channel: str,
@@ -359,10 +370,15 @@ def _child_acp_thread_binding_metadata(
     account_id = _requester_account_id_from_context(context)
     requester_thread_id = _requester_thread_id_from_context(context)
     parent_conversation_id = _strip_child_parent_conversation_target(channel, to)
+    delivery_to = _child_thread_delivery_target(
+        channel=channel,
+        to=to,
+        parent_conversation_id=parent_conversation_id,
+    )
     thread_binding = {
         "channel": channel,
         "accountId": account_id,
-        "to": to,
+        "to": delivery_to,
         "threadId": child_thread_id,
     }
     session_binding = _child_session_binding_record(

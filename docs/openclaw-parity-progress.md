@@ -206,6 +206,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- Matrix ACP child-placement delivery now mirrors OpenClaw's Matrix delivery
+  resolver for top-level room targets: requester `channel:<room>` contexts are
+  delivered back as `room:<room>` while the child ACP runtime thread id remains
+  the local thread handle in `threadBinding` and `completionDelivery`.
+- Verified the Matrix ACP top-level delivery target slice with `python -m
+  pytest tests\test_gateway_acp_spawn.py -k "matrix_top_level_delivery_target"
+  -q` (`1 passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`14 passed`), adjacent gateway ACP proof
+  `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 - Gateway ACP spawns now inherit the target custom agent workspace when `cwd`
   is omitted, matching OpenClaw's cross-agent ACP workspace resolution. Missing
   inherited workspaces fall back to the ACP backend default cwd, while

@@ -84,7 +84,9 @@ synthesize child-placement binding metadata from requester context, preserving
 canonical Matrix room casing in `sessionBinding.conversation.parentConversationId`
 and using the native ACP runtime thread id as OpenZues' local child-thread
 handle for `threadBinding`, `completionDelivery`, and
-`sessionBinding.metadata`. Remaining ACP binding parity is real provider-native
+`sessionBinding.metadata`. Matrix top-level `channel:<room>` requester targets
+now also format bound delivery as `room:<room>` the way OpenClaw's Matrix
+delivery resolver does. Remaining ACP binding parity is real provider-native
 child-thread creation/store breadth, unbind lifecycle breadth, and the
 standalone ACP bridge server/client runtime.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel

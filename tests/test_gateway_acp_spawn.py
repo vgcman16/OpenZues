@@ -390,6 +390,50 @@ async def test_runtime_manager_acp_spawn_binds_matrix_child_thread_metadata() ->
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_formats_matrix_top_level_delivery_target() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Matrix top-level thread tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": "agent:main:matrix:channel:!room:example",
+            "requesterChannel": "matrix",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:!room:example",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example",
+        "threadId": "thread-acp-new",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example",
+        "threadId": "thread-acp-new",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["conversation"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "conversationId": "thread-acp-new",
+        "parentConversationId": "!room:example",
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)
