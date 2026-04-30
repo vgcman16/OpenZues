@@ -2874,6 +2874,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_plugin_runtime.py`.
+- Native config writes now preserve OpenClaw's canonical
+  `session.threadBindings.enabled`, `idleHours`, and `maxAgeHours` keys and
+  reject legacy `threadBindings.ttlHours` at the session, channel, and
+  channel-account paths before snapshot validation.
+- Verified the thread-binding config-key seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_config_set_rejects_legacy_thread_binding_ttl_hours
+  tests\test_gateway_node_methods.py::test_config_set_preserves_session_thread_binding_idle_hours
+  -q` (`4 passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "config_write_methods or
+  config_patch_noop or config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or
+  config_get_returns_control_ui_bootstrap_snapshot or config_open_file"` (`14
+  passed`), adjacent thread-binding spawn policy coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_rejects_omitted_spawn_policy_for_child_placement_channel
+  or
+  sessions_spawn_acp_thread_mode_rejects_omitted_spawn_policy_for_child_placement_channel"`
+  (`2 passed`), adjacent doctor coverage `python -m pytest tests\test_cli.py
+  -q -k "doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`4
+  passed`), `ruff check src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
 
 ## References
 

@@ -33224,6 +33224,129 @@ async def test_config_write_methods_persist_control_ui_config_with_base_hash(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("legacy_config", "expected_path"),
+    [
+        (
+            {
+                "session": {
+                    "threadBindings": {
+                        "ttlHours": 24,
+                    },
+                },
+            },
+            "session.threadBindings.ttlHours",
+        ),
+        (
+            {
+                "channels": {
+                    "discord": {
+                        "threadBindings": {
+                            "ttlHours": 12,
+                        },
+                    },
+                },
+            },
+            "channels.discord.threadBindings.ttlHours",
+        ),
+        (
+            {
+                "channels": {
+                    "discord": {
+                        "accounts": {
+                            "alpha": {
+                                "threadBindings": {
+                                    "ttlHours": 6,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            "channels.discord.accounts.alpha.threadBindings.ttlHours",
+        ),
+    ],
+)
+async def test_config_set_rejects_legacy_thread_binding_ttl_hours(
+    tmp_path,
+    legacy_config: dict[str, object],
+    expected_path: str,
+) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+            **legacy_config,
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await service.call("config.set", {"raw": raw_snapshot})
+
+    message = str(exc_info.value)
+    assert expected_path in message
+    assert "ttlHours" in message
+    assert "idleHours" in message
+
+
+@pytest.mark.asyncio
+async def test_config_set_preserves_session_thread_binding_idle_hours(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        config_service=GatewayConfigService(
+            assistant_name="OpenZues",
+            assistant_avatar="/static/favicon.svg",
+            assistant_agent_id="assistant-control-ui",
+            server_version="9.9.9",
+            data_dir=tmp_path,
+        ),
+    )
+    raw_snapshot = json.dumps(
+        {
+            "basePath": "",
+            "assistantName": "Parity Builder",
+            "assistantAvatar": "/static/parity.svg",
+            "assistantAgentId": "assistant-control-ui",
+            "serverVersion": "9.9.9",
+            "localMediaPreviewRoots": [],
+            "embedSandbox": "scripts",
+            "allowExternalEmbedUrls": False,
+            "session": {
+                "threadBindings": {
+                    "enabled": True,
+                    "idleHours": 24,
+                    "maxAgeHours": 168,
+                },
+            },
+        }
+    )
+
+    payload = await service.call("config.set", {"raw": raw_snapshot})
+
+    assert payload["config"]["session"]["threadBindings"] == {
+        "enabled": True,
+        "idleHours": 24.0,
+        "maxAgeHours": 168.0,
+    }
+
+
+@pytest.mark.asyncio
 async def test_channels_status_returns_notification_route_inventory() -> None:
     async def fake_list_notification_route_views() -> list[NotificationRouteView]:
         return [

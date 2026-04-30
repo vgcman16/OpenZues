@@ -1792,12 +1792,24 @@ class ControlUiSessionAgentToAgentConfigView(BaseModel):
     )
 
 
+class ControlUiSessionThreadBindingsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool | None = None
+    idle_hours: float | None = Field(default=None, alias="idleHours", ge=0)
+    max_age_hours: float | None = Field(default=None, alias="maxAgeHours", ge=0)
+
+
 class ControlUiSessionConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     agent_to_agent: ControlUiSessionAgentToAgentConfigView | None = Field(
         default=None,
         alias="agentToAgent",
+    )
+    thread_bindings: ControlUiSessionThreadBindingsConfigView | None = Field(
+        default=None,
+        alias="threadBindings",
     )
 
 

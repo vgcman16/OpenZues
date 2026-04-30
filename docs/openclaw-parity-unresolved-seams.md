@@ -82,6 +82,12 @@ ACP and subagent thread spawns: Discord and Matrix require explicit
 unset, while current-placement channels keep the permissive default. Remaining
 thread-binding parity is provider-adapter capability breadth, persistent
 session binding records, and unbind/end-hook lifecycle breadth.
+OpenClaw's canonical `session.threadBindings` config keys now survive native
+config writes for `enabled`, `idleHours`, and `maxAgeHours`, while legacy
+`threadBindings.ttlHours` is rejected at session, channel, and channel-account
+paths before snapshot validation. Remaining legacy-config parity is the
+doctor `--fix` raw-file migration path that rewrites `ttlHours` to
+`idleHours` for already-persisted config files.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

@@ -579,6 +579,7 @@ class GatewayConfigService:
         )
 
     def _validated_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _reject_legacy_thread_binding_ttl_hours(payload)
         return _clean_config_snapshot(
             ControlUiBootstrapConfigView.model_validate(payload).model_dump(
                 mode="json",
@@ -1472,3 +1473,47 @@ def _clean_config_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             if snapshot.get(section) is None:
                 snapshot.pop(section, None)
     return snapshot
+
+
+def _reject_legacy_thread_binding_ttl_hours(payload: dict[str, Any]) -> None:
+    legacy_paths = list(_iter_legacy_thread_binding_ttl_hour_paths(payload))
+    if not legacy_paths:
+        return
+    path = legacy_paths[0]
+    replacement = path.removesuffix(".ttlHours") + ".idleHours"
+    raise ValueError(
+        f'{path} is legacy; use {replacement}. Run "openzues doctor --fix".'
+    )
+
+
+def _iter_legacy_thread_binding_ttl_hour_paths(payload: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    session = payload.get("session")
+    if isinstance(session, dict):
+        thread_bindings = session.get("threadBindings")
+        if isinstance(thread_bindings, dict) and "ttlHours" in thread_bindings:
+            paths.append("session.threadBindings.ttlHours")
+
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return paths
+    for raw_channel_id, raw_channel in channels.items():
+        channel_id = str(raw_channel_id)
+        if channel_id == "defaults" or not isinstance(raw_channel, dict):
+            continue
+        thread_bindings = raw_channel.get("threadBindings")
+        if isinstance(thread_bindings, dict) and "ttlHours" in thread_bindings:
+            paths.append(f"channels.{channel_id}.threadBindings.ttlHours")
+        accounts = raw_channel.get("accounts")
+        if not isinstance(accounts, dict):
+            continue
+        for raw_account_id, raw_account in accounts.items():
+            if not isinstance(raw_account, dict):
+                continue
+            account_thread_bindings = raw_account.get("threadBindings")
+            if isinstance(account_thread_bindings, dict) and "ttlHours" in account_thread_bindings:
+                account_id = str(raw_account_id)
+                paths.append(
+                    f"channels.{channel_id}.accounts.{account_id}.threadBindings.ttlHours"
+                )
+    return paths
