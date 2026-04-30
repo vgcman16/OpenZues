@@ -6911,16 +6911,23 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "discord" and action == "react":
+        if channel == "discord" and action in {"react", "reactions"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Discord route is configured for message.action react."
+                    f"No native Discord route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
+            if action == "reactions":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_reactions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             return await asyncio.to_thread(
                 self._dispatch_discord_react_message_action,
                 route,
@@ -7295,6 +7302,90 @@ class OpsMeshService:
             if isinstance(result, dict) and result.get("error"):
                 raise RuntimeError(str(result.get("error")))
         return removed
+
+    def _dispatch_discord_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord reactions requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        limit = _message_action_param_positive_int(request.params, "limit") or 100
+        limit = min(max(limit, 1), 100)
+        authorization = _discord_bot_authorization(secret_token)
+        message = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        raw_reactions = message.get("reactions") if isinstance(message, dict) else []
+        summaries: list[dict[str, object]] = []
+        if not isinstance(raw_reactions, list):
+            return {"ok": True, "reactions": summaries}
+        for reaction in raw_reactions:
+            if not isinstance(reaction, dict):
+                continue
+            raw_emoji = reaction.get("emoji")
+            identifier = _discord_reaction_identifier_from_payload(raw_emoji)
+            if not identifier:
+                continue
+            emoji_payload = raw_emoji if isinstance(raw_emoji, dict) else {}
+            emoji_id = emoji_payload.get("id")
+            emoji_name = emoji_payload.get("name")
+            encoded = _discord_reaction_identifier(identifier)
+            users_result = self._request_json_provider_url(
+                _discord_api_endpoint(
+                    "channels/"
+                    f"{channel_id}/messages/{message_id}/reactions/{encoded}"
+                    f"?{urlencode({'limit': limit})}"
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            users: list[dict[str, object]] = []
+            if isinstance(users_result, list):
+                for user in users_result:
+                    if not isinstance(user, dict):
+                        continue
+                    user_id = str(user.get("id") or "").strip()
+                    if not user_id:
+                        continue
+                    user_summary: dict[str, object] = {"id": user_id}
+                    username = str(user.get("username") or "").strip()
+                    discriminator = str(user.get("discriminator") or "").strip()
+                    if username:
+                        user_summary["username"] = username
+                        user_summary["tag"] = (
+                            f"{username}#{discriminator}" if discriminator else username
+                        )
+                    users.append(user_summary)
+            count = reaction.get("count")
+            summaries.append(
+                {
+                    "emoji": {
+                        "id": str(emoji_id) if emoji_id is not None else None,
+                        "name": str(emoji_name) if emoji_name is not None else None,
+                        "raw": identifier,
+                    },
+                    "count": count if isinstance(count, int) else 0,
+                    "users": users,
+                }
+            )
+        return {"ok": True, "reactions": summaries}
 
     async def _post_provider_route_event(
         self,

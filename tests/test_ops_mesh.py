@@ -3143,6 +3143,142 @@ async def test_ops_mesh_service_message_action_dispatches_discord_react_remove_o
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        if target.endswith("/messages/discord-message-1"):
+            return {
+                "reactions": [
+                    {"count": 2, "emoji": {"name": "\u2705", "id": None}},
+                    {"count": 1, "emoji": {"name": "party_blob", "id": "123"}},
+                ]
+            }
+        if "%E2%9C%85" in target:
+            return [
+                {"id": "U1", "username": "alice", "discriminator": "1234"},
+                {"id": "U2", "username": "bob"},
+            ]
+        return [{"id": "U3", "username": "carol", "discriminator": "0001"}]
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="reactions",
+            params={
+                "channelId": "channel:987654321",
+                "messageId": "discord-message-1",
+                "limit": 2,
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-reactions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "reactions": [
+            {
+                "emoji": {"id": None, "name": "\u2705", "raw": "\u2705"},
+                "count": 2,
+                "users": [
+                    {"id": "U1", "username": "alice", "tag": "alice#1234"},
+                    {"id": "U2", "username": "bob", "tag": "bob"},
+                ],
+            },
+            {
+                "emoji": {"id": "123", "name": "party_blob", "raw": "party_blob:123"},
+                "count": 1,
+                "users": [
+                    {"id": "U3", "username": "carol", "tag": "carol#0001"},
+                ],
+            },
+        ],
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/987654321/messages/discord-message-1",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/%E2%9C%85?limit=2"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/party_blob%3A123?limit=2"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-provider-options"
