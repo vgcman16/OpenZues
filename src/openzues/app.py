@@ -2199,6 +2199,7 @@ def create_app(
         thread_id: str | None = None,
         bootstrap_context_mode: str | None = None,
         bootstrap_context_run_kind: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> dict[str, object]:
         del (
             thinking,
@@ -2216,6 +2217,7 @@ def create_app(
             message,
             dashboard_view,
             session_key=session_key,
+            metadata=metadata,
         )
         return {"runId": idempotency_key, "status": "ok"}
 
@@ -2228,6 +2230,7 @@ def create_app(
         deliver: bool | None,
         timeout_ms: int | None,
         attachments: list[dict[str, object]],
+        image_order: list[str] | None = None,
         channel: str | None = None,
         to: str | None = None,
         node_id: str | None = None,
@@ -2252,6 +2255,11 @@ def create_app(
             timeout_ms=timeout_ms,
             channel=channel,
             to=to,
+            metadata=(
+                {"imageOrder": list(image_order)}
+                if image_order is not None
+                else None
+            ),
         )
 
     async def abort_gateway_chat_run(
@@ -2321,6 +2329,7 @@ def create_app(
             models_service=GatewayModelsService(list_instance_views=active_manager.list_views),
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
+            message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
             acp_spawn_service=RuntimeManagerAcpSpawnService(active_manager),
             sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
             subagent_thread_binder=GatewaySubagentThreadBinderRegistry(

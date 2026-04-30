@@ -64,12 +64,16 @@ from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
 from openzues.services.gateway_channels import GatewayChannelsService
 from openzues.services.gateway_commands import GatewayCommandsService
-from openzues.services.gateway_config import GatewayConfigService
+from openzues.services.gateway_config import (
+    GatewayConfigService,
+    _normalize_openclaw_channel_plugin_id,
+)
 from openzues.services.gateway_logs import GatewayLogsService, GatewayLogsUnavailableError
 from openzues.services.gateway_model_scan import GatewayModelScanService
 from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
+from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
 from openzues.services.github import GitHubService
@@ -86,12 +90,16 @@ from openzues.services.projects import ProjectService
 from openzues.services.recall import RecallService
 from openzues.services.remote_ops import RemoteOpsService
 from openzues.services.runtime_updates import RuntimeUpdateService
+from openzues.services.session_keys import DEFAULT_ACCOUNT_ID
 from openzues.services.setup import SetupService
 from openzues.services.swarm import SWARM_COLLABORATION_MODE
 from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 app = typer.Typer(help="OpenZues local control plane")
+_ROOT_FLAG_TERMINATOR = "--"
+_ROOT_BOOLEAN_FLAGS = {"--dev", "--no-color"}
+_ROOT_VALUE_FLAGS = {"--profile", "--log-level", "--container"}
 _ATTENTION_QUEUE_IDLE_REPLY = (
     "The attention queue is clear right now. There is no bounded move to fire."
 )
@@ -104,6 +112,38 @@ _BROWSER_SNAPSHOT_CHAR_LIMIT = 24_000
 _BROWSER_SNAPSHOT_LINE_LIMIT = 240
 _CHANNEL_LOG_DEFAULT_LIMIT = 200
 _CHANNEL_LOG_MAX_BYTES = 1_000_000
+_DEFAULT_SANDBOX_TOOL_ALLOW = [
+    "exec",
+    "process",
+    "read",
+    "write",
+    "edit",
+    "apply_patch",
+    "image",
+    "sessions_list",
+    "sessions_history",
+    "sessions_send",
+    "sessions_spawn",
+    "sessions_yield",
+    "subagents",
+    "session_status",
+]
+_DEFAULT_SANDBOX_TOOL_DENY = [
+    "browser",
+    "canvas",
+    "nodes",
+    "cron",
+    "gateway",
+    "discord",
+    "imessage",
+    "line",
+    "matrix",
+    "signal",
+    "slack",
+    "telegram",
+    "whatsapp",
+    "xmtp",
+]
 _AcpClientRunner = Callable[[AcpClientSpawnPlan], int | None]
 _acp_client_runner: _AcpClientRunner | None = None
 _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
@@ -132,6 +172,13 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "chatTypes": ["direct", "group"],
         "reply": True,
         "media": True,
+    },
+    "zalo": {
+        "chatTypes": ["direct", "group"],
+        "media": True,
+        "reactions": False,
+        "polls": False,
+        "threads": False,
     },
 }
 _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
@@ -360,6 +407,36 @@ _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
 _WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
 
 
+def _is_root_value_token(arg: str | None) -> bool:
+    if not arg or arg == _ROOT_FLAG_TERMINATOR:
+        return False
+    if not arg.startswith("-"):
+        return True
+    return re.fullmatch(r"-\d+(?:\.\d+)?", arg) is not None
+
+
+def _consume_root_option_token(args: list[str], index: int) -> int:
+    try:
+        arg = args[index]
+    except IndexError:
+        return 0
+    if arg in _ROOT_BOOLEAN_FLAGS:
+        return 1
+    if (
+        arg.startswith("--profile=")
+        or arg.startswith("--log-level=")
+        or arg.startswith("--container=")
+    ):
+        return 1
+    if arg in _ROOT_VALUE_FLAGS:
+        try:
+            next_arg = args[index + 1]
+        except IndexError:
+            next_arg = None
+        return 2 if _is_root_value_token(next_arg) else 1
+    return 0
+
+
 def _coerce_int(value: object) -> int:
     return int(cast("int | str", value or 0))
 
@@ -445,6 +522,37 @@ hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
 setup_app.add_typer(setup_wizard_app, name="wizard")
+
+
+@app.callback()
+def root_callback(
+    dev: bool = typer.Option(
+        False,
+        "--dev",
+        help="Accept the OpenClaw development-mode root flag for CLI compatibility.",
+    ),
+    no_color: bool = typer.Option(
+        False,
+        "--no-color",
+        help="Accept the OpenClaw no-color root flag for CLI compatibility.",
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Accept an OpenClaw profile name for CLI compatibility.",
+    ),
+    log_level: str | None = typer.Option(
+        None,
+        "--log-level",
+        help="Accept an OpenClaw log-level value for CLI compatibility.",
+    ),
+    container: str | None = typer.Option(
+        None,
+        "--container",
+        help="Accept an OpenClaw container target for CLI compatibility.",
+    ),
+) -> None:
+    del dev, no_color, profile, log_level, container
 
 
 def _runtime_settings() -> Settings:
@@ -679,6 +787,32 @@ async def _build_status_security_audit_payload(
     return _build_status_security_audit_unavailable_payload()
 
 
+def _build_status_gateway_service_payload() -> dict[str, object]:
+    return {
+        "label": "OpenZues gateway service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed gateway service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+
+
+def _build_status_node_service_payload() -> dict[str, object]:
+    return {
+        "label": "OpenZues node service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed node service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+
+
 async def _build_status_runtime_sections(
     app_settings: Settings,
     *,
@@ -688,7 +822,10 @@ async def _build_status_runtime_sections(
     timeout_ms: int,
     services: object | None = None,
 ) -> dict[str, object]:
-    sections: dict[str, object] = {}
+    sections: dict[str, object] = {
+        "gatewayService": _build_status_gateway_service_payload(),
+        "nodeService": _build_status_node_service_payload(),
+    }
     if deep:
         try:
             sections["health"] = await _build_live_health_payload(
@@ -935,6 +1072,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         models_service=GatewayModelsService(list_instance_views=manager.list_views),
         send_channel_message_service=ops_mesh.send_direct_channel_message,
         send_channel_poll_service=ops_mesh.send_direct_channel_poll,
+        message_action_dispatcher=ops_mesh.dispatch_message_action,
         acp_spawn_service=RuntimeManagerAcpSpawnService(manager),
         sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
         subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
@@ -1787,10 +1925,33 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
     promotion_loop = payload.get("promotion_loop")
     if isinstance(promotion_loop, dict):
         typer.echo("learning: " + str(promotion_loop.get("summary") or ""))
-    for key in ("memory", "executors", "plugins", "delivery", "acp", "extras"):
+    for key in (
+        "memory",
+        "executors",
+        "plugins",
+        "delivery",
+        "security",
+        "shellCompletion",
+        "sandbox",
+        "gatewayHealth",
+        "memorySearch",
+        "bundledPluginRuntimeDependencies",
+        "startupChannelMaintenance",
+        "acp",
+        "extras",
+    ):
         section = payload.get(key)
         if isinstance(section, dict):
             typer.echo(f"{key}: " + str(section.get("summary") or ""))
+    session_locks = payload.get("session_locks")
+    if isinstance(session_locks, dict):
+        lines = session_locks.get("lines")
+        if isinstance(lines, list) and lines:
+            typer.echo("Session locks")
+            for line in lines:
+                typer.echo(str(line))
+        else:
+            typer.echo("Session locks: " + str(session_locks.get("summary") or ""))
     updates = payload.get("updates")
     if isinstance(updates, dict):
         typer.echo("updates: " + str(updates.get("summary") or ""))
@@ -1798,6 +1959,869 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
     if isinstance(warnings, list):
         for warning in warnings:
             typer.echo("warning: " + str(warning))
+
+
+def _sandbox_docker_available() -> bool:
+    docker_command = shutil.which("docker")
+    if docker_command is None:
+        return False
+    try:
+        result = subprocess.run(
+            [docker_command, "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _doctor_sandbox_docker_unavailable_warning(mode: str) -> str:
+    return "\n".join(
+        [
+            f'Sandbox mode is enabled (mode: "{mode}") but Docker is not available.',
+            "Docker is required for sandbox mode to function.",
+            "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
+            "",
+            "Options:",
+            "- Install Docker and restart the gateway",
+            "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
+        ]
+    )
+
+
+def _doctor_sandbox_warning_from_config(
+    config_service: GatewayConfigService | None,
+) -> str | None:
+    if config_service is None:
+        return None
+    sandbox_config = _doctor_sandbox_config_from_snapshot(config_service.build_snapshot())
+    if sandbox_config is None:
+        return None
+    mode = _doctor_sandbox_mode(sandbox_config.get("mode"))
+    if mode == "off":
+        return None
+    backend = _doctor_sandbox_backend(sandbox_config.get("backend"))
+    if backend != "docker":
+        return None
+    if _sandbox_docker_available():
+        return None
+    return _doctor_sandbox_docker_unavailable_warning(mode)
+
+
+def _doctor_sandbox_scope_warnings_from_config(
+    config_service: GatewayConfigService | None,
+) -> list[str]:
+    if config_service is None:
+        return []
+    return _doctor_sandbox_scope_warnings_from_snapshot(config_service.build_snapshot())
+
+
+def _doctor_sandbox_scope_warnings_from_snapshot(snapshot: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        defaults_config = agents_config.get("defaults")
+        default_sandbox = (
+            defaults_config.get("sandbox")
+            if isinstance(defaults_config, dict)
+            else None
+        )
+        default_scope = (
+            default_sandbox.get("scope")
+            if isinstance(default_sandbox, dict)
+            else None
+        )
+        raw_agents = agents_config.get("list")
+        if not isinstance(raw_agents, list):
+            continue
+        for raw_agent in raw_agents:
+            if not isinstance(raw_agent, dict):
+                continue
+            agent_sandbox = raw_agent.get("sandbox")
+            if not isinstance(agent_sandbox, dict):
+                continue
+            scope = _doctor_sandbox_scope(
+                agent_sandbox.get("scope") or default_scope,
+                per_session=agent_sandbox.get("perSession"),
+            )
+            if scope != "shared":
+                continue
+            overrides = [
+                key
+                for key in ("docker", "browser", "prune")
+                if isinstance(agent_sandbox.get(key), dict) and agent_sandbox.get(key)
+            ]
+            if not overrides:
+                continue
+            agent_id = str(raw_agent.get("id") or "").strip()
+            warnings.append(
+                "\n".join(
+                    [
+                        f'- agents.list (id "{agent_id}") sandbox '
+                        f'{"/".join(overrides)} overrides ignored.',
+                        '  scope resolves to "shared".',
+                    ]
+                )
+            )
+    return warnings
+
+
+def _with_doctor_sandbox_warnings(
+    payload: dict[str, object],
+    config_service: GatewayConfigService | None,
+) -> dict[str, object]:
+    warnings_to_add = [
+        warning
+        for warning in (
+            _doctor_sandbox_warning_from_config(config_service),
+            *_doctor_sandbox_scope_warnings_from_config(config_service),
+        )
+        if warning
+    ]
+    if not warnings_to_add:
+        return payload
+    next_payload = dict(payload)
+    existing = next_payload.get("warnings")
+    if isinstance(existing, list):
+        warnings = list(existing)
+    elif existing is None:
+        warnings = []
+    else:
+        warnings = [existing]
+    existing_warnings = {str(item) for item in warnings}
+    for warning in warnings_to_add:
+        if warning in existing_warnings:
+            continue
+        warnings.append(warning)
+        existing_warnings.add(warning)
+    next_payload["warnings"] = warnings
+    return next_payload
+
+
+def _build_doctor_sandbox_payload(config_service: object | None) -> dict[str, object]:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for sandbox doctor checks.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:sandbox",
+            "repairAvailable": False,
+            "mode": "off",
+            "backend": "docker",
+            "dockerAvailable": None,
+            "warnings": [],
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "status": "unavailable",
+            "summary": f"Gateway config could not be read: {exc}",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:sandbox",
+            "repairAvailable": False,
+            "mode": "off",
+            "backend": "docker",
+            "dockerAvailable": None,
+            "warnings": [],
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    sandbox_config = _doctor_sandbox_config_from_snapshot(snapshot)
+    mode = _doctor_sandbox_mode(
+        sandbox_config.get("mode") if isinstance(sandbox_config, dict) else None
+    )
+    backend = _doctor_sandbox_backend(
+        sandbox_config.get("backend") if isinstance(sandbox_config, dict) else None
+    )
+    scope_warnings = _doctor_sandbox_scope_warnings_from_snapshot(snapshot)
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:sandbox",
+        "repairAvailable": False,
+        "mode": mode,
+        "backend": backend,
+        "warnings": scope_warnings,
+    }
+    if mode == "off" or sandbox_config is None:
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "Sandbox mode is off.",
+            "dockerAvailable": None,
+        }
+    if backend != "docker":
+        warning = None
+        browser_config = sandbox_config.get("browser")
+        if isinstance(browser_config, dict) and browser_config.get("enabled") is True:
+            warning = (
+                f'Sandbox backend "{backend}" selected. Docker browser health checks are '
+                "skipped; browser sandbox currently requires the docker backend."
+            )
+        warnings = [*scope_warnings, warning] if warning else scope_warnings
+        return {
+            **base_payload,
+            "status": "warn" if warning else "ok",
+            "summary": warning or f'Sandbox backend "{backend}" selected.',
+            "dockerAvailable": None,
+            "warnings": warnings,
+        }
+    docker_available = _sandbox_docker_available()
+    if not docker_available:
+        warning = _doctor_sandbox_docker_unavailable_warning(mode)
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f'Sandbox mode is enabled (mode: "{mode}") but Docker is not available.',
+            "dockerAvailable": False,
+            "warnings": [*scope_warnings, warning],
+        }
+    return {
+        **base_payload,
+        "status": "ok",
+        "summary": f'Sandbox Docker backend is available for mode "{mode}".',
+        "dockerAvailable": True,
+    }
+
+
+def _with_doctor_sandbox_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["sandbox"] = _build_doctor_sandbox_payload(config_service)
+    return next_payload
+
+
+_SESSION_LOCK_STALE_SECONDS = 30 * 60
+
+
+def _doctor_session_lock_payload(data_dir: Path) -> dict[str, object] | None:
+    lock_paths = sorted((data_dir / "agents").glob("*/sessions/*.jsonl.lock"))
+    if not lock_paths:
+        return None
+    locks = [_doctor_session_lock_record(lock_path) for lock_path in lock_paths]
+    stale_count = sum(1 for lock in locks if lock.get("stale") is True)
+    lines = [
+        f"- Found {len(locks)} session lock file{'s' if len(locks) != 1 else ''}.",
+        *[_doctor_session_lock_line(lock) for lock in locks],
+    ]
+    if stale_count:
+        lines.append(f"- {stale_count} lock file{'s are' if stale_count != 1 else ' is'} stale.")
+        lines.append("- Remove stale lock files only after confirming no writer owns them.")
+    return {
+        "summary": lines[0][2:],
+        "count": len(locks),
+        "staleCount": stale_count,
+        "locks": locks,
+        "lines": lines,
+    }
+
+
+def _doctor_session_lock_record(lock_path: Path) -> dict[str, object]:
+    raw_payload: object = {}
+    try:
+        raw_payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw_payload = {}
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    pid = _doctor_session_lock_pid(payload.get("pid"))
+    age_seconds = _doctor_session_lock_age_seconds(payload.get("createdAt"))
+    pid_alive = _doctor_session_lock_pid_alive(pid)
+    stale_reasons: list[str] = []
+    if pid is None:
+        stale_reasons.append("missing pid")
+    elif not pid_alive:
+        stale_reasons.append("dead pid")
+    if age_seconds is None:
+        stale_reasons.append("unknown age")
+    elif age_seconds >= _SESSION_LOCK_STALE_SECONDS:
+        stale_reasons.append("old")
+    return {
+        "path": str(lock_path),
+        "pid": pid,
+        "pidAlive": pid_alive,
+        "ageSeconds": age_seconds,
+        "stale": bool(stale_reasons),
+        "staleReasons": stale_reasons,
+        "removed": False,
+    }
+
+
+def _doctor_session_lock_line(lock: dict[str, object]) -> str:
+    path = str(lock.get("path") or "")
+    pid = lock.get("pid")
+    if isinstance(pid, int):
+        pid_status = f"pid={pid} ({'alive' if lock.get('pidAlive') is True else 'dead'})"
+    else:
+        pid_status = "pid=missing"
+    age_status = f"age={_doctor_session_lock_age_label(lock.get('ageSeconds'))}"
+    raw_stale_reasons = lock.get("staleReasons")
+    stale_reasons = raw_stale_reasons if isinstance(raw_stale_reasons, list) else ["unknown"]
+    stale_status = (
+        "stale=yes (" + ", ".join(str(reason) for reason in stale_reasons or ["unknown"]) + ")"
+        if lock.get("stale") is True
+        else "stale=no"
+    )
+    return f"- {path} {pid_status} {age_status} {stale_status}"
+
+
+def _doctor_session_lock_pid(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if not isinstance(value, str):
+        return None
+    try:
+        pid = int(value)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _doctor_session_lock_pid_alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    if pid == os.getpid():
+        return True
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        output = (result.stdout or "").strip().lower()
+        return result.returncode == 0 and str(pid) in output and "no tasks" not in output
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _doctor_session_lock_age_seconds(value: object) -> int | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        created_at = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - created_at.astimezone(UTC)
+    return max(0, int(age.total_seconds()))
+
+
+def _doctor_session_lock_age_label(value: object) -> str:
+    if not isinstance(value, int):
+        return "unknown"
+    if value < 60:
+        return f"{value}s"
+    minutes, seconds = divmod(value, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds}s"
+    hours, remaining_minutes = divmod(minutes, 60)
+    return f"{hours}h{remaining_minutes}m"
+
+
+def _with_doctor_session_lock_health(
+    payload: dict[str, object],
+    data_dir: Path,
+) -> dict[str, object]:
+    session_locks = _doctor_session_lock_payload(data_dir)
+    if session_locks is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["session_locks"] = session_locks
+    return next_payload
+
+
+def _build_doctor_security_payload() -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "summary": (
+            "Security doctor contribution is not available from the native OpenZues "
+            "CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:security",
+        "repairAvailable": False,
+    }
+
+
+def _build_doctor_shell_completion_payload() -> dict[str, object]:
+    return {
+        "status": "partial",
+        "summary": (
+            "Typer shell completion is available, but the OpenClaw doctor repair flow "
+            "is not wired into the native OpenZues CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:shell-completion",
+        "repairAvailable": False,
+    }
+
+
+def _doctor_bundled_plugin_runtime_dependency_summary(
+    *,
+    missing: list[object],
+    conflicts: list[object],
+) -> str:
+    if missing and conflicts:
+        return "Bundled plugin runtime deps are missing and use conflicting versions."
+    if conflicts:
+        return "Bundled plugin runtime deps use conflicting versions."
+    if missing:
+        return "Bundled plugin runtime deps are missing."
+    return "Bundled plugin runtime deps are present."
+
+
+def _build_doctor_bundled_plugin_runtime_dependency_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            "status": "unavailable",
+            "summary": (
+                "Gateway config is unavailable for bundled plugin runtime dependency "
+                "checks."
+            ),
+            "source": "openzues-native",
+            "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+            "repairAvailable": False,
+            "missing": [],
+            "conflicts": [],
+            "diagnostics": [],
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "status": "unavailable",
+            "summary": f"Gateway config could not be read: {exc}",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+            "repairAvailable": False,
+            "missing": [],
+            "conflicts": [],
+            "diagnostics": [],
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    plugin_rows = _plugin_records_from_config_snapshot(snapshot)
+    runtime_payload, diagnostics = _build_plugin_runtime_dependency_doctor_payload(
+        list(plugin_rows)
+    )
+    raw_missing = runtime_payload.get("missing")
+    raw_conflicts = runtime_payload.get("conflicts")
+    missing = raw_missing if isinstance(raw_missing, list) else []
+    conflicts = raw_conflicts if isinstance(raw_conflicts, list) else []
+    return {
+        "status": "error" if missing or conflicts else "ok",
+        "summary": _doctor_bundled_plugin_runtime_dependency_summary(
+            missing=missing,
+            conflicts=conflicts,
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+        "repairAvailable": False,
+        "missing": missing,
+        "conflicts": conflicts,
+        "diagnostics": diagnostics,
+    }
+
+
+def _with_doctor_bundled_plugin_runtime_dependencies(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["bundledPluginRuntimeDependencies"] = (
+        _build_doctor_bundled_plugin_runtime_dependency_payload(config_service)
+    )
+    return next_payload
+
+
+def _collect_doctor_channel_status_warnings(
+    channel_status_payload: dict[str, object],
+) -> list[dict[str, object]]:
+    accounts_by_channel = channel_status_payload.get("channelAccounts")
+    if not isinstance(accounts_by_channel, dict):
+        return []
+    warnings: list[dict[str, object]] = []
+    for raw_channel, raw_accounts in accounts_by_channel.items():
+        channel = str(raw_channel or "").strip()
+        if not channel or not isinstance(raw_accounts, list):
+            continue
+        for raw_account in raw_accounts:
+            if not isinstance(raw_account, dict):
+                continue
+            probe = raw_account.get("probe")
+            if not isinstance(probe, dict):
+                continue
+            reason = _optional_cli_string(probe.get("reason"))
+            status = _optional_cli_string(probe.get("status"))
+            if reason == "native_provider_probe_unsupported" or status == "unsupported":
+                continue
+            is_issue = probe.get("ok") is False or status in {
+                "degraded",
+                "error",
+                "fail",
+                "failed",
+                "unavailable",
+                "warn",
+                "warning",
+            }
+            if not is_issue:
+                continue
+            account_id = _optional_cli_string(raw_account.get("accountId"))
+            if account_id is None:
+                account_id = _optional_cli_string(raw_account.get("account_id"))
+            message = (
+                _optional_cli_string(probe.get("summary"))
+                or _optional_cli_string(probe.get("error"))
+                or reason
+                or "Channel account probe is not ready."
+            )
+            warning: dict[str, object] = {
+                "channel": channel,
+                "accountId": account_id or DEFAULT_ACCOUNT_ID,
+                "status": status or "warn",
+                "message": message,
+            }
+            if reason is not None:
+                warning["reason"] = reason
+            fix = _optional_cli_string(probe.get("fix"))
+            if fix is not None:
+                warning["fix"] = fix
+            warnings.append(warning)
+    return warnings
+
+
+async def _build_doctor_gateway_health_payload(
+    app_settings: object,
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-health",
+        "repairAvailable": False,
+        "timeoutMs": 3000,
+        "channelProbeTimeoutMs": 5000,
+    }
+    try:
+        health_payload = await _build_live_health_payload(
+            cast(Settings, app_settings),
+            timeout_ms=3000,
+        )
+    except Exception as exc:  # pragma: no cover - defensive local runtime boundary
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": f"Gateway health probe is unavailable: {exc}",
+            "healthOk": False,
+            "health": None,
+            "channelWarnings": [],
+        }
+
+    health_ok = health_payload.get("ok") is True or health_payload.get("status") == "ok"
+    channel_status: dict[str, object] | None = None
+    channel_warnings: list[dict[str, object]] = []
+    if health_ok:
+        call = getattr(gateway_node_methods, "call", None)
+        if callable(call):
+            try:
+                raw_channel_status = await call(
+                    "channels.status",
+                    {"probe": True, "timeoutMs": 5000},
+                )
+            except Exception as exc:  # pragma: no cover - upstream ignores this branch
+                channel_status = {
+                    "status": "unavailable",
+                    "error": str(exc),
+                }
+            else:
+                if isinstance(raw_channel_status, dict):
+                    channel_status = raw_channel_status
+                    channel_warnings = _collect_doctor_channel_status_warnings(
+                        raw_channel_status
+                    )
+                else:
+                    channel_status = {
+                        "status": "unavailable",
+                        "error": "channels.status response was not an object",
+                    }
+        else:
+            channel_status = {
+                "status": "unavailable",
+                "reason": "native_gateway_method_runtime_unavailable",
+            }
+
+    if not health_ok:
+        status = "error"
+        summary = "Gateway health probe did not pass."
+    elif channel_warnings:
+        status = "warn"
+        summary = "Gateway health probe passed with channel warnings."
+    else:
+        status = "ok"
+        summary = "Gateway health probe passed."
+
+    payload: dict[str, object] = {
+        **base_payload,
+        "status": status,
+        "summary": summary,
+        "healthOk": health_ok,
+        "health": health_payload,
+        "channelWarnings": channel_warnings,
+    }
+    if channel_status is not None:
+        payload["channelStatus"] = channel_status
+    return payload
+
+
+async def _with_doctor_gateway_health_payload(
+    payload: dict[str, object],
+    app_settings: object,
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["gatewayHealth"] = await _build_doctor_gateway_health_payload(
+        app_settings,
+        gateway_node_methods,
+    )
+    return next_payload
+
+
+def _doctor_gateway_memory_probe_warning(probe: dict[str, object]) -> str | None:
+    if probe.get("checked") is not True or probe.get("ready") is True:
+        return None
+    error = _optional_cli_string(probe.get("error"))
+    if error is not None:
+        return f"Gateway memory probe for default agent is not ready: {error}"
+    return "Gateway memory probe for default agent is not ready."
+
+
+async def _build_doctor_gateway_memory_probe(
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    call = getattr(gateway_node_methods, "call", None)
+    if not callable(call):
+        return {"checked": False, "ready": False}
+    try:
+        payload = await call("doctor.memory.status", {})
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "checked": True,
+            "ready": False,
+            "error": f"gateway memory probe unavailable: {exc}",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "checked": True,
+            "ready": False,
+            "error": "gateway memory probe response was not an object",
+        }
+    embedding = payload.get("embedding")
+    embedding_payload = embedding if isinstance(embedding, dict) else {}
+    result: dict[str, object] = {
+        "checked": True,
+        "ready": embedding_payload.get("ok") is True,
+    }
+    agent_id = _optional_cli_string(payload.get("agentId"))
+    if agent_id is not None:
+        result["agentId"] = agent_id
+    provider = _optional_cli_string(embedding_payload.get("provider"))
+    if provider is not None:
+        result["provider"] = provider
+    error = _optional_cli_string(embedding_payload.get("error"))
+    if error is not None:
+        result["error"] = error
+    return result
+
+
+def _build_doctor_memory_search_payload(
+    gateway_memory_probe: dict[str, object],
+) -> dict[str, object]:
+    warning = _doctor_gateway_memory_probe_warning(gateway_memory_probe)
+    if gateway_memory_probe.get("checked") is not True:
+        status = "unavailable"
+        summary = "Gateway memory probe is unavailable."
+    elif gateway_memory_probe.get("ready") is True:
+        status = "ok"
+        summary = "Gateway memory probe reports embeddings are ready."
+    else:
+        status = "warn"
+        summary = warning or "Gateway memory probe for default agent is not ready."
+    warnings = [warning] if warning else []
+    return {
+        "status": status,
+        "summary": summary,
+        "source": "openzues-native",
+        "openClawContribution": "doctor:memory-search",
+        "repairAvailable": False,
+        "gatewayMemoryProbe": gateway_memory_probe,
+        "warnings": warnings,
+    }
+
+
+async def _with_doctor_memory_search_payload(
+    payload: dict[str, object],
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    probe = await _build_doctor_gateway_memory_probe(gateway_node_methods)
+    next_payload["memorySearch"] = _build_doctor_memory_search_payload(probe)
+    return next_payload
+
+
+def _doctor_config_snapshot(config_service: object | None) -> dict[str, object]:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {}
+    try:
+        snapshot = build_snapshot()
+    except Exception:
+        return {}
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+async def _build_doctor_startup_channel_maintenance_payload(
+    config_service: object | None,
+    maintenance_adapter: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-channel-maintenance",
+        "repairRequested": should_repair,
+        "trigger": "doctor-fix",
+        "logPrefix": "doctor",
+    }
+    if not should_repair:
+        return {
+            **base_payload,
+            "status": "skipped",
+            "summary": "Startup channel maintenance only runs during doctor --fix.",
+        }
+    run = getattr(maintenance_adapter, "run", None)
+    if not callable(run):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Channel startup maintenance runtime is unavailable.",
+        }
+    try:
+        result = await run(
+            config=_doctor_config_snapshot(config_service),
+            trigger="doctor-fix",
+            log_prefix="doctor",
+        )
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Channel startup maintenance failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    summary = _optional_cli_string(result_payload.get("summary")) or (
+        "Channel startup maintenance completed."
+    )
+    return {
+        **base_payload,
+        "status": "ok",
+        "summary": summary,
+        "result": result_payload,
+    }
+
+
+async def _with_doctor_startup_channel_maintenance_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    maintenance_adapter: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["startupChannelMaintenance"] = (
+        await _build_doctor_startup_channel_maintenance_payload(
+            config_service,
+            maintenance_adapter,
+            should_repair=should_repair,
+        )
+    )
+    return next_payload
+
+
+def _with_doctor_contribution_surfaces(payload: dict[str, object]) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload.setdefault("security", _build_doctor_security_payload())
+    next_payload.setdefault("shellCompletion", _build_doctor_shell_completion_payload())
+    return next_payload
+
+
+def _doctor_sandbox_config_from_snapshot(
+    snapshot: dict[str, Any],
+) -> dict[str, object] | None:
+    resolved: dict[str, object] = {}
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        defaults_config = agents_config.get("defaults")
+        if not isinstance(defaults_config, dict):
+            continue
+        sandbox_config = defaults_config.get("sandbox")
+        if isinstance(sandbox_config, dict):
+            resolved.update(sandbox_config)
+    if not resolved:
+        return None
+    return resolved
+
+
+def _doctor_agents_config_roots(snapshot: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    roots: list[dict[str, Any]] = []
+    gateway_config = snapshot.get("gateway")
+    if isinstance(gateway_config, dict):
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
+
+
+def _doctor_sandbox_mode(value: object) -> Literal["off", "non-main", "all"]:
+    text = str(value or "").strip()
+    if text in {"non-main", "all"}:
+        return cast(Literal["non-main", "all"], text)
+    return "off"
+
+
+def _doctor_sandbox_scope(
+    value: object,
+    *,
+    per_session: object = None,
+) -> Literal["shared", "session", "agent"]:
+    text = str(value or "").strip()
+    if text in {"shared", "session", "agent"}:
+        return cast(Literal["shared", "session", "agent"], text)
+    if isinstance(per_session, bool):
+        return "session" if per_session else "shared"
+    return "agent"
+
+
+def _doctor_sandbox_backend(value: object) -> str:
+    backend = str(value or "").strip()
+    return backend or "docker"
 
 
 def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> None:
@@ -5316,6 +6340,7 @@ async def _build_sandbox_explain_payload(
     session_key: str | None,
     agent_id: str | None,
 ) -> dict[str, object]:
+    config_snapshot = _gateway_config_snapshot_for_cli(services)
     resolved_agent_id = (
         _optional_cli_string(agent_id)
         or _agent_id_from_session_key(session_key)
@@ -5326,6 +6351,10 @@ async def _build_sandbox_explain_payload(
     )
     main_session_key = _main_session_key_for_agent(resolved_agent_id)
     metadata = await _sandbox_metadata_for_session(services, resolved_session_key)
+    config = _sandbox_explain_config_for_agent(
+        config_snapshot,
+        agent_id=resolved_agent_id,
+    )
     sandboxed = bool(metadata.get("sandboxed")) if metadata is not None else False
     sandbox_mode = (
         _optional_cli_string(metadata.get("sandboxMode"))
@@ -5338,19 +6367,43 @@ async def _build_sandbox_explain_payload(
         if metadata is not None
         else None
     )
+    metadata_scope = (
+        _optional_cli_string(metadata.get("sandboxScope"))
+        if metadata is not None
+        else None
+    )
+    config_mode = _sandbox_explain_mode(config.get("mode"))
+    config_scope = _sandbox_explain_scope(config.get("scope"))
+    config_workspace_access = _sandbox_explain_workspace_access(
+        config.get("workspaceAccess")
+    )
+    config_workspace_root = _optional_cli_string(config.get("workspaceRoot"))
+    if metadata is None:
+        sandboxed = config_mode == "all" or (
+            config_mode == "non-main"
+            and resolved_session_key.strip() != main_session_key.strip()
+        )
+    tool_policy = _sandbox_tool_policy_from_snapshot(
+        config_snapshot,
+        agent_id=resolved_agent_id,
+    )
     sandbox: dict[str, object] = {
-        "mode": sandbox_mode or ("workspace-write" if sandboxed else "off"),
-        "scope": "session",
-        "workspaceAccess": sandbox_mode or ("workspace-write" if sandboxed else "direct"),
-        "workspaceRoot": workspace_root,
+        "mode": sandbox_mode or config_mode,
+        "scope": metadata_scope or ("session" if metadata is not None else config_scope),
+        "workspaceAccess": (
+            sandbox_mode
+            or (
+                "workspace-write"
+                if metadata is not None and sandboxed
+                else config_workspace_access
+            )
+        ),
+        "workspaceRoot": workspace_root or config_workspace_root,
         "sessionIsSandboxed": sandboxed,
         "tools": {
-            "allow": [],
-            "deny": [],
-            "sources": {
-                "allow": {"source": "openzues-metadata"},
-                "deny": {"source": "openzues-metadata"},
-            },
+            "allow": tool_policy["allow"],
+            "deny": tool_policy["deny"],
+            "sources": tool_policy["sources"],
         },
     }
     if metadata is not None:
@@ -5377,17 +6430,7 @@ async def _build_sandbox_explain_payload(
             "allowFrom": {"global": None, "agent": None},
             "failures": [],
         },
-        "fixIt": [
-            "agents.defaults.sandbox.mode",
-            "agents.list[].sandbox.mode",
-            "tools.sandbox.tools.allow",
-            "tools.sandbox.tools.alsoAllow",
-            "tools.sandbox.tools.deny",
-            "agents.list[].tools.sandbox.tools.allow",
-            "agents.list[].tools.sandbox.tools.alsoAllow",
-            "agents.list[].tools.sandbox.tools.deny",
-            "tools.elevated.enabled",
-        ],
+        "fixIt": _sandbox_explain_fix_it(sandbox_mode or config_mode),
     }
 
 
@@ -5408,6 +6451,307 @@ async def _sandbox_metadata_for_session(
         metadata = row.get("metadata")
         return dict(metadata) if isinstance(metadata, dict) else None
     return None
+
+
+def _gateway_config_snapshot_for_cli(services: object) -> dict[str, Any]:
+    config_service = getattr(services, "gateway_config", None)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {}
+    snapshot = build_snapshot()
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _sandbox_explain_config_for_agent(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, object]:
+    resolved: dict[str, object] = {}
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        defaults_config = agents_config.get("defaults")
+        if isinstance(defaults_config, dict):
+            default_sandbox = defaults_config.get("sandbox")
+            if isinstance(default_sandbox, dict):
+                resolved.update(default_sandbox)
+        agent_config = _sandbox_explain_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        if isinstance(agent_config, dict):
+            agent_sandbox = agent_config.get("sandbox")
+            if isinstance(agent_sandbox, dict):
+                resolved.update(agent_sandbox)
+    return resolved
+
+
+def _sandbox_explain_agent_config_from_root(
+    agents_config: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, Any] | None:
+    raw_agents = agents_config.get("list")
+    if not isinstance(raw_agents, list):
+        return None
+    normalized_agent_id = _normalize_agent_id_for_cli(agent_id)
+    for raw_agent in raw_agents:
+        if not isinstance(raw_agent, dict):
+            continue
+        candidate_id = _optional_cli_string(raw_agent.get("id"))
+        if (
+            candidate_id is not None
+            and _normalize_agent_id_for_cli(candidate_id) == normalized_agent_id
+        ):
+            return raw_agent
+    return None
+
+
+def _sandbox_explain_mode(value: object) -> Literal["off", "non-main", "all"]:
+    return _doctor_sandbox_mode(value)
+
+
+def _sandbox_explain_scope(value: object) -> str:
+    text = _optional_cli_string(value)
+    if text in {"session", "agent", "shared"}:
+        return text
+    return "agent"
+
+
+def _sandbox_explain_workspace_access(value: object) -> str:
+    text = _optional_cli_string(value)
+    if text in {"none", "ro", "rw"}:
+        return text
+    return "none"
+
+
+def _sandbox_tool_policy_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, object]:
+    agent_tools = _sandbox_agent_tools_config(snapshot, agent_id=agent_id)
+    global_tools = _sandbox_global_tools_config(snapshot)
+    allow_values, allow_source, allow_defined = _sandbox_pick_tool_list(
+        agent_tools,
+        global_tools,
+        key="allow",
+        agent_source_key="agents.list[].tools.sandbox.tools.allow",
+        global_source_key="tools.sandbox.tools.allow",
+        default_source_key="tools.sandbox.tools.allow",
+    )
+    also_allow_values, also_allow_source = _sandbox_pick_optional_tool_list(
+        agent_tools,
+        global_tools,
+        key="alsoAllow",
+        agent_source_key="agents.list[].tools.sandbox.tools.alsoAllow",
+        global_source_key="tools.sandbox.tools.alsoAllow",
+    )
+    deny_values, deny_source, deny_defined = _sandbox_pick_tool_list(
+        agent_tools,
+        global_tools,
+        key="deny",
+        agent_source_key="agents.list[].tools.sandbox.tools.deny",
+        global_source_key="tools.sandbox.tools.deny",
+        default_source_key="tools.sandbox.tools.deny",
+    )
+    allow = _sandbox_merge_allowlist(allow_values, also_allow_values)
+    explicit_allow = _dedupe_cli_strings(
+        [*(allow_values or []), *(also_allow_values or [])]
+    )
+    deny = (
+        list(deny_values or [])
+        if deny_defined
+        else _sandbox_filter_default_deny(explicit_allow)
+    )
+    allow = _sandbox_expand_allow(allow, deny)
+    return {
+        "allow": allow,
+        "deny": deny,
+        "sources": {
+            "allow": _sandbox_pick_allow_source(
+                allow_source=allow_source,
+                allow_defined=allow_defined,
+                also_allow_source=also_allow_source,
+            ),
+            "deny": deny_source,
+        },
+    }
+
+
+def _sandbox_global_tools_config(snapshot: dict[str, Any]) -> dict[str, object]:
+    tools = snapshot.get("tools")
+    if not isinstance(tools, dict):
+        return {}
+    sandbox = tools.get("sandbox")
+    if not isinstance(sandbox, dict):
+        return {}
+    sandbox_tools = sandbox.get("tools")
+    return dict(sandbox_tools) if isinstance(sandbox_tools, dict) else {}
+
+
+def _sandbox_agent_tools_config(
+    snapshot: dict[str, Any],
+    *,
+    agent_id: str,
+) -> dict[str, object]:
+    for agents_config in _doctor_agents_config_roots(snapshot):
+        agent_config = _sandbox_explain_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        if not isinstance(agent_config, dict):
+            continue
+        tools = agent_config.get("tools")
+        if not isinstance(tools, dict):
+            continue
+        sandbox = tools.get("sandbox")
+        if not isinstance(sandbox, dict):
+            continue
+        sandbox_tools = sandbox.get("tools")
+        if isinstance(sandbox_tools, dict):
+            return dict(sandbox_tools)
+    return {}
+
+
+def _sandbox_pick_tool_list(
+    agent_tools: dict[str, object],
+    global_tools: dict[str, object],
+    *,
+    key: str,
+    agent_source_key: str,
+    global_source_key: str,
+    default_source_key: str,
+) -> tuple[list[str] | None, dict[str, str], bool]:
+    agent_values = _string_list_or_none(agent_tools.get(key))
+    if agent_values is not None:
+        return agent_values, {"source": "agent", "key": agent_source_key}, True
+    global_values = _string_list_or_none(global_tools.get(key))
+    if global_values is not None:
+        return global_values, {"source": "global", "key": global_source_key}, True
+    return None, {"source": "default", "key": default_source_key}, False
+
+
+def _sandbox_pick_optional_tool_list(
+    agent_tools: dict[str, object],
+    global_tools: dict[str, object],
+    *,
+    key: str,
+    agent_source_key: str,
+    global_source_key: str,
+) -> tuple[list[str] | None, dict[str, str] | None]:
+    agent_values = _string_list_or_none(agent_tools.get(key))
+    if agent_values is not None:
+        return agent_values, {"source": "agent", "key": agent_source_key}
+    global_values = _string_list_or_none(global_tools.get(key))
+    if global_values is not None:
+        return global_values, {"source": "global", "key": global_source_key}
+    return None, None
+
+
+def _sandbox_merge_allowlist(
+    base: list[str] | None,
+    extra: list[str] | None,
+) -> list[str]:
+    if base is not None:
+        if not base:
+            return []
+        if not extra:
+            return list(base)
+        return _dedupe_cli_strings([*base, *extra])
+    if extra:
+        return _dedupe_cli_strings([*_DEFAULT_SANDBOX_TOOL_ALLOW, *extra])
+    return list(_DEFAULT_SANDBOX_TOOL_ALLOW)
+
+
+def _sandbox_filter_default_deny(explicit_allow: list[str]) -> list[str]:
+    if not explicit_allow:
+        return list(_DEFAULT_SANDBOX_TOOL_DENY)
+    allowed = {_normalize_tool_name_for_cli(value) for value in explicit_allow}
+    return [
+        tool
+        for tool in _DEFAULT_SANDBOX_TOOL_DENY
+        if _normalize_tool_name_for_cli(tool) not in allowed
+    ]
+
+
+def _sandbox_expand_allow(allow: list[str], deny: list[str]) -> list[str]:
+    expanded = list(allow)
+    deny_names = {_normalize_tool_name_for_cli(value) for value in deny}
+    allow_names = {_normalize_tool_name_for_cli(value) for value in expanded}
+    if expanded and "image" not in deny_names and "image" not in allow_names:
+        expanded.append("image")
+    return expanded
+
+
+def _sandbox_pick_allow_source(
+    *,
+    allow_source: dict[str, str],
+    allow_defined: bool,
+    also_allow_source: dict[str, str] | None,
+) -> dict[str, str]:
+    if allow_defined and allow_source.get("source") == "agent":
+        return allow_source
+    if also_allow_source is not None and also_allow_source.get("source") == "agent":
+        return also_allow_source
+    if allow_defined and allow_source.get("source") == "global":
+        return allow_source
+    if also_allow_source is not None and also_allow_source.get("source") == "global":
+        return also_allow_source
+    return allow_source
+
+
+def _sandbox_explain_fix_it(mode: str) -> list[str]:
+    fix_it: list[str] = []
+    if mode != "off":
+        fix_it.extend(
+            [
+                "agents.defaults.sandbox.mode=off",
+                "agents.list[].sandbox.mode=off",
+            ]
+        )
+    fix_it.extend(
+        [
+            "agents.defaults.sandbox.mode",
+            "agents.list[].sandbox.mode",
+            "tools.sandbox.tools.allow",
+            "tools.sandbox.tools.alsoAllow",
+            "tools.sandbox.tools.deny",
+            "agents.list[].tools.sandbox.tools.allow",
+            "agents.list[].tools.sandbox.tools.alsoAllow",
+            "agents.list[].tools.sandbox.tools.deny",
+            "tools.elevated.enabled",
+        ]
+    )
+    return fix_it
+
+
+def _string_list_or_none(value: object) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    return [
+        item
+        for item in (_optional_cli_string(raw_item) for raw_item in value)
+        if item is not None
+    ]
+
+
+def _dedupe_cli_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalize_agent_id_for_cli(value: str) -> str:
+    return value.strip().lower() or "main"
+
+
+def _normalize_tool_name_for_cli(value: str) -> str:
+    return value.strip().lower().replace("-", "_")
 
 
 def _agent_id_from_session_key(session_key: str | None) -> str | None:
@@ -5591,6 +6935,10 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         if isinstance(plugin, dict)
         for notice in _plugin_compatibility_notices(plugin)
     ]
+    runtime_dependency_payload, runtime_dependency_diagnostics = (
+        _build_plugin_runtime_dependency_doctor_payload(plugin_rows)
+    )
+    diagnostics.extend(runtime_dependency_diagnostics)
     issue_count = len(errors) + len(diagnostics) + len(compatibility)
     return {
         "ok": issue_count == 0,
@@ -5603,6 +6951,7 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "errors": errors,
         "diagnostics": diagnostics,
         "compatibility": compatibility,
+        "runtimeDependencies": runtime_dependency_payload,
         "docs": "https://docs.openclaw.ai/plugin",
     }
 
@@ -6742,20 +8091,32 @@ async def _build_plugin_inspect_payload(
     inspect_all: bool,
 ) -> dict[str, object] | list[dict[str, object]]:
     inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    runtime_specs = _plugin_runtime_specs_from_services(services)
     plugins = inventory.get("plugins")
     plugin_rows = [plugin for plugin in plugins if isinstance(plugin, dict)] if isinstance(
         plugins,
         list,
     ) else []
     if inspect_all:
-        return [_plugin_inspect_report(plugin) for plugin in plugin_rows]
+        return [
+            _plugin_inspect_report(
+                plugin,
+                runtime_specs=runtime_specs,
+                policy=_plugin_inspect_policy_from_services(services, plugin),
+            )
+            for plugin in plugin_rows
+        ]
     normalized_id = _optional_cli_string(plugin_id)
     if normalized_id is None:
         raise ValueError("Provide a plugin id or use --all.")
     plugin = _find_plugin_record(plugin_rows, normalized_id)
     if plugin is None:
         raise KeyError(normalized_id)
-    return _plugin_inspect_report(plugin)
+    return _plugin_inspect_report(
+        plugin,
+        runtime_specs=runtime_specs,
+        policy=_plugin_inspect_policy_from_services(services, plugin),
+    )
 
 
 def _find_plugin_record(
@@ -6771,7 +8132,12 @@ def _find_plugin_record(
     return None
 
 
-def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
+def _plugin_inspect_report(
+    plugin: dict[str, object],
+    *,
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
+    policy: dict[str, object] | None = None,
+) -> dict[str, object]:
     capabilities = plugin.get("capabilities")
     capability_ids = [
         str(capability)
@@ -6779,29 +8145,201 @@ def _plugin_inspect_report(plugin: dict[str, object]) -> dict[str, object]:
         if str(capability).strip()
     ]
     install = plugin.get("install")
-    return {
-        "plugin": dict(plugin),
+    runtime_tool_entries = _plugin_runtime_tool_entries(plugin, runtime_specs)
+    runtime_tools = _plugin_runtime_tool_names(runtime_tool_entries)
+    runtime_dependencies = _plugin_record_runtime_dependencies(plugin)
+    inspected_plugin = dict(plugin)
+    if runtime_tools:
+        inspected_plugin["imported"] = True
+    report: dict[str, object] = {
+        "plugin": inspected_plugin,
         "shape": _plugin_inspect_shape(plugin),
-        "capabilityMode": "inventory",
-        "capabilities": [{"kind": "inventory", "ids": capability_ids}]
-        if capability_ids
-        else [],
+        "capabilityMode": "runtime" if runtime_tools else "inventory",
+        "capabilities": _plugin_inspect_capabilities(
+            capability_ids,
+            runtime_tools=runtime_tools,
+        ),
         "compatibility": _plugin_compatibility_notices(plugin),
-        "bundleCapabilities": [],
+        "bundleCapabilities": _plugin_record_string_list(plugin, "bundleCapabilities"),
         "typedHooks": [],
         "customHooks": [],
-        "tools": [],
-        "commands": [],
-        "cliCommands": [],
-        "services": [],
-        "gatewayMethods": [],
+        "tools": runtime_tool_entries,
+        "commands": _plugin_record_string_list(plugin, "commands"),
+        "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
+        "services": _plugin_record_string_list(plugin, "services"),
+        "gatewayMethods": _plugin_record_string_list(plugin, "gatewayMethods"),
         "mcpServers": [],
         "lspServers": [],
-        "httpRouteCount": 0,
-        "policy": {},
+        "httpRouteCount": _plugin_record_http_route_count(plugin),
+        "policy": dict(policy) if policy is not None else {},
         "diagnostics": [],
         "install": dict(install) if isinstance(install, dict) else None,
     }
+    if runtime_dependencies:
+        report["runtimeDependencies"] = runtime_dependencies
+    return report
+
+
+def _plugin_record_string_list(plugin: dict[str, object], key: str) -> list[str]:
+    value = plugin.get(key)
+    if not isinstance(value, list):
+        return []
+    return _dedupe_cli_strings(
+        [
+            text
+            for item in value
+            if (text := _optional_cli_string(item)) is not None
+        ]
+    )
+
+
+def _plugin_record_http_route_count(plugin: dict[str, object]) -> int:
+    for key in ("httpRoutes", "httpRouteCount"):
+        value = plugin.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, list):
+            return len(value)
+    return 0
+
+
+def _plugin_runtime_specs_from_services(
+    services: object,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    for candidate in (
+        getattr(services, "plugin_runtime_service", None),
+        getattr(services, "gateway_plugin_runtime", None),
+        getattr(services, "plugin_runtime", None),
+        getattr(getattr(services, "gateway_node_methods", None), "_plugin_runtime_service", None),
+    ):
+        catalog_specs = getattr(candidate, "catalog_specs", None)
+        if not callable(catalog_specs):
+            continue
+        specs = catalog_specs(include_owner_only=True)
+        if isinstance(specs, tuple):
+            return tuple(
+                spec
+                for spec in specs
+                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
+            )
+        if isinstance(specs, list):
+            return tuple(
+                spec
+                for spec in specs
+                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
+            )
+    return ()
+
+
+def _plugin_runtime_tool_entries(
+    plugin: dict[str, object],
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...],
+) -> list[dict[str, object]]:
+    plugin_id = _optional_cli_string(plugin.get("id"))
+    plugin_name = _optional_cli_string(plugin.get("name"))
+    entries: list[tuple[str, bool]] = []
+    seen: set[tuple[str, bool]] = set()
+    for spec in runtime_specs:
+        if not _plugin_runtime_spec_matches_plugin(
+            spec,
+            plugin_id=plugin_id,
+            plugin_name=plugin_name,
+        ):
+            continue
+        tool = _optional_cli_string(spec.tool)
+        if tool is None:
+            continue
+        key = (tool, spec.optional)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(key)
+    return [
+        {"names": [tool], "optional": optional}
+        for tool, optional in sorted(entries, key=lambda item: item[0])
+    ]
+
+
+def _plugin_runtime_tool_names(runtime_tool_entries: list[dict[str, object]]) -> list[str]:
+    names: list[str] = []
+    for entry in runtime_tool_entries:
+        raw_names = entry.get("names")
+        if not isinstance(raw_names, list):
+            continue
+        names.extend(
+            text
+            for item in raw_names
+            if (text := _optional_cli_string(item)) is not None
+        )
+    return sorted(_dedupe_cli_strings(names))
+
+
+def _plugin_runtime_spec_matches_plugin(
+    spec: GatewayPluginRuntimeExecutorSpec,
+    *,
+    plugin_id: str | None,
+    plugin_name: str | None,
+) -> bool:
+    candidate_ids = {
+        value.strip().lower()
+        for value in (plugin_id, plugin_name)
+        if value is not None and value.strip()
+    }
+    if not candidate_ids:
+        return False
+    return any(
+        candidate is not None and candidate.strip().lower() in candidate_ids
+        for candidate in (spec.plugin_id, spec.plugin_name)
+    )
+
+
+def _plugin_inspect_capabilities(
+    capability_ids: list[str],
+    *,
+    runtime_tools: list[str],
+) -> list[dict[str, object]]:
+    if runtime_tools:
+        return [{"kind": "runtime-tools", "ids": runtime_tools}]
+    if capability_ids:
+        return [{"kind": "inventory", "ids": capability_ids}]
+    return []
+
+
+def _plugin_inspect_policy_from_services(
+    services: object,
+    plugin: dict[str, object],
+) -> dict[str, object]:
+    plugin_id = _optional_cli_string(plugin.get("id"))
+    if plugin_id is None:
+        return {}
+    snapshot = _gateway_config_snapshot_for_cli(services)
+    plugins = snapshot.get("plugins")
+    if not isinstance(plugins, dict):
+        return {}
+    entries = plugins.get("entries")
+    if not isinstance(entries, dict):
+        return {}
+    entry = entries.get(plugin_id)
+    if not isinstance(entry, dict):
+        return {}
+    policy: dict[str, object] = {}
+    hooks = entry.get("hooks")
+    if isinstance(hooks, dict) and isinstance(hooks.get("allowPromptInjection"), bool):
+        policy["allowPromptInjection"] = hooks["allowPromptInjection"]
+    subagent = entry.get("subagent")
+    if isinstance(subagent, dict):
+        if isinstance(subagent.get("allowModelOverride"), bool):
+            policy["allowModelOverride"] = subagent["allowModelOverride"]
+        allowed_models = _string_list_or_none(subagent.get("allowedModels"))
+        if allowed_models is not None:
+            policy["allowedModels"] = allowed_models
+        if isinstance(subagent.get("hasAllowedModelsConfig"), bool):
+            policy["hasAllowedModelsConfig"] = subagent["hasAllowedModelsConfig"]
+        elif allowed_models is not None:
+            policy["hasAllowedModelsConfig"] = True
+    return policy
 
 
 def _plugin_inspect_shape(plugin: dict[str, object]) -> str:
@@ -6899,12 +8437,455 @@ def _plugin_record_from_deck_item(
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
+    for key in (
+        "commands",
+        "cliCommands",
+        "services",
+        "gatewayMethods",
+        "bundleCapabilities",
+    ):
+        values = _plugin_record_string_list(item, key)
+        if values:
+            record[key] = values
+    route_count = _plugin_record_http_route_count(item)
+    if route_count:
+        record["httpRoutes"] = route_count
     return record
+
+
+_OPENCLAW_PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
+_OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
+    "tools": "tool",
+    "speechProviders": "speech",
+    "realtimeTranscriptionProviders": "realtime-transcription",
+    "realtimeVoiceProviders": "realtime-voice",
+    "mediaUnderstandingProviders": "media-understanding",
+    "imageGenerationProviders": "image-generation",
+    "videoGenerationProviders": "video-generation",
+    "musicGenerationProviders": "music-generation",
+    "webFetchProviders": "web-fetch",
+    "webSearchProviders": "web-search",
+    "memoryEmbeddingProviders": "memory-embedding",
+}
+
+
+@dataclass
+class _PluginRuntimeDependencyBucket:
+    plugin_ids: set[str]
+    install_roots: dict[str, set[str]]
+
+
+def _plugin_manifest_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _read_cli_json_object(path: Path) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _plugin_manifest_contracts(manifest: dict[str, object]) -> dict[str, object]:
+    raw_contracts = manifest.get("contracts")
+    contracts = raw_contracts if isinstance(raw_contracts, dict) else {}
+    result: dict[str, object] = {}
+    for key in _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS:
+        values = _plugin_manifest_string_list(contracts.get(key))
+        if values:
+            result[key] = values
+    return result
+
+
+def _plugin_manifest_capabilities(
+    manifest: dict[str, object],
+    contracts: dict[str, object],
+) -> list[str]:
+    capabilities: list[str] = []
+    for key, label in _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS.items():
+        values = contracts.get(key)
+        if isinstance(values, list):
+            capabilities.extend(f"{label}:{value}" for value in values)
+    for key, label in (
+        ("channels", "channel"),
+        ("providers", "text-inference"),
+        ("cliBackends", "cli-backend"),
+        ("skills", "skill"),
+    ):
+        capabilities.extend(
+            f"{label}:{value}" for value in _plugin_manifest_string_list(manifest.get(key))
+        )
+    seen: set[str] = set()
+    unique: list[str] = []
+    for capability in capabilities:
+        if capability in seen:
+            continue
+        seen.add(capability)
+        unique.append(capability)
+    return unique
+
+
+def _plugin_manifest_has_enabled_channel(
+    manifest: dict[str, object],
+    config_snapshot: dict[str, object] | None,
+) -> bool:
+    if config_snapshot is None:
+        return False
+    raw_channels_config = config_snapshot.get("channels")
+    channels_config = raw_channels_config if isinstance(raw_channels_config, dict) else {}
+    if not channels_config:
+        return False
+    for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
+        normalized_channel = _normalize_openclaw_channel_plugin_id(channel_id)
+        if normalized_channel is None:
+            continue
+        channel_config = channels_config.get(normalized_channel)
+        if isinstance(channel_config, dict) and channel_config.get("enabled") is True:
+            return True
+    return False
+
+
+def _plugin_runtime_dependency_entries_from_package_json(
+    package_json: dict[str, object],
+) -> list[dict[str, object]]:
+    raw_runtime_deps: dict[str, object] = {}
+    for key in ("dependencies", "optionalDependencies"):
+        raw_value = package_json.get(key)
+        if isinstance(raw_value, dict):
+            raw_runtime_deps.update(raw_value)
+    entries: list[dict[str, object]] = []
+    for raw_name, raw_version in raw_runtime_deps.items():
+        name = _optional_cli_string(raw_name)
+        version = _optional_cli_string(raw_version)
+        if name is None or version is None:
+            continue
+        entries.append({"name": name, "version": version})
+    return sorted(entries, key=lambda entry: str(entry["name"]))
+
+
+def _is_openclaw_source_checkout_root(path: Path) -> bool:
+    return (
+        (path / ".git").exists()
+        and (path / "src").exists()
+        and (path / "extensions").exists()
+    )
+
+
+def _is_source_checkout_bundled_plugin_root(plugin_root: Path) -> bool:
+    extensions_dir = plugin_root.parent
+    return extensions_dir.name == "extensions" and _is_openclaw_source_checkout_root(
+        extensions_dir.parent
+    )
+
+
+def _plugin_runtime_dependency_install_root(plugin_root: Path) -> Path:
+    extensions_dir = plugin_root.parent
+    build_dir = extensions_dir.parent
+    if extensions_dir.name == "extensions" and build_dir.name in {"dist", "dist-runtime"}:
+        return build_dir.parent
+    return extensions_dir
+
+
+def _plugin_manifest_runtime_dependencies(
+    manifest_path: Path,
+) -> tuple[list[dict[str, object]], Path | None]:
+    plugin_root = manifest_path.parent
+    install_root = _plugin_runtime_dependency_install_root(plugin_root)
+    if _is_openclaw_source_checkout_root(install_root) or _is_source_checkout_bundled_plugin_root(
+        plugin_root
+    ):
+        return [], None
+    package_json = _read_cli_json_object(plugin_root / "package.json")
+    if package_json is None:
+        return [], None
+    return _plugin_runtime_dependency_entries_from_package_json(package_json), install_root
+
+
+def _plugin_record_runtime_dependencies(plugin: dict[str, object]) -> list[dict[str, object]]:
+    raw_dependencies = plugin.get("runtimeDependencies")
+    dependencies = raw_dependencies if isinstance(raw_dependencies, list) else []
+    result: list[dict[str, object]] = []
+    for raw_dependency in dependencies:
+        if not isinstance(raw_dependency, dict):
+            continue
+        name = _optional_cli_string(raw_dependency.get("name"))
+        version = _optional_cli_string(raw_dependency.get("version"))
+        if name is None or version is None:
+            continue
+        result.append({"name": name, "version": version})
+    return result
+
+
+def _dependency_sentinel_path(dep_name: str) -> Path | None:
+    parts = [part for part in dep_name.split("/") if part]
+    if not parts:
+        return None
+    return Path("node_modules", *parts, "package.json")
+
+
+def _dependency_sentinel_exists(install_root: str, dep_name: str) -> bool:
+    sentinel_path = _dependency_sentinel_path(dep_name)
+    if sentinel_path is None:
+        return False
+    return (Path(install_root) / sentinel_path).exists()
+
+
+def _build_plugin_runtime_dependency_doctor_payload(
+    plugin_rows: list[object],
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    version_map: dict[str, dict[str, _PluginRuntimeDependencyBucket]] = {}
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        if _optional_cli_string(plugin.get("status")) != "loaded":
+            continue
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        install_root = _optional_cli_string(plugin.get("runtimeDependencyInstallRoot"))
+        if plugin_id is None or install_root is None:
+            continue
+        for dependency in _plugin_record_runtime_dependencies(plugin):
+            name = _optional_cli_string(dependency.get("name"))
+            version = _optional_cli_string(dependency.get("version"))
+            if name is None or version is None:
+                continue
+            versions = version_map.setdefault(name, {})
+            bucket = versions.setdefault(
+                version,
+                _PluginRuntimeDependencyBucket(plugin_ids=set(), install_roots={}),
+            )
+            bucket.plugin_ids.add(plugin_id)
+            bucket.install_roots.setdefault(install_root, set()).add(plugin_id)
+
+    conflicts: list[dict[str, object]] = []
+    conflicted_names: set[str] = set()
+    for name in sorted(version_map):
+        versions = version_map[name]
+        if len(versions) <= 1:
+            continue
+        sorted_versions = sorted(versions)
+        conflicted_names.add(name)
+        conflicts.append(
+            {
+                "name": name,
+                "versions": sorted_versions,
+                "pluginIdsByVersion": {
+                    version: sorted(versions[version].plugin_ids)
+                    for version in sorted_versions
+                },
+            }
+        )
+
+    missing: list[dict[str, object]] = []
+    for name in sorted(version_map):
+        if name in conflicted_names:
+            continue
+        versions = version_map[name]
+        for version in sorted(versions):
+            bucket = versions[version]
+            for install_root in sorted(bucket.install_roots):
+                if _dependency_sentinel_exists(install_root, name):
+                    continue
+                missing.append(
+                    {
+                        "name": name,
+                        "version": version,
+                        "pluginIds": sorted(bucket.install_roots[install_root]),
+                        "installRoot": install_root,
+                        "spec": f"{name}@{version}",
+                    }
+                )
+
+    diagnostics: list[dict[str, object]] = []
+    if conflicts:
+        diagnostics.append(
+            {
+                "level": "error",
+                "category": "runtimeDependencies",
+                "code": "bundled_plugin_runtime_dependency_conflict",
+                "message": "Bundled plugin runtime deps use conflicting versions.",
+                "conflicts": conflicts,
+                "action": "Update bundled plugins and rerun openzues plugins doctor.",
+            }
+        )
+    if missing:
+        diagnostics.append(
+            {
+                "level": "error",
+                "category": "runtimeDependencies",
+                "code": "bundled_plugin_runtime_dependency_missing",
+                "message": "Bundled plugin runtime deps are missing.",
+                "missing": missing,
+                "action": "Fix: run openzues doctor --fix to install them.",
+            }
+        )
+    return {"missing": missing, "conflicts": conflicts}, diagnostics
+
+
+def _plugin_manifest_load_paths(plugins_config: dict[str, object]) -> list[Path]:
+    load = plugins_config.get("load")
+    load_payload = load if isinstance(load, dict) else {}
+    raw_paths = load_payload.get("paths")
+    paths = raw_paths if isinstance(raw_paths, list) else []
+    result: list[Path] = []
+    for raw_path in paths:
+        path_text = _optional_cli_string(raw_path)
+        if path_text is None:
+            continue
+        expanded = os.path.expandvars(os.path.expanduser(path_text))
+        try:
+            result.append(Path(expanded).resolve(strict=False))
+        except OSError:
+            result.append(Path(expanded))
+    return result
+
+
+def _plugin_manifest_path_for_load_path(load_path: Path) -> Path | None:
+    manifest_path = (
+        load_path
+        if load_path.name == _OPENCLAW_PLUGIN_MANIFEST_FILENAME
+        else load_path / _OPENCLAW_PLUGIN_MANIFEST_FILENAME
+    )
+    return manifest_path if manifest_path.is_file() else None
+
+
+def _plugin_manifest_status(
+    manifest: dict[str, object],
+    *,
+    plugin_id: str,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object] | None = None,
+) -> str:
+    if plugins_config.get("enabled") is False:
+        return "disabled"
+    deny = plugins_config.get("deny")
+    deny_values = {str(value) for value in deny} if isinstance(deny, list) else set()
+    if plugin_id in deny_values:
+        return "disabled"
+    entries = plugins_config.get("entries")
+    entry_records = entries if isinstance(entries, dict) else {}
+    entry = entry_records.get(plugin_id)
+    entry_payload = entry if isinstance(entry, dict) else {}
+    if entry_payload.get("enabled") is False:
+        return "disabled"
+    if entry_payload.get("enabled") is True:
+        return "loaded"
+    allow = plugins_config.get("allow")
+    allow_values = {str(value) for value in allow} if isinstance(allow, list) else set()
+    if plugin_id in allow_values:
+        return "loaded"
+    if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
+        return "loaded"
+    return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
+
+
+def _plugin_record_from_openclaw_manifest(
+    manifest_path: Path,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object] | None = None,
+) -> dict[str, object] | None:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    plugin_id = _optional_cli_string(manifest.get("id"))
+    config_schema = manifest.get("configSchema")
+    if plugin_id is None or not isinstance(config_schema, dict):
+        return None
+    contracts = _plugin_manifest_contracts(manifest)
+    capabilities = _plugin_manifest_capabilities(manifest, contracts)
+    description = _optional_cli_string(manifest.get("description")) or ""
+    record: dict[str, object] = {
+        "id": plugin_id,
+        "name": _optional_cli_string(manifest.get("name")) or plugin_id,
+        "status": _plugin_manifest_status(
+            manifest,
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+        ),
+        "format": "openclaw",
+        "source": str(manifest_path),
+        "origin": "config",
+        "description": description,
+        "capabilities": capabilities,
+        "parityStatus": "metadata",
+        "rootDir": str(manifest_path.parent),
+        "manifestPath": str(manifest_path),
+        "configSchema": True,
+    }
+    version = _optional_cli_string(manifest.get("version"))
+    if version is not None:
+        record["version"] = version
+    if contracts:
+        record["contracts"] = contracts
+    tool_names = contracts.get("tools")
+    if isinstance(tool_names, list):
+        record["toolNames"] = list(tool_names)
+    for key in (
+        "commands",
+        "cliCommands",
+        "services",
+        "gatewayMethods",
+        "bundleCapabilities",
+    ):
+        values = _plugin_record_string_list(manifest, key)
+        if values:
+            record[key] = values
+    route_count = _plugin_record_http_route_count(manifest)
+    if route_count:
+        record["httpRoutes"] = route_count
+    runtime_dependencies, install_root = _plugin_manifest_runtime_dependencies(manifest_path)
+    if runtime_dependencies:
+        record["runtimeDependencies"] = runtime_dependencies
+        if install_root is not None:
+            record["runtimeDependencyInstallRoot"] = str(install_root)
+    return record
+
+
+def _plugin_manifest_records_from_config_snapshot(
+    plugins_config: dict[str, object],
+    *,
+    config_snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for load_path in _plugin_manifest_load_paths(plugins_config):
+        manifest_path = _plugin_manifest_path_for_load_path(load_path)
+        if manifest_path is None:
+            continue
+        record = _plugin_record_from_openclaw_manifest(
+            manifest_path,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+        )
+        if record is None:
+            continue
+        plugin_id = str(record.get("id") or "")
+        if not plugin_id or plugin_id in seen_ids:
+            continue
+        seen_ids.add(plugin_id)
+        records.append(record)
+    return records
 
 
 def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
     plugins = snapshot.get("plugins")
-    plugins_config = plugins if isinstance(plugins, dict) else {}
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    manifest_records = _plugin_manifest_records_from_config_snapshot(
+        plugins_config,
+        config_snapshot=snapshot,
+    )
+    records_by_id = {
+        str(record.get("id") or ""): dict(record)
+        for record in manifest_records
+        if str(record.get("id") or "")
+    }
     entries = plugins_config.get("entries")
     entry_records = entries if isinstance(entries, dict) else {}
     installs = plugins_config.get("installs")
@@ -6915,7 +8896,6 @@ def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[di
             *(str(key) for key in install_records),
         }
     )
-    records: list[dict[str, object]] = []
     for plugin_id in plugin_ids:
         entry = entry_records.get(plugin_id)
         entry_payload = entry if isinstance(entry, dict) else {}
@@ -6952,8 +8932,25 @@ def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[di
             record["shape"] = shape
         if entry_payload.get("usesLegacyBeforeAgentStart") is True:
             record["usesLegacyBeforeAgentStart"] = True
-        records.append(record)
-    return records
+        existing = records_by_id.get(plugin_id)
+        if existing is not None:
+            merged = dict(existing)
+            if entry_payload.get("enabled") is False:
+                merged["status"] = "disabled"
+            elif entry_payload.get("enabled") is True or install_payload:
+                merged["status"] = "loaded"
+            if version is not None:
+                merged["version"] = version
+            if install_payload:
+                merged["install"] = dict(install_payload)
+            if shape is not None:
+                merged["shape"] = shape
+            if entry_payload.get("usesLegacyBeforeAgentStart") is True:
+                merged["usesLegacyBeforeAgentStart"] = True
+            records_by_id[plugin_id] = merged
+        else:
+            records_by_id[plugin_id] = record
+    return [records_by_id[plugin_id] for plugin_id in sorted(records_by_id)]
 
 
 def _openclaw_plugin_status(parity_status: str) -> str:
@@ -14658,12 +16655,46 @@ def doctor(
         "--json",
         help="Emit the Hermes parity doctor view as JSON.",
     ),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        "--repair",
+        help="Run repair-mode doctor checks where native adapters are available.",
+    ),
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_doctor_view()
-        return view.model_dump(mode="json")
+        payload = _with_doctor_sandbox_warnings(
+            view.model_dump(mode="json"),
+            services.gateway_config,
+        )
+        payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
+        data_dir = getattr(services.settings, "data_dir", None)
+        if isinstance(data_dir, Path):
+            payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = await _with_doctor_gateway_health_payload(
+            payload,
+            services.settings,
+            getattr(services, "gateway_node_methods", None),
+        )
+        payload = await _with_doctor_memory_search_payload(
+            payload,
+            getattr(services, "gateway_node_methods", None),
+        )
+        payload = await _with_doctor_startup_channel_maintenance_payload(
+            payload,
+            services.gateway_config,
+            getattr(services, "channel_startup_maintenance", None),
+            should_repair=fix,
+        )
+        payload = _with_doctor_bundled_plugin_runtime_dependencies(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_contribution_surfaces(payload)
+        return payload
 
     payload = _run(_run_with_services(_action))
     _emit_hermes_doctor(payload, json_output=json_output)

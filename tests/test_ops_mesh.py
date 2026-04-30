@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,7 @@ from openzues.schemas import (
     IntegrationView,
     MissionStatus,
     MissionView,
+    NotificationRouteCreate,
     PlaybookView,
     ProjectView,
     SkillPinView,
@@ -25,6 +27,7 @@ from openzues.schemas import (
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.gateway_canvas_documents import create_canvas_document
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
+from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
     GatewayOutboundRuntimeMessageRequest,
     GatewayOutboundRuntimePollRequest,
@@ -2244,6 +2247,7 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
         account_id="default",
         agent_id="release-bot",
         thread_id="1710000000.9999",
+        gateway_client_scopes=["operator.write"],
         idempotency_key="idem-provider-runtime-send",
     )
 
@@ -2297,12 +2301,1731 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
             thread_id="1710000000.9999",
             session_key=expected_session_key,
             agent_id="release-bot",
+            gateway_client_scopes=("operator.write",),
         )
     ]
     assert delivery is not None
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "provider-send-42"
     assert delivery["event_payload"]["agentId"] == "release-bot"
+    assert delivery["event_payload"]["gatewayClientScopes"] == ["operator.write"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_mirrors_explicit_session_key(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-source-session"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, str]:
+        provider_requests.append(request)
+        return {"messageId": "provider-source-session-42"}
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        raise AssertionError(f"session fallback should not run: {session_key} {message}")
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            session_deliverer=fake_session_delivery,
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Mirror source session.",
+        account_id="workspace-bot",
+        session_key="agent:Work:Slack:channel:C123",
+        idempotency_key="idem-provider-source-session",
+    )
+
+    expected_source_session_key = "agent:work:slack:channel:c123"
+    expected_target_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="workspace-bot",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-provider-source-session",
+        "channel": "slack",
+        "messageId": "provider-source-session-42",
+        "sessionKey": expected_target_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "provider-backed",
+            "channel": "slack",
+            "target": "channel:C123",
+            "accountId": "workspace-bot",
+            "sessionKey": expected_source_session_key,
+        },
+    }
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="slack",
+            target="channel:C123",
+            message="Mirror source session.",
+            account_id="workspace-bot",
+            session_key=expected_source_session_key,
+        )
+    ]
+    assert delivery is not None
+    assert delivery["session_key"] == expected_target_session_key
+    assert delivery["event_payload"]["sessionKey"] == expected_target_session_key
+    assert delivery["event_payload"]["sourceSessionKey"] == expected_source_session_key
+    assert delivery["route_scope"]["source_session_key"] == expected_source_session_key
+    assert delivery["route_scope"]["runtime_session_key"] == expected_source_session_key
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_forwards_requester_context(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-requester-context"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, str]:
+        provider_requests.append(request)
+        return {"messageId": "provider-requester-context-42"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Carry requester context.",
+        account_id="destination-workspace",
+        session_key="agent:work:slack:channel:C123",
+        requester_session_key="agent:main:discord:channel:ops",
+        requester_account_id="source-workspace",
+        requester_sender_id="discord-user-1",
+        requester_sender_name="Alice",
+        requester_sender_username="alice_u",
+        requester_sender_e164="+15551234567",
+        idempotency_key="idem-provider-requester-context",
+    )
+
+    expected_runtime_session_key = "agent:work:slack:channel:c123"
+    expected_target_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="destination-workspace",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["sessionKey"] == expected_target_session_key
+    assert result["transport"]["sessionKey"] == expected_runtime_session_key
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="slack",
+            target="channel:C123",
+            message="Carry requester context.",
+            account_id="destination-workspace",
+            session_key=expected_runtime_session_key,
+            requester_session_key="agent:main:discord:channel:ops",
+            requester_account_id="source-workspace",
+            requester_sender_id="discord-user-1",
+            requester_sender_name="Alice",
+            requester_sender_username="alice_u",
+            requester_sender_e164="+15551234567",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["sessionKey"] == expected_target_session_key
+    assert delivery["event_payload"]["sourceSessionKey"] == expected_runtime_session_key
+    assert delivery["event_payload"]["requesterSessionKey"] == "agent:main:discord:channel:ops"
+    assert delivery["event_payload"]["requesterAccountId"] == "source-workspace"
+    assert delivery["event_payload"]["requesterSenderId"] == "discord-user-1"
+    assert delivery["event_payload"]["requesterSenderName"] == "Alice"
+    assert delivery["event_payload"]["requesterSenderUsername"] == "alice_u"
+    assert delivery["event_payload"]["requesterSenderE164"] == "+15551234567"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="react",
+            params={
+                "channelId": "channel:C123",
+                "messageId": "1710000000.0001",
+                "emoji": ":white_check_mark:",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "white_check_mark"}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/reactions.add",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "name": "white_check_mark",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-react-remove"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="react",
+            params={
+                "channelId": "channel:C123",
+                "messageId": "1710000000.0001",
+                "emoji": "eyes",
+                "remove": True,
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-react-remove-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": "eyes"}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/reactions.remove",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "name": "eyes",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    reactions = [{"name": "eyes", "count": 2, "users": ["U123", "U456"]}]
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True, "message": {"reactions": reactions}}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="reactions",
+            params={
+                "channelId": "channel:C123",
+                "messageId": "1710000000.0001",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-reactions-action",
+        )
+    )
+
+    assert result == {"ok": True, "reactions": reactions}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/reactions.get",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "full": True,
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-react-remove-own"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/auth.test"):
+            return {"ok": True, "user_id": "UBOT"}
+        if target.endswith("/reactions.get"):
+            return {
+                "ok": True,
+                "message": {
+                    "reactions": [
+                        {"name": "eyes", "users": ["UBOT", "U123"]},
+                        {"name": "thumbsup", "users": ["U123"]},
+                        {"name": "rocket", "users": ["UBOT"]},
+                    ]
+                },
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="react",
+            params={
+                "channelId": "channel:C123",
+                "messageId": "1710000000.0001",
+                "emoji": "",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-react-remove-own-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": ["eyes", "rocket"]}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/auth.test",
+            {},
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/reactions.get",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "full": True,
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/reactions.remove",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "name": "eyes",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/reactions.remove",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "name": "rocket",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="react",
+            params={
+                "chatId": "channel:-100123",
+                "messageId": 456,
+                "emoji": "\u2705",
+            },
+            account_id="telegram-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2705"}
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/setMessageReaction",
+            {
+                "chat_id": "-100123",
+                "message_id": 456,
+                "reaction": [{"type": "emoji", "emoji": "\u2705"}],
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "idempotency_key"),
+    [
+        ({"chatId": "channel:-100123", "messageId": 456, "emoji": ""}, "empty"),
+        (
+            {
+                "chatId": "channel:-100123",
+                "messageId": 456,
+                "emoji": "\u2705",
+                "remove": True,
+            },
+            "remove",
+        ),
+    ],
+)
+async def test_ops_mesh_service_message_action_dispatches_telegram_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+    params: dict[str, object],
+    idempotency_key: str,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / f"ops-mesh-message-action-telegram-react-{idempotency_key}"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="react",
+            params=params,
+            account_id="telegram-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key=f"idem-telegram-react-{idempotency_key}-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": True}
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/setMessageReaction",
+            {
+                "chat_id": "-100123",
+                "message_id": 456,
+                "reaction": [],
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"status": 204}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="react",
+            params={
+                "channelId": "channel:987654321",
+                "messageId": "discord-message-1",
+                "emoji": "\u2705",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2705"}
+    assert discord_requests == [
+        (
+            "PUT",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/%E2%9C%85/@me"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-react-remove"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        return {"status": 204}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="react",
+            params={
+                "channelId": "channel:987654321",
+                "messageId": "discord-message-1",
+                "emoji": "\u2705",
+                "remove": True,
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-react-remove-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": "\u2705"}
+    assert discord_requests == [
+        (
+            "DELETE",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/%E2%9C%85/@me"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_react_remove_own_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-react-own"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        if method == "GET":
+            return {
+                "reactions": [
+                    {"emoji": {"name": "\u2705", "id": None}},
+                    {"emoji": {"name": "party_blob", "id": "123"}},
+                    {"emoji": {"name": None, "id": None}},
+                ]
+            }
+        return {"status": 204}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="react",
+            params={
+                "channelId": "channel:987654321",
+                "messageId": "discord-message-1",
+                "emoji": "",
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-react-remove-own-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": ["\u2705", "party_blob:123"]}
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/987654321/messages/discord-message-1",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "DELETE",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/%E2%9C%85/@me"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "DELETE",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/party_blob%3A123/@me"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_discord_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-discord-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Action Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="discord-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object:
+        del self
+        discord_requests.append((method, target, payload, secret_header_name, secret_token))
+        if target.endswith("/messages/discord-message-1"):
+            return {
+                "reactions": [
+                    {"count": 2, "emoji": {"name": "\u2705", "id": None}},
+                    {"count": 1, "emoji": {"name": "party_blob", "id": "123"}},
+                ]
+            }
+        if "%E2%9C%85" in target:
+            return [
+                {"id": "U1", "username": "alice", "discriminator": "1234"},
+                {"id": "U2", "username": "bob"},
+            ]
+        return [{"id": "U3", "username": "carol", "discriminator": "0001"}]
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="discord",
+            action="reactions",
+            params={
+                "channelId": "channel:987654321",
+                "messageId": "discord-message-1",
+                "limit": 2,
+            },
+            account_id="discord-bot",
+            requester_sender_id="1234",
+            sender_is_owner=True,
+            session_key="agent:main:discord:channel:987654321",
+            idempotency_key="idem-discord-reactions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "reactions": [
+            {
+                "emoji": {"id": None, "name": "\u2705", "raw": "\u2705"},
+                "count": 2,
+                "users": [
+                    {"id": "U1", "username": "alice", "tag": "alice#1234"},
+                    {"id": "U2", "username": "bob", "tag": "bob"},
+                ],
+            },
+            {
+                "emoji": {"id": "123", "name": "party_blob", "raw": "party_blob:123"},
+                "count": 1,
+                "users": [
+                    {"id": "U3", "username": "carol", "tag": "carol#0001"},
+                ],
+            },
+        ],
+    }
+    assert discord_requests == [
+        (
+            "GET",
+            "https://discord.com/api/v10/channels/987654321/messages/discord-message-1",
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/%E2%9C%85?limit=2"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+        (
+            "GET",
+            (
+                "https://discord.com/api/v10/channels/987654321/messages/"
+                "discord-message-1/reactions/party_blob%3A123?limit=2"
+            ),
+            None,
+            "Authorization",
+            "Bot discord-bot-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_whatsapp_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-whatsapp-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+123",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+123", "wa_id": "123"}],
+            "messages": [{"id": "wamid.react.1"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="whatsapp",
+            action="react",
+            params={
+                "chatJid": "123@s.whatsapp.net",
+                "messageId": "wamid.source.1",
+                "emoji": "\u2705",
+            },
+            account_id="wa-business",
+            requester_sender_id="123@s.whatsapp.net",
+            sender_is_owner=True,
+            session_key="agent:main:whatsapp:direct:+123",
+            idempotency_key="idem-whatsapp-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2705"}
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+123",
+                "type": "reaction",
+                "reaction": {
+                    "message_id": "wamid.source.1",
+                    "emoji": "\u2705",
+                },
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "idempotency_key"),
+    [
+        ({"to": "+123", "messageId": "wamid.source.1", "emoji": ""}, "empty"),
+        (
+            {
+                "to": "+123",
+                "messageId": "wamid.source.1",
+                "emoji": "\u2705",
+                "remove": True,
+            },
+            "remove",
+        ),
+    ],
+)
+async def test_ops_mesh_service_message_action_dispatches_whatsapp_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+    params: dict[str, object],
+    idempotency_key: str,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / f"ops-mesh-message-action-whatsapp-react-{idempotency_key}"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789/messages",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="Bearer wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+123",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+123", "wa_id": "123"}],
+            "messages": [{"id": "wamid.react.remove.1"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="whatsapp",
+            action="react",
+            params=params,
+            account_id="wa-business",
+            requester_sender_id="123@s.whatsapp.net",
+            sender_is_owner=True,
+            session_key="agent:main:whatsapp:direct:+123",
+            idempotency_key=f"idem-whatsapp-react-{idempotency_key}-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": True}
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+123",
+                "type": "reaction",
+                "reaction": {
+                    "message_id": "wamid.source.1",
+                    "emoji": "",
+                },
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_whatsapp_react_current_message_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-whatsapp-react-context"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+123",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+123", "wa_id": "123"}],
+            "messages": [{"id": "wamid.react.ctx"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="whatsapp",
+            action="react",
+            params={"to": "+123", "emoji": "\u2764\ufe0f"},
+            account_id="wa-business",
+            requester_sender_id="123@s.whatsapp.net",
+            sender_is_owner=True,
+            session_key="agent:main:whatsapp:direct:+123",
+            idempotency_key="idem-whatsapp-react-context-action",
+            tool_context={
+                "currentChannelId": "whatsapp:123@s.whatsapp.net",
+                "currentChannelProvider": "whatsapp",
+                "currentMessageId": 12345,
+            },
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2764\ufe0f"}
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+123",
+                "type": "reaction",
+                "reaction": {
+                    "message_id": "12345",
+                    "emoji": "\u2764\ufe0f",
+                },
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_rejects_whatsapp_cross_chat_context_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-whatsapp-react-cross-chat"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+999",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {"messaging_product": "whatsapp", "messages": [{"id": "unexpected"}]}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(RuntimeError, match="messageId is required"):
+        await service.dispatch_message_action(
+            GatewayMessageActionDispatchRequest(
+                channel="whatsapp",
+                action="react",
+                params={"to": "+999", "emoji": "\u2705"},
+                account_id="wa-business",
+                requester_sender_id="123@s.whatsapp.net",
+                sender_is_owner=True,
+                session_key="agent:main:whatsapp:direct:+999",
+                idempotency_key="idem-whatsapp-react-cross-chat-action",
+                tool_context={
+                    "currentChannelId": "whatsapp:+123",
+                    "currentChannelProvider": "whatsapp",
+                    "currentMessageId": "ctx-msg-42",
+                },
+            )
+        )
+
+    assert whatsapp_posts == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-zalo-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Action Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": "zalo-action-1",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="zalo",
+            action="send",
+            params={
+                "to": "direct:dm-chat-1",
+                "message": "Ship Zalo action parity.",
+            },
+            account_id="zalo-bot",
+            requester_sender_id="zalo-user-1",
+            sender_is_owner=True,
+            session_key="agent:main:zalo:direct:dm-chat-1",
+            idempotency_key="idem-zalo-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "to": "direct:dm-chat-1",
+        "messageId": "zalo-action-1",
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendMessage",
+            {
+                "chat_id": "dm-chat-1",
+                "text": "Ship Zalo action parity.",
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_zalo_send_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-zalo-send-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Action Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": "zalo-photo-action-1",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="zalo",
+            action="send",
+            params={
+                "to": "direct:dm-chat-1",
+                "message": "Caption",
+                "media": "https://example.com/zalo.jpg",
+            },
+            account_id="zalo-bot",
+            requester_sender_id="zalo-user-1",
+            sender_is_owner=True,
+            session_key="agent:main:zalo:direct:dm-chat-1",
+            idempotency_key="idem-zalo-send-media-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "to": "direct:dm-chat-1",
+        "messageId": "zalo-photo-action-1",
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendPhoto",
+            {
+                "chat_id": "dm-chat-1",
+                "photo": "https://example.com/zalo.jpg",
+                "caption": "Caption",
+            },
+            None,
+            None,
+        )
+    ]
+
+
+def test_notification_route_create_accepts_zalo_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Zalo Native Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="zalo",
+            account_id="zalo-bot",
+            peer_kind="direct",
+            peer_id="direct:dm-chat-1",
+        ),
+        secret_token="zalo-access-token",
+    )
+
+    assert route.kind == "zalo"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "zalo"
 
 
 @pytest.mark.asyncio
@@ -2801,7 +4524,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
                 "filename": "slack.png",
                 "length": "8",
             },
-            "Bearer xoxb-route-token",
+            "xoxb-route-token",
         ),
         (
             "https://slack.com/api/files.completeUploadExternal",
@@ -2812,7 +4535,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
                     "Ship native Slack parity.\n\nMedia:\n1. https://example.com/slack.png"
                 ),
             },
-            "Bearer xoxb-route-token",
+            "xoxb-route-token",
         ),
     ]
     assert uploaded_files == [("https://upload.slack.test/file-1", b"fake-png")]
@@ -3148,6 +4871,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
                 "reply_to_message_id": "41",
                 "disable_notification": True,
                 "document": "https://example.com/report.pdf",
+                "disable_content_type_detection": True,
                 "caption": (
                     "Ship native Telegram document parity.\n\n"
                     "Media:\n"
@@ -3345,20 +5069,22 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
     ) -> dict[str, object]:
         del self, secret_header_name, secret_token
         telegram_posts.append((target, payload))
-        return {
-            "ok": True,
-            "result": [
-                {
+        if len(telegram_posts) == 1:
+            return {
+                "ok": True,
+                "result": {
                     "message_id": 44,
                     "chat": {"id": -100123},
                     "photo": [{"file_id": "small-one"}, {"file_id": "large-one"}],
                 },
-                {
-                    "message_id": 45,
-                    "chat": {"id": -100123},
-                    "photo": [{"file_id": "small-two"}, {"file_id": "large-two"}],
-                },
-            ],
+            }
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 45,
+                "chat": {"id": -100123},
+                "photo": [{"file_id": "small-two"}, {"file_id": "large-two"}],
+            },
         }
 
     monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
@@ -3386,7 +5112,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
 
     delivery = await database.get_outbound_delivery(1)
 
-    assert result["messageId"] == "44"
+    assert result["messageId"] == "45"
     assert result["mediaIds"] == ["large-one", "large-two"]
     assert result["mediaUrls"] == [
         "https://example.com/one.png",
@@ -3394,25 +5120,23 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
     ]
     assert telegram_posts == [
         (
-            "https://api.telegram.org/bot123456:telegram-token/sendMediaGroup",
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
             {
                 "chat_id": "-100123",
-                "media": [
-                    {
-                        "type": "photo",
-                        "media": "https://example.com/one.png",
-                        "caption": (
-                            "Ship the media bundle.\n\n"
-                            "Media:\n"
-                            "1. https://example.com/one.png\n"
-                            "2. https://example.com/two.png"
-                        ),
-                    },
-                    {
-                        "type": "photo",
-                        "media": "https://example.com/two.png",
-                    },
-                ],
+                "photo": "https://example.com/one.png",
+                "caption": (
+                    "Ship the media bundle.\n\n"
+                    "Media:\n"
+                    "1. https://example.com/one.png\n"
+                    "2. https://example.com/two.png"
+                ),
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            {
+                "chat_id": "-100123",
+                "photo": "https://example.com/two.png",
             },
         )
     ]
@@ -3715,11 +5439,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_native
                 "type": "image",
                 "image": {
                     "link": "https://example.com/whatsapp.png",
-                    "caption": (
-                        "Ship native WhatsApp parity.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/whatsapp.png"
-                    ),
+                    "caption": "Ship native WhatsApp parity.",
                 },
             },
             "Authorization",
@@ -3735,6 +5455,318 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_native
         "channelId": "15551234567",
         "mediaUrls": ["https://example.com/whatsapp.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_chunks_whatsapp_long_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-whatsapp-long-text"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Long Text Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": f"wamid.chunk.{len(whatsapp_posts)}"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    long_text = "x" * 8500
+
+    result = await service.send_direct_channel_message(
+        channel="whatsapp",
+        to="direct:+15551234567",
+        message=long_text,
+        account_id="wa-business",
+        idempotency_key="idem-native-whatsapp-long-text",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "wamid.chunk.3"
+    assert len(whatsapp_posts) == 3
+    bodies = [post[1]["text"]["body"] for post in whatsapp_posts]  # type: ignore[index]
+    assert [len(body) for body in bodies] == [4000, 4000, 500]
+    assert "".join(str(body) for body in bodies) == long_text
+    assert all(
+        post[0] == "https://graph.facebook.com/v20.0/123456789/messages"
+        for post in whatsapp_posts
+    )
+    assert all(post[2] == "Authorization" for post in whatsapp_posts)
+    assert all(post[3] == "Bearer wa-access-token" for post in whatsapp_posts)
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "wamid.chunk.3"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_zalo_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-zalo-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Send Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": f"zalo-msg-{len(zalo_posts)}",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    long_text = "z" * 3000
+
+    result = await service.send_direct_channel_message(
+        channel="zalo",
+        to="direct:dm-chat-1",
+        message=long_text,
+        account_id="zalo-bot",
+        idempotency_key="idem-native-zalo-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="zalo",
+            account_id="zalo-bot",
+            peer_kind="direct",
+            peer_id="direct:dm-chat-1",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-zalo-send",
+        "channel": "zalo",
+        "messageId": "zalo-msg-2",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "zalo",
+            "target": "direct:dm-chat-1",
+            "accountId": "zalo-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "dm-chat-1",
+        "channelId": "dm-chat-1",
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendMessage",
+            {
+                "chat_id": "dm-chat-1",
+                "text": "z" * 2000,
+            },
+            None,
+            None,
+        ),
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendMessage",
+            {
+                "chat_id": "dm-chat-1",
+                "text": "z" * 1000,
+            },
+            None,
+            None,
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "zalo-msg-2",
+        "chatId": "dm-chat-1",
+        "channelId": "dm-chat-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-zalo-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Media Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": f"zalo-photo-{len(zalo_posts)}",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="zalo",
+        to="direct:dm-chat-1",
+        message="Caption",
+        media_urls=[
+            "https://example.com/one.jpg",
+            "https://example.com/two.jpg",
+        ],
+        account_id="zalo-bot",
+        idempotency_key="idem-native-zalo-media",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "zalo-photo-2"
+    assert result["chatId"] == "dm-chat-1"
+    assert result["channelId"] == "dm-chat-1"
+    assert result["mediaIds"] == ["zalo-photo-1", "zalo-photo-2"]
+    assert result["mediaUrls"] == [
+        "https://example.com/one.jpg",
+        "https://example.com/two.jpg",
+    ]
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendPhoto",
+            {
+                "chat_id": "dm-chat-1",
+                "photo": "https://example.com/one.jpg",
+                "caption": "Caption",
+            },
+            None,
+            None,
+        ),
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendPhoto",
+            {
+                "chat_id": "dm-chat-1",
+                "photo": "https://example.com/two.jpg",
+            },
+            None,
+            None,
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "zalo-photo-2"
+    assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
+        "zalo-photo-1",
+        "zalo-photo-2",
+    ]
 
 
 @pytest.mark.asyncio
@@ -3804,7 +5836,7 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
     )
     delivery = await database.get_outbound_delivery(1)
 
-    assert result["messageId"] == "wamid.media.1"
+    assert result["messageId"] == "wamid.media.2"
     assert result["mediaIds"] == ["wamid.media.1", "wamid.media.2"]
     assert result["mediaUrls"] == [
         "https://example.com/one.png",
@@ -3819,12 +5851,7 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
                 "type": "image",
                 "image": {
                     "link": "https://example.com/one.png",
-                    "caption": (
-                        "Ship both WhatsApp images.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/one.png\n"
-                        "2. https://example.com/two.png"
-                    ),
+                    "caption": "Ship both WhatsApp images.",
                 },
             },
             "Authorization",
@@ -3843,6 +5870,7 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
         ),
     ]
     assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "wamid.media.2"
     assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
         "wamid.media.1",
         "wamid.media.2",
@@ -3927,11 +5955,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_r
                 "type": "document",
                 "document": {
                     "link": "https://example.com/report.pdf",
-                    "caption": (
-                        "Ship doc reply.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/report.pdf"
-                    ),
+                    "caption": "Ship doc reply.",
                 },
             },
             "Authorization",
@@ -4025,12 +6049,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_gif_vi
                 "type": "video",
                 "video": {
                     "link": "https://example.com/loop.mp4",
-                    "caption": (
-                        "Ship loop.\n\n"
-                        "Media:\n"
-                        "1. https://example.com/loop.mp4\n\n"
-                        "Settings: gifPlayback=true"
-                    ),
+                    "caption": "Ship loop.",
                 },
             },
             "Authorization",
@@ -4540,6 +6559,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
         is_anonymous=True,
         account_id="workspace-bot",
         thread_id="1710000000.9999",
+        gateway_client_scopes=[],
         idempotency_key="idem-provider-runtime-poll",
     )
 
@@ -4590,12 +6610,50 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
             account_id="workspace-bot",
             thread_id="1710000000.9999",
             session_key=expected_session_key,
+            gateway_client_scopes=(),
         )
     ]
     assert delivery is not None
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "provider-poll-77"
     assert delivery["event_payload"]["durationSeconds"] == 3600
+    assert delivery["event_payload"]["gatewayClientScopes"] == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_outbound_runtime_poll_defaults_max_selections_to_one() -> None:
+    provider_requests: list[GatewayOutboundRuntimePollRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimePollRequest,
+    ) -> dict[str, str]:
+        provider_requests.append(request)
+        return {"id": "provider-poll-default-1"}
+
+    runtime = GatewayOutboundRuntimeService(
+        provider_poll_deliverer=fake_provider_delivery,
+    )
+
+    result = await runtime.deliver_poll(
+        session_key="launch:channel:slack:peer:channel:C123",
+        message="Poll: Default max selections?",
+        channel="slack",
+        target="channel:C123",
+        question="Default max selections?",
+        options=("Yes", "No"),
+    )
+
+    assert result.message_id == "provider-poll-default-1"
+    assert provider_requests == [
+        GatewayOutboundRuntimePollRequest(
+            channel="slack",
+            target="channel:C123",
+            question="Default max selections?",
+            options=("Yes", "No"),
+            max_selections=1,
+            session_key="launch:channel:slack:peer:channel:C123",
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -4896,8 +6954,8 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         channel="telegram",
         to="channel:-100123",
         question="Ship native Telegram poll?",
-        options=["Yes", "No"],
-        duration_seconds=3600,
+        options=[" Yes ", "   ", "No"],
+        duration_seconds=60,
         silent=True,
         is_anonymous=False,
         account_id="telegram-bot",
@@ -4946,12 +7004,13 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
                 "question": "Ship native Telegram poll?",
                 "options": ["Yes", "No"],
                 "is_anonymous": False,
-                "open_period": 3600,
+                "open_period": 60,
                 "disable_notification": True,
             },
         )
     ]
     assert delivery is not None
+    assert delivery["event_payload"]["options"] == ["Yes", "No"]
     assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
     assert delivery["route_scope"]["provider_result"] == {
         "runtime": "native-provider-backed",
@@ -4961,6 +7020,246 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_telegram_native_ro
         "conversationId": "-100123",
         "pollId": "poll-telegram-1",
     }
+
+
+@pytest.mark.parametrize(
+    ("poll_kwargs", "expected_message"),
+    [
+        (
+            {"duration_seconds": 601},
+            "Telegram poll durationSeconds must be between 5 and 600",
+        ),
+        (
+            {"duration_hours": 1},
+            "Telegram poll durationHours is not supported. "
+            "Use durationSeconds (5-600) instead.",
+        ),
+        (
+            {"duration_seconds": 60, "duration_hours": 1},
+            "durationSeconds and durationHours are mutually exclusive",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_invalid_telegram_durations(
+    monkeypatch: pytest.MonkeyPatch,
+    poll_kwargs: dict[str, int],
+    expected_message: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-telegram-duration"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bot123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 43,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-telegram-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match=re.escape(expected_message)):
+        await service.send_direct_channel_poll(
+            channel="telegram",
+            to="channel:-100123",
+            question="Ship native Telegram poll?",
+            options=["Yes", "No"],
+            account_id="telegram-bot",
+            idempotency_key="idem-native-telegram-poll-invalid-duration",
+            **poll_kwargs,
+        )
+
+    assert telegram_posts == []
+
+
+@pytest.mark.parametrize(
+    ("question", "options", "expected_message"),
+    [
+        ("   ", ["Yes", "No"], "Poll question is required"),
+        ("Pick one", ["Yes", "   "], "Poll requires at least 2 options"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_invalid_poll_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    question: str,
+    options: list[str],
+    expected_message: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-shape"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bot123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 43,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-telegram-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match=re.escape(expected_message)):
+        await service.send_direct_channel_poll(
+            channel="telegram",
+            to="channel:-100123",
+            question=question,
+            options=options,
+            account_id="telegram-bot",
+            idempotency_key="idem-native-telegram-poll-invalid-shape",
+        )
+
+    assert telegram_posts == []
+
+
+@pytest.mark.parametrize(
+    ("channel", "target", "account_id"),
+    [
+        ("telegram", "channel:-100123", "telegram-bot"),
+        ("discord", "channel:987654321", "discord-webhook"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_provider_option_caps(
+    channel: str,
+    target: str,
+    account_id: str,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / f"ops-mesh-direct-poll-{channel}-options"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="Poll supports at most 10 options"):
+        await service.send_direct_channel_poll(
+            channel=channel,
+            to=target,
+            question="Pick one",
+            options=[f"Option {index}" for index in range(11)],
+            account_id=account_id,
+            idempotency_key=f"idem-native-{channel}-poll-options",
+        )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_rejects_max_selections_above_options(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-max-selections"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="maxSelections cannot exceed option count"):
+        await service.send_direct_channel_poll(
+            channel="telegram",
+            to="channel:-100123",
+            question="Pick several",
+            options=["Yes", "No"],
+            max_selections=3,
+            account_id="telegram-bot",
+            idempotency_key="idem-native-poll-max-selections",
+        )
 
 
 @pytest.mark.asyncio
@@ -5366,7 +7665,6 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_gateway_route_adap
         to="channel:C123",
         question="Use the route provider?",
         options=["Yes", "No"],
-        max_selections=1,
         duration_hours=2,
         silent=True,
         account_id="workspace-bot",
@@ -5377,7 +7675,6 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_gateway_route_adap
         to="channel:C123",
         question="Use the route provider?",
         options=["Yes", "No"],
-        max_selections=1,
         duration_hours=2,
         silent=True,
         account_id="workspace-bot",
@@ -5423,11 +7720,13 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_gateway_route_adap
     assert event_type == "gateway/poll"
     assert event["question"] == "Use the route provider?"
     assert event["options"] == ["Yes", "No"]
+    assert event["maxSelections"] == 1
     assert event["durationHours"] == 2
     assert event["silent"] is True
     assert event["routeMatch"] == "peer"
     assert secret_token is None
     assert delivery is not None
+    assert delivery["event_payload"]["maxSelections"] == 1
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "route-provider-poll-1"
     assert delivery["route_scope"]["provider_result"] == {
@@ -5681,6 +7980,112 @@ async def test_ops_mesh_service_delivers_explicit_cron_failure_to_announce_threa
     assert deliveries[0].event_payload is not None
     assert deliveries[0].event_payload["sessionKey"] == expected_session_key
     assert deliveries[0].event_payload["threadId"] == 77
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_dedupes_replayed_cron_failure_announce_delivery(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> None:
+        session_deliveries.append((session_key, message))
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    task = await service.create_task_blueprint(
+        build_gateway_cron_task_blueprint(
+            {
+                "name": "Replay Safe Announce Failure Delivery",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "sessionTarget": "isolated",
+                "wakeMode": "next-heartbeat",
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "Deliver the cron failure once per execution.",
+                },
+                "delivery": {
+                    "mode": "announce",
+                    "channel": "telegram",
+                    "to": "deploy-room",
+                    "accountId": "coordinator",
+                    "threadId": 77,
+                },
+            }
+        )
+    )
+    mission_id = await database.create_mission(
+        name="Replay Safe Announce Failure Delivery",
+        objective="Deliver the cron failure once per execution.",
+        status="failed",
+        instance_id=task.instance_id or 1,
+        project_id=task.project_id,
+        task_blueprint_id=task.id,
+        thread_id="thread_replay_safe_announce_failure_delivery",
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=4,
+        use_builtin_agents=True,
+        run_verification=True,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        toolsets=[],
+    )
+    await database.update_mission(
+        mission_id,
+        last_checkpoint="explicit announce delivery failed",
+        last_error="lane timed out",
+        last_activity_at=datetime.now(UTC).isoformat(),
+        session_key="agent:replay-safe-announce-failure-route",
+    )
+
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+    await service.handle_mission_event("mission/failed", {"missionId": mission_id})
+
+    expected_base_session_key = (
+        "launch:mode:workspace_affinity:channel:telegram:account:coordinator:"
+        "peer:channel:deploy-room"
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="77",
+    ).session_key
+    assert session_deliveries == [
+        (
+            expected_session_key,
+            (
+                '\u26a0\ufe0f Cron job "Replay Safe Announce Failure Delivery" '
+                "failed: lane timed out"
+            ),
+        )
+    ]
+    deliveries = await service.list_outbound_delivery_views(limit=10)
+    assert len(deliveries) == 1
+    assert deliveries[0].event_type == "cron/failure"
+    assert deliveries[0].route_kind == "announce"
+    assert deliveries[0].request_idempotency_key is not None
+    assert deliveries[0].request_idempotency_key.startswith(
+        "cron-direct-delivery:v1:"
+    )
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ class GatewayPluginRuntimeExecutorSpec:
     executor: GatewayPluginExecutor
     enabled: bool = True
     owner_only: bool = False
+    optional: bool = False
     plugin_id: str | None = None
     plugin_name: str | None = None
     description: str | None = None
@@ -36,6 +37,7 @@ class GatewayPluginRuntimeExecutorRegistry(Protocol):
 class GatewayPluginRuntimeExecutorResolution:
     tool: str
     executor: GatewayPluginExecutor
+    optional: bool = False
     plugin_id: str | None = None
     plugin_name: str | None = None
     source: str = "plugin"
@@ -100,6 +102,7 @@ class GatewayPluginRuntimeService:
             return GatewayPluginRuntimeExecutorResolution(
                 tool=normalized_tool,
                 executor=spec.executor,
+                optional=spec.optional,
                 plugin_id=spec.plugin_id,
                 plugin_name=spec.plugin_name,
                 source=spec.source,
@@ -164,6 +167,7 @@ def _normalize_executor_spec(
             executor=entry.executor,
             enabled=entry.enabled,
             owner_only=entry.owner_only or normalized_tool in owner_only_tools,
+            optional=entry.optional,
             plugin_id=_optional_string(entry.plugin_id),
             plugin_name=_optional_string(entry.plugin_name),
             description=_optional_string(entry.description),
@@ -192,6 +196,7 @@ def _normalize_executor_spec(
         executor=cast(GatewayPluginExecutor, mapping_executor),
         enabled=bool(entry.get("enabled", True)),
         owner_only=owner_only or normalized_tool in owner_only_tools,
+        optional=bool(entry.get("optional", False)),
         plugin_id=_optional_string(entry.get("plugin_id", entry.get("pluginId"))),
         plugin_name=_optional_string(entry.get("plugin_name", entry.get("pluginName"))),
         description=_optional_string(entry.get("description")),

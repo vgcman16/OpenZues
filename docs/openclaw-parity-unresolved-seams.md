@@ -42,6 +42,23 @@ default, missing targets return `errorCode="target_agent_required"`, and
 `errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
 now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
 resolved target agent id in session metadata.
+ACP `streamTo="parent"` accepted runs now continue through the same native
+tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
+is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
+parent completion announcements still fire, and `streamLogPath` / `note`
+fields are preserved in the spawn response. Remaining ACP parity is the
+standalone ACP bridge server/client harness and deeper protocol session
+presentation, permission, replay, and parent-stream relay breadth.
+RuntimeManager-backed ACP prompt dispatch now also mirrors OpenClaw's prompt
+presentation prefix: when a child turn has `cwd`, the adapter sends
+`[Working directory: ...]` before the task text and redacts the user home to
+`~` while preserving Windows backslash separators. Remaining ACP presentation
+parity is deeper bridge server/client protocol metadata and replay behavior.
+RuntimeManager-backed ACP accepted responses now also include OpenClaw's
+mode-specific accepted notes for ordinary run spawns and persistent
+thread-bound session spawns. Remaining ACP presentation parity is deeper
+bridge server/client protocol metadata, replay behavior, and parent-stream
+relay breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
@@ -69,7 +86,13 @@ The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `agentId`, `sessionKey`, `mainSessionKey`, `sandbox`, `elevated`, and `fixIt`
 fields backed by saved sandbox runtime metadata, and `sandbox recreate` target
 validation plus `--force` cleanup for saved sandbox runtime metadata so stale
-runtime posture is forgotten and recreated on the next use.
+runtime posture is forgotten and recreated on the next use. `sandbox explain`
+now also resolves config-only sandbox posture from OpenClaw-shaped
+`agents.defaults.sandbox`, `agents.list[].sandbox`, `tools.sandbox.tools`,
+and `agents.list[].tools.sandbox.tools` config: mode/scope/workspace access,
+default allow/deny policy, explicit `allow`/`alsoAllow`/`deny`, source
+metadata, and the actionable `agents.defaults.sandbox.mode=off` fix-it entries
+are projected even before a sandbox runtime has been spawned.
 
 Current queue-head adjustment: `sessions.spawn thread=true` now has a
 production route-backed `GatewaySubagentThreadBinderRegistry` wired at app
@@ -100,7 +123,11 @@ reply and silent flags, and saved failed `gateway/send` / `gateway/poll` rows
 replay through provider-native runtime calls with their original OpenClaw-style
 delivery options. The CLI now exposes `routes send` and `routes poll` as thin
 JSON/human wrappers over the same native direct send/poll runtime owner,
-including reply/thread/media/silent/document/idempotency options. Remaining
+including reply/thread/media/silent/document/idempotency options. Direct
+provider-backed `gateway.send` calls with an explicit `sessionKey` now
+canonicalize and pass that key as the runtime/mirror session while keeping the
+saved delivery row attached to the channel-derived target session for history
+and replay. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
@@ -110,6 +137,51 @@ payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
 saved delivery metadata path.
+Zalo native route-backed direct text sends now use OpenClaw's Bot API
+`/bot{token}/sendMessage` shape and 2000-character split behavior, with native
+provider result metadata persisted through the direct-send delivery path.
+Zalo media sends now use the upstream `sendPhoto` path, preserve caption text
+only on the first media item, iterate multiple media URLs, and persist
+`mediaIds` / `mediaUrls`. Remaining Zalo provider parity is limited to deeper
+provider-specific edge cases surfaced by future upstream contract checks.
+Gateway `message.action` now has a fakeable native action dispatcher that
+receives OpenClaw-shaped channel/action params, normalized routing metadata,
+trusted-owner posture, tool context, and idempotency key, returning the
+dispatcher payload instead of always reporting unsupported action. Remaining
+route-backed Slack action parity now includes `react` add/remove dispatch via
+Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
+`reactions.get full=true` using the saved native route token. Empty-emoji
+`react` now also resolves the bot user through `auth.test`, removes only the
+bot-owned reactions, and returns the removed names.
+Telegram route-backed action parity now includes `react` add/remove/empty-clear
+dispatch via Bot API `setMessageReaction`, including the upstream empty
+reaction-array remove shape and soft missing-message-id result.
+Discord route-backed action parity now includes `react` add dispatch via REST
+own-reaction `PUT` using the saved bot token and OpenClaw-style encoded emoji
+identifier, plus explicit `remove=true` through the matching own-reaction
+`DELETE`. Empty-emoji `react` now also fetches message reactions, removes each
+own reaction identifier, and returns the removed list. Discord `reactions` now
+fetches message reaction summaries and per-reaction users with bounded limits,
+so no smaller Discord reaction action seam remains in this queue.
+WhatsApp route-backed action parity now includes `react` add/remove dispatch
+via the native WhatsApp Cloud API messages endpoint, including direct JID
+normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
+same-provider/same-chat `toolContext.currentMessageId` fallback with cross-chat
+fallback rejection. Remaining action parity is other production provider action
+adapters, `supportsAction` breadth, and deeper trusted-sender requirements for
+provider-specific tool contexts.
+Official Zalo route-backed action parity now includes upstream's supported
+`send` action via the native Bot API route owner, including text and optional
+`media` sends plus the public `kind="zalo"` route-create/view schema. Zalo
+reactions remain intentionally unsupported because the upstream official Zalo
+plugin advertises `reactions: false`. `channels capabilities` now also reports
+Zalo's upstream support posture: direct/group chat types, media enabled, and
+reactions/polls/threads disabled. Zalouser reaction parity remains a separate
+future native user-session runtime seam.
+Gateway `poll` now also mirrors OpenClaw's provider capability guard for
+anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
+outbound adapter advertises anonymous-poll support, and non-Telegram channels
+return `INVALID_REQUEST` before any runtime dispatch.
 Telegram topic-qualified native polls now have the same focused proof as
 topic-qualified sends: parent supergroup routes accept
 `telegram:group:<chatId>:topic:<threadId>` targets, and the Bot API
@@ -135,7 +207,10 @@ the production `sessions.list` gateway method owner, and still exposes
 `GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
-control-chat submit seams used by the app-server path. `sessions cleanup`
+control-chat submit seams used by the app-server path. Gateway `sessions.patch`
+and `sessions.delete` now reject non-control webchat clients with the upstream
+`use chat.send for session-scoped updates` error before mutating session
+storage. `sessions cleanup`
 now accepts the upstream command shape and returns OpenClaw-shaped no-mutation
 maintenance summaries from the native `sessions.list` owner for both dry-run
 preview and enforce/apply no-op cases. `--fix-missing` now maps OpenClaw's
@@ -182,20 +257,35 @@ Top-level
 `--timeout` / `--timeout-ms` breadth flags, forwards the timeout into the
 native live health probe for `--deep`, and projects honest unavailable JSON
 sections for provider usage and security-audit runtime adapters that do not
-yet exist. Text-mode `status --all` now renders the OpenClaw-shaped
+yet exist. Plain `status --json` now also includes OpenClaw-shaped
+`gatewayService` and `nodeService` summaries with truthful native OpenZues
+unmanaged status instead of omitting the managed-service read model. Text-mode
+`status --all` now renders the OpenClaw-shaped
 pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
 CLI/runtime parity includes ACP/sandbox status commands, deeper model
 auth/probe inspection, production provider usage/security-audit adapter wiring,
-plugin/runtime inspection, doctor readiness checks, non-metadata external
-sandbox container cleanup, and broader TUI ergonomics.
+plugin/runtime inspection, deeper runtime bridge doctor checks, non-metadata
+external sandbox container cleanup, and broader TUI ergonomics.
 `status --json --usage
 --all` now consumes fakeable native provider-usage and security-audit runtime
 adapters when registered while keeping the honest unavailable placeholders
 when they are absent. The existing
 `sandbox list` human output now also mirrors OpenClaw's total/running summary
 line and config-mismatch recreate hint after listing native saved sandbox
-runtimes. The top-level `acp` and `acp client` command surfaces now accept the
+runtimes. Top-level `doctor --json` / human output now also mirrors OpenClaw's
+Sandbox doctor preflight for `agents.defaults.sandbox.mode`: when mode is
+`non-main` or `all`, the effective backend defaults to Docker, and `docker
+version` is unavailable, the Hermes doctor payload carries the same actionable
+Sandbox warning text while preserving the existing warning surface. The
+top-level human/JSON doctor view now also reports OpenClaw-style session lock
+health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
+liveness, age, stale posture, and read-only guidance without removing files.
+Top-level doctor output now also includes the upstream `doctor:security` and
+`doctor:shell-completion` contribution surfaces as stable native read models,
+currently marked honest unavailable/partial until production security and shell
+completion repair adapters are wired.
+The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
 ACP CLI parity is the real bridge server/client runtime. The unavailable
@@ -398,6 +488,27 @@ Telegram native sends now parse topic-qualified targets like
 `message_thread_id` instead of treating the full target as the chat id.
 Telegram parent supergroup routes now also match topic-qualified sends for the
 same chat id, while topic-specific routes remain specific to their thread id.
+WhatsApp native route sends now match OpenClaw's direct text/media outbound
+chunking contract for text-only long sends by splitting bodies into 4000
+character messages and returning the last provider message id instead of
+truncating the payload.
+WhatsApp native media sends now also preserve OpenClaw's leading-caption
+contract: provider-visible image/document/video captions contain only the
+original outbound text, while generated media URL/settings summaries remain
+delivery metadata instead of being appended to captions.
+Gateway poll requests now mirror OpenClaw's provider capability guard for
+`durationSeconds`: Telegram can still opt into second-granularity polls, while
+Slack/Discord/WhatsApp reject `durationSeconds` before runtime dispatch and
+continue using `durationHours` where applicable.
+Telegram gateway poll validation now also matches the upstream Telegram adapter
+duration contract by accepting only `durationSeconds` in the 5-600 range and
+rejecting `durationHours` with the OpenClaw-shaped guidance message.
+The same Telegram duration contract is now enforced in the OpsMesh
+route-backed provider path so direct CLI/runtime sends and replays cannot
+bypass the gateway-method validation before posting `sendPoll`.
+Gateway poll option validation now follows OpenClaw's provider caps for
+Telegram and Discord by rejecting more than 10 options while keeping WhatsApp's
+12-option path available.
 
 Current queue-head adjustment: `tools.invoke` plugin execution now routes
 through a fakeable `GatewayPluginRuntimeService`, preserving core mappings
@@ -411,9 +522,12 @@ from the same enabled plugin runtime specs by default, suppresses core-name
 collisions, and honors `includePlugins=false` for core-only catalog reads.
 `tools.effective` now projects the same runtime specs as upstream-style
 `source="plugin"` entries under the `Connected tools` group while filtering
-empty groups from plugin-only sessions. Remaining tool parity is future
-production plugin metadata discovery beyond the fakeable registry adapter and
-deeper marketplace install/update/uninstall flows.
+empty groups from plugin-only sessions. Optional plugin runtime executors now
+preserve OpenClaw's `optional` tool metadata and can be enabled by exact tool
+name, plugin id, or `group:plugins` allowlist entries before dispatching
+through `tools.invoke`. Remaining tool parity is future
+production runtime activation/import metadata beyond the native manifest
+snapshot adapter and deeper marketplace install/update/uninstall flows.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
@@ -426,7 +540,10 @@ load errors from the same projection and preserves OpenClaw's
 its `plugins info` alias now return OpenClaw-shaped JSON reports with
 `plugin`, `shape`, `capabilityMode`, capability kinds, diagnostics, policy, and
 install metadata projected from the same inventory, and `inspect --all` returns
-all records with top-level saved install metadata when present. `plugins enable`
+all records with top-level saved install metadata when present. Runtime-backed
+`plugins inspect` tool reports now preserve OpenClaw's registered-tool
+`optional` metadata instead of collapsing native executor tools into a single
+required group. `plugins enable`
 / `plugins disable` now write through the
 existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
@@ -455,6 +572,26 @@ OpenClaw-shaped `plugins.entries` / `plugins.installs` records from the native
 gateway config owner, so config-installed marketplace plugins are visible even
 when the live platform deck has not loaded them yet; `plugins inspect --all --json`
 now preserves those saved install records in the report-level `install` field.
+`plugins list --json` now also performs OpenClaw-style metadata-only discovery
+for configured `plugins.load.paths` entries that contain `openclaw.plugin.json`,
+preserving manifest `id`, `name`, `description`, `version`, contracts, tool
+names, manifest/root paths, and enabled/default status without importing plugin
+code. `plugins inspect --json` now also consults the native
+`GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
+runtime executor specs mark discovered plugins as imported, switch the inspect
+report from inventory-only to `capabilityMode="runtime"`, and project
+OpenClaw-shaped runtime tool entries with `names` / `optional` metadata.
+Inspect reports now also project OpenClaw-shaped policy summaries from
+`plugins.entries.<id>.hooks.allowPromptInjection` and
+`plugins.entries.<id>.subagent` (`allowModelOverride`, `allowedModels`, and
+`hasAllowedModelsConfig`) instead of always returning an empty policy object.
+`plugins inspect --json` now also preserves OpenClaw's plugin-record runtime
+surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
+`httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
+metadata-only manifest records instead of being zeroed in the report.
+Remaining plugin CLI parity is remote marketplace clone/update breadth and
+deeper runtime activation/import metadata beyond the native metadata/runtime
+projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
@@ -2114,10 +2251,350 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   preserves `/stop` as `origin="stop-command"`, ignores blank partials, and
   projects the metadata through `chat.history`.
 - Verified the abort partial transcript seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort_persists_partial_assistant_transcript_like_openclaw or chat_send_stop_persists_abort_partial_with_stop_command_origin or chat_abort"`, API proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "chat_abort"`, adjacent transcript proof `python -m pytest tests\test_gateway_node_methods.py -q -k "chat_abort or chat_history or sessions_history"`, shared session read-model proof `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface or transcript_usage or control_chat"`, `ruff check src\openzues\database.py src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\database.py src\openzues\services\gateway_node_methods.py`.
+- Closed the OpsMesh provider-runtime poll option-cap seam: direct poll calls
+  now validate channel-specific OpenClaw caps before provider route lookup, and
+  Telegram/Discord/WhatsApp native provider post helpers apply the same guard
+  before replay/provider payload dispatch. Verified with `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_provider_option_caps"`, adjacent
+  native poll pack `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_telegram_native_route or
+  send_direct_channel_poll_uses_discord_native_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  rejects_provider_option_caps or rejects_invalid_telegram_durations"`,
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py`.
+- Closed the poll `maxSelections` option-count seam from OpenClaw
+  `normalizePollInput`: Gateway `poll` and OpsMesh direct/native provider poll
+  paths now reject `maxSelections` values above the cleaned option count before
+  runtime dispatch or replay/provider post construction. Verified with
+  `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "poll_rejects_max_selections_above_option_count"`, `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_max_selections_above_options"`,
+  adjacent gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py tests\test_gateway_node_methods.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py`.
+- Closed the poll duration mutual-exclusion seam from OpenClaw
+  `normalizePollInput`: Gateway `poll` and OpsMesh direct/native provider poll
+  paths now reject requests that set both `durationSeconds` and
+  `durationHours` before runtime dispatch or replay/provider post
+  construction. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "poll_rejects_mutual_duration_fields"`, `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_invalid_telegram_durations"`,
+  adjacent gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py tests\test_gateway_node_methods.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py`.
+- Closed the blank poll option filtering seam from OpenClaw
+  `normalizePollInput`: Gateway `poll` and OpsMesh direct/provider poll
+  delivery now trim options and drop blank entries before validation, dispatch,
+  persisted delivery payloads, and native provider payload construction.
+  Verified with `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "test_poll_uses_channel_poll_runtime"`, `python -m pytest
+  tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_telegram_native_route"`, adjacent
+  gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py tests\test_gateway_node_methods.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py`.
+- Closed the omitted poll `maxSelections` default seam from OpenClaw
+  `normalizePollInput`: Gateway `poll`, OpsMesh direct/provider poll delivery,
+  and the shared outbound runtime now normalize missing `maxSelections` to `1`
+  before runtime dispatch, persisted delivery payloads, and native/provider
+  request construction. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_poll_uses_channel_poll_runtime"`,
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_poll_uses_gateway_route_adapter or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one"`, adjacent
+  gateway/OpsMesh poll packs, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py
+  tests\test_gateway_node_methods.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- Closed the remaining OpsMesh poll shape guards from OpenClaw
+  `normalizePollInput`: direct/provider poll delivery now rejects empty
+  questions and fewer than two cleaned options before provider lookup,
+  persisted delivery creation, route-backed runtime posting, or native provider
+  payload construction. Verified with `python -m pytest
+  tests\test_ops_mesh.py -q -k "rejects_invalid_poll_shape"`, adjacent OpsMesh
+  provider poll pack, `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Closed the `agents.files.list` primary-memory projection seam: OpenZues now
+  mirrors OpenClaw by listing `MEMORY.md` when present, falling back to legacy
+  `memory.md` only when the primary file is absent, instead of returning both.
+  Verified with `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "agents_files_list_prefers_primary_memory_file_like_openclaw"`, adjacent
+  agent-files pack, `ruff check
+  src\openzues\services\gateway_agent_files.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_agent_files.py`.
+- Closed the ACP sandboxed-requester policy seam: `sessions.spawn
+  runtime="acp"` now rejects sandboxed requester sessions before ACP target
+  resolution or runtime dispatch, using the OpenClaw host-runtime error while
+  preserving the existing explicit `sandbox="require"` ACP rejection. Verified
+  with `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_rejects_sandboxed_requester_to_acp_runtime"`, adjacent ACP
+  spawn policy/runtime pack, `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
+- Closed the `tools.invoke` scoped plugin visibility seam: plugin executors
+  are no longer gated solely by `gateway.tools.allow`; non-core plugin tools
+  can be exposed by the invoking agent's OpenClaw-style `tools.allow` policy,
+  while the existing gateway default-deny behavior for high-risk core tools
+  remains intact. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "tools_invoke_runs_plugin_executor_from_agent_tool_allowlist"`, adjacent
+  `tools.invoke` plugin pack, config smoke, `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Closed the doctor sandbox shared-scope override warning seam: `doctor --json`
+  now adds OpenClaw-shaped warnings when agent-level `sandbox.docker`,
+  `sandbox.browser`, or `sandbox.prune` overrides resolve to `scope="shared"`
+  and would be ignored. Verified with `python -m pytest tests\test_cli.py -q
+  -k "doctor_json_warns_about_shared_sandbox_agent_overrides"`, adjacent doctor
+  sandbox/lock pack, `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Closed the sandboxed session-tools visibility clamp seam: `tools.invoke`
+  session history/status/send/list access now treats sandboxed requesters as
+  tree/spawned-scoped when sandbox `sessionToolsVisibility` is omitted or
+  `spawned`, while explicit `sessionToolsVisibility="all"` keeps the broader
+  configured visibility. Verified with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_history_clamps_sandboxed_requester_to_tree_visibility or
+  sessions_history_allows_sandboxed_requester_when_visibility_all"`, adjacent
+  sessions visibility pack, `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
+- Closed the `chat.inject` parent-link seam from OpenClaw
+  `chat.inject.parentid.test.ts`: injected assistant transcript rows now record
+  the current control-chat leaf as `parentId` metadata and project that linkage
+  through `chat.history` plus session message payloads. Verified with
+  `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_inject_records_parent_id_from_current_transcript_leaf -q`,
+  adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "chat_inject or chat_history"`, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_sessions.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_sessions.py`.
+- Closed the cron direct-announce replay idempotency seam from OpenClaw
+  `delivery-dispatch.double-announce.test.ts`: explicit cron failure announce
+  and failure-alert channel deliveries now pass stable
+  `cron-direct-delivery:v1:*` idempotency keys into the shared direct-channel
+  delivery owner, so repeated handling of the same failed cron execution reuses
+  the saved delivered row instead of double-sending. Verified with
+  `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_dedupes_replayed_cron_failure_announce_delivery -q`,
+  adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "explicit_cron_failure_to_announce or replayed_cron_failure_announce or
+  send_direct_channel_message_dedupes_inflight_idempotent_retries or
+  replay_outbound_deliveries_retries_saved_failed_announce_delivery"`, `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the first `chat.send` mixed attachment ordering seam from OpenClaw
+  `chat.directive-tags.test.ts` / `chat-attachments.ts`: effective image
+  attachments now carry `imageOrder` through the native attachment runtime,
+  using OpenClaw's 2 MB decoded-size inline/offloaded boundary, and the
+  app-wired control-chat path persists that ordering metadata on the user turn.
+  Verified with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments
+  tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_preserves_chat_send_attachment_image_order -q`,
+  adjacent `python -m pytest tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py -q -k "chat_send and attachment"`, `ruff
+  check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\control_chat.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\control_chat.py src\openzues\app.py`.
+- Closed the bundled plugin runtime dependency doctor seam from OpenClaw
+  `doctor-bundled-plugin-runtime-deps.test.ts` /
+  `bundled-runtime-deps.ts`: OpenZues now reads manifest-adjacent
+  `package.json` `dependencies` and `optionalDependencies`, exposes them
+  through plugin inventory/inspect JSON, computes bundled install roots, skips
+  source checkouts, honors enabled channel plugin config, suppresses installed
+  dependency sentinels, and reports missing deps plus conflicting versions
+  through `plugins doctor --json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies
+  tests\test_cli.py::test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies
+  tests\test_cli.py::test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_discovers_openclaw_manifest_load_paths or runtime_deps or
+  runtime_dependencies or plugins_doctor or
+  plugins_inspect_json_projects_runtime_executor_tools"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the top-level bundled plugin runtime dependency doctor contribution
+  seam from OpenClaw `doctor-health-contributions.ts`: `doctor --json` now
+  includes the `doctor:bundled-plugin-runtime-deps` contribution, reusing the
+  native dependency scanner and reporting missing deps, conflicts, diagnostics,
+  and a truthful no-install repair boundary. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_and_update_status_json_include_hermes_sections or
+  plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
+  plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`, `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the structured `doctor:sandbox` contribution seam from OpenClaw
+  `doctor-sandbox.ts` / `doctor-health-contributions.ts`: `doctor --json` now
+  reports resolved sandbox mode/backend, Docker availability, missing-Docker
+  and shared-scope override warnings, status, summary, and the current
+  no-install repair boundary as structured data instead of warning text only.
+  Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_sandbox_contribution -q`,
+  adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the first structured `doctor:memory-search` gateway probe seam from
+  OpenClaw `doctor-gateway-health.ts` / `doctor-memory-search.ts`: `doctor
+  --json` now calls the native `doctor.memory.status` gateway method when
+  available, records checked/ready/error/provider state, and projects the
+  OpenClaw-shaped "Gateway memory probe for default agent is not ready"
+  warning into structured JSON. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_gateway_memory_probe_contribution
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the compact CLI root-option token seam from OpenClaw
+  `cli-root-options.ts`: the native CLI now accepts `--dev`, `--no-color`,
+  `--profile`, `--log-level`, and `--container` before subcommands, and its
+  token helpers match OpenClaw's handling of negative numeric values, `--`
+  terminators, `--flag=value` forms, and missing values. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_root_option_token_consumption_matches_openclaw_reference_cases
+  tests\test_cli.py::test_root_openclaw_compat_options_are_accepted_before_command
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k "root_option or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  health_json_surfaces_gateway_health_snapshot"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the repair-mode `doctor:startup-channel-maintenance` seam from
+  OpenClaw `doctor-startup-channel-maintenance.ts`: `doctor --fix` / `--repair`
+  now calls a fakeable native channel startup maintenance adapter with
+  `trigger="doctor-fix"` and `logPrefix="doctor"`, while non-repair doctor
+  reports the contribution as skipped and repair mode without an adapter keeps
+  an honest unavailable boundary. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_startup_channel_maintenance_adapter
+  tests\test_cli.py::test_doctor_skips_startup_channel_maintenance_without_fix
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "startup_channel_maintenance or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  root_openclaw_compat"`, `ruff check src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\cli.py`.
+- Closed the structured `doctor:gateway-health` contribution seam from
+  OpenClaw `doctor-gateway-health.ts` / `doctor-health-contributions.ts`:
+  `doctor --json` now runs the native bounded health probe, calls
+  `channels.status` with OpenClaw-shaped probe options when health is up, and
+  returns channel warning metadata for degraded provider accounts without
+  treating unsupported provider probe hooks as warnings. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_gateway_health_contribution_and_channel_warnings
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_gateway_health_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  startup_channel_maintenance or
+  channels_status_json_calls_gateway_method_owner_with_probe"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the provider-native `gatewayClientScopes` seam from OpenClaw
+  `gateway/server-methods/send.ts`: direct send and poll now pass normalized
+  gateway client scopes into provider runtime requests, route-backed provider
+  event payloads, and persisted delivery payloads, including explicit empty
+  arrays when the caller has no scopes. Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_prefers_provider_runtime
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtime
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_message_prefers_provider_runtime or
+  send_direct_channel_poll_prefers_provider_runtime or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one or
+  send_direct_channel_message_uses_native_adapter_binding or
+  send_direct_channel_poll_uses_native_adapter_binding or
+  send_direct_channel_message_uses_gateway_route_adapter or
+  send_direct_channel_message_preserves_provider_native_options"`, `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
+- Closed the provider-native requester context seam from OpenClaw
+  `infra/outbound/outbound-send-service.ts`: direct send now distinguishes the
+  runtime delivery `sessionKey` from requester metadata and forwards
+  `requesterSessionKey`, `requesterAccountId`, `requesterSenderId`, and
+  sender display fields into provider runtime requests, route-backed provider
+  event payloads, and persisted delivery payloads. Verified with `python -m
+  pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_forwards_requester_context
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "requester_context or send_direct_channel_message_mirrors_explicit_session_key
+  or send_direct_channel_message_prefers_provider_runtime or
+  send_direct_channel_message_preserves_provider_native_options or
+  send_direct_channel_message_uses_native_adapter_binding"`, `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
+- Closed the WhatsApp multi-media result seam from OpenClaw's outbound payload
+  contract helper: multi-media WhatsApp sends now return the final provider
+  message id as canonical `messageId` while preserving the ordered `mediaIds`
+  list. Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "whatsapp_media or whatsapp_document_reply or whatsapp_gif or whatsapp_text
+  or send_direct_channel_message_splits_whatsapp_media"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the Slack native media upload auth seam from OpenClaw
+  `extensions/slack/src/send.ts`: route-backed media upload now passes the raw
+  Slack route token into the upload helper and relies on the Slack form poster
+  to apply a single `Bearer` wrapper, preserving thread/reply upload metadata
+  without double-wrapping authorization. Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_slack_native_route
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "slack_native_route or slack_reply_to or slack_media_download or
+  send_direct_channel_message_uses_slack_native_route or
+  message_action_dispatches_slack"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the Telegram route-backed media/force-document seam from OpenClaw
+  `src/plugin-sdk/reply-payload.ts`, `extensions/telegram/src/outbound-adapter.ts`,
+  and `extensions/telegram/src/send.ts`: native route-backed multi-media sends
+  now use individual Telegram `sendPhoto`/`sendDocument` calls with the caption
+  on the first send, return the final send's message id, preserve ordered media
+  ids, and include `disable_content_type_detection` for forced document sends.
+  Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_native_options
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_native_route or telegram_native_options or telegram_topic or
+  telegram_media_group or invalid_telegram_durations"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially ACP spawn harness parity, richer `tools.invoke` executor parity
-  (real plugin HTTP ordering and any additional intentional high-risk
-  mappings), broader runtime/client integration, and session runtime methods
-  (`chat.*`, `sessions.*`), rather than the older approval lifecycle/config/
-  device-token/agent-mutation/memory-doctor/placeheld provenance/false
-  steer-runtime/custom-agent-session placeholders.
+  especially broader runtime/client integration, provider replay/direct
+  announce consistency, remaining runtime bridge doctor/packaging checks, and
+  session runtime methods (`chat.*`, `sessions.*`), rather than the older
+  approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
+  provenance/false steer-runtime/custom-agent-session/plugin-dependency
+  placeholders.

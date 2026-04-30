@@ -12,6 +12,12 @@ def _normalize_optional_string(value: str | None) -> str | None:
     return normalized or None
 
 
+def _normalize_scope_tuple(scopes: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if scopes is None:
+        return ()
+    return tuple(str(scope).strip() for scope in scopes if str(scope).strip())
+
+
 def _native_adapter_key(
     channel: str | None,
     account_id: str | None,
@@ -123,6 +129,13 @@ class GatewayOutboundRuntimeMessageRequest:
     thread_id: str | None = None
     session_key: str | None = None
     agent_id: str | None = None
+    requester_session_key: str | None = None
+    requester_account_id: str | None = None
+    requester_sender_id: str | None = None
+    requester_sender_name: str | None = None
+    requester_sender_username: str | None = None
+    requester_sender_e164: str | None = None
+    gateway_client_scopes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +152,7 @@ class GatewayOutboundRuntimePollRequest:
     account_id: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
+    gateway_client_scopes: tuple[str, ...] = ()
 
 
 class GatewayOutboundRuntimeUnavailableError(RuntimeError):
@@ -298,9 +312,17 @@ class GatewayOutboundRuntimeService:
         account_id: str | None = None,
         thread_id: str | None = None,
         agent_id: str | None = None,
+        requester_session_key: str | None = None,
+        requester_account_id: str | None = None,
+        requester_sender_id: str | None = None,
+        requester_sender_name: str | None = None,
+        requester_sender_username: str | None = None,
+        requester_sender_e164: str | None = None,
+        gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
     ) -> GatewayOutboundRuntimeDeliveryResult:
         normalized_channel = _normalize_optional_string(channel)
         normalized_target = _normalize_optional_string(target)
+        normalized_gateway_client_scopes = _normalize_scope_tuple(gateway_client_scopes)
         native_message_deliverer = self._native_message_deliverer(
             channel=normalized_channel,
             account_id=account_id,
@@ -321,6 +343,25 @@ class GatewayOutboundRuntimeService:
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
                         agent_id=_normalize_optional_string(agent_id),
+                        requester_session_key=_normalize_optional_string(
+                            requester_session_key
+                        ),
+                        requester_account_id=_normalize_optional_string(
+                            requester_account_id
+                        ),
+                        requester_sender_id=_normalize_optional_string(
+                            requester_sender_id
+                        ),
+                        requester_sender_name=_normalize_optional_string(
+                            requester_sender_name
+                        ),
+                        requester_sender_username=_normalize_optional_string(
+                            requester_sender_username
+                        ),
+                        requester_sender_e164=_normalize_optional_string(
+                            requester_sender_e164
+                        ),
+                        gateway_client_scopes=normalized_gateway_client_scopes,
                     )
                 )
             except GatewayOutboundRuntimeUnavailableError:
@@ -365,6 +406,25 @@ class GatewayOutboundRuntimeService:
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
                         agent_id=_normalize_optional_string(agent_id),
+                        requester_session_key=_normalize_optional_string(
+                            requester_session_key
+                        ),
+                        requester_account_id=_normalize_optional_string(
+                            requester_account_id
+                        ),
+                        requester_sender_id=_normalize_optional_string(
+                            requester_sender_id
+                        ),
+                        requester_sender_name=_normalize_optional_string(
+                            requester_sender_name
+                        ),
+                        requester_sender_username=_normalize_optional_string(
+                            requester_sender_username
+                        ),
+                        requester_sender_e164=_normalize_optional_string(
+                            requester_sender_e164
+                        ),
+                        gateway_client_scopes=normalized_gateway_client_scopes,
                     )
                 )
             except GatewayOutboundRuntimeUnavailableError:
@@ -416,13 +476,16 @@ class GatewayOutboundRuntimeService:
         is_anonymous: bool | None = None,
         account_id: str | None = None,
         thread_id: str | None = None,
+        gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
     ) -> GatewayOutboundRuntimeDeliveryResult:
         normalized_channel = _normalize_optional_string(channel)
         normalized_target = _normalize_optional_string(target)
+        normalized_gateway_client_scopes = _normalize_scope_tuple(gateway_client_scopes)
         native_poll_deliverer = self._native_poll_deliverer(
             channel=normalized_channel,
             account_id=account_id,
         )
+        resolved_max_selections = max_selections if max_selections is not None else 1
         if native_poll_deliverer is not None and normalized_target is not None:
             try:
                 poll_result = await native_poll_deliverer(
@@ -431,7 +494,7 @@ class GatewayOutboundRuntimeService:
                         target=normalized_target,
                         question=question,
                         options=options,
-                        max_selections=max_selections,
+                        max_selections=resolved_max_selections,
                         duration_seconds=duration_seconds,
                         duration_hours=duration_hours,
                         silent=silent,
@@ -439,6 +502,7 @@ class GatewayOutboundRuntimeService:
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
+                        gateway_client_scopes=normalized_gateway_client_scopes,
                     )
                 )
             except GatewayOutboundRuntimeUnavailableError:
@@ -472,7 +536,7 @@ class GatewayOutboundRuntimeService:
                         target=normalized_target,
                         question=question,
                         options=options,
-                        max_selections=max_selections,
+                        max_selections=resolved_max_selections,
                         duration_seconds=duration_seconds,
                         duration_hours=duration_hours,
                         silent=silent,
@@ -480,6 +544,7 @@ class GatewayOutboundRuntimeService:
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
+                        gateway_client_scopes=normalized_gateway_client_scopes,
                     )
                 )
             except GatewayOutboundRuntimeUnavailableError:
@@ -505,4 +570,5 @@ class GatewayOutboundRuntimeService:
             target=target,
             account_id=account_id,
             thread_id=thread_id,
+            gateway_client_scopes=normalized_gateway_client_scopes,
         )

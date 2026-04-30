@@ -17,11 +17,13 @@ from openzues.app import create_app
 from openzues.cli import (
     _append_watch_log,
     _close_services,
+    _consume_root_option_token,
     _emit_attention_queue_action,
     _emit_continue_action,
     _emit_gateway_bootstrap,
     _emit_gateway_capability,
     _emit_status,
+    _is_root_value_token,
     _summarize_browser_snapshot,
     _watch_browser_verify,
     app,
@@ -37,6 +39,10 @@ from openzues.services.control_chat import ControlChatPlan
 from openzues.services.device_bootstrap_profile import BOOTSTRAP_HANDOFF_OPERATOR_SCOPES
 from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_method_policy import list_known_gateway_methods
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginRuntimeExecutorSpec,
+    GatewayPluginRuntimeService,
+)
 from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
 
@@ -98,6 +104,86 @@ def test_close_services_shuts_down_background_service_loops() -> None:
         "mission_service",
         "manager",
     ]
+
+
+def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
+    assert _is_root_value_token("work") is True
+    assert _is_root_value_token("-1") is True
+    assert _is_root_value_token("-1.5") is True
+    assert _is_root_value_token("-0.5") is True
+    assert _is_root_value_token("--") is False
+    assert _is_root_value_token("--dev") is False
+    assert _is_root_value_token("-") is False
+    assert _is_root_value_token("") is False
+    assert _is_root_value_token(None) is False
+    assert _consume_root_option_token(["--dev"], 0) == 1
+    assert _consume_root_option_token(["--profile=work"], 0) == 1
+    assert _consume_root_option_token(["--log-level=debug"], 0) == 1
+    assert _consume_root_option_token(["--container=openclaw-demo"], 0) == 1
+    assert _consume_root_option_token(["--profile", "work"], 0) == 2
+    assert _consume_root_option_token(["--container", "openclaw-demo"], 0) == 2
+    assert _consume_root_option_token(["--profile", "-1"], 0) == 2
+    assert _consume_root_option_token(["--log-level", "-1.5"], 0) == 2
+    assert _consume_root_option_token(["--profile", "--no-color"], 0) == 1
+    assert _consume_root_option_token(["--profile", "--"], 0) == 1
+    assert _consume_root_option_token(["x", "--profile", "work"], 1) == 2
+    assert _consume_root_option_token(["--log-level", ""], 0) == 1
+    assert _consume_root_option_token(["--unknown"], 0) == 0
+    assert _consume_root_option_token([], 0) == 0
+
+
+def test_root_openclaw_compat_options_are_accepted_before_command(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=None,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "--dev",
+            "--no-color",
+            "--profile",
+            "-1",
+            "--log-level",
+            "-1.5",
+            "--container=openclaw-demo",
+            "doctor",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["profile"] == {"summary": "Hermes runtime profile is mapped."}
 
 
 def _watch_dashboard_payload(*, mission_status: str = "paused") -> dict[str, object]:
@@ -825,6 +911,64 @@ def test_channels_capabilities_json_filters_channel_and_account(tmp_path, monkey
     assert "send" in report["actions"]
     assert report["support"]["reply"] is True
     assert report["probe"]["status"] == "unavailable"
+
+
+def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Zalo Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Zalo Route",
+            kind="zalo",
+            target="https://bot-api.zaloplatforms.test",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "zalo",
+                "account_id": "zalo-bot",
+                "peer_kind": "direct",
+                "peer_id": "direct:dm-chat-1",
+                "summary": "zalo-bot direct dm-chat-1",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="zalo-access-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "zalo",
+            "--account",
+            "zalo-bot",
+            "--target",
+            "direct:dm-chat-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "direct:dm-chat-1"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "zalo"
+    assert report["accountId"] == "zalo-bot"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert report["support"]["chatTypes"] == ["direct", "group"]
+    assert report["support"]["media"] is True
+    assert report["support"]["reactions"] is False
+    assert report["support"]["polls"] is False
+    assert report["support"]["threads"] is False
+    assert report["actions"] == ["send", "broadcast"]
 
 
 def test_channels_capabilities_json_uses_account_probe_result(monkeypatch) -> None:
@@ -2366,6 +2510,83 @@ def test_sandbox_explain_json_uses_saved_sandbox_metadata(monkeypatch) -> None:
     assert payload["sandbox"]["runtimeId"] == 7
     assert payload["sandbox"]["policy"] == {"type": "workspaceWrite"}
     assert "agents.defaults.sandbox.mode" in payload["fixIt"]
+
+
+def test_sandbox_explain_json_projects_config_sandbox_tool_policy(monkeypatch) -> None:
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "scope": "agent",
+                            "workspaceAccess": "none",
+                        }
+                    },
+                    "list": [
+                        {
+                            "id": "tavern",
+                            "tools": {
+                                "sandbox": {
+                                    "tools": {
+                                        "alsoAllow": ["message", "tts"],
+                                    }
+                                }
+                            },
+                        }
+                    ],
+                },
+                "tools": {
+                    "sandbox": {
+                        "tools": {
+                            "allow": ["browser"],
+                            "deny": ["shell"],
+                        }
+                    }
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=None,
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "explain",
+            "--agent",
+            "tavern",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["agentId"] == "tavern"
+    assert payload["mainSessionKey"] == "agent:tavern:main"
+    assert payload["sandbox"]["mode"] == "all"
+    assert payload["sandbox"]["scope"] == "agent"
+    assert payload["sandbox"]["workspaceAccess"] == "none"
+    assert payload["sandbox"]["sessionIsSandboxed"] is True
+    assert payload["sandbox"]["tools"]["allow"] == ["browser", "message", "tts", "image"]
+    assert payload["sandbox"]["tools"]["deny"] == ["shell"]
+    assert payload["sandbox"]["tools"]["sources"]["allow"] == {
+        "source": "agent",
+        "key": "agents.list[].tools.sandbox.tools.alsoAllow",
+    }
+    assert payload["sandbox"]["tools"]["sources"]["deny"] == {
+        "source": "global",
+        "key": "tools.sandbox.tools.deny",
+    }
+    assert "agents.defaults.sandbox.mode=off" in payload["fixIt"]
 
 
 def test_cron_status_json_calls_gateway_method_owner(monkeypatch) -> None:
@@ -5014,6 +5235,641 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
     ]
 
 
+def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "native-runtime",
+                "name": "Native Runtime",
+                "description": "Metadata-only native plugin.",
+                "version": "0.3.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {
+                    "tools": ["native_runtime.search"],
+                    "webSearchProviders": ["native-search"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == [
+        {
+            "id": "native-runtime",
+            "name": "Native Runtime",
+            "status": "loaded",
+            "format": "openclaw",
+            "source": str(manifest_path),
+            "origin": "config",
+            "description": "Metadata-only native plugin.",
+            "capabilities": [
+                "tool:native_runtime.search",
+                "web-search:native-search",
+            ],
+            "parityStatus": "metadata",
+            "version": "0.3.0",
+            "rootDir": str(plugin_dir),
+            "manifestPath": str(manifest_path),
+            "configSchema": True,
+            "contracts": {
+                "tools": ["native_runtime.search"],
+                "webSearchProviders": ["native-search"],
+            },
+            "toolNames": ["native_runtime.search"],
+        }
+    ]
+
+
+def _write_openclaw_runtime_plugin(
+    plugin_dir: Path,
+    *,
+    plugin_id: str,
+    dependencies: dict[str, object] | None = None,
+    optional_dependencies: dict[str, object] | None = None,
+    enabled_by_default: bool = True,
+    channels: list[str] | None = None,
+) -> Path:
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": plugin_id,
+                "name": plugin_id,
+                "description": f"{plugin_id} runtime plugin.",
+                "version": "1.0.0",
+                "enabledByDefault": enabled_by_default,
+                "channels": list(channels or []),
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    package_payload: dict[str, object] = {}
+    if dependencies is not None:
+        package_payload["dependencies"] = dependencies
+    if optional_dependencies is not None:
+        package_payload["optionalDependencies"] = optional_dependencies
+    (plugin_dir / "package.json").write_text(
+        json.dumps(package_payload),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _patch_plugins_cli_services(
+    monkeypatch,
+    *,
+    gateway_config: GatewayConfigService,
+) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+
+def test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    plugin_dir = package_root / "dist" / "extensions" / "native-runtime"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="native-runtime",
+        dependencies={
+            "dep-one": "1.0.0",
+            "dep-blank": " ",
+            "dep-object": {"version": "skip"},
+        },
+        optional_dependencies={
+            "@scope/dep-two": "2.0.0",
+            "dep-opt": "3.0.0",
+        },
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["source"] == str(manifest_path)
+    assert payload["plugins"][0]["runtimeDependencyInstallRoot"] == str(package_root)
+    assert payload["plugins"][0]["runtimeDependencies"] == [
+        {"name": "@scope/dep-two", "version": "2.0.0"},
+        {"name": "dep-one", "version": "1.0.0"},
+        {"name": "dep-opt", "version": "3.0.0"},
+    ]
+
+
+def test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    extensions_dir = package_root / "dist" / "extensions"
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "alpha",
+        plugin_id="alpha",
+        dependencies={
+            "dep-one": "1.0.0",
+            "@scope/dep-two": "2.0.0",
+        },
+        optional_dependencies={"dep-opt": "3.0.0"},
+    )
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "beta",
+        plugin_id="beta",
+        dependencies={
+            "dep-one": "1.0.0",
+            "dep-conflict": "1.0.0",
+        },
+    )
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "gamma",
+        plugin_id="gamma",
+        dependencies={"dep-conflict": "2.0.0"},
+    )
+    installed_dep = package_root / "node_modules" / "dep-one" / "package.json"
+    installed_dep.parent.mkdir(parents=True)
+    installed_dep.write_text(json.dumps({"name": "dep-one"}), encoding="utf-8")
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {
+                        "paths": [
+                            str(extensions_dir / "alpha"),
+                            str(extensions_dir / "beta"),
+                            str(extensions_dir / "gamma"),
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["runtimeDependencies"] == {
+        "missing": [
+            {
+                "name": "@scope/dep-two",
+                "version": "2.0.0",
+                "pluginIds": ["alpha"],
+                "installRoot": str(package_root),
+                "spec": "@scope/dep-two@2.0.0",
+            },
+            {
+                "name": "dep-opt",
+                "version": "3.0.0",
+                "pluginIds": ["alpha"],
+                "installRoot": str(package_root),
+                "spec": "dep-opt@3.0.0",
+            },
+        ],
+        "conflicts": [
+            {
+                "name": "dep-conflict",
+                "versions": ["1.0.0", "2.0.0"],
+                "pluginIdsByVersion": {
+                    "1.0.0": ["beta"],
+                    "2.0.0": ["gamma"],
+                },
+            }
+        ],
+    }
+    assert [entry["message"] for entry in payload["diagnostics"]] == [
+        "Bundled plugin runtime deps use conflicting versions.",
+        "Bundled plugin runtime deps are missing.",
+    ]
+
+
+def test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    extensions_dir = package_root / "dist" / "extensions"
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "discord",
+        plugin_id="discord",
+        dependencies={"discord-only": "1.0.0"},
+        enabled_by_default=False,
+        channels=["discord"],
+    )
+    _write_openclaw_runtime_plugin(
+        extensions_dir / "whatsapp",
+        plugin_id="whatsapp",
+        dependencies={"whatsapp-only": "1.0.0"},
+        enabled_by_default=False,
+        channels=["whatsapp"],
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {"discord": {"enabled": True}},
+                "plugins": {
+                    "enabled": True,
+                    "load": {
+                        "paths": [
+                            str(extensions_dir / "discord"),
+                            str(extensions_dir / "whatsapp"),
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeDependencies"]["missing"] == [
+        {
+            "name": "discord-only",
+            "version": "1.0.0",
+            "pluginIds": ["discord"],
+            "installRoot": str(package_root),
+            "spec": "discord-only@1.0.0",
+        }
+    ]
+    assert payload["runtimeDependencies"]["conflicts"] == []
+
+
+def test_plugins_inspect_json_projects_runtime_executor_tools(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "native-runtime",
+                "name": "Native Runtime",
+                "description": "Runtime-backed native plugin.",
+                "version": "0.3.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {"tools": ["native_runtime.search"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                description="Search through the native runtime.",
+            )
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "native-runtime", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "native-runtime"
+    assert payload["plugin"]["imported"] is True
+    assert payload["capabilityMode"] == "runtime"
+    assert payload["capabilities"] == [
+        {"kind": "runtime-tools", "ids": ["native_runtime.search"]}
+    ]
+    assert payload["tools"] == [
+        {"names": ["native_runtime.search"], "optional": False}
+    ]
+
+
+def test_plugins_inspect_json_preserves_runtime_executor_optional_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "native-runtime",
+                "name": "Native Runtime",
+                "description": "Runtime-backed native plugin.",
+                "version": "0.3.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {
+                    "tools": [
+                        "native_runtime.required",
+                        "native_runtime.optional",
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.optional",
+                executor=fake_executor,
+                optional=True,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.required",
+                executor=fake_executor,
+                optional=False,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+            ),
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "native-runtime", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["capabilities"] == [
+        {
+            "kind": "runtime-tools",
+            "ids": ["native_runtime.optional", "native_runtime.required"],
+        }
+    ]
+    assert payload["tools"] == [
+        {"names": ["native_runtime.optional"], "optional": True},
+        {"names": ["native_runtime.required"], "optional": False},
+    ]
+
+
+def test_plugins_inspect_json_projects_record_runtime_surfaces(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "runtime-surfaces",
+                            "label": "Runtime Surfaces",
+                            "status": "ready",
+                            "summary": "Plugin with registered runtime surfaces.",
+                            "capabilities": ["tool:runtime.search"],
+                            "commands": ["pair"],
+                            "cliCommands": ["memory"],
+                            "services": ["memory.index"],
+                            "gatewayMethods": ["memory.search"],
+                            "httpRoutes": 2,
+                            "bundleCapabilities": ["skills", "commands"],
+                        }
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "runtime-surfaces", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["commands"] == ["pair"]
+    assert payload["cliCommands"] == ["memory"]
+    assert payload["services"] == ["memory.index"]
+    assert payload["gatewayMethods"] == ["memory.search"]
+    assert payload["httpRouteCount"] == 2
+    assert payload["bundleCapabilities"] == ["skills", "commands"]
+
+
 def test_plugins_inspect_all_json_includes_saved_install_records(
     tmp_path,
     monkeypatch,
@@ -5078,6 +5934,72 @@ def test_plugins_inspect_all_json_includes_saved_install_records(
     payload = json.loads(result.stdout)
     assert payload[0]["plugin"]["id"] == "frontend-design"
     assert payload[0]["install"] == install_record
+
+
+def test_plugins_inspect_json_projects_config_policy(tmp_path, monkeypatch) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {
+                        "policy-plugin": {
+                            "enabled": True,
+                            "hooks": {"allowPromptInjection": False},
+                            "subagent": {
+                                "allowModelOverride": True,
+                                "allowedModels": ["openai/gpt-5.4"],
+                                "hasAllowedModelsConfig": True,
+                            },
+                        }
+                    }
+                },
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "policy-plugin", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["policy"] == {
+        "allowPromptInjection": False,
+        "allowModelOverride": True,
+        "allowedModels": ["openai/gpt-5.4"],
+        "hasAllowedModelsConfig": True,
+    }
 
 
 def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
@@ -9768,6 +10690,40 @@ def test_status_json_prefers_live_status_payload_when_available(tmp_path, monkey
     assert payload["instance_summary"]["connected_count"] == 1
 
 
+def test_status_json_includes_managed_service_summaries(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    async def fake_live_status(_settings: Settings) -> dict[str, object]:
+        return {"headline": "Live dashboard headline", "summary": "Live dashboard summary"}
+
+    monkeypatch.setattr(cli_module, "_try_live_status_payload", fake_live_status)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["gatewayService"] == {
+        "label": "OpenZues gateway service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed gateway service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+    assert payload["nodeService"] == {
+        "label": "OpenZues node service",
+        "installed": None,
+        "loaded": False,
+        "managedByOpenClaw": False,
+        "externallyManaged": False,
+        "loadedText": "native OpenZues app runtime; no OpenClaw-managed node service",
+        "runtime": None,
+        "runtimeShort": None,
+    }
+
+
 def test_status_json_breadth_flags_add_runtime_sections_with_timeout(
     tmp_path, monkeypatch
 ) -> None:
@@ -12845,6 +13801,725 @@ def test_doctor_and_update_status_json_include_hermes_sections(tmp_path, monkeyp
     assert "delivery" in doctor_payload
     assert "updates" in doctor_payload
     assert update_payload["headline"]
+
+
+def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "non-main",
+                        }
+                    }
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: False, raising=False)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["warnings"] == [
+        "\n".join(
+            [
+                'Sandbox mode is enabled (mode: "non-main") but Docker is not available.',
+                "Docker is required for sandbox mode to function.",
+                "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
+                "",
+                "Options:",
+                "- Install Docker and restart the gateway",
+                "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
+            ]
+        )
+    ]
+
+
+def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        }
+                    }
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: False, raising=False)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["sandbox"] == {
+        "status": "error",
+        "summary": 'Sandbox mode is enabled (mode: "all") but Docker is not available.',
+        "source": "openzues-native",
+        "openClawContribution": "doctor:sandbox",
+        "repairAvailable": False,
+        "mode": "all",
+        "backend": "docker",
+        "dockerAvailable": False,
+        "warnings": [
+            "\n".join(
+                [
+                    'Sandbox mode is enabled (mode: "all") but Docker is not available.',
+                    "Docker is required for sandbox mode to function.",
+                    "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
+                    "",
+                    "Options:",
+                    "- Install Docker and restart the gateway",
+                    "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
+                ]
+            )
+        ],
+    }
+
+
+def test_doctor_json_includes_gateway_memory_probe_contribution(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    class FakeGatewayNodeMethods:
+        async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "agentId": "main",
+                "embedding": {
+                    "ok": False,
+                    "provider": "local",
+                    "error": "node-llama-cpp not installed",
+                },
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=FakeGatewayNodeMethods(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert calls == [("doctor.memory.status", {})]
+    assert payload["memorySearch"] == {
+        "status": "warn",
+        "summary": (
+            "Gateway memory probe for default agent is not ready: "
+            "node-llama-cpp not installed"
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:memory-search",
+        "repairAvailable": False,
+        "gatewayMemoryProbe": {
+            "checked": True,
+            "ready": False,
+            "agentId": "main",
+            "provider": "local",
+            "error": "node-llama-cpp not installed",
+        },
+        "warnings": [
+            "Gateway memory probe for default agent is not ready: node-llama-cpp not installed"
+        ],
+    }
+
+
+def test_doctor_json_includes_gateway_health_contribution_and_channel_warnings(
+    monkeypatch,
+) -> None:
+    health_calls: list[int] = []
+    gateway_calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    class FakeGatewayNodeMethods:
+        async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            gateway_calls.append((method, params))
+            if method == "channels.status":
+                return {
+                    "channelAccounts": {
+                        "slack": [
+                            {
+                                "accountId": "workspace-bot",
+                                "probe": {
+                                    "ok": False,
+                                    "status": "unavailable",
+                                    "reason": "native_provider_secret_unavailable",
+                                    "summary": (
+                                        "Native provider route is missing a credential secret."
+                                    ),
+                                },
+                            }
+                        ],
+                        "whatsapp": [
+                            {
+                                "accountId": "business",
+                                "probe": {
+                                    "status": "unsupported",
+                                    "reason": "native_provider_probe_unsupported",
+                                    "summary": (
+                                        "This channel does not expose an upstream account probe "
+                                        "hook."
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                    "probeStatus": {"status": "degraded", "timeoutMs": 5000},
+                }
+            if method == "doctor.memory.status":
+                return {"embedding": {"ok": True, "provider": "local"}}
+            raise AssertionError(method)
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_live_health(
+        _settings: object,
+        *,
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        health_calls.append(timeout_ms)
+        return {
+            "ok": True,
+            "status": "ok",
+            "controlPlane": "leader",
+            "readiness": {"ready": True, "failing": []},
+        }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=FakeGatewayNodeMethods(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_build_live_health_payload", fake_live_health)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert health_calls == [3000]
+    assert gateway_calls == [
+        ("channels.status", {"probe": True, "timeoutMs": 5000}),
+        ("doctor.memory.status", {}),
+    ]
+    assert payload["gatewayHealth"]["openClawContribution"] == "doctor:gateway-health"
+    assert payload["gatewayHealth"]["status"] == "warn"
+    assert payload["gatewayHealth"]["healthOk"] is True
+    assert payload["gatewayHealth"]["health"]["status"] == "ok"
+    assert payload["gatewayHealth"]["channelWarnings"] == [
+        {
+            "channel": "slack",
+            "accountId": "workspace-bot",
+            "status": "unavailable",
+            "reason": "native_provider_secret_unavailable",
+            "message": "Native provider route is missing a credential secret.",
+        }
+    ]
+
+
+def test_doctor_fix_runs_startup_channel_maintenance_adapter(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"channels": {"matrix": {"homeserver": "https://matrix.example.org"}}}
+
+    class FakeChannelStartupMaintenance:
+        async def run(
+            self,
+            *,
+            config: dict[str, object],
+            trigger: str,
+            log_prefix: str,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "config": config,
+                    "trigger": trigger,
+                    "logPrefix": log_prefix,
+                }
+            )
+            return {"changed": True, "summary": "Matrix startup migration ran."}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=None,
+                channel_startup_maintenance=FakeChannelStartupMaintenance(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert calls == [
+        {
+            "config": {"channels": {"matrix": {"homeserver": "https://matrix.example.org"}}},
+            "trigger": "doctor-fix",
+            "logPrefix": "doctor",
+        }
+    ]
+    assert payload["startupChannelMaintenance"] == {
+        "status": "ok",
+        "summary": "Matrix startup migration ran.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-channel-maintenance",
+        "repairRequested": True,
+        "trigger": "doctor-fix",
+        "logPrefix": "doctor",
+        "result": {"changed": True, "summary": "Matrix startup migration ran."},
+    }
+
+
+def test_doctor_skips_startup_channel_maintenance_without_fix(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"channels": {"matrix": {}}}
+
+    class FakeChannelStartupMaintenance:
+        async def run(
+            self,
+            *,
+            config: dict[str, object],
+            trigger: str,
+            log_prefix: str,
+        ) -> dict[str, object]:
+            calls.append({"config": config, "trigger": trigger, "logPrefix": log_prefix})
+            return {"changed": True}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=None,
+                channel_startup_maintenance=FakeChannelStartupMaintenance(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert calls == []
+    assert payload["startupChannelMaintenance"] == {
+        "status": "skipped",
+        "summary": "Startup channel maintenance only runs during doctor --fix.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:startup-channel-maintenance",
+        "repairRequested": False,
+        "trigger": "doctor-fix",
+        "logPrefix": "doctor",
+    }
+
+
+def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "scope": "shared",
+                        }
+                    },
+                    "list": [
+                        {
+                            "id": "work",
+                            "sandbox": {
+                                "mode": "all",
+                                "scope": "shared",
+                                "docker": {"setupCommand": "echo work"},
+                            },
+                        }
+                    ],
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: True, raising=False)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["warnings"] == [
+        '- agents.list (id "work") sandbox docker overrides ignored.\n'
+        '  scope resolves to "shared".'
+    ]
+
+
+def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["security"] == {
+        "status": "unavailable",
+        "summary": (
+            "Security doctor contribution is not available from the native OpenZues "
+            "CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:security",
+        "repairAvailable": False,
+    }
+    assert payload["shellCompletion"] == {
+        "status": "partial",
+        "summary": (
+            "Typer shell completion is available, but the OpenClaw doctor repair flow "
+            "is not wired into the native OpenZues CLI runtime yet."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:shell-completion",
+        "repairAvailable": False,
+    }
+
+
+def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    plugin_dir = package_root / "dist" / "extensions" / "alpha"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="alpha",
+        dependencies={"alpha-only": "1.0.0"},
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["bundledPluginRuntimeDependencies"] == {
+        "status": "error",
+        "summary": "Bundled plugin runtime deps are missing.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+        "repairAvailable": False,
+        "missing": [
+            {
+                "name": "alpha-only",
+                "version": "1.0.0",
+                "pluginIds": ["alpha"],
+                "installRoot": str(package_root),
+                "spec": "alpha-only@1.0.0",
+            }
+        ],
+        "conflicts": [],
+        "diagnostics": [
+            {
+                "level": "error",
+                "category": "runtimeDependencies",
+                "code": "bundled_plugin_runtime_dependency_missing",
+                "message": "Bundled plugin runtime deps are missing.",
+                "missing": [
+                    {
+                        "name": "alpha-only",
+                        "version": "1.0.0",
+                        "pluginIds": ["alpha"],
+                        "installRoot": str(package_root),
+                        "spec": "alpha-only@1.0.0",
+                    }
+                ],
+                "action": "Fix: run openzues doctor --fix to install them.",
+            }
+        ],
+    }
+
+
+def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    sessions_dir = data_dir / "agents" / "main" / "sessions"
+    sessions_dir.mkdir(parents=True)
+    lock_path = sessions_dir / "active.jsonl.lock"
+    lock_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "createdAt": datetime.now(UTC).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    _bootstrap_cli_workspace(
+        tmp_path,
+        monkeypatch,
+        task_name="CLI Doctor Session Locks",
+    )
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Session locks" in result.stdout
+    assert "Found 1 session lock file" in result.stdout
+    assert f"pid={os.getpid()} (alive)" in result.stdout
+    assert "stale=no" in result.stdout
+    assert lock_path.exists()
 
 
 def test_hermes_profile_set_updates_saved_defaults(tmp_path, monkeypatch) -> None:

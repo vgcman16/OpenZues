@@ -18,9 +18,9 @@ ScopeDriftLevel = Literal["aligned", "watch", "drifting", "critical"]
 DreamStatus = Literal["forming", "ready", "fresh"]
 EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hibernating"]
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
-NotificationRouteKind = Literal["webhook", "slack", "telegram", "discord", "whatsapp"]
+NotificationRouteKind = Literal["webhook", "slack", "telegram", "discord", "whatsapp", "zalo"]
 NotificationRouteViewKind = Literal[
-    "webhook", "slack", "telegram", "discord", "whatsapp", "session", "announce"
+    "webhook", "slack", "telegram", "discord", "whatsapp", "zalo", "session", "announce"
 ]
 GatewayBootstrapStatus = Literal["unconfigured", "staged", "ready", "degraded"]
 GatewayRouteBindingMode = Literal["saved_lane", "workspace_affinity"]
@@ -1706,11 +1706,17 @@ class ControlUiGatewayAgentSandboxConfigView(BaseModel):
     prune: dict[str, Any] | None = None
 
 
+class ControlUiToolAllowDenyConfigView(BaseModel):
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+
+
 class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
     sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
+    tools: ControlUiToolAllowDenyConfigView | None = None
     models: dict[str, dict[str, Any]] | None = None
     model: dict[str, Any] | str | None = None
     image_model: dict[str, Any] | str | None = Field(default=None, alias="imageModel")
@@ -1726,6 +1732,7 @@ class ControlUiGatewayAgentConfigView(BaseModel):
     agent_dir: str | None = Field(default=None, alias="agentDir")
     subagents: ControlUiGatewayAgentSubagentsConfigView | None = None
     sandbox: ControlUiGatewayAgentSandboxConfigView | None = None
+    tools: ControlUiToolAllowDenyConfigView | None = None
 
 
 class ControlUiGatewayAgentsConfigView(BaseModel):
@@ -1738,11 +1745,8 @@ class ControlUiGatewayAgentsConfigView(BaseModel):
     )
 
 
-class ControlUiGatewayToolsConfigView(BaseModel):
+class ControlUiGatewayToolsConfigView(ControlUiToolAllowDenyConfigView):
     model_config = ConfigDict(populate_by_name=True)
-
-    allow: list[str] = Field(default_factory=list)
-    deny: list[str] = Field(default_factory=list)
 
 
 class ControlUiGatewayConfigView(BaseModel):
@@ -1787,6 +1791,8 @@ class ControlUiToolsSessionsConfigView(BaseModel):
 class ControlUiToolsConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
     agent_to_agent: ControlUiToolsAgentToAgentConfigView | None = Field(
         default=None,
         alias="agentToAgent",

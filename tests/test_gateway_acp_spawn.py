@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -95,6 +96,10 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
         "mode": "run",
         "runtimeThreadId": "thread-acp-new",
         "runtimeSessionId": "thread-acp-new",
+        "note": (
+            "initial ACP task queued in isolated session; "
+            "follow-ups continue in the bound thread."
+        ),
     }
     assert manager.start_thread_calls == [
         {
@@ -109,13 +114,75 @@ async def test_runtime_manager_acp_spawn_starts_thread_and_turn() -> None:
         {
             "instance_id": 7,
             "thread_id": "thread-acp-new",
-            "text": "Run this through ACP.",
+            "text": "[Working directory: C:/workspace]\n\nRun this through ACP.",
             "cwd": "C:/workspace",
             "model": None,
             "reasoning_effort": None,
             "collaboration_mode": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_prefixes_cwd_like_openclaw() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+    cwd = f"{Path.home()}\\openclaw-test"
+
+    await service.spawn(
+        {
+            "task": "Run this through ACP.",
+            "agentId": "codex",
+            "cwd": cwd,
+        },
+        {},
+    )
+
+    assert manager.start_turn_calls[0]["text"] == (
+        "[Working directory: ~\\openclaw-test]\n\nRun this through ACP."
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_run_mode() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Run this through ACP.",
+            "agentId": "codex",
+            "mode": "run",
+        },
+        {},
+    )
+
+    assert payload["note"] == (
+        "initial ACP task queued in isolated session; "
+        "follow-ups continue in the bound thread."
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_session_mode() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Continue this ACP session.",
+            "agentId": "codex",
+            "resumeSessionId": "thread-existing",
+            "mode": "session",
+            "thread": True,
+        },
+        {},
+    )
+
+    assert payload["note"] == (
+        "thread-bound ACP session stays active after this task; "
+        "continue in-thread for follow-ups."
+    )
 
 
 @pytest.mark.asyncio

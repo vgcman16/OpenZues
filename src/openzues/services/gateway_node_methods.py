@@ -10,7 +10,7 @@ import secrets
 import shutil
 import time
 import unicodedata
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +47,10 @@ from openzues.services.gateway_logs import (
     GatewayLogsUnavailableError,
     _redact_sensitive_tokens,
 )
+from openzues.services.gateway_message_actions import (
+    GatewayMessageActionDispatcher,
+    GatewayMessageActionDispatchRequest,
+)
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
     TALK_SECRETS_GATEWAY_METHOD_SCOPE,
@@ -69,6 +73,7 @@ from openzues.services.gateway_node_pending_work import (
 from openzues.services.gateway_node_registry import GatewayNodeRegistry, KnownNode
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
+    GatewayPluginRuntimeExecutorResolution,
     GatewayPluginRuntimeService,
 )
 from openzues.services.gateway_sandbox_spawn import (
@@ -141,7 +146,7 @@ _SESSION_PATCH_SPAWN_LINEAGE_FIELDS = {
 }
 _INPUT_PROVENANCE_KIND_VALUES = {"external_user", "inter_session", "internal_system"}
 _DEFAULT_SESSION_DELETE_ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp")
+_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER = ("discord", "slack", "telegram", "whatsapp", "zalo")
 _KNOWN_GATEWAY_CHAT_CHANNEL_IDS = set(_KNOWN_GATEWAY_CHAT_CHANNEL_ORDER)
 _NODE_WAKE_NUDGE_THROTTLE_MS = 10 * 60_000
 _YYYY_MM_DD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -154,6 +159,7 @@ _EXEC_APPROVAL_DEFAULT_TIMEOUT_MS = 1_800_000
 _EXEC_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
 _OPENCLAW_MAX_SAFE_TIMEOUT_MS = 2_147_000_000
 _CHAT_SEND_SESSION_KEY_MAX_LENGTH = 512
+_CHAT_ATTACHMENT_OFFLOAD_THRESHOLD_BYTES = 2_000_000
 _CHAT_INJECT_LABEL_MAX_LENGTH = 100
 _CHAT_HISTORY_DEFAULT_MAX_CHARS = 8_000
 _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024
@@ -193,6 +199,10 @@ _ACP_TARGET_AGENT_REQUIRED_ERROR = (
 _SANDBOXED_REQUESTER_UNSANDBOXED_CHILD_ERROR = (
     "Sandboxed sessions cannot spawn unsandboxed subagents. Set a sandboxed target agent "
     "or use the same agent runtime."
+)
+_ACP_SANDBOXED_REQUESTER_ERROR = (
+    'Sandboxed sessions cannot spawn ACP sessions because runtime="acp" runs on the host. '
+    'Use runtime="subagent" from sandboxed sessions.'
 )
 _GATEWAY_TOOLS_INVOKE_DEFAULT_DENY = {
     "exec",
@@ -394,6 +404,32 @@ class GatewayNodeMethodRequester:
     message_account_id: str | None = None
     message_to: str | None = None
     message_thread_id: str | None = None
+
+
+_SESSION_MUTATION_CONTROL_CLIENT_IDS = frozenset(
+    {"openclaw-control-ui", "openzues-control-ui"}
+)
+
+
+def _reject_webchat_session_mutation(
+    *,
+    action: str,
+    requester: GatewayNodeMethodRequester,
+) -> None:
+    client_mode = str(requester.client_mode or "").strip().lower()
+    if client_mode != "webchat":
+        return
+    client_id = str(requester.client_id or "").strip().lower()
+    if client_id in _SESSION_MUTATION_CONTROL_CLIENT_IDS:
+        return
+    raise GatewayNodeMethodError(
+        code="INVALID_REQUEST",
+        message=(
+            f"webchat clients cannot {action} sessions; use chat.send for "
+            "session-scoped updates"
+        ),
+        status_code=400,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -906,6 +942,57 @@ def _normalized_tools_invoke_policy_set(value: object) -> set[str]:
     return {entry.strip() for entry in value if isinstance(entry, str) and entry.strip()}
 
 
+def _tools_invoke_policy_token(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _tools_invoke_plugin_executor_allowed(
+    resolution: GatewayPluginRuntimeExecutorResolution,
+    allow_tools: set[str],
+) -> bool:
+    allow_tokens = {_tools_invoke_policy_token(entry) for entry in allow_tools}
+    tool_token = _tools_invoke_policy_token(resolution.tool)
+    if tool_token in allow_tokens:
+        return True
+    if not resolution.optional:
+        return False
+    plugin_token = _tools_invoke_policy_token(resolution.plugin_id)
+    return bool(plugin_token and plugin_token in allow_tokens) or "group:plugins" in allow_tokens
+
+
+def _tools_invoke_allow_policy_from_mapping(value: object) -> set[str]:
+    if not isinstance(value, dict):
+        return set()
+    tools = value.get("tools")
+    if not isinstance(tools, dict):
+        return set()
+    return _normalized_tools_invoke_policy_set(tools.get("allow"))
+
+
+def _tools_invoke_scoped_allow_policy(
+    config_service: GatewayConfigService | None,
+    *,
+    session_key: str | None,
+) -> set[str]:
+    if config_service is None:
+        return set()
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return set()
+    scoped_allow = _tools_invoke_allow_policy_from_mapping(snapshot)
+    agent_id = resolve_agent_id_from_session_key(session_key or DEFAULT_MAIN_KEY)
+    for agents_config in _sessions_spawn_agents_config_roots(config_service):
+        defaults_config = agents_config.get("defaults")
+        scoped_allow.update(_tools_invoke_allow_policy_from_mapping(defaults_config))
+        agent_config = _sessions_spawn_agent_config_from_root(
+            agents_config,
+            agent_id=agent_id,
+        )
+        scoped_allow.update(_tools_invoke_allow_policy_from_mapping(agent_config))
+    return scoped_allow
+
+
 def _tools_invoke_sessions_send_result(
     result: object,
     params: dict[str, Any],
@@ -1285,6 +1372,7 @@ class GatewayNodeMethodService:
             Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
         plugin_runtime_service: GatewayPluginRuntimeService | None = None,
+        message_action_dispatcher: GatewayMessageActionDispatcher | None = None,
     ) -> None:
         self.registry = registry
         self._database = database
@@ -1394,6 +1482,7 @@ class GatewayNodeMethodService:
             executors=self._tools_invoke_executors,
             owner_only=self._tools_invoke_owner_only,
         )
+        self._message_action_dispatcher = message_action_dispatcher
         if tools_catalog_service is None:
             self._tools_catalog_service = GatewayToolsCatalogService(
                 plugin_runtime_service=self._plugin_runtime_service
@@ -2090,10 +2179,9 @@ class GatewayNodeMethodService:
             resolved_tool_method = _GATEWAY_TOOLS_INVOKE_METHOD_ALIASES.get(tool_key)
         raw_args = payload.get("args")
         tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
         plugin_executor: GatewayPluginExecutor | None = None
         if resolved_tool_method is None:
-            if tool_key not in allow_tools:
-                _raise_tools_invoke_not_found(tool_key)
             plugin_resolution = self._plugin_runtime_service.resolve_executor(
                 tool_key,
                 requester,
@@ -2101,9 +2189,14 @@ class GatewayNodeMethodService:
             )
             if plugin_resolution is None:
                 _raise_tools_invoke_not_found(tool_key)
+            scoped_allow_tools = allow_tools | _tools_invoke_scoped_allow_policy(
+                self._config_service,
+                session_key=session_key,
+            )
+            if not _tools_invoke_plugin_executor_allowed(plugin_resolution, scoped_allow_tools):
+                _raise_tools_invoke_not_found(tool_key)
             plugin_executor = plugin_resolution.executor
 
-        session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
         if (
             session_key is not None
             and resolved_tool_method in _GATEWAY_TOOLS_INVOKE_SESSION_KEY_METHODS
@@ -5469,7 +5562,7 @@ class GatewayNodeMethodService:
                 reject_webchat_as_internal_only=True,
             )
             action = _require_non_empty_string(payload.get("action"), label="action")
-            _require_unknown_mapping(payload.get("params"), label="params")
+            action_params = _require_unknown_mapping(payload.get("params"), label="params")
             if "accountId" in payload and payload.get("accountId") is not None:
                 _require_string(payload.get("accountId"), label="accountId")
             if "requesterSenderId" in payload and payload.get("requesterSenderId") is not None:
@@ -5485,12 +5578,55 @@ class GatewayNodeMethodService:
                 _require_string(payload.get("sessionId"), label="sessionId")
             if "agentId" in payload and payload.get("agentId") is not None:
                 _require_string(payload.get("agentId"), label="agentId")
+            tool_context: dict[str, Any] | None = None
             if "toolContext" in payload and payload.get("toolContext") is not None:
                 _validate_message_action_tool_context(payload.get("toolContext"))
-            _require_non_empty_string(
+                tool_context = _require_unknown_mapping(
+                    payload.get("toolContext"),
+                    label="toolContext",
+                )
+            idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
             )
+            if self._message_action_dispatcher is not None:
+                try:
+                    action_result = await self._message_action_dispatcher(
+                        GatewayMessageActionDispatchRequest(
+                            channel=resolved_channel,
+                            action=action,
+                            params=action_params,
+                            idempotency_key=idempotency_key,
+                            account_id=_string_or_none(payload.get("accountId")),
+                            requester_sender_id=_string_or_none(
+                                payload.get("requesterSenderId")
+                            ),
+                            sender_is_owner=(
+                                bool(payload.get("senderIsOwner"))
+                                and _tools_invoke_requester_is_owner(resolved_requester)
+                            ),
+                            session_key=_string_or_none(payload.get("sessionKey")),
+                            session_id=_string_or_none(payload.get("sessionId")),
+                            agent_id=_string_or_none(payload.get("agentId")),
+                            tool_context=tool_context,
+                        )
+                    )
+                except Exception as exc:
+                    raise GatewayNodeMethodError(
+                        code="UNAVAILABLE",
+                        message=str(exc),
+                        status_code=503,
+                    ) from exc
+                if action_result is not None:
+                    return dict(action_result)
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=(
+                        f"Message action {action} not supported for channel "
+                        f"{resolved_channel}."
+                    ),
+                    status_code=400,
+                )
             raise GatewayNodeMethodError(
                 code="INVALID_REQUEST",
                 message=f"Channel {resolved_channel} does not support action {action}.",
@@ -5661,17 +5797,21 @@ class GatewayNodeMethodService:
             raw_options = payload.get("options")
             if not isinstance(raw_options, list):
                 raise ValueError("options must be an array")
-            if len(raw_options) < 2 or len(raw_options) > 12:
-                raise ValueError("options must contain between 2 and 12 items")
             options = [
-                _require_non_empty_string(entry, label="options[]") for entry in raw_options
+                _require_string(entry, label="options[]").strip()
+                for entry in raw_options
             ]
+            options = [option for option in options if option]
+            if len(options) < 2 or len(options) > 12:
+                raise ValueError("options must contain between 2 and 12 items")
             max_selections = _optional_bounded_int(
                 payload.get("maxSelections"),
                 label="maxSelections",
                 minimum=1,
                 maximum=12,
             )
+            if max_selections is None:
+                max_selections = 1
             duration_seconds = _optional_bounded_int(
                 payload.get("durationSeconds"),
                 label="durationSeconds",
@@ -5691,6 +5831,29 @@ class GatewayNodeMethodService:
                 rejected_webchat_message="unsupported poll channel: webchat",
             )
             _validate_gateway_outbound_target(resolved_channel, to)
+            _validate_gateway_poll_option_count(resolved_channel, options)
+            _validate_gateway_poll_max_selections(options, max_selections)
+            _validate_gateway_poll_duration_options(
+                resolved_channel,
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
+            if duration_seconds is not None and not _gateway_poll_supports_duration_seconds(
+                resolved_channel
+            ):
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=f"durationSeconds is not supported for {resolved_channel} polls",
+                    status_code=400,
+                )
+            if is_anonymous is not None and not _gateway_poll_supports_anonymous(
+                resolved_channel
+            ):
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=f"isAnonymous is not supported for {resolved_channel} polls",
+                    status_code=400,
+                )
             account_id = _optional_normalized_string(payload.get("accountId"), label="accountId")
             thread_id = _optional_normalized_string(payload.get("threadId"), label="threadId")
             idempotency_key = _require_non_empty_string(
@@ -6030,6 +6193,7 @@ class GatewayNodeMethodService:
                     deliver=deliver,
                     timeout_ms=timeout_ms,
                     attachments=attachments,
+                    image_order=_chat_attachment_image_order(attachments),
                     channel=delivery_channel,
                     to=delivery_to,
                     node_id=None,
@@ -6091,11 +6255,16 @@ class GatewayNodeMethodService:
             if session_payload is None:
                 raise ValueError("session not found")
             canonical_session_key = str(session_payload["key"])
+            parent_message_id = await self._latest_control_chat_message_id(canonical_session_key)
+            inject_metadata: dict[str, Any] = {
+                "parentId": str(parent_message_id) if parent_message_id > 0 else None,
+            }
             message_id = await self._database.append_control_chat_message(
                 role="assistant",
                 content=message,
                 target_label=label,
                 session_key=canonical_session_key,
+                metadata=inject_metadata,
             )
             message_row = await self._database.get_control_chat_message(message_id)
             assert message_row is not None
@@ -6573,6 +6742,10 @@ class GatewayNodeMethodService:
                 label="deleteTranscript",
             )
             _optional_bool(payload.get("emitLifecycleHooks"), label="emitLifecycleHooks")
+            _reject_webchat_session_mutation(
+                action="delete",
+                requester=resolved_requester,
+            )
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -7196,6 +7369,26 @@ class GatewayNodeMethodService:
                         message="sessions.spawn is unavailable until session inventory is wired",
                         status_code=503,
                     )
+                timestamp_ms = _timestamp_ms(now_ms)
+                requester_session_key = _optional_non_empty_string(
+                    payload.get("requesterSessionKey"),
+                    label="requesterSessionKey",
+                )
+                spawn_parent_session_key = (
+                    await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
+                    if requester_session_key is not None
+                    else await self._sessions_service.main_session_key()
+                )
+                requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
+                    self._config_service,
+                    session_key=spawn_parent_session_key,
+                )
+                if requester_sandbox_status.sandboxed:
+                    return {
+                        "status": "forbidden",
+                        "error": _ACP_SANDBOXED_REQUESTER_ERROR,
+                        **role_context,
+                    }
                 acp_agent_id = _sessions_spawn_acp_target_agent_id(
                     requested_agent_id=agent_id,
                     config_service=self._config_service,
@@ -7218,16 +7411,6 @@ class GatewayNodeMethodService:
                         "error": acp_agent_policy_error,
                         **role_context,
                     }
-                timestamp_ms = _timestamp_ms(now_ms)
-                requester_session_key = _optional_non_empty_string(
-                    payload.get("requesterSessionKey"),
-                    label="requesterSessionKey",
-                )
-                spawn_parent_session_key = (
-                    await self._resolve_existing_session_key(requester_session_key, now_ms=now_ms)
-                    if requester_session_key is not None
-                    else await self._sessions_service.main_session_key()
-                )
                 spawn_parent_payload = await self._sessions_service.build_session_payload_for_key(
                     session_key=spawn_parent_session_key,
                     now_ms=timestamp_ms,
@@ -7329,10 +7512,6 @@ class GatewayNodeMethodService:
                     acp_error_response = dict(acp_result)
                     acp_error_response.update(role_context)
                     return acp_error_response
-                if stream_to == "parent":
-                    acp_stream_response = dict(acp_result)
-                    acp_stream_response.update(role_context)
-                    return acp_stream_response
                 child_session_key = _require_non_empty_string(
                     acp_result.get("childSessionKey"),
                     label="childSessionKey",
@@ -7362,6 +7541,8 @@ class GatewayNodeMethodService:
                     "runTimeoutSeconds": run_timeout_seconds,
                     "runtimeThreadId": _string_or_none(acp_result.get("runtimeThreadId")),
                     "runtimeSessionId": _string_or_none(acp_result.get("runtimeSessionId")),
+                    "streamTo": stream_to,
+                    "streamLogPath": _string_or_none(acp_result.get("streamLogPath")),
                 }
                 acp_metadata = {
                     key: metadata_value
@@ -7416,7 +7597,7 @@ class GatewayNodeMethodService:
                 }
                 if entry is not None:
                     acp_response["entry"] = entry
-                for key in ("runtimeThreadId", "runtimeSessionId", "note"):
+                for key in ("runtimeThreadId", "runtimeSessionId", "streamLogPath", "note"):
                     acp_result_value = acp_result.get(key)
                     if acp_result_value is not None:
                         acp_response[key] = acp_result_value
@@ -8186,6 +8367,10 @@ class GatewayNodeMethodService:
                 _normalize_session_patch_send_policy(payload.get("sendPolicy"))
             if "groupActivation" in payload:
                 _normalize_session_patch_group_activation(payload.get("groupActivation"))
+            _reject_webchat_session_mutation(
+                action="patch",
+                requester=resolved_requester,
+            )
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -14133,7 +14318,7 @@ def _chat_history_message_payload(
     if cost is not None:
         payload["cost"] = cost
     if metadata is not None:
-        for key in ("idempotencyKey", "stopReason", "openclawAbort"):
+        for key in ("idempotencyKey", "stopReason", "openclawAbort", "parentId"):
             if key in metadata:
                 payload[key] = metadata[key]
     return payload
@@ -15804,7 +15989,10 @@ async def _session_access_visibility_policy_error(
 ) -> str | None:
     if requester_session_key is None or target_session_key is None:
         return None
-    visibility = _sessions_send_tools_visibility(config_service)
+    visibility = _sessions_send_effective_tools_visibility(
+        config_service,
+        requester_session_key=requester_session_key,
+    )
     if visibility is None:
         return None
     requester_agent_id = resolve_agent_id_from_session_key(requester_session_key)
@@ -15899,6 +16087,40 @@ def _sessions_send_tools_visibility(
     if visibility in {"self", "tree", "agent", "all"}:
         return visibility
     return "tree"
+
+
+def _sessions_send_effective_tools_visibility(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_session_key: str | None,
+) -> str | None:
+    visibility = _sessions_send_tools_visibility(config_service)
+    if (
+        config_service is None
+        or requester_session_key is None
+        or visibility in {None, "tree"}
+    ):
+        return visibility
+    requester_sandbox_status = _sessions_spawn_sandbox_runtime_status(
+        config_service,
+        session_key=requester_session_key,
+    )
+    if not requester_sandbox_status.sandboxed:
+        return visibility
+    sandbox_config = _sessions_spawn_sandbox_config_for_agent(
+        config_service,
+        agent_id=requester_sandbox_status.agent_id,
+    )
+    if _sessions_spawn_sandbox_session_tools_visibility(sandbox_config) == "all":
+        return visibility
+    return "tree"
+
+
+def _sessions_spawn_sandbox_session_tools_visibility(
+    sandbox_config: dict[str, Any],
+) -> Literal["spawned", "all"]:
+    value = _string_or_none(sandbox_config.get("sessionToolsVisibility"))
+    return "all" if value == "all" else "spawned"
 
 
 def _sessions_send_a2a_policy_error(
@@ -16204,6 +16426,63 @@ def _has_effective_agent_attachments(value: object) -> bool:
     return False
 
 
+def _chat_attachment_text_value(value: object) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _chat_attachment_base64_value(attachment: Mapping[str, object]) -> str | None:
+    content = _chat_attachment_text_value(attachment.get("content"))
+    if content is not None:
+        return content
+    source = attachment.get("source")
+    if not isinstance(source, dict):
+        return None
+    if _chat_attachment_text_value(source.get("type")) != "base64":
+        return None
+    return _chat_attachment_text_value(source.get("data"))
+
+
+def _chat_attachment_mime_type(attachment: Mapping[str, object]) -> str | None:
+    for key in ("mimeType", "mime_type", "media_type"):
+        mime = _chat_attachment_text_value(attachment.get(key))
+        if mime is not None:
+            return mime
+    source = attachment.get("source")
+    if not isinstance(source, dict):
+        return None
+    return _chat_attachment_text_value(source.get("media_type"))
+
+
+def _chat_attachment_estimated_base64_bytes(value: str) -> int:
+    candidate = value.strip()
+    if candidate.lower().startswith("data:") and "," in candidate:
+        candidate = candidate.split(",", 1)[1].strip()
+    candidate = re.sub(r"\s+", "", candidate)
+    if not candidate:
+        return 0
+    unpadded = candidate.rstrip("=")
+    padding = len(candidate) - len(unpadded)
+    return max(0, (len(candidate) * 3) // 4 - padding)
+
+
+def _chat_attachment_image_order(attachments: list[dict[str, object]]) -> list[str]:
+    image_order: list[str] = []
+    for attachment in attachments:
+        mime = _chat_attachment_mime_type(attachment)
+        if mime is None or not mime.lower().startswith("image/"):
+            continue
+        base64_value = _chat_attachment_base64_value(attachment)
+        if base64_value is None:
+            continue
+        estimated_bytes = _chat_attachment_estimated_base64_bytes(base64_value)
+        image_order.append(
+            "offloaded"
+            if estimated_bytes > _CHAT_ATTACHMENT_OFFLOAD_THRESHOLD_BYTES
+            else "inline"
+        )
+    return image_order
+
+
 def _normalize_gateway_send_media_urls(
     *,
     media_url: str | None = None,
@@ -16284,6 +16563,73 @@ def _gateway_channel_label(channel: str) -> str:
         "telegram": "Telegram",
         "whatsapp": "WhatsApp",
     }.get(channel, channel.title())
+
+
+def _gateway_poll_supports_anonymous(channel: str) -> bool:
+    return channel == "telegram"
+
+
+def _gateway_poll_supports_duration_seconds(channel: str) -> bool:
+    return channel == "telegram"
+
+
+def _gateway_poll_max_options(channel: str) -> int:
+    if channel in {"discord", "telegram"}:
+        return 10
+    return 12
+
+
+def _validate_gateway_poll_option_count(channel: str, options: list[str]) -> None:
+    max_options = _gateway_poll_max_options(channel)
+    if len(options) > max_options:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message=f"Poll supports at most {max_options} options",
+            status_code=400,
+        )
+
+
+def _validate_gateway_poll_max_selections(
+    options: list[str],
+    max_selections: int | None,
+) -> None:
+    if max_selections is not None and max_selections > len(options):
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message="maxSelections cannot exceed option count",
+            status_code=400,
+        )
+
+
+def _validate_gateway_poll_duration_options(
+    channel: str,
+    *,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+) -> None:
+    if duration_seconds is not None and duration_hours is not None:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message="durationSeconds and durationHours are mutually exclusive",
+            status_code=400,
+        )
+    if channel != "telegram":
+        return
+    if duration_seconds is None and duration_hours is not None:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message=(
+                "Telegram poll durationHours is not supported. "
+                "Use durationSeconds (5-600) instead."
+            ),
+            status_code=400,
+        )
+    if duration_seconds is not None and not 5 <= duration_seconds <= 600:
+        raise GatewayNodeMethodError(
+            code="INVALID_REQUEST",
+            message="Telegram poll durationSeconds must be between 5 and 600",
+            status_code=400,
+        )
 
 
 def _validate_gateway_outbound_target(channel: str, target: str) -> None:

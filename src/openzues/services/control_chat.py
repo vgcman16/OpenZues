@@ -1632,6 +1632,7 @@ class ControlChatService:
         dashboard: DashboardView,
         *,
         session_key: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ControlChatResponse:
         text = prompt.strip()
         if not text:
@@ -1642,6 +1643,7 @@ class ControlChatService:
             role="user",
             content=text,
             session_key=resolved_session_key,
+            metadata=metadata,
         )
         plan = plan_control_chat(text, dashboard)
         executed = False
@@ -2122,6 +2124,7 @@ class ControlChatService:
         opportunity_id: str | None = None,
         target_label: str | None = None,
         session_key: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ControlChatMessageView:
         message_id = await self.database.append_control_chat_message(
             role=role,
@@ -2131,6 +2134,7 @@ class ControlChatService:
             opportunity_id=opportunity_id,
             target_label=target_label,
             session_key=session_key,
+            metadata=metadata,
         )
         row = await self.database.get_control_chat_message(message_id)
         assert row is not None

@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from openzues.database import Database, utcnow
@@ -68,6 +68,7 @@ from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
 from openzues.services.gateway_cron import cron_expression_next_run_at
+from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
     GatewayOutboundRuntimeMessageRequest,
     GatewayOutboundRuntimePollRequest,
@@ -107,6 +108,7 @@ from openzues.services.scope_enforcer import build_scope_assessment
 from openzues.services.session_keys import (
     DEFAULT_ACCOUNT_ID,
     build_launch_session_key,
+    canonicalize_session_key,
     normalize_optional_account_id,
     resolve_thread_session_keys,
 )
@@ -135,7 +137,8 @@ OUTBOUND_DELIVERY_MAX_RETRIES = 5
 OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
-NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp"}
+ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
+NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp", "zalo"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
@@ -794,6 +797,82 @@ def _slack_channel_id(target: str | None) -> str | None:
     return normalized or None
 
 
+def _slack_reaction_name(raw: str | None) -> str:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError("Emoji is required for Slack reactions")
+    return normalized.strip(":")
+
+
+def _message_action_param_string(
+    params: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+    allow_empty: bool = False,
+) -> str | None:
+    value = params.get(key)
+    if value is None:
+        if required:
+            raise RuntimeError(f"{key} is required.")
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a string.")
+    trimmed = value.strip()
+    if required and not trimmed and not allow_empty:
+        raise RuntimeError(f"{key} is required.")
+    if not trimmed and not allow_empty:
+        return None
+    return trimmed
+
+
+def _message_action_param_string_or_number(
+    params: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+) -> str | None:
+    value = params.get(key)
+    if value is None:
+        if required:
+            raise RuntimeError(f"{key} is required.")
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise RuntimeError(f"{key} must be a string or number.")
+    trimmed = str(value).strip()
+    if required and not trimmed:
+        raise RuntimeError(f"{key} is required.")
+    return trimmed or None
+
+
+def _message_action_param_positive_int(
+    params: dict[str, Any],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        value = params.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            raise RuntimeError(f"{key} must be a positive integer.")
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                continue
+            try:
+                parsed = int(trimmed)
+            except ValueError as exc:
+                raise RuntimeError(f"{key} must be a positive integer.") from exc
+        else:
+            raise RuntimeError(f"{key} must be a positive integer.")
+        if parsed <= 0:
+            raise RuntimeError(f"{key} must be a positive integer.")
+        return parsed
+    return None
+
+
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
     if normalized.startswith(("direct:", "dm:")):
@@ -1113,8 +1192,13 @@ def _telegram_result_payload(result: object) -> dict[str, Any]:
     return items[0] if items else {}
 
 
+def _telegram_terminal_result_payload(result: object) -> dict[str, Any]:
+    items = _telegram_result_items(result)
+    return items[-1] if items else {}
+
+
 def _telegram_message_id(result: object) -> str | None:
-    payload = _telegram_result_payload(result)
+    payload = _telegram_terminal_result_payload(result)
     candidate = payload.get("message_id")
     if candidate is None:
         return None
@@ -1191,6 +1275,37 @@ def _discord_bot_authorization(secret_token: str | None) -> str:
     if not token:
         raise RuntimeError("Discord route is missing a bot token secret.")
     return f"Bot {token}"
+
+
+def _discord_action_channel_id(raw: str | None) -> str | None:
+    resolved = _parse_discord_channel_resolve_input(str(raw or ""))
+    channel_id = resolved.get("channelId")
+    return str(channel_id or "").strip() or None
+
+
+def _discord_reaction_identifier(raw: str | None) -> str:
+    trimmed = str(raw or "").strip()
+    if not trimmed:
+        raise RuntimeError("Emoji is required for Discord reactions.")
+    custom_match = re.match(r"^<a?:([^:>]+):(\d+)>$", trimmed)
+    identifier = (
+        f"{custom_match.group(1)}:{custom_match.group(2)}"
+        if custom_match
+        else re.sub("[\ufe0e\ufe0f]", "", trimmed)
+    )
+    return quote(identifier, safe="")
+
+
+def _discord_reaction_identifier_from_payload(emoji: object) -> str | None:
+    if not isinstance(emoji, dict):
+        return None
+    raw_name = emoji.get("name")
+    name = str(raw_name).strip() if raw_name is not None else ""
+    raw_id = emoji.get("id")
+    emoji_id = str(raw_id).strip() if raw_id is not None else ""
+    if name and emoji_id:
+        return f"{name}:{emoji_id}"
+    return name or None
 
 
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
@@ -1392,6 +1507,70 @@ def _discord_poll_duration_hours(event: dict[str, Any]) -> int:
     return 24
 
 
+def _validate_telegram_poll_duration_options(
+    *,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+) -> None:
+    if duration_seconds is not None and duration_hours is not None:
+        raise ValueError("durationSeconds and durationHours are mutually exclusive")
+    if duration_seconds is None and duration_hours is not None:
+        raise ValueError(
+            "Telegram poll durationHours is not supported. "
+            "Use durationSeconds (5-600) instead."
+        )
+    if duration_seconds is not None and not 5 <= duration_seconds <= 600:
+        raise ValueError("Telegram poll durationSeconds must be between 5 and 600")
+
+
+def _normalize_direct_channel_poll_options(options: list[str]) -> list[str]:
+    return [normalized for option in options if (normalized := str(option).strip())]
+
+
+def _validate_direct_channel_poll_shape(question: str, options: list[str]) -> None:
+    if not question.strip():
+        raise ValueError("Poll question is required")
+    if len([option for option in options if option.strip()]) < 2:
+        raise ValueError("Poll requires at least 2 options")
+
+
+def _direct_channel_poll_max_options(channel: str) -> int:
+    normalized = channel.strip().lower()
+    if normalized in {"discord", "telegram"}:
+        return 10
+    return 12
+
+
+def _validate_direct_channel_poll_option_count(
+    channel: str,
+    options: list[str],
+) -> None:
+    max_options = _direct_channel_poll_max_options(channel)
+    cleaned = [option.strip() for option in options if option.strip()]
+    if len(cleaned) > max_options:
+        raise ValueError(f"Poll supports at most {max_options} options")
+
+
+def _validate_direct_channel_poll_max_selections(
+    options: list[str],
+    max_selections: int | None,
+) -> None:
+    if max_selections is None:
+        return
+    cleaned = [option.strip() for option in options if option.strip()]
+    if max_selections > len(cleaned):
+        raise ValueError("maxSelections cannot exceed option count")
+
+
+def _validate_direct_channel_poll_duration_exclusivity(
+    *,
+    duration_seconds: int | None,
+    duration_hours: int | None,
+) -> None:
+    if duration_seconds is not None and duration_hours is not None:
+        raise ValueError("durationSeconds and durationHours are mutually exclusive")
+
+
 def _whatsapp_messages_endpoint(target: str | None) -> str:
     normalized = str(target or "").strip()
     if _normalized_http_webhook_url(normalized) is None:
@@ -1420,6 +1599,57 @@ def _whatsapp_recipient_id(target: str | None) -> str | None:
         break
     normalized = normalized.replace(" ", "")
     return normalized or None
+
+
+def _whatsapp_action_recipient_id(target: str | None) -> str | None:
+    normalized = _whatsapp_recipient_id(target)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered.endswith("@g.us"):
+        group_id = lowered.removesuffix("@g.us")
+        if re.fullmatch(r"\d+(?:-\d+)*", group_id):
+            return f"{group_id}@g.us"
+        return None
+    for pattern in (
+        r"^(\d+)(?::\d+)?@s\.whatsapp\.net$",
+        r"^(\d+)@c\.us$",
+        r"^(\d+)@lid$",
+    ):
+        match = re.fullmatch(pattern, normalized, flags=re.IGNORECASE)
+        if match is not None:
+            return f"+{match.group(1)}"
+    if "@" in normalized:
+        return None
+    digits = re.sub(r"\D", "", normalized)
+    return f"+{digits}" if digits else None
+
+
+def _whatsapp_reaction_context_message_id(
+    request: GatewayMessageActionDispatchRequest,
+    chat_target: str,
+) -> str | None:
+    tool_context = request.tool_context
+    if tool_context is None:
+        return None
+    if str(tool_context.get("currentChannelProvider") or "") != "whatsapp":
+        return None
+    current_channel_id = tool_context.get("currentChannelId")
+    if not isinstance(current_channel_id, str):
+        return None
+    current_target = _whatsapp_action_recipient_id(current_channel_id)
+    requested_target = _whatsapp_action_recipient_id(chat_target)
+    if current_target is None or requested_target is None or current_target != requested_target:
+        return None
+    current_message_id = tool_context.get("currentMessageId")
+    if current_message_id is None:
+        return None
+    if isinstance(current_message_id, bool) or not isinstance(
+        current_message_id,
+        (str, int, float),
+    ):
+        raise RuntimeError("toolContext.currentMessageId must be a string or number.")
+    return str(current_message_id).strip() or None
 
 
 def _whatsapp_message_id(result: object) -> str | None:
@@ -1455,6 +1685,74 @@ def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> 
         payload["context"] = {"message_id": normalized_reply_to_id}
 
 
+def _fixed_text_chunks(text: str, *, limit: int) -> list[str]:
+    if not text:
+        return [""]
+    safe_limit = max(1, limit)
+    return [text[index : index + safe_limit] for index in range(0, len(text), safe_limit)]
+
+
+def _whatsapp_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
+    return _fixed_text_chunks(text, limit=limit)
+
+
+def _zalo_text_chunks(text: str, *, limit: int = 2000) -> list[str]:
+    return _fixed_text_chunks(text, limit=limit)
+
+
+def _zalo_bot_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Zalo route is missing a bot token secret.")
+    return token
+
+
+def _zalo_api_endpoint(target: str | None, token: str, method: str) -> str:
+    base_url = str(target or "").strip() or ZALO_API_BASE_URL
+    if f"/bot{token}/" in base_url:
+        endpoint = f"{base_url.rstrip('/')}/{method}"
+    else:
+        endpoint = f"{base_url.rstrip('/')}/bot{token}/{method}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Zalo route target must be an http(s) Bot API base URL.")
+    return endpoint
+
+
+def _zalo_chat_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while ":" in normalized:
+        prefix, suffix = normalized.split(":", 1)
+        if prefix.strip().lower() in {"channel", "group", "dm", "direct", "zalo"}:
+            normalized = suffix.strip()
+            continue
+        break
+    return normalized or None
+
+
+def _zalo_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        return None
+    candidate = payload.get("message_id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _zalo_chat_from_result(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            chat = payload.get("chat")
+            if isinstance(chat, dict):
+                candidate = str(chat.get("id") or "").strip()
+                if candidate:
+                    return candidate
+    return fallback
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -1466,6 +1764,29 @@ def _cron_run_status(status: str) -> Literal["ok", "error"]:
 
 def _cron_job_id(task_id: int) -> str:
     return f"task-blueprint:{task_id}"
+
+
+def _cron_direct_delivery_idempotency_key(
+    *,
+    task: TaskBlueprintView,
+    mission: dict[str, Any],
+    event_type: str,
+    conversation_target: ConversationTargetView,
+    thread_id: str | int | None = None,
+) -> str:
+    started_at_ms, _ = _cron_runtime_window_ms(task, mission)
+    job_id = _cron_job_id(int(task.id))
+    execution_id = f"cron:{job_id}:{started_at_ms}"
+    channel = str(conversation_target.channel or "").strip().lower()
+    account_id = normalize_optional_account_id(conversation_target.account_id) or ""
+    target = str(conversation_target.peer_id or "").strip()
+    normalized_thread_id = _normalized_delivery_thread_id(thread_id) or ""
+    normalized_event_type = str(event_type or "").strip().lower()
+    return (
+        "cron-direct-delivery:v1:"
+        f"{normalized_event_type}:{execution_id}:{channel}:"
+        f"{account_id}:{target}:{normalized_thread_id}"
+    )
 
 
 def _cron_failure_message(task: TaskBlueprintView, mission: dict[str, Any]) -> str:
@@ -1593,6 +1914,18 @@ def _normalize_direct_channel_media_urls(
         seen.add(trimmed)
         normalized.append(trimmed)
     return normalized
+
+
+def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(scope).strip() for scope in value if str(scope).strip())
+
+
+def _normalize_optional_payload_string(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value).strip() or None
 
 
 def _optional_int_payload_value(payload: dict[str, Any], key: str) -> int | None:
@@ -1788,7 +2121,10 @@ def _direct_channel_transport_from_delivery_row(
     thread_id = event_payload.get("threadId")
     if thread_id is None:
         thread_id = route_scope.get("thread_id")
-    session_key = str(delivery_row.get("session_key") or "").strip() or None
+    session_key = (
+        str(route_scope.get("runtime_session_key") or delivery_row.get("session_key") or "").strip()
+        or None
+    )
     runtime = str(route_scope.get("transport_runtime") or "").strip() or "session-backed"
     return _build_direct_channel_transport(
         channel=channel,
@@ -5609,6 +5945,7 @@ class OpsMeshService:
         event_type: str,
         payload: dict[str, Any],
         message: str,
+        request_idempotency_key: str | None = None,
     ) -> None:
         await self._deliver_direct_channel_message(
             route_name=route_name,
@@ -5617,6 +5954,7 @@ class OpsMeshService:
             event_type=event_type,
             payload=payload,
             message=message,
+            request_idempotency_key=request_idempotency_key,
         )
 
     async def _send_cron_failure_alert(
@@ -5667,6 +6005,12 @@ class OpsMeshService:
                 event_type="cron/failure-alert",
                 payload=payload,
                 message=message,
+                request_idempotency_key=_cron_direct_delivery_idempotency_key(
+                    task=task,
+                    mission=mission,
+                    event_type="cron/failure-alert",
+                    conversation_target=conversation_target,
+                ),
             )
             return
         if session_key is not None and self._session_outbound_runtime_available():
@@ -6663,7 +7007,649 @@ class OpsMeshService:
             return self._post_discord_provider_event
         if route_kind == "whatsapp":
             return self._post_whatsapp_provider_event
+        if route_kind == "zalo":
+            return self._post_zalo_provider_event
         return self._post_webhook
+
+    async def dispatch_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object] | None:
+        channel = request.channel.strip().lower()
+        action = request.action.strip()
+        if channel == "zalo" and action == "send":
+            return await self._dispatch_zalo_send_message_action(request)
+        if channel == "whatsapp" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native WhatsApp route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_whatsapp_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "telegram" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Telegram route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "discord" and action in {"react", "reactions"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Discord route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            if action == "reactions":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_reactions_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            return await asyncio.to_thread(
+                self._dispatch_discord_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel != "slack" or action not in {"react", "reactions"}:
+            return None
+        route = await self._provider_route_for_channel_account(
+            channel=channel,
+            account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+        )
+        if route is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                f"No native Slack route is configured for message.action {action}."
+            )
+        secret_token = await self._notification_route_secret_token(route)
+        if action == "reactions":
+            return await asyncio.to_thread(
+                self._dispatch_slack_reactions_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        return await asyncio.to_thread(
+            self._dispatch_slack_react_message_action,
+            route,
+            request,
+            secret_token,
+        )
+
+    async def _dispatch_zalo_send_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        if target is None:
+            raise RuntimeError("Zalo send requires to.")
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        conversation_target = _normalize_conversation_target(
+            ConversationTargetView(
+                channel="zalo",
+                account_id=request.account_id,
+                peer_kind=_provider_peer_kind_from_target(target),
+                peer_id=target,
+            )
+        )
+        if conversation_target is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "gateway outbound provider route is missing a conversation target"
+            )
+        payload: dict[str, Any] = {
+            "channel": "zalo",
+            "to": target,
+            "message": message,
+        }
+        media = request.params.get("media")
+        if media is not None:
+            if not isinstance(media, str):
+                raise RuntimeError("media must be a string.")
+            if media.strip():
+                payload["mediaUrl"] = media
+        if request.account_id is not None:
+            payload["accountId"] = request.account_id
+        if request.session_key is not None:
+            payload["sessionKey"] = request.session_key
+        if request.agent_id is not None:
+            payload["agentId"] = request.agent_id
+        result = await self._post_provider_route_event(
+            event_type="gateway/send",
+            conversation_target=conversation_target,
+            payload=payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Zalo API returned a non-JSON response.")
+        message_id = str(result.get("messageId") or "").strip()
+        if not message_id:
+            raise RuntimeError("Zalo API response did not include a message id.")
+        return {"ok": True, "to": target, "messageId": message_id}
+
+    def _dispatch_whatsapp_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_target = _message_action_param_string(request.params, "chatJid")
+        if chat_target is None:
+            chat_target = _message_action_param_string(
+                request.params,
+                "to",
+                required=True,
+            )
+        if chat_target is None:
+            raise RuntimeError("WhatsApp react requires chatJid.")
+        recipient_id = _whatsapp_action_recipient_id(chat_target)
+        if recipient_id is None:
+            raise RuntimeError("WhatsApp react requires chatJid.")
+        message_id = _message_action_param_string_or_number(request.params, "messageId")
+        if message_id is None:
+            message_id = _whatsapp_reaction_context_message_id(request, chat_target)
+        if message_id is None:
+            _message_action_param_string_or_number(
+                request.params,
+                "messageId",
+                required=True,
+            )
+        remove = request.params.get("remove") is True
+        emoji = (
+            _message_action_param_string(
+                request.params,
+                "emoji",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a WhatsApp reaction.")
+        resolved_emoji = "" if remove else emoji
+        result = self._post_json_webhook(
+            _whatsapp_messages_endpoint(str(route.get("target") or "")),
+            {
+                "messaging_product": "whatsapp",
+                "to": recipient_id,
+                "type": "reaction",
+                "reaction": {
+                    "message_id": message_id,
+                    "emoji": resolved_emoji,
+                },
+            },
+            secret_header_name="Authorization",
+            secret_token=_whatsapp_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("WhatsApp API returned a non-JSON response.")
+        if result.get("error"):
+            error = result.get("error")
+            if isinstance(error, dict):
+                detail = str(error.get("message") or error.get("code") or "unknown")
+            else:
+                detail = str(error)
+            raise RuntimeError(f"WhatsApp API returned {detail}.")
+        if remove or not emoji:
+            return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
+
+    def _dispatch_slack_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack react requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        remove = request.params.get("remove") is True
+        emoji_value = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+            allow_empty=True,
+        )
+        if remove and not emoji_value:
+            raise RuntimeError("Emoji is required to remove a Slack reaction.")
+        if not remove and not emoji_value:
+            removed = self._remove_own_slack_reactions(
+                route=route,
+                channel_id=channel_id,
+                message_id=message_id or "",
+                secret_token=secret_token,
+            )
+            return {"ok": True, "removed": removed}
+        emoji = _slack_reaction_name(emoji_value)
+        result = self._post_json_webhook(
+            _slack_api_endpoint(
+                str(route.get("target") or ""),
+                "reactions.remove" if remove else "reactions.add",
+            ),
+            {
+                "channel": channel_id,
+                "timestamp": message_id or "",
+                "name": emoji,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        return {"ok": True, "removed" if remove else "added": emoji}
+
+    def _dispatch_slack_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack reactions requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "reactions.get"),
+            {
+                "channel": channel_id,
+                "timestamp": message_id or "",
+                "full": True,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message = result.get("message")
+        reactions: object = []
+        if isinstance(message, dict):
+            raw_reactions = message.get("reactions")
+            if isinstance(raw_reactions, list):
+                reactions = raw_reactions
+        return {"ok": True, "reactions": reactions}
+
+    def _remove_own_slack_reactions(
+        self,
+        *,
+        route: dict[str, Any],
+        channel_id: str,
+        message_id: str,
+        secret_token: str | None,
+    ) -> list[str]:
+        bearer_token = _slack_bearer_token(secret_token)
+        auth_result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "auth.test"),
+            {},
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        if not isinstance(auth_result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if auth_result.get("ok") is False:
+            error = str(auth_result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        bot_user_id = str(auth_result.get("user_id") or "").strip()
+        if not bot_user_id:
+            raise RuntimeError("Failed to resolve Slack bot user id.")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "reactions.get"),
+            {
+                "channel": channel_id,
+                "timestamp": message_id,
+                "full": True,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message = result.get("message")
+        raw_reactions = message.get("reactions") if isinstance(message, dict) else []
+        removed: list[str] = []
+        if isinstance(raw_reactions, list):
+            seen: set[str] = set()
+            for reaction in raw_reactions:
+                if not isinstance(reaction, dict):
+                    continue
+                name = str(reaction.get("name") or "").strip()
+                users = reaction.get("users")
+                if (
+                    name
+                    and name not in seen
+                    and isinstance(users, list)
+                    and bot_user_id in {str(user) for user in users}
+                ):
+                    seen.add(name)
+                    removed.append(name)
+        for name in removed:
+            remove_result = self._post_json_webhook(
+                _slack_api_endpoint(str(route.get("target") or ""), "reactions.remove"),
+                {
+                    "channel": channel_id,
+                    "timestamp": message_id,
+                    "name": name,
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if not isinstance(remove_result, dict):
+                raise RuntimeError("Slack API returned a non-JSON response.")
+            if remove_result.get("ok") is False:
+                error = str(remove_result.get("error") or "unknown_error")
+                raise RuntimeError(f"Slack API returned {error}.")
+        return removed
+
+    def _dispatch_telegram_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string(request.params, "chatId", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram react requires chatId.")
+        message_id = _message_action_param_positive_int(
+            request.params,
+            "messageId",
+            "message_id",
+        )
+        if message_id is None:
+            return {
+                "ok": False,
+                "reason": "missing_message_id",
+                "hint": (
+                    "Telegram reaction requires a valid messageId "
+                    "(or inbound context fallback). Do not retry."
+                ),
+            }
+        remove = request.params.get("remove") is True
+        emoji = (
+            _message_action_param_string(
+                request.params,
+                "emoji",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a Telegram reaction.")
+        reaction: list[dict[str, str]] = []
+        if not remove and emoji:
+            reaction.append({"type": "emoji", "emoji": emoji})
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "setMessageReaction",
+            ),
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reaction": reaction,
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            description = str(result.get("description") or "")
+            is_invalid = "REACTION_INVALID" in description
+            return {
+                "ok": False,
+                "reason": "REACTION_INVALID" if is_invalid else "error",
+                "emoji": emoji,
+                "hint": (
+                    "This emoji is not supported for Telegram reactions. "
+                    "Add it to your reaction disallow list so you do not try it again."
+                    if is_invalid
+                    else "Reaction failed. Do not retry."
+                ),
+            }
+        if remove or not emoji:
+            return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
+
+    def _dispatch_discord_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object] | None:
+        del route
+        remove = request.params.get("remove") is True
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+            allow_empty=True,
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji is required to remove a Discord reaction.")
+        if not emoji:
+            removed = self._remove_own_discord_reactions(
+                channel_id=_discord_action_channel_id(
+                    _message_action_param_string(
+                        request.params,
+                        "channelId",
+                        required=True,
+                    )
+                ),
+                message_id=_message_action_param_string(
+                    request.params,
+                    "messageId",
+                    required=True,
+                ),
+                secret_token=secret_token,
+            )
+            return {"ok": True, "removed": removed}
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord react requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        encoded_emoji = _discord_reaction_identifier(emoji)
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(
+                f"channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me"
+            ),
+            method="DELETE" if remove else "PUT",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if remove:
+            return {"ok": True, "removed": emoji}
+        return {"ok": True, "added": emoji}
+
+    def _remove_own_discord_reactions(
+        self,
+        *,
+        channel_id: str | None,
+        message_id: str | None,
+        secret_token: str | None,
+    ) -> list[str]:
+        if channel_id is None:
+            raise RuntimeError("Discord react requires channelId.")
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        authorization = _discord_bot_authorization(secret_token)
+        message = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        raw_reactions = message.get("reactions") if isinstance(message, dict) else []
+        removed: list[str] = []
+        if isinstance(raw_reactions, list):
+            seen: set[str] = set()
+            for reaction in raw_reactions:
+                if not isinstance(reaction, dict):
+                    continue
+                identifier = _discord_reaction_identifier_from_payload(
+                    reaction.get("emoji")
+                )
+                if identifier and identifier not in seen:
+                    seen.add(identifier)
+                    removed.append(identifier)
+        for identifier in removed:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(
+                    "channels/"
+                    f"{channel_id}/messages/{message_id}/reactions/"
+                    f"{_discord_reaction_identifier(identifier)}/@me"
+                ),
+                method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(str(result.get("error")))
+        return removed
+
+    def _dispatch_discord_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord reactions requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        limit = _message_action_param_positive_int(request.params, "limit") or 100
+        limit = min(max(limit, 1), 100)
+        authorization = _discord_bot_authorization(secret_token)
+        message = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=authorization,
+        )
+        raw_reactions = message.get("reactions") if isinstance(message, dict) else []
+        summaries: list[dict[str, object]] = []
+        if not isinstance(raw_reactions, list):
+            return {"ok": True, "reactions": summaries}
+        for reaction in raw_reactions:
+            if not isinstance(reaction, dict):
+                continue
+            raw_emoji = reaction.get("emoji")
+            identifier = _discord_reaction_identifier_from_payload(raw_emoji)
+            if not identifier:
+                continue
+            emoji_payload = raw_emoji if isinstance(raw_emoji, dict) else {}
+            emoji_id = emoji_payload.get("id")
+            emoji_name = emoji_payload.get("name")
+            encoded = _discord_reaction_identifier(identifier)
+            users_result = self._request_json_provider_url(
+                _discord_api_endpoint(
+                    "channels/"
+                    f"{channel_id}/messages/{message_id}/reactions/{encoded}"
+                    f"?{urlencode({'limit': limit})}"
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=authorization,
+            )
+            users: list[dict[str, object]] = []
+            if isinstance(users_result, list):
+                for user in users_result:
+                    if not isinstance(user, dict):
+                        continue
+                    user_id = str(user.get("id") or "").strip()
+                    if not user_id:
+                        continue
+                    user_summary: dict[str, object] = {"id": user_id}
+                    username = str(user.get("username") or "").strip()
+                    discriminator = str(user.get("discriminator") or "").strip()
+                    if username:
+                        user_summary["username"] = username
+                        user_summary["tag"] = (
+                            f"{username}#{discriminator}" if discriminator else username
+                        )
+                    users.append(user_summary)
+            count = reaction.get("count")
+            summaries.append(
+                {
+                    "emoji": {
+                        "id": str(emoji_id) if emoji_id is not None else None,
+                        "name": str(emoji_name) if emoji_name is not None else None,
+                        "raw": identifier,
+                    },
+                    "count": count if isinstance(count, int) else 0,
+                    "users": users,
+                }
+            )
+        return {"ok": True, "reactions": summaries}
 
     async def _post_provider_route_event(
         self,
@@ -6755,6 +7741,19 @@ class OpsMeshService:
             payload["sessionKey"] = request.session_key
         if request.agent_id is not None:
             payload["agentId"] = request.agent_id
+        if request.requester_session_key is not None:
+            payload["requesterSessionKey"] = request.requester_session_key
+        if request.requester_account_id is not None:
+            payload["requesterAccountId"] = request.requester_account_id
+        if request.requester_sender_id is not None:
+            payload["requesterSenderId"] = request.requester_sender_id
+        if request.requester_sender_name is not None:
+            payload["requesterSenderName"] = request.requester_sender_name
+        if request.requester_sender_username is not None:
+            payload["requesterSenderUsername"] = request.requester_sender_username
+        if request.requester_sender_e164 is not None:
+            payload["requesterSenderE164"] = request.requester_sender_e164
+        payload["gatewayClientScopes"] = list(request.gateway_client_scopes)
         return await self._post_provider_route_event(
             event_type="gateway/send",
             conversation_target=conversation_target,
@@ -6777,11 +7776,14 @@ class OpsMeshService:
             raise GatewayOutboundRuntimeUnavailableError(
                 "gateway outbound provider route is missing a conversation target"
             )
+        question = request.question.strip()
+        options = _normalize_direct_channel_poll_options(list(request.options))
+        _validate_direct_channel_poll_shape(question, options)
         payload: dict[str, Any] = {
             "channel": request.channel,
             "to": request.target,
-            "question": request.question,
-            "options": list(request.options),
+            "question": question,
+            "options": options,
         }
         if request.max_selections is not None:
             payload["maxSelections"] = request.max_selections
@@ -6799,6 +7801,7 @@ class OpsMeshService:
             payload["threadId"] = request.thread_id
         if request.session_key is not None:
             payload["sessionKey"] = request.session_key
+        payload["gatewayClientScopes"] = list(request.gateway_client_scopes)
         return await self._post_provider_route_event(
             event_type="gateway/poll",
             conversation_target=conversation_target,
@@ -6937,6 +7940,8 @@ class OpsMeshService:
             resolved_target,
             thread_id=normalized_thread_id,
         )
+        source_session_key = canonicalize_session_key(payload.get("sourceSessionKey"))
+        runtime_session_key = source_session_key or announce_session_key
         route_target = (
             str(serialized_target.get("summary") or "").strip() or announce_session_key
         )
@@ -6949,6 +7954,8 @@ class OpsMeshService:
         payload_with_target = dict(payload)
         payload_with_target["sessionKey"] = announce_session_key
         payload_with_target["conversationTarget"] = serialized_target
+        if source_session_key is not None:
+            payload_with_target["sourceSessionKey"] = source_session_key
         if "accountId" not in payload_with_target and resolved_target.account_id is not None:
             payload_with_target["accountId"] = resolved_target.account_id
         if thread_id is not None:
@@ -6957,10 +7964,32 @@ class OpsMeshService:
             route_scope["thread_id"] = normalized_thread_id
         if requested_account_id is None and resolved_target.account_id is not None:
             route_scope["resolved_account_id"] = resolved_target.account_id
+        gateway_client_scopes = _normalize_gateway_client_scopes(
+            payload.get("gatewayClientScopes")
+        )
+        requester_session_key = canonicalize_session_key(payload.get("requesterSessionKey"))
+        requester_account_id = _normalize_optional_payload_string(
+            payload.get("requesterAccountId")
+        )
+        requester_sender_id = _normalize_optional_payload_string(
+            payload.get("requesterSenderId")
+        )
+        requester_sender_name = _normalize_optional_payload_string(
+            payload.get("requesterSenderName")
+        )
+        requester_sender_username = _normalize_optional_payload_string(
+            payload.get("requesterSenderUsername")
+        )
+        requester_sender_e164 = _normalize_optional_payload_string(
+            payload.get("requesterSenderE164")
+        )
         if route_scope_extra:
             for key, value in route_scope_extra.items():
                 if value is not None:
                     route_scope[key] = value
+        if source_session_key is not None:
+            route_scope["source_session_key"] = source_session_key
+            route_scope["runtime_session_key"] = runtime_session_key
         delivery_id = await self.database.create_outbound_delivery(
             route_id=None,
             route_name=route_name,
@@ -6999,7 +8028,7 @@ class OpsMeshService:
                     else ()
                 )
                 runtime_result = await runtime.deliver_poll(
-                    session_key=announce_session_key,
+                    session_key=runtime_session_key,
                     message=message,
                     channel=resolved_target.channel,
                     target=runtime_target,
@@ -7015,6 +8044,7 @@ class OpsMeshService:
                     is_anonymous=_optional_bool_payload_value(payload, "isAnonymous"),
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
             else:
                 raw_media_url = payload.get("mediaUrl")
@@ -7025,17 +8055,24 @@ class OpsMeshService:
                     if isinstance(raw_media_urls, list)
                     else None
                 )
+                normalized_media_urls = tuple(
+                    _normalize_direct_channel_media_urls(
+                        media_url=media_url,
+                        media_urls=media_urls,
+                    )
+                )
+                runtime_message = message
+                if (
+                    resolved_target.channel.lower() in {"whatsapp", "zalo"}
+                    and normalized_media_urls
+                ):
+                    runtime_message = str(payload.get("message") or "").strip()
                 runtime_result = await runtime.deliver_message(
-                    session_key=announce_session_key,
-                    message=message,
+                    session_key=runtime_session_key,
+                    message=runtime_message,
                     channel=resolved_target.channel,
                     target=runtime_target,
-                    media_urls=tuple(
-                        _normalize_direct_channel_media_urls(
-                            media_url=media_url,
-                            media_urls=media_urls,
-                        )
-                    ),
+                    media_urls=normalized_media_urls,
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
@@ -7043,6 +8080,13 @@ class OpsMeshService:
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
+                    requester_session_key=requester_session_key,
+                    requester_account_id=requester_account_id,
+                    requester_sender_id=requester_sender_id,
+                    requester_sender_name=requester_sender_name,
+                    requester_sender_username=requester_sender_username,
+                    requester_sender_e164=requester_sender_e164,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
@@ -7066,7 +8110,7 @@ class OpsMeshService:
                     target=runtime_target,
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
-                    session_key=announce_session_key,
+                    session_key=runtime_session_key,
                 ),
                 "error": error,
             }
@@ -7115,6 +8159,13 @@ class OpsMeshService:
         agent_id: str | None = None,
         thread_id: str | int | None = None,
         session_key: str | None = None,
+        requester_session_key: str | None = None,
+        requester_account_id: str | None = None,
+        requester_sender_id: str | None = None,
+        requester_sender_name: str | None = None,
+        requester_sender_username: str | None = None,
+        requester_sender_e164: str | None = None,
+        gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
         if not self._outbound_runtime_available():
@@ -7135,6 +8186,7 @@ class OpsMeshService:
             "message": message,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
+            "gatewayClientScopes": list(_normalize_gateway_client_scopes(gateway_client_scopes)),
         }
         if normalized_media_urls:
             if len(normalized_media_urls) == 1:
@@ -7155,8 +8207,38 @@ class OpsMeshService:
             payload["accountId"] = account_id
         if agent_id is not None:
             payload["agentId"] = agent_id
-        if session_key is not None:
-            payload["sourceSessionKey"] = session_key
+        source_session_key = canonicalize_session_key(session_key)
+        if source_session_key is not None:
+            payload["sourceSessionKey"] = source_session_key
+        normalized_requester_session_key = canonicalize_session_key(requester_session_key)
+        if normalized_requester_session_key is not None:
+            payload["requesterSessionKey"] = normalized_requester_session_key
+        normalized_requester_account_id = _normalize_optional_payload_string(
+            requester_account_id
+        )
+        if normalized_requester_account_id is None and any(
+            _normalize_optional_payload_string(value) is not None
+            for value in (
+                requester_session_key,
+                requester_sender_id,
+                requester_sender_name,
+                requester_sender_username,
+                requester_sender_e164,
+            )
+        ):
+            normalized_requester_account_id = _normalize_optional_payload_string(account_id)
+        if normalized_requester_account_id is not None:
+            payload["requesterAccountId"] = normalized_requester_account_id
+        requester_sender_fields = {
+            "requesterSenderId": requester_sender_id,
+            "requesterSenderName": requester_sender_name,
+            "requesterSenderUsername": requester_sender_username,
+            "requesterSenderE164": requester_sender_e164,
+        }
+        for key, value in requester_sender_fields.items():
+            normalized_value = _normalize_optional_payload_string(value)
+            if normalized_value is not None:
+                payload[key] = normalized_value
         if idempotency_key is not None:
             payload["idempotencyKey"] = idempotency_key
         result = await self._deliver_direct_channel_message(
@@ -7172,7 +8254,7 @@ class OpsMeshService:
             ),
             route_scope_extra={
                 "source": "gateway.send",
-                "source_session_key": session_key,
+                "source_session_key": source_session_key,
                 "agent_id": agent_id,
                 "idempotency_key": idempotency_key,
             },
@@ -7217,6 +8299,7 @@ class OpsMeshService:
         is_anonymous: bool | None = None,
         account_id: str | None = None,
         thread_id: str | int | None = None,
+        gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
         if not self._outbound_runtime_available():
@@ -7231,18 +8314,37 @@ class OpsMeshService:
         if conversation_target is None:
             raise ValueError("poll requires an explicit channel target")
         normalized_question = str(question).strip()
-        normalized_options = [str(option).strip() for option in options]
+        normalized_options = _normalize_direct_channel_poll_options(options)
+        _validate_direct_channel_poll_shape(normalized_question, normalized_options)
+        resolved_max_selections = max_selections if max_selections is not None else 1
+        _validate_direct_channel_poll_option_count(
+            conversation_target.channel,
+            normalized_options,
+        )
+        _validate_direct_channel_poll_max_selections(
+            normalized_options,
+            resolved_max_selections,
+        )
+        _validate_direct_channel_poll_duration_exclusivity(
+            duration_seconds=duration_seconds,
+            duration_hours=duration_hours,
+        )
+        if conversation_target.channel == "telegram":
+            _validate_telegram_poll_duration_options(
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
         payload: dict[str, Any] = {
             "summary": normalized_question,
             "question": normalized_question,
             "options": normalized_options,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
+            "gatewayClientScopes": list(_normalize_gateway_client_scopes(gateway_client_scopes)),
         }
         if account_id is not None:
             payload["accountId"] = account_id
-        if max_selections is not None:
-            payload["maxSelections"] = max_selections
+        payload["maxSelections"] = resolved_max_selections
         if duration_seconds is not None:
             payload["durationSeconds"] = duration_seconds
         if duration_hours is not None:
@@ -7260,7 +8362,7 @@ class OpsMeshService:
             message=_format_direct_channel_poll_message(
                 question=normalized_question,
                 options=normalized_options,
-                max_selections=max_selections,
+                max_selections=resolved_max_selections,
                 duration_seconds=duration_seconds,
                 duration_hours=duration_hours,
                 silent=silent,
@@ -7515,6 +8617,12 @@ class OpsMeshService:
                         event_type="cron/failure",
                         payload=payload,
                         message=announce_message,
+                        request_idempotency_key=_cron_direct_delivery_idempotency_key(
+                            task=task,
+                            mission=mission,
+                            event_type="cron/failure",
+                            conversation_target=failure_destination_target,
+                        ),
                     )
                     return
                 if (
@@ -7538,13 +8646,21 @@ class OpsMeshService:
                     explicit_announce_target is not None
                     and self._session_outbound_runtime_available()
                 ):
+                    explicit_thread_id = _task_cron_delivery_thread_id(task)
                     await self._send_ad_hoc_announce_delivery(
                         route_name=f"Announce delivery for {task.name}",
                         conversation_target=explicit_announce_target,
-                        thread_id=_task_cron_delivery_thread_id(task),
+                        thread_id=explicit_thread_id,
                         event_type="cron/failure",
                         payload=payload,
                         message=announce_message,
+                        request_idempotency_key=_cron_direct_delivery_idempotency_key(
+                            task=task,
+                            mission=mission,
+                            event_type="cron/failure",
+                            conversation_target=explicit_announce_target,
+                            thread_id=explicit_thread_id,
+                        ),
                     )
                     return
                 if (
@@ -8188,6 +9304,45 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_json_provider_url(
+        self,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        headers: dict[str, str] = {}
+        body: bytes | None = None
+        if payload is not None:
+            body = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if secret_header_name and secret_token:
+            headers[str(secret_header_name)] = str(secret_token)
+        request = Request(
+            target,
+            data=body,
+            headers=headers,
+            method=str(method or "GET").upper(),
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _post_json_webhook(
         self,
         target: str,
@@ -8395,7 +9550,7 @@ class OpsMeshService:
                 channel_id=channel_id,
                 initial_comment=text,
                 thread_id=thread_id or None,
-                secret_token=_slack_bearer_token(secret_token),
+                secret_token=secret_token or "",
             )
             return {
                 "runtime": "native-provider-backed",
@@ -8475,11 +9630,28 @@ class OpsMeshService:
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
         if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_shape(question, options)
+            _validate_direct_channel_poll_option_count("telegram", options)
+            _validate_direct_channel_poll_max_selections(
+                options,
+                _optional_int_payload_value(event, "maxSelections"),
+            )
+            duration_seconds = _optional_int_payload_value(event, "durationSeconds")
+            duration_hours = _optional_int_payload_value(event, "durationHours")
+            _validate_direct_channel_poll_duration_exclusivity(
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
+            _validate_telegram_poll_duration_options(
+                duration_seconds=duration_seconds,
+                duration_hours=duration_hours,
+            )
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
-                "question": str(event.get("question") or event.get("summary") or ""),
+                "question": question,
                 "options": options,
             }
             if _optional_bool_payload_value(event, "isAnonymous") is not None:
@@ -8487,11 +9659,8 @@ class OpsMeshService:
                     event,
                     "isAnonymous",
                 )
-            if _optional_int_payload_value(event, "durationSeconds") is not None:
-                payload["open_period"] = _optional_int_payload_value(
-                    event,
-                    "durationSeconds",
-                )
+            if duration_seconds is not None:
+                payload["open_period"] = duration_seconds
             if silent is not None:
                 payload["disable_notification"] = silent
             if thread_id:
@@ -8521,26 +9690,43 @@ class OpsMeshService:
             if silent is not None:
                 payload["disable_notification"] = silent
             if len(media_urls) > 1:
-                media: list[dict[str, str]] = []
-                for index, media_url in enumerate(media_urls[:10]):
-                    item = {
-                        "type": "document" if force_document else "photo",
-                        "media": media_url,
-                    }
+                result_items: list[dict[str, Any]] = []
+                for index, media_url in enumerate(media_urls):
+                    media_payload = dict(payload)
+                    media_payload["document" if force_document else "photo"] = media_url
+                    if force_document:
+                        media_payload["disable_content_type_detection"] = True
                     if index == 0 and text:
-                        item["caption"] = text[:1024]
-                    media.append(item)
-                payload["media"] = media
-                result = self._post_json_webhook(
-                    _telegram_api_endpoint(
-                        str(route.get("target") or ""),
-                        token,
-                        "sendMediaGroup",
-                    ),
-                    payload,
-                )
+                        media_payload["caption"] = text[:1024]
+                    media_result = self._post_json_webhook(
+                        _telegram_api_endpoint(
+                            str(route.get("target") or ""),
+                            token,
+                            "sendDocument" if force_document else "sendPhoto",
+                        ),
+                        media_payload,
+                    )
+                    if not isinstance(media_result, dict):
+                        raise RuntimeError("Telegram API returned a non-JSON response.")
+                    if media_result.get("ok") is False:
+                        error = str(
+                            media_result.get("description")
+                            or media_result.get("error_code")
+                            or "unknown"
+                        )
+                        raise RuntimeError(f"Telegram API returned {error}.")
+                    result_payload = media_result.get("result")
+                    if isinstance(result_payload, dict):
+                        result_items.append(result_payload)
+                    elif isinstance(result_payload, list):
+                        result_items.extend(
+                            item for item in result_payload if isinstance(item, dict)
+                        )
+                result = {"ok": True, "result": result_items}
             elif media_urls:
                 payload["document" if force_document else "photo"] = media_urls[0]
+                if force_document:
+                    payload["disable_content_type_detection"] = True
                 if text:
                     payload["caption"] = text[:1024]
                 result = self._post_json_webhook(
@@ -8615,22 +9801,28 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
             options = [option for option in options if option]
+            _validate_direct_channel_poll_shape(question, options)
+            _validate_direct_channel_poll_option_count("discord", options)
+            max_selections = _optional_int_payload_value(event, "maxSelections")
+            _validate_direct_channel_poll_max_selections(options, max_selections)
+            _validate_direct_channel_poll_duration_exclusivity(
+                duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
+                duration_hours=_optional_int_payload_value(event, "durationHours"),
+            )
             payload: dict[str, Any] = {
                 "poll": {
                     "question": {
-                        "text": str(event.get("question") or event.get("summary") or ""),
+                        "text": question,
                     },
                     "answers": [
                         {"poll_media": {"text": option}}
                         for option in options
                     ],
                     "duration": _discord_poll_duration_hours(event),
-                    "allow_multiselect": (
-                        _optional_int_payload_value(event, "maxSelections") or 1
-                    )
-                    > 1,
+                    "allow_multiselect": (max_selections or 1) > 1,
                 }
             }
         else:
@@ -8712,7 +9904,18 @@ class OpsMeshService:
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
-            options = [option for option in options if option][:3]
+            options = [option for option in options if option]
+            _validate_direct_channel_poll_shape(question, options)
+            _validate_direct_channel_poll_option_count("whatsapp", options)
+            _validate_direct_channel_poll_max_selections(
+                options,
+                _optional_int_payload_value(event, "maxSelections"),
+            )
+            _validate_direct_channel_poll_duration_exclusivity(
+                duration_seconds=_optional_int_payload_value(event, "durationSeconds"),
+                duration_hours=_optional_int_payload_value(event, "durationHours"),
+            )
+            options = options[:3]
             payload: dict[str, Any] = {
                 "messaging_product": "whatsapp",
                 "to": recipient_id,
@@ -8797,7 +10000,7 @@ class OpsMeshService:
                         delivered_contact = _whatsapp_contact_id(result, delivered_contact)
                     return {
                         "runtime": "native-provider-backed",
-                        "messageId": message_ids[0],
+                        "messageId": message_ids[-1],
                         "chatId": delivered_contact,
                         "channelId": delivered_contact,
                         "mediaIds": message_ids,
@@ -8816,11 +10019,55 @@ class OpsMeshService:
                 }
                 _whatsapp_apply_reply_context(payload, reply_to_id)
             else:
+                text_chunks = _whatsapp_text_chunks(text)
+                if len(text_chunks) > 1:
+                    endpoint = _whatsapp_messages_endpoint(str(route.get("target") or ""))
+                    bearer_token = _whatsapp_bearer_token(secret_token)
+                    message_id = ""
+                    delivered_contact = recipient_id
+                    for chunk in text_chunks:
+                        message_payload = {
+                            "messaging_product": "whatsapp",
+                            "to": recipient_id,
+                            "type": "text",
+                            "text": {"body": chunk},
+                        }
+                        _whatsapp_apply_reply_context(message_payload, reply_to_id)
+                        result = self._post_json_webhook(
+                            endpoint,
+                            message_payload,
+                            secret_header_name="Authorization",
+                            secret_token=bearer_token,
+                        )
+                        if not isinstance(result, dict):
+                            raise RuntimeError("WhatsApp API returned a non-JSON response.")
+                        if result.get("error"):
+                            error = result.get("error")
+                            if isinstance(error, dict):
+                                detail = str(
+                                    error.get("message") or error.get("code") or "unknown"
+                                )
+                            else:
+                                detail = str(error)
+                            raise RuntimeError(f"WhatsApp API returned {detail}.")
+                        chunk_message_id = _whatsapp_message_id(result)
+                        if chunk_message_id is None:
+                            raise RuntimeError(
+                                "WhatsApp API response did not include a message id."
+                            )
+                        message_id = chunk_message_id
+                        delivered_contact = _whatsapp_contact_id(result, delivered_contact)
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": message_id,
+                        "chatId": delivered_contact,
+                        "channelId": delivered_contact,
+                    }
                 payload = {
                     "messaging_product": "whatsapp",
                     "to": recipient_id,
                     "type": "text",
-                    "text": {"body": text[:4096]},
+                    "text": {"body": text},
                 }
                 _whatsapp_apply_reply_context(payload, reply_to_id)
         result = self._post_json_webhook(
@@ -8866,6 +10113,92 @@ class OpsMeshService:
             if media_urls:
                 native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _post_zalo_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Zalo native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        chat_id = _zalo_chat_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if chat_id is None:
+            raise RuntimeError("Zalo route is missing a chat target.")
+        token = _zalo_bot_token(secret_token)
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            endpoint = _zalo_api_endpoint(str(route.get("target") or ""), token, "sendPhoto")
+            message_ids: list[str] = []
+            delivered_chat = chat_id
+            for index, media_url in enumerate(media_urls):
+                payload: dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "photo": media_url,
+                }
+                if index == 0 and text:
+                    payload["caption"] = text[:2000]
+                result = self._post_json_webhook(endpoint, payload)
+                if not isinstance(result, dict):
+                    raise RuntimeError("Zalo API returned a non-JSON response.")
+                if result.get("ok") is False:
+                    error = str(
+                        result.get("description") or result.get("error_code") or "unknown"
+                    )
+                    raise RuntimeError(f"Zalo API returned {error}.")
+                message_id = _zalo_message_id(result)
+                if message_id is None:
+                    raise RuntimeError("Zalo API response did not include a message id.")
+                message_ids.append(message_id)
+                delivered_chat = _zalo_chat_from_result(result, delivered_chat)
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": message_ids[-1],
+                "chatId": delivered_chat,
+                "channelId": delivered_chat,
+                "mediaIds": message_ids,
+                "mediaUrls": media_urls,
+            }
+        endpoint = _zalo_api_endpoint(str(route.get("target") or ""), token, "sendMessage")
+        message_id = ""
+        delivered_chat = chat_id
+        for chunk in _zalo_text_chunks(text):
+            result = self._post_json_webhook(
+                endpoint,
+                {
+                    "chat_id": chat_id,
+                    "text": chunk,
+                },
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Zalo API returned a non-JSON response.")
+            if result.get("ok") is False:
+                error = str(result.get("description") or result.get("error_code") or "unknown")
+                raise RuntimeError(f"Zalo API returned {error}.")
+            chunk_message_id = _zalo_message_id(result)
+            if chunk_message_id is None:
+                raise RuntimeError("Zalo API response did not include a message id.")
+            message_id = chunk_message_id
+            delivered_chat = _zalo_chat_from_result(result, delivered_chat)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
 
     def _post_webhook(
         self,
