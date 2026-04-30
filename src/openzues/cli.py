@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1959,6 +1959,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "security",
         "shellCompletion",
         "legacyConfig",
+        "bundledPluginLoadPaths",
         "stalePluginConfig",
         "sandbox",
         "gatewayHealth",
@@ -2154,6 +2155,223 @@ def _with_doctor_legacy_config_payload(
     next_payload = dict(payload)
     next_payload["legacyConfig"] = legacy_payload
     warnings = _object_list(legacy_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _config_service_path_label(config_service: object | None) -> str | None:
+    config_path = getattr(config_service, "_config_path", None)
+    return str(config_path) if isinstance(config_path, Path) else None
+
+
+def _bundled_lookup_path(path_text: str) -> Path:
+    expanded = os.path.expandvars(os.path.expanduser(path_text))
+    try:
+        return Path(expanded).resolve(strict=False)
+    except OSError:
+        return Path(expanded)
+
+
+def _normalize_bundled_lookup_path(path_text: str) -> str:
+    return str(_bundled_lookup_path(path_text)).rstrip("\\/")
+
+
+def _bundled_plugin_load_path_hit(
+    raw_path: str,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    resolved = _bundled_lookup_path(raw_path)
+    parts = resolved.parts
+    for index, part in enumerate(parts):
+        if part.lower() != "extensions" or index == 0 or index >= len(parts) - 1:
+            continue
+        previous = parts[index - 1].lower()
+        if previous in {"dist", "dist-runtime"}:
+            continue
+        package_root = Path(*parts[:index])
+        bundled_leaf = Path(*parts[index + 1 :])
+        for bundled_root in ("dist", "dist-runtime"):
+            candidate = package_root / bundled_root / "extensions" / bundled_leaf
+            manifest_path = _plugin_manifest_path_for_load_path(candidate)
+            if manifest_path is None:
+                continue
+            record = _plugin_record_from_openclaw_manifest(
+                manifest_path,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+            )
+            if record is None:
+                continue
+            plugin_id = _optional_cli_string(record.get("id")) or bundled_leaf.name
+            return {
+                "pluginId": plugin_id,
+                "fromPath": raw_path,
+                "toPath": str(candidate),
+                "pathLabel": "plugins.load.paths",
+            }
+    return None
+
+
+def _scan_bundled_plugin_load_path_migrations(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    load = plugins_config.get("load")
+    load_config = load if isinstance(load, dict) else {}
+    raw_paths = load_config.get("paths")
+    paths = raw_paths if isinstance(raw_paths, list) else []
+    hits: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        if not isinstance(raw_path, str):
+            continue
+        hit = _bundled_plugin_load_path_hit(
+            raw_path,
+            plugins_config=plugins_config,
+            config_snapshot=snapshot,
+        )
+        if hit is None:
+            continue
+        dedupe_key = _normalize_bundled_lookup_path(str(hit.get("fromPath") or ""))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        hits.append(hit)
+    return hits
+
+
+def _doctor_bundled_plugin_load_path_warnings(issues: Sequence[object]) -> list[str]:
+    if not issues:
+        return []
+    warnings: list[str] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        path_label = str(issue.get("pathLabel") or "").strip()
+        plugin_id = str(issue.get("pluginId") or "").strip()
+        from_path = str(issue.get("fromPath") or "").strip()
+        to_path = str(issue.get("toPath") or "").strip()
+        if not path_label or not plugin_id or not from_path or not to_path:
+            continue
+        warnings.append(
+            f'- {path_label}: legacy bundled plugin path "{from_path}" '
+            f'still points at {plugin_id}; current packaged path is "{to_path}".'
+        )
+    if warnings:
+        warnings.append(
+            '- Run "openzues doctor --fix" to rewrite these bundled plugin paths.'
+        )
+    return warnings
+
+
+def _build_doctor_bundled_plugin_load_paths_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bundled-plugin-load-paths",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "issues": [],
+        "warnings": [],
+    }
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for bundled plugin load path checks.",
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Bundled plugin load path detection failed: {exc}",
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    issues = _scan_bundled_plugin_load_path_migrations(snapshot)
+    if should_repair:
+        repair = getattr(config_service, "repair_bundled_plugin_load_paths", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Bundled plugin load path repair runtime is unavailable.",
+                "issues": issues,
+                "warnings": _doctor_bundled_plugin_load_path_warnings(issues),
+                "path": _config_service_path_label(config_service),
+            }
+        try:
+            result = repair(issues)
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Bundled plugin load path repair failed: {exc}",
+                "issues": issues,
+                "warnings": _doctor_bundled_plugin_load_path_warnings(issues),
+                "path": _config_service_path_label(config_service),
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        remaining_issues = [] if changed else issues
+        return {
+            **base_payload,
+            "status": "warn" if remaining_issues else "ok",
+            "summary": (
+                "Rewrote legacy bundled plugin load paths."
+                if changed
+                else (
+                    "Legacy bundled plugin load paths found."
+                    if remaining_issues
+                    else "No legacy bundled plugin load paths found."
+                )
+            ),
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": _object_list(result_payload.get("changes")),
+            "issues": remaining_issues,
+            "warnings": _doctor_bundled_plugin_load_path_warnings(remaining_issues),
+            "path": result_payload.get("path") or _config_service_path_label(config_service),
+        }
+
+    warnings = _doctor_bundled_plugin_load_path_warnings(issues)
+    return {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Legacy bundled plugin load paths found."
+            if issues
+            else "No legacy bundled plugin load paths found."
+        ),
+        "repairAvailable": True,
+        "issues": issues,
+        "warnings": warnings,
+        "path": _config_service_path_label(config_service),
+    }
+
+
+def _with_doctor_bundled_plugin_load_paths_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    load_paths_payload = _build_doctor_bundled_plugin_load_paths_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["bundledPluginLoadPaths"] = load_paths_payload
+    warnings = _object_list(load_paths_payload.get("warnings"))
     if warnings:
         next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
     return next_payload
@@ -17218,6 +17436,11 @@ def doctor(
             view = await services.hermes_platform.get_doctor_view()
         payload = _with_doctor_legacy_config_payload(
             view.model_dump(mode="json"),
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_bundled_plugin_load_paths_payload(
+            payload,
             services.gateway_config,
             should_repair=fix,
         )

@@ -407,6 +407,47 @@ class GatewayConfigService:
             "hash": self._snapshot_hash(snapshot),
         }
 
+    def repair_bundled_plugin_load_paths(
+        self,
+        replacements: Iterable[dict[str, Any]],
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            snapshot = self._default_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        payload = self._read_raw_config_object(label="bundled plugin load path repair")
+        changes = _rewrite_bundled_plugin_load_paths(payload, replacements)
+        if not changes:
+            snapshot = self.build_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        snapshot = self._validated_snapshot(payload)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changed": True,
+            "changes": changes,
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
     def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()
@@ -1794,6 +1835,73 @@ def _remove_stale_plugin_config(
             f"({', '.join(entry_ids)})"
         )
     return changes
+
+
+def _normalize_plugin_load_path(value: str) -> str:
+    try:
+        normalized = str(Path(value).resolve(strict=False))
+    except OSError:
+        normalized = value
+    return normalized.rstrip("\\/")
+
+
+def _rewrite_bundled_plugin_load_paths(
+    payload: dict[str, Any],
+    replacements: Iterable[dict[str, Any]],
+) -> list[str]:
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, dict):
+        return []
+    load = plugins.get("load")
+    if not isinstance(load, dict):
+        return []
+    paths = load.get("paths")
+    if not isinstance(paths, list):
+        return []
+    replacement_rows = [
+        replacement for replacement in replacements if isinstance(replacement, dict)
+    ]
+    replacements_by_path: dict[str, dict[str, str]] = {}
+    for replacement in replacement_rows:
+        from_path = replacement.get("fromPath")
+        to_path = replacement.get("toPath")
+        plugin_id = replacement.get("pluginId")
+        if not isinstance(from_path, str) or not isinstance(to_path, str):
+            continue
+        replacements_by_path[_normalize_plugin_load_path(from_path)] = {
+            "fromPath": from_path,
+            "toPath": to_path,
+            "pluginId": str(plugin_id or ""),
+        }
+    if not replacements_by_path:
+        return []
+
+    seen_paths: set[str] = set()
+    rewritten: list[Any] = []
+    applied: list[dict[str, str]] = []
+    for entry in paths:
+        if not isinstance(entry, str):
+            rewritten.append(entry)
+            continue
+        normalized_entry = _normalize_plugin_load_path(entry)
+        matched_replacement = replacements_by_path.get(normalized_entry)
+        next_entry = matched_replacement["toPath"] if matched_replacement is not None else entry
+        normalized_next = _normalize_plugin_load_path(next_entry)
+        if normalized_next in seen_paths:
+            continue
+        seen_paths.add(normalized_next)
+        rewritten.append(next_entry)
+        if matched_replacement is not None:
+            applied.append(matched_replacement)
+
+    if applied:
+        load["paths"] = rewritten
+    return [
+        "- plugins.load.paths: rewrote bundled "
+        f"{replacement['pluginId']} path from {replacement['fromPath']} "
+        f"to {replacement['toPath']}"
+        for replacement in applied
+    ]
 
 
 def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:

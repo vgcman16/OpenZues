@@ -131,6 +131,12 @@ entry `webSearch` config: global `apiKey` maps to Brave, provider-scoped
 records such as `grok` and `kimi` map through the OpenClaw manifest ownership
 table to `xai` and `moonshot`, existing plugin config wins, and modern
 `openaiCodex` search config stays under `tools.web.search`.
+OpenClaw's bundled plugin load-path doctor helper is now covered by a native
+`bundledPluginLoadPaths` contribution: legacy `plugins.load.paths` entries
+that still point at source-style `extensions/<plugin>` are detected, warned,
+and rewritten to packaged `dist/extensions/<plugin>` or
+`dist-runtime/extensions/<plugin>` paths before stale plugin config cleanup
+runs.
 OpenClaw's stale plugin config doctor helper is now covered by a native
 `stalePluginConfig` doctor contribution: `doctor --json` scans
 `plugins.allow` and `plugins.entries.<id>` against native/bundled plugin

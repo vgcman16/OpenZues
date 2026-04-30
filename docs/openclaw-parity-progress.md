@@ -3288,6 +3288,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_config.py
   src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- Top-level `doctor --json` now includes OpenClaw's bundled plugin load-path
+  repair contribution. It detects legacy source-style
+  `plugins.load.paths=.../extensions/<plugin>` entries, reports the current
+  packaged target, rewrites them to `dist/extensions` or `dist-runtime/extensions`
+  during `doctor --fix`, and runs before stale plugin config cleanup.
+- Verified the bundled plugin load-path doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_bundled_plugin_load_paths
+  tests\test_cli.py::test_doctor_fix_rewrites_legacy_bundled_plugin_load_paths_before_stale_scan
+  -q` (`2 passed`), adjacent doctor/plugin coverage `python -m pytest
+  tests\test_cli.py -q -k "bundled_plugin_load_paths or stale_plugin_config or
+  bundled_plugin_runtime_dependency_contribution or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`7 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
 - Top-level `doctor --json` now includes OpenClaw's stale plugin config
   contribution. It scans `plugins.allow` and `plugins.entries.<id>` against
   native and manifest-backed plugin ids, formats the upstream warning/hint
