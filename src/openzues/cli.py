@@ -166,6 +166,13 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "reply": True,
         "media": True,
     },
+    "zalo": {
+        "chatTypes": ["direct", "group"],
+        "media": True,
+        "reactions": False,
+        "polls": False,
+        "threads": False,
+    },
 }
 _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
     {

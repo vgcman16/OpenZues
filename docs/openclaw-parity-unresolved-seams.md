@@ -170,8 +170,10 @@ Official Zalo route-backed action parity now includes upstream's supported
 `send` action via the native Bot API route owner, including text and optional
 `media` sends plus the public `kind="zalo"` route-create/view schema. Zalo
 reactions remain intentionally unsupported because the upstream official Zalo
-plugin advertises `reactions: false`; Zalouser reaction parity remains a
-separate future native user-session runtime seam.
+plugin advertises `reactions: false`. `channels capabilities` now also reports
+Zalo's upstream support posture: direct/group chat types, media enabled, and
+reactions/polls/threads disabled. Zalouser reaction parity remains a separate
+future native user-session runtime seam.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels

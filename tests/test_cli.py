@@ -831,6 +831,64 @@ def test_channels_capabilities_json_filters_channel_and_account(tmp_path, monkey
     assert report["probe"]["status"] == "unavailable"
 
 
+def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Zalo Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Zalo Route",
+            kind="zalo",
+            target="https://bot-api.zaloplatforms.test",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "zalo",
+                "account_id": "zalo-bot",
+                "peer_kind": "direct",
+                "peer_id": "direct:dm-chat-1",
+                "summary": "zalo-bot direct dm-chat-1",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="zalo-access-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "zalo",
+            "--account",
+            "zalo-bot",
+            "--target",
+            "direct:dm-chat-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "direct:dm-chat-1"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "zalo"
+    assert report["accountId"] == "zalo-bot"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert report["support"]["chatTypes"] == ["direct", "group"]
+    assert report["support"]["media"] is True
+    assert report["support"]["reactions"] is False
+    assert report["support"]["polls"] is False
+    assert report["support"]["threads"] is False
+    assert report["actions"] == ["send", "broadcast"]
+
+
 def test_channels_capabilities_json_uses_account_probe_result(monkeypatch) -> None:
     calls: list[tuple[bool | None, int | None]] = []
 
