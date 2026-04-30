@@ -514,10 +514,10 @@ scheduled-event payload through the same route-backed bot-token REST path,
 including entity type, timing, channel, description, location, and privacy
 mapping; OpenClaw-style cover image URL/path resolution remains queued as a
 separate media seam.
-Discord moderation `timeout` now dispatches explicit-until and
-`durationMin`/`durationMinutes` paths through the same route-backed bot-token
-REST path and returns the upstream-shaped `{ok: true, member}` payload;
-audit-log reason headers remain queued.
+Discord moderation `timeout` now dispatches explicit-until,
+`durationMin`/`durationMinutes`, and encoded audit-log reason paths through the
+same route-backed bot-token REST path and returns the upstream-shaped
+`{ok: true, member}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

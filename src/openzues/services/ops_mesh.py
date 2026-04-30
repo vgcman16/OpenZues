@@ -1646,6 +1646,13 @@ def _discord_parent_id_param(params: dict[str, Any]) -> tuple[bool, str | None]:
     return False, None
 
 
+def _discord_audit_reason_headers(reason: str | None) -> dict[str, str] | None:
+    trimmed = str(reason or "").strip()
+    if not trimmed:
+        return None
+    return {"X-Audit-Log-Reason": quote(trimmed, safe="")}
+
+
 class GatewayDiscordPresenceRuntime(Protocol):
     def update_presence(
         self,
@@ -9567,13 +9574,26 @@ class OpsMeshService:
             if duration_minutes is not None:
                 timeout_until = datetime.now(UTC) + timedelta(minutes=duration_minutes)
                 until = timeout_until.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        member = self._request_json_provider_url(
-            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
-            method="PATCH",
-            payload={"communication_disabled_until": until},
-            secret_header_name="Authorization",
-            secret_token=_discord_bot_authorization(secret_token),
+        extra_headers = _discord_audit_reason_headers(
+            _message_action_param_string(request.params, "reason")
         )
+        if extra_headers:
+            member = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="PATCH",
+                payload={"communication_disabled_until": until},
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+                extra_headers=extra_headers,
+            )
+        else:
+            member = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+                method="PATCH",
+                payload={"communication_disabled_until": until},
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
         if not isinstance(member, dict):
             raise RuntimeError("Discord API returned a non-JSON member response.")
         if member.get("error"):
@@ -11654,6 +11674,7 @@ class OpsMeshService:
         payload: object | None = None,
         secret_header_name: str | None = None,
         secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
         timeout_seconds: float = 10.0,
     ) -> object | None:
         headers: dict[str, str] = {}
@@ -11663,6 +11684,8 @@ class OpsMeshService:
             headers["Content-Type"] = "application/json"
         if secret_header_name and secret_token:
             headers[str(secret_header_name)] = str(secret_token)
+        if extra_headers:
+            headers.update({str(key): str(value) for key, value in extra_headers.items()})
         request = Request(
             target,
             data=body,
