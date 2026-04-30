@@ -338,6 +338,11 @@ ACP thread-bound spawns with a channel context but no explicit account id now
 mirror OpenClaw's `resolveAcpSpawnChannelAccountId`: the native gateway uses
 `channels.<channel>.defaultAccount` when present and otherwise falls back to
 `default` before account-scoped spawn policy checks and ACP runtime dispatch.
+ACP Telegram `thread=true` current-conversation bindings now also preserve
+forum-topic conversations whether the requester supplies a topic-qualified
+`to` target or a group plus `threadId`; persisted `sessionBinding`
+conversation ids use OpenClaw's `chatId:topic:threadId` shape without a
+self-parent conversation record.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

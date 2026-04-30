@@ -4670,6 +4670,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed`), `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- RuntimeManager ACP `thread=true` bindings now preserve Telegram forum-topic
+  current-conversation ids in both upstream shapes: topic-qualified `to`
+  targets and `groupId` plus `threadId` contexts persist
+  `conversationId="<chatId>:topic:<threadId>"` without a self-parent
+  conversation field.
+- Verified the ACP Telegram topic binding seam with `python -m pytest
+  tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_preserves_telegram_topic_target
+  tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_binds_telegram_forum_topic_from_thread_id
+  -q` (`2 passed`), full ACP adapter coverage `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`18 passed`), adjacent gateway ACP
+  persistence coverage `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "sessions_spawn_acp_thread_mode or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run or
+  sessions_reset_closes_acp_runtime_before_resetting_metadata or
+  sessions_delete_closes_acp_runtime_before_metadata_delete"` (`10 passed`),
+  `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 - Gateway ACP spawns now honor OpenClaw's `acp.enabled=false` runtime policy
   before the service boundary, returning `errorCode="acp_disabled"` and
   avoiding target/runtime dispatch.
