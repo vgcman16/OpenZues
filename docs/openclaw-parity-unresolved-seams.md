@@ -451,6 +451,11 @@ mutations and normalized pinned-message timestamps for `list-pins`.
 Discord `read` now dispatches through the same route-backed bot-token REST
 path, including upstream-style `limit` integer parsing, 1-100 clamping,
 `before` / `after` / `around` query params, and normalized message timestamps.
+Discord `fetch-message` now dispatches through the same route-backed bot-token
+REST path, including OpenClaw `messageLink` parsing, direct
+`guildId`/`channelId`/`messageId` params, normalized timestamp metadata, and
+the upstream-shaped `{ok: true, message, guildId, channelId, messageId}`
+payload.
 Discord `permissions` now dispatches through the same route-backed bot-token
 REST path, fetching channel, bot identity, guild, and member records before
 applying OpenClaw's guild/role/member overwrite order into a permission

@@ -1723,6 +1723,25 @@ def _discord_audit_reason_headers(reason: str | None) -> dict[str, str] | None:
     return {"X-Audit-Log-Reason": quote(trimmed, safe="")}
 
 
+def _parse_discord_message_link(link: str) -> dict[str, str]:
+    match = re.match(
+        r"^(?:https?://)?(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/"
+        r"(\d+)/(\d+)/(\d+)(?:/?|\?.*)$",
+        link.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        raise RuntimeError(
+            "Invalid Discord message link. Expected "
+            "https://discord.com/channels/<guildId>/<channelId>/<messageId>."
+        )
+    return {
+        "guildId": match.group(1),
+        "channelId": match.group(2),
+        "messageId": match.group(3),
+    }
+
+
 class GatewayDiscordPresenceRuntime(Protocol):
     def update_presence(
         self,
@@ -7536,6 +7555,7 @@ class OpsMeshService:
             "emoji-upload",
             "event-create",
             "event-list",
+            "fetch-message",
             "kick",
             "list-pins",
             "member-info",
@@ -7614,6 +7634,13 @@ class OpsMeshService:
             if action == "read":
                 return await asyncio.to_thread(
                     self._dispatch_discord_read_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "fetch-message":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_fetch_message_action,
                     route,
                     request,
                     secret_token,
@@ -9313,6 +9340,50 @@ class OpsMeshService:
                 _discord_message_with_normalized_timestamp(message)
                 for message in result
             ],
+        }
+
+    def _dispatch_discord_fetch_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        message_link = _message_action_param_string(request.params, "messageLink")
+        guild_id: str | None
+        channel_id_raw: str | None
+        message_id: str | None
+        if message_link is not None:
+            parsed = _parse_discord_message_link(message_link)
+            guild_id = parsed["guildId"]
+            channel_id_raw = parsed["channelId"]
+            message_id = parsed["messageId"]
+        else:
+            guild_id = _message_action_param_string(request.params, "guildId")
+            channel_id_raw = _message_action_param_string(request.params, "channelId")
+            message_id = _message_action_param_string(request.params, "messageId")
+        channel_id = _discord_action_channel_id(channel_id_raw)
+        if not guild_id or channel_id is None or not message_id:
+            raise RuntimeError(
+                "Discord message fetch requires guildId, channelId, and messageId "
+                "(or a valid messageLink)."
+            )
+        message = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(message, dict) and message.get("error"):
+            raise RuntimeError(str(message.get("error")))
+        if not isinstance(message, dict):
+            raise RuntimeError("Discord API returned a non-JSON message response.")
+        return {
+            "ok": True,
+            "message": _discord_message_with_normalized_timestamp(message),
+            "guildId": guild_id,
+            "channelId": channel_id,
+            "messageId": message_id,
         }
 
     def _dispatch_discord_permissions_message_action(
