@@ -79,9 +79,14 @@ wait-time completion delivery. LINE group/current contexts now also preserve
 OpenClaw's fallback precedence by binding and delivering to `agentGroupId`
 when it is present, and the gateway method owner now forwards that group
 context to the production ACP spawn adapter instead of dropping LINE at channel
-normalization. Remaining ACP binding parity is child-thread creation for
-child-placement providers, provider-adapter capability/store breadth, unbind
-lifecycle breadth, and the standalone ACP bridge server/client runtime.
+normalization. RuntimeManager-backed Matrix ACP `thread=true` sessions now also
+synthesize child-placement binding metadata from requester context, preserving
+canonical Matrix room casing in `sessionBinding.conversation.parentConversationId`
+and using the native ACP runtime thread id as OpenZues' local child-thread
+handle for `threadBinding`, `completionDelivery`, and
+`sessionBinding.metadata`. Remaining ACP binding parity is real provider-native
+child-thread creation/store breadth, unbind lifecycle breadth, and the
+standalone ACP bridge server/client runtime.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same

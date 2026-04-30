@@ -338,6 +338,58 @@ async def test_runtime_manager_acp_spawn_prefers_line_group_current_conversation
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_binds_matrix_child_thread_metadata() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate Matrix child thread tests.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {
+            "requesterSessionKey": (
+                "agent:main:matrix:channel:!room:example.org:thread:$thread-root"
+            ),
+            "requesterChannel": "matrix",
+            "requesterAccountId": "default",
+            "requesterTo": "room:!Room:Example.org",
+            "requesterThreadId": "$thread-root",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!Room:Example.org",
+        "threadId": "thread-acp-new",
+    }
+    assert payload["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!Room:Example.org",
+        "threadId": "thread-acp-new",
+    }
+    session_binding = payload["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["targetSessionKey"] == "agent:codex:acp:thread-acp-new"
+    assert session_binding["targetKind"] == "session"
+    assert session_binding["conversation"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "conversationId": "thread-acp-new",
+        "parentConversationId": "!Room:Example.org",
+    }
+    assert session_binding["metadata"]["placement"] == "child"
+    assert session_binding["metadata"]["threadId"] == "thread-acp-new"
+    assert session_binding["metadata"]["parentThreadId"] == "$thread-root"
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)

@@ -180,6 +180,25 @@ def _strip_conversation_target_prefixes(channel: str, target: str) -> str | None
     return value
 
 
+def _strip_child_parent_conversation_target(channel: str, target: str) -> str | None:
+    value = target.strip()
+    channel_prefix = f"{channel}:"
+    for _ in range(4):
+        normalized = value.lower()
+        if normalized.startswith(channel_prefix):
+            value = value[len(channel_prefix) :].strip()
+            continue
+        matched = False
+        for prefix in _CONVERSATION_TARGET_PREFIXES:
+            if normalized.startswith(prefix):
+                value = value[len(prefix) :].strip()
+                matched = True
+                break
+        if not matched:
+            break
+    return value or None
+
+
 def _current_conversation_ref(
     *,
     channel: str,
@@ -275,6 +294,85 @@ def _current_acp_thread_binding_metadata(
         account_id=account_id,
         conversation=conversation,
         thread_id=requester_thread_id,
+    )
+    return {
+        "threadBinding": thread_binding,
+        "sessionBinding": session_binding,
+        "completionDelivery": {"mode": "thread", **thread_binding},
+    }
+
+
+def _child_session_binding_record(
+    *,
+    child_session_key: str,
+    target_agent_id: str,
+    channel: str,
+    account_id: str,
+    child_thread_id: str,
+    parent_conversation_id: str | None,
+    parent_thread_id: str | None,
+) -> dict[str, object]:
+    bound_at = int(time.time() * 1000)
+    binding_key = _CONVERSATION_KEY_SEPARATOR.join(
+        [channel, account_id, "", child_thread_id]
+    )
+    conversation_payload: dict[str, object] = {
+        "channel": channel,
+        "accountId": account_id,
+        "conversationId": child_thread_id,
+    }
+    if parent_conversation_id is not None and parent_conversation_id != child_thread_id:
+        conversation_payload["parentConversationId"] = parent_conversation_id
+    metadata: dict[str, object] = {
+        "placement": "child",
+        "threadId": child_thread_id,
+        "lastActivityAt": bound_at,
+        "agentId": target_agent_id,
+        "boundBy": "system",
+    }
+    if parent_thread_id is not None and parent_thread_id != child_thread_id:
+        metadata["parentThreadId"] = parent_thread_id
+    return {
+        "bindingId": f"{_CURRENT_BINDINGS_ID_PREFIX}{binding_key}",
+        "targetSessionKey": child_session_key,
+        "targetKind": "session",
+        "conversation": conversation_payload,
+        "status": "active",
+        "boundAt": bound_at,
+        "metadata": metadata,
+    }
+
+
+def _child_acp_thread_binding_metadata(
+    *,
+    context: Mapping[str, object],
+    child_session_key: str,
+    target_agent_id: str,
+    child_thread_id: str,
+) -> dict[str, object] | None:
+    channel = _requester_channel_from_context(context)
+    if channel is None or channel not in _CHILD_THREAD_PLACEMENT_CHANNELS:
+        return None
+    to = _requester_to_from_context(context)
+    if to is None:
+        return None
+    account_id = _requester_account_id_from_context(context)
+    requester_thread_id = _requester_thread_id_from_context(context)
+    parent_conversation_id = _strip_child_parent_conversation_target(channel, to)
+    thread_binding = {
+        "channel": channel,
+        "accountId": account_id,
+        "to": to,
+        "threadId": child_thread_id,
+    }
+    session_binding = _child_session_binding_record(
+        child_session_key=child_session_key,
+        target_agent_id=target_agent_id,
+        channel=channel,
+        account_id=account_id,
+        child_thread_id=child_thread_id,
+        parent_conversation_id=parent_conversation_id,
+        parent_thread_id=requester_thread_id,
     )
     return {
         "threadBinding": thread_binding,
@@ -399,6 +497,13 @@ class RuntimeManagerAcpSpawnService:
                 child_session_key=child_session_key,
                 target_agent_id=target_agent_id,
             )
+            if binding_metadata is None:
+                binding_metadata = _child_acp_thread_binding_metadata(
+                    context=context,
+                    child_session_key=child_session_key,
+                    target_agent_id=target_agent_id,
+                    child_thread_id=thread_id,
+                )
             if binding_metadata is not None:
                 payload.update(binding_metadata)
         return payload

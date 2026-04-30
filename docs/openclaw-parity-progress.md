@@ -187,6 +187,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
   tests\test_gateway_acp_spawn.py`, and `mypy
   src\openzues\services\gateway_acp_spawn.py`.
+- RuntimeManager-backed ACP `thread=true` session spawns now also synthesize
+  OpenClaw-shaped child-placement binding metadata for Matrix requester
+  contexts. Accepted responses include `threadBinding`, `completionDelivery`,
+  and `sessionBinding` records with `placement="child"`, the native ACP runtime
+  thread id as the local child-thread handle, the parent Matrix room preserved
+  with canonical casing, and the requester thread id recorded as
+  `parentThreadId`.
+- Verified the ACP Matrix child-thread metadata slice with `python -m pytest
+  tests\test_gateway_acp_spawn.py -k "matrix_child_thread_metadata" -q` (`1
+  passed`), full ACP adapter proof `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`13 passed`), adjacent gateway ACP
+  proof `python -m pytest tests\test_gateway_node_methods.py -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion" -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 - Gateway ACP spawns now inherit the target custom agent workspace when `cwd`
   is omitted, matching OpenClaw's cross-agent ACP workspace resolution. Missing
   inherited workspaces fall back to the ACP backend default cwd, while
