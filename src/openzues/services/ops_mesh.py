@@ -7185,7 +7185,7 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "discord" and action in {"react", "reactions", "send"}:
+        if channel == "discord" and action in {"edit", "react", "reactions", "send"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -7205,6 +7205,13 @@ class OpsMeshService:
             if action == "send":
                 return await asyncio.to_thread(
                     self._dispatch_discord_send_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "edit":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_edit_message_action,
                     route,
                     request,
                     secret_token,
@@ -8452,6 +8459,43 @@ class OpsMeshService:
                 "channelId": str(result.get("channelId") or result.get("chatId") or ""),
             },
         }
+
+    def _dispatch_discord_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord edit requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        content = _message_action_param_string(
+            request.params,
+            "message",
+            required=True,
+            allow_empty=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/messages/{message_id}"),
+            method="PATCH",
+            payload={"content": content or ""},
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Discord API returned a non-JSON response.")
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "message": result}
 
     async def _post_provider_route_event(
         self,
