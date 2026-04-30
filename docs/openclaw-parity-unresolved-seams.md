@@ -2475,6 +2475,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_json_includes_security_and_shell_completion_surfaces or
   doctor_and_update_status_json_include_hermes_sections"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the compact CLI root-option token seam from OpenClaw
+  `cli-root-options.ts`: the native CLI now accepts `--dev`, `--no-color`,
+  `--profile`, `--log-level`, and `--container` before subcommands, and its
+  token helpers match OpenClaw's handling of negative numeric values, `--`
+  terminators, `--flag=value` forms, and missing values. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_root_option_token_consumption_matches_openclaw_reference_cases
+  tests\test_cli.py::test_root_openclaw_compat_options_are_accepted_before_command
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k "root_option or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  health_json_surfaces_gateway_health_snapshot"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

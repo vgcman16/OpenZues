@@ -17,11 +17,13 @@ from openzues.app import create_app
 from openzues.cli import (
     _append_watch_log,
     _close_services,
+    _consume_root_option_token,
     _emit_attention_queue_action,
     _emit_continue_action,
     _emit_gateway_bootstrap,
     _emit_gateway_capability,
     _emit_status,
+    _is_root_value_token,
     _summarize_browser_snapshot,
     _watch_browser_verify,
     app,
@@ -102,6 +104,86 @@ def test_close_services_shuts_down_background_service_loops() -> None:
         "mission_service",
         "manager",
     ]
+
+
+def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
+    assert _is_root_value_token("work") is True
+    assert _is_root_value_token("-1") is True
+    assert _is_root_value_token("-1.5") is True
+    assert _is_root_value_token("-0.5") is True
+    assert _is_root_value_token("--") is False
+    assert _is_root_value_token("--dev") is False
+    assert _is_root_value_token("-") is False
+    assert _is_root_value_token("") is False
+    assert _is_root_value_token(None) is False
+    assert _consume_root_option_token(["--dev"], 0) == 1
+    assert _consume_root_option_token(["--profile=work"], 0) == 1
+    assert _consume_root_option_token(["--log-level=debug"], 0) == 1
+    assert _consume_root_option_token(["--container=openclaw-demo"], 0) == 1
+    assert _consume_root_option_token(["--profile", "work"], 0) == 2
+    assert _consume_root_option_token(["--container", "openclaw-demo"], 0) == 2
+    assert _consume_root_option_token(["--profile", "-1"], 0) == 2
+    assert _consume_root_option_token(["--log-level", "-1.5"], 0) == 2
+    assert _consume_root_option_token(["--profile", "--no-color"], 0) == 1
+    assert _consume_root_option_token(["--profile", "--"], 0) == 1
+    assert _consume_root_option_token(["x", "--profile", "work"], 1) == 2
+    assert _consume_root_option_token(["--log-level", ""], 0) == 1
+    assert _consume_root_option_token(["--unknown"], 0) == 0
+    assert _consume_root_option_token([], 0) == 0
+
+
+def test_root_openclaw_compat_options_are_accepted_before_command(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                gateway_node_methods=None,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "--dev",
+            "--no-color",
+            "--profile",
+            "-1",
+            "--log-level",
+            "-1.5",
+            "--container=openclaw-demo",
+            "doctor",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["profile"] == {"summary": "Hermes runtime profile is mapped."}
 
 
 def _watch_dashboard_payload(*, mission_status: str = "paused") -> dict[str, object]:

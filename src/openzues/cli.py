@@ -96,6 +96,9 @@ from openzues.services.vault import VaultService
 from openzues.settings import Settings, settings
 
 app = typer.Typer(help="OpenZues local control plane")
+_ROOT_FLAG_TERMINATOR = "--"
+_ROOT_BOOLEAN_FLAGS = {"--dev", "--no-color"}
+_ROOT_VALUE_FLAGS = {"--profile", "--log-level", "--container"}
 _ATTENTION_QUEUE_IDLE_REPLY = (
     "The attention queue is clear right now. There is no bounded move to fire."
 )
@@ -403,6 +406,36 @@ _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
 _WATCH_LEADER_PID_RE = re.compile(r"Leader PID:\s*(?P<pid>\d+)", re.IGNORECASE)
 
 
+def _is_root_value_token(arg: str | None) -> bool:
+    if not arg or arg == _ROOT_FLAG_TERMINATOR:
+        return False
+    if not arg.startswith("-"):
+        return True
+    return re.fullmatch(r"-\d+(?:\.\d+)?", arg) is not None
+
+
+def _consume_root_option_token(args: list[str], index: int) -> int:
+    try:
+        arg = args[index]
+    except IndexError:
+        return 0
+    if arg in _ROOT_BOOLEAN_FLAGS:
+        return 1
+    if (
+        arg.startswith("--profile=")
+        or arg.startswith("--log-level=")
+        or arg.startswith("--container=")
+    ):
+        return 1
+    if arg in _ROOT_VALUE_FLAGS:
+        try:
+            next_arg = args[index + 1]
+        except IndexError:
+            next_arg = None
+        return 2 if _is_root_value_token(next_arg) else 1
+    return 0
+
+
 def _coerce_int(value: object) -> int:
     return int(cast("int | str", value or 0))
 
@@ -488,6 +521,37 @@ hermes_app.add_typer(hermes_profile_app, name="profile")
 app.add_typer(update_app, name="update")
 app.add_typer(setup_app, name="setup")
 setup_app.add_typer(setup_wizard_app, name="wizard")
+
+
+@app.callback()
+def root_callback(
+    dev: bool = typer.Option(
+        False,
+        "--dev",
+        help="Accept the OpenClaw development-mode root flag for CLI compatibility.",
+    ),
+    no_color: bool = typer.Option(
+        False,
+        "--no-color",
+        help="Accept the OpenClaw no-color root flag for CLI compatibility.",
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Accept an OpenClaw profile name for CLI compatibility.",
+    ),
+    log_level: str | None = typer.Option(
+        None,
+        "--log-level",
+        help="Accept an OpenClaw log-level value for CLI compatibility.",
+    ),
+    container: str | None = typer.Option(
+        None,
+        "--container",
+        help="Accept an OpenClaw container target for CLI compatibility.",
+    ),
+) -> None:
+    del dev, no_color, profile, log_level, container
 
 
 def _runtime_settings() -> Settings:

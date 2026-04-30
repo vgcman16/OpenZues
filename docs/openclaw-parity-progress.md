@@ -177,6 +177,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_includes_security_and_shell_completion_surfaces or
   doctor_and_update_status_json_include_hermes_sections"` (`6 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- The CLI root now accepts OpenClaw-compatible `--dev`, `--no-color`,
+  `--profile`, `--log-level`, and `--container` flags before subcommands, and
+  native token-consumption helpers match OpenClaw's value-token behavior for
+  negative numeric values and `--` terminators.
+- Verified the CLI root option compatibility slice with `python -m pytest
+  tests\test_cli.py::test_root_option_token_consumption_matches_openclaw_reference_cases
+  tests\test_cli.py::test_root_openclaw_compat_options_are_accepted_before_command
+  -q` (`2 passed`), adjacent CLI parser/doctor proof `python -m pytest
+  tests\test_cli.py -q -k "root_option or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_sandbox_contribution or
+  health_json_surfaces_gateway_health_snapshot"` (`3 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Native WhatsApp route sends now split text-only payloads into OpenClaw-style
   4000-character chunks instead of truncating at 4096 characters, and return
   the last provider message id from the chunked send sequence.
@@ -498,6 +511,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "doctor_json_includes_gateway_memory_probe_contribution or doctor_json_includes_sandbox_contribution or doctor_json_warns_when_sandbox_enabled_without_docker or doctor_json_includes_bundled_plugin_runtime_dependency_contribution or doctor_json_includes_security_and_shell_completion_surfaces or doctor_and_update_status_json_include_hermes_sections"`: 6 passed after rechecking adjacent top-level doctor surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the memory-search gateway probe doctor contribution slice.
 - `mypy src\openzues\cli.py`: clean after the memory-search gateway probe doctor contribution slice.
+- `python -m pytest tests\test_cli.py::test_root_option_token_consumption_matches_openclaw_reference_cases tests\test_cli.py::test_root_openclaw_compat_options_are_accepted_before_command -q`: 2 passed after adding OpenClaw-compatible root flag parsing.
+- `python -m pytest tests\test_cli.py -q -k "root_option or doctor_json_includes_gateway_memory_probe_contribution or doctor_json_includes_sandbox_contribution or health_json_surfaces_gateway_health_snapshot"`: 3 passed after rechecking adjacent CLI parser/doctor smoke.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the root option compatibility slice.
+- `mypy src\openzues\cli.py`: clean after the root option compatibility slice.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain_json_projects_config_sandbox_tool_policy"`: 1 passed after adding config-backed `sandbox explain` mode/scope/workspace/tool-policy projection.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`: 8 passed after rechecking adjacent sandbox CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the config-backed sandbox explain slice.
