@@ -5947,6 +5947,58 @@ def test_gateway_node_method_call_endpoint_sends_effective_chat_send_attachments
     )
 
 
+def test_gateway_node_method_call_endpoint_preserves_chat_send_attachment_image_order(
+    tmp_path: Path,
+) -> None:
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    big_png = bytearray(2_100_000)
+    big_png[:8] = b"\x89PNG\r\n\x1a\n"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "chat.send",
+                "params": {
+                    "sessionKey": "openzues:thread:demo",
+                    "message": "compare these",
+                    "attachments": [
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "fileName": "large.png",
+                            "content": base64.b64encode(bytes(big_png)).decode("ascii"),
+                        },
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "fileName": "small.png",
+                            "content": "Zm9v",
+                        },
+                    ],
+                    "idempotencyKey": "run-chat-send-mixed-attachments-order-api-1",
+                },
+            },
+        )
+        messages = asyncio.run(client.app.state.database.list_control_chat_messages())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-chat-send-mixed-attachments-order-api-1",
+        "status": "ok",
+    }
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+    metadata = json.loads(str(messages[-2]["metadata_json"]))
+    assert metadata["imageOrder"] == ["offloaded", "inline"]
+
+
 @pytest.mark.parametrize(
     ("method", "session_field"),
     [

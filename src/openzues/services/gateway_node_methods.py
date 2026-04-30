@@ -10,7 +10,7 @@ import secrets
 import shutil
 import time
 import unicodedata
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -159,6 +159,7 @@ _EXEC_APPROVAL_DEFAULT_TIMEOUT_MS = 1_800_000
 _EXEC_APPROVAL_DECISIONS = {"allow-once", "allow-always", "deny"}
 _OPENCLAW_MAX_SAFE_TIMEOUT_MS = 2_147_000_000
 _CHAT_SEND_SESSION_KEY_MAX_LENGTH = 512
+_CHAT_ATTACHMENT_OFFLOAD_THRESHOLD_BYTES = 2_000_000
 _CHAT_INJECT_LABEL_MAX_LENGTH = 100
 _CHAT_HISTORY_DEFAULT_MAX_CHARS = 8_000
 _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024
@@ -6192,6 +6193,7 @@ class GatewayNodeMethodService:
                     deliver=deliver,
                     timeout_ms=timeout_ms,
                     attachments=attachments,
+                    image_order=_chat_attachment_image_order(attachments),
                     channel=delivery_channel,
                     to=delivery_to,
                     node_id=None,
@@ -16422,6 +16424,63 @@ def _has_effective_agent_attachments(value: object) -> bool:
         if _has_effective_agent_attachment_content(source.get("data")):
             return True
     return False
+
+
+def _chat_attachment_text_value(value: object) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _chat_attachment_base64_value(attachment: Mapping[str, object]) -> str | None:
+    content = _chat_attachment_text_value(attachment.get("content"))
+    if content is not None:
+        return content
+    source = attachment.get("source")
+    if not isinstance(source, dict):
+        return None
+    if _chat_attachment_text_value(source.get("type")) != "base64":
+        return None
+    return _chat_attachment_text_value(source.get("data"))
+
+
+def _chat_attachment_mime_type(attachment: Mapping[str, object]) -> str | None:
+    for key in ("mimeType", "mime_type", "media_type"):
+        mime = _chat_attachment_text_value(attachment.get(key))
+        if mime is not None:
+            return mime
+    source = attachment.get("source")
+    if not isinstance(source, dict):
+        return None
+    return _chat_attachment_text_value(source.get("media_type"))
+
+
+def _chat_attachment_estimated_base64_bytes(value: str) -> int:
+    candidate = value.strip()
+    if candidate.lower().startswith("data:") and "," in candidate:
+        candidate = candidate.split(",", 1)[1].strip()
+    candidate = re.sub(r"\s+", "", candidate)
+    if not candidate:
+        return 0
+    unpadded = candidate.rstrip("=")
+    padding = len(candidate) - len(unpadded)
+    return max(0, (len(candidate) * 3) // 4 - padding)
+
+
+def _chat_attachment_image_order(attachments: list[dict[str, object]]) -> list[str]:
+    image_order: list[str] = []
+    for attachment in attachments:
+        mime = _chat_attachment_mime_type(attachment)
+        if mime is None or not mime.lower().startswith("image/"):
+            continue
+        base64_value = _chat_attachment_base64_value(attachment)
+        if base64_value is None:
+            continue
+        estimated_bytes = _chat_attachment_estimated_base64_bytes(base64_value)
+        image_order.append(
+            "offloaded"
+            if estimated_bytes > _CHAT_ATTACHMENT_OFFLOAD_THRESHOLD_BYTES
+            else "inline"
+        )
+    return image_order
 
 
 def _normalize_gateway_send_media_urls(

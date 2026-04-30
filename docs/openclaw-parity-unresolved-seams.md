@@ -2401,6 +2401,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   replay_outbound_deliveries_retries_saved_failed_announce_delivery"`, `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the first `chat.send` mixed attachment ordering seam from OpenClaw
+  `chat.directive-tags.test.ts` / `chat-attachments.ts`: effective image
+  attachments now carry `imageOrder` through the native attachment runtime,
+  using OpenClaw's 2 MB decoded-size inline/offloaded boundary, and the
+  app-wired control-chat path persists that ordering metadata on the user turn.
+  Verified with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments
+  tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_preserves_chat_send_attachment_image_order -q`,
+  adjacent `python -m pytest tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py -q -k "chat_send and attachment"`, `ruff
+  check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\control_chat.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\control_chat.py src\openzues\app.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, CLI/runtime doctor parity, and session runtime methods

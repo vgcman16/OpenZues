@@ -8530,6 +8530,7 @@ async def test_chat_send_uses_attachment_runtime_when_wired() -> None:
         deliver: bool | None,
         timeout_ms: int | None,
         attachments: list[dict[str, object]],
+        image_order: list[str] | None = None,
         channel: str | None = None,
         to: str | None = None,
         node_id: str | None = None,
@@ -8543,6 +8544,7 @@ async def test_chat_send_uses_attachment_runtime_when_wired() -> None:
                 "deliver": deliver,
                 "timeout_ms": timeout_ms,
                 "attachments": attachments,
+                "image_order": image_order,
                 "channel": channel,
                 "to": to,
                 "node_id": node_id,
@@ -8578,10 +8580,72 @@ async def test_chat_send_uses_attachment_runtime_when_wired() -> None:
         "deliver": True,
         "timeout_ms": 45_000,
         "attachments": attachments,
+        "image_order": ["inline"],
         "channel": None,
         "to": None,
         "node_id": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments() -> None:
+    observed: dict[str, object | None] = {}
+    big_png = bytearray(2_100_000)
+    big_png[:8] = b"\x89PNG\r\n\x1a\n"
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "inline.png",
+            "content": (
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
+                "woAAn8B9FD5fHAAAAAASUVORK5CYII="
+            ),
+        },
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "offloaded.png",
+            "content": base64.b64encode(bytes(big_png)).decode("ascii"),
+        },
+    ]
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+        image_order: list[str] | None = None,
+    ) -> dict[str, object]:
+        del session_key, message, thinking, deliver, timeout_ms, attachments
+        del channel, to, node_id
+        observed["image_order"] = image_order
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "describe both",
+            "attachments": attachments,
+            "idempotencyKey": "run-chat-send-image-order-1",
+        },
+    )
+
+    assert payload == {"runId": "run-chat-send-image-order-1", "status": "ok"}
+    assert observed["image_order"] == ["inline", "offloaded"]
 
 
 @pytest.mark.asyncio

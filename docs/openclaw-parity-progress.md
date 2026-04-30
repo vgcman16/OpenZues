@@ -2373,6 +2373,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   replay_outbound_deliveries_retries_saved_failed_announce_delivery"` (`6
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- `chat.send` attachment dispatch now computes OpenClaw-style `imageOrder`
+  for mixed inline/offloaded image attachments at the 2 MB decoded-size
+  boundary and persists that ordering metadata on app-wired control-chat user
+  turns, preserving the original attachment order for downstream native
+  runtimes.
+- Verified the mixed attachment ordering seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments
+  tests\test_gateway_nodes_api.py::test_gateway_node_method_call_endpoint_preserves_chat_send_attachment_image_order -q`
+  (`2 passed`), adjacent attachment coverage `python -m pytest
+  tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k
+  "chat_send and attachment"` (`15 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\control_chat.py src\openzues\app.py
+  tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\control_chat.py src\openzues\app.py`.
 
 ## References
 
