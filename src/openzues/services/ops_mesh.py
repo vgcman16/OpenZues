@@ -7409,6 +7409,7 @@ class OpsMeshService:
         if channel == "discord" and action in {
             "delete",
             "edit",
+            "emoji-list",
             "list-pins",
             "member-info",
             "permissions",
@@ -7498,6 +7499,13 @@ class OpsMeshService:
             if action == "role-info":
                 return await asyncio.to_thread(
                     self._dispatch_discord_role_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "emoji-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_emoji_list_message_action,
                     route,
                     request,
                     secret_token,
@@ -9187,6 +9195,30 @@ class OpsMeshService:
         if not isinstance(roles, list):
             raise RuntimeError("Discord API returned a non-JSON roles response.")
         return {"ok": True, "roles": roles}
+
+    def _dispatch_discord_emoji_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        emojis = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/emojis"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(emojis, dict) and emojis.get("error"):
+            raise RuntimeError(str(emojis.get("error")))
+        if not isinstance(emojis, list):
+            raise RuntimeError("Discord API returned a non-JSON emojis response.")
+        return {"ok": True, "emojis": emojis}
 
     def _dispatch_discord_thread_create_message_action(
         self,
