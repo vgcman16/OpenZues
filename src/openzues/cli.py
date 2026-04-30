@@ -1867,6 +1867,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "delivery",
         "security",
         "shellCompletion",
+        "sandbox",
         "bundledPluginRuntimeDependencies",
         "acp",
         "extras",
@@ -1909,6 +1910,20 @@ def _sandbox_docker_available() -> bool:
     return result.returncode == 0
 
 
+def _doctor_sandbox_docker_unavailable_warning(mode: str) -> str:
+    return "\n".join(
+        [
+            f'Sandbox mode is enabled (mode: "{mode}") but Docker is not available.',
+            "Docker is required for sandbox mode to function.",
+            "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
+            "",
+            "Options:",
+            "- Install Docker and restart the gateway",
+            "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
+        ]
+    )
+
+
 def _doctor_sandbox_warning_from_config(
     config_service: GatewayConfigService | None,
 ) -> str | None:
@@ -1925,17 +1940,7 @@ def _doctor_sandbox_warning_from_config(
         return None
     if _sandbox_docker_available():
         return None
-    return "\n".join(
-        [
-            f'Sandbox mode is enabled (mode: "{mode}") but Docker is not available.',
-            "Docker is required for sandbox mode to function.",
-            "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
-            "",
-            "Options:",
-            "- Install Docker and restart the gateway",
-            "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
-        ]
-    )
+    return _doctor_sandbox_docker_unavailable_warning(mode)
 
 
 def _doctor_sandbox_scope_warnings_from_config(
@@ -2024,6 +2029,101 @@ def _with_doctor_sandbox_warnings(
         warnings.append(warning)
         existing_warnings.add(warning)
     next_payload["warnings"] = warnings
+    return next_payload
+
+
+def _build_doctor_sandbox_payload(config_service: object | None) -> dict[str, object]:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for sandbox doctor checks.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:sandbox",
+            "repairAvailable": False,
+            "mode": "off",
+            "backend": "docker",
+            "dockerAvailable": None,
+            "warnings": [],
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "status": "unavailable",
+            "summary": f"Gateway config could not be read: {exc}",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:sandbox",
+            "repairAvailable": False,
+            "mode": "off",
+            "backend": "docker",
+            "dockerAvailable": None,
+            "warnings": [],
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    sandbox_config = _doctor_sandbox_config_from_snapshot(snapshot)
+    mode = _doctor_sandbox_mode(
+        sandbox_config.get("mode") if isinstance(sandbox_config, dict) else None
+    )
+    backend = _doctor_sandbox_backend(
+        sandbox_config.get("backend") if isinstance(sandbox_config, dict) else None
+    )
+    scope_warnings = _doctor_sandbox_scope_warnings_from_snapshot(snapshot)
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:sandbox",
+        "repairAvailable": False,
+        "mode": mode,
+        "backend": backend,
+        "warnings": scope_warnings,
+    }
+    if mode == "off" or sandbox_config is None:
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": "Sandbox mode is off.",
+            "dockerAvailable": None,
+        }
+    if backend != "docker":
+        warning = None
+        browser_config = sandbox_config.get("browser")
+        if isinstance(browser_config, dict) and browser_config.get("enabled") is True:
+            warning = (
+                f'Sandbox backend "{backend}" selected. Docker browser health checks are '
+                "skipped; browser sandbox currently requires the docker backend."
+            )
+        warnings = [*scope_warnings, warning] if warning else scope_warnings
+        return {
+            **base_payload,
+            "status": "warn" if warning else "ok",
+            "summary": warning or f'Sandbox backend "{backend}" selected.',
+            "dockerAvailable": None,
+            "warnings": warnings,
+        }
+    docker_available = _sandbox_docker_available()
+    if not docker_available:
+        warning = _doctor_sandbox_docker_unavailable_warning(mode)
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f'Sandbox mode is enabled (mode: "{mode}") but Docker is not available.',
+            "dockerAvailable": False,
+            "warnings": [*scope_warnings, warning],
+        }
+    return {
+        **base_payload,
+        "status": "ok",
+        "summary": f'Sandbox Docker backend is available for mode "{mode}".',
+        "dockerAvailable": True,
+    }
+
+
+def _with_doctor_sandbox_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["sandbox"] = _build_doctor_sandbox_payload(config_service)
     return next_payload
 
 
@@ -16184,6 +16284,7 @@ def doctor(
             view.model_dump(mode="json"),
             services.gateway_config,
         )
+        payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
             payload = _with_doctor_session_lock_health(payload, data_dir)

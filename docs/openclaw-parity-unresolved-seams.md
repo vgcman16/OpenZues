@@ -2445,6 +2445,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
   plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`, `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the structured `doctor:sandbox` contribution seam from OpenClaw
+  `doctor-sandbox.ts` / `doctor-health-contributions.ts`: `doctor --json` now
+  reports resolved sandbox mode/backend, Docker availability, missing-Docker
+  and shared-scope override warnings, status, summary, and the current
+  no-install repair boundary as structured data instead of warning text only.
+  Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_sandbox_contribution -q`,
+  adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

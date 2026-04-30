@@ -13782,6 +13782,77 @@ def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> N
     ]
 
 
+def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                        }
+                    }
+                }
+            }
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: False, raising=False)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["sandbox"] == {
+        "status": "error",
+        "summary": 'Sandbox mode is enabled (mode: "all") but Docker is not available.',
+        "source": "openzues-native",
+        "openClawContribution": "doctor:sandbox",
+        "repairAvailable": False,
+        "mode": "all",
+        "backend": "docker",
+        "dockerAvailable": False,
+        "warnings": [
+            "\n".join(
+                [
+                    'Sandbox mode is enabled (mode: "all") but Docker is not available.',
+                    "Docker is required for sandbox mode to function.",
+                    "Isolated sessions (cron jobs, sub-agents) will fail without Docker.",
+                    "",
+                    "Options:",
+                    "- Install Docker and restart the gateway",
+                    "- Disable sandbox mode: openclaw config set agents.defaults.sandbox.mode off",
+                ]
+            )
+        ],
+    }
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

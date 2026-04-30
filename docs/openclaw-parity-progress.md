@@ -147,6 +147,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"` (`5
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now also includes the OpenClaw `doctor:sandbox`
+  contribution as structured data, including resolved sandbox mode/backend,
+  Docker availability, warnings for missing Docker or ignored shared-scope
+  overrides, status, summary, and the current no-install repair boundary.
+- Verified the structured sandbox doctor contribution with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_sandbox_contribution -q` (`1
+  passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_and_update_status_json_include_hermes_sections"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Native WhatsApp route sends now split text-only payloads into OpenClaw-style
   4000-character chunks instead of truncating at 4096 characters, and return
   the last provider message id from the chunked send sequence.
@@ -460,6 +474,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "doctor_json_includes_bundled_plugin_runtime_dependency_contribution or doctor_json_includes_security_and_shell_completion_surfaces or doctor_and_update_status_json_include_hermes_sections or plugins_doctor_json_reports_missing_bundled_runtime_dependencies or plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`: 5 passed after rechecking adjacent top-level doctor/plugin surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the top-level bundled plugin runtime dependency doctor contribution slice.
 - `mypy src\openzues\cli.py`: clean after the top-level bundled plugin runtime dependency doctor contribution slice.
+- `python -m pytest tests\test_cli.py::test_doctor_json_includes_sandbox_contribution -q`: 1 passed after adding the structured `doctor:sandbox` contribution.
+- `python -m pytest tests\test_cli.py -q -k "doctor_json_includes_sandbox_contribution or doctor_json_warns_when_sandbox_enabled_without_docker or doctor_json_warns_about_shared_sandbox_agent_overrides or doctor_json_includes_security_and_shell_completion_surfaces or doctor_json_includes_bundled_plugin_runtime_dependency_contribution or doctor_and_update_status_json_include_hermes_sections"`: 6 passed after rechecking adjacent top-level doctor surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the structured sandbox doctor contribution slice.
+- `mypy src\openzues\cli.py`: clean after the structured sandbox doctor contribution slice.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain_json_projects_config_sandbox_tool_policy"`: 1 passed after adding config-backed `sandbox explain` mode/scope/workspace/tool-policy projection.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`: 8 passed after rechecking adjacent sandbox CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the config-backed sandbox explain slice.
