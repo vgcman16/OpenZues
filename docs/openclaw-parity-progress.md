@@ -1087,6 +1087,152 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "message_action_dispatches_discord"` (`17 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Discord `message.action role-info` now follows OpenClaw's guild-admin
+  runtime by dispatching route-backed bot-token REST guild role reads and
+  returning the upstream `{ok: true, roles}` payload.
+- Verified the Discord role-info-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_role_info_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`18 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action emoji-list` now follows OpenClaw's guild-admin
+  runtime by dispatching route-backed bot-token REST guild emoji reads and
+  returning the upstream `{ok: true, emojis}` payload.
+- Verified the Discord emoji-list-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_emoji_list_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`19 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action channel-info` and `channel-list` now follow
+  OpenClaw's guild-admin runtime by dispatching route-backed bot-token REST
+  channel metadata reads and returning upstream `{ok: true, channel}` /
+  `{ok: true, channels}` payloads.
+- Verified the Discord channel metadata-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_channel_info_route or
+  discord_channel_list_route"` (`2 passed`), adjacent Discord action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`21 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action role-add` and `role-remove` now follow OpenClaw's
+  guild-admin runtime by dispatching route-backed bot-token REST member-role
+  `PUT` / `DELETE` mutations and returning `{ok: true}`.
+- Verified the Discord role mutation-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_role_mutation_route"` (`2 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`23 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action channel-create` now follows OpenClaw's guild-admin
+  runtime by dispatching route-backed bot-token REST channel creation with
+  `name`, `type`, `parentId`, `topic`, `position`, and `nsfw` body mapping.
+- Verified the Discord channel-create-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_channel_create_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`24 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action channel-edit` now follows OpenClaw's guild-admin
+  runtime by dispatching route-backed bot-token REST channel PATCH requests,
+  including `clearParent` / null parent handling plus rate-limit, archive, lock,
+  and auto-archive body mapping.
+- Verified the Discord channel-edit-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_channel_edit_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`25 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action channel-delete` now follows OpenClaw's guild-admin
+  runtime by dispatching route-backed bot-token REST channel deletion and
+  returning the upstream `{ok: true, channelId}` payload.
+- Verified the Discord channel-delete-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_channel_delete_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`26 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action channel-move` now follows OpenClaw's guild-admin
+  runtime by PATCHing the guild channel positions endpoint with normalized
+  channel ids, optional parent clearing/assignment, integer position coercion,
+  and the upstream `{ok: true}` result.
+- Verified the Discord channel-move-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_channel_move_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`27 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action category-create` now follows OpenClaw's guild-admin
+  runtime by creating a type `4` Discord category through the route-backed
+  guild channels endpoint and returning the upstream `{ok: true, category}`
+  payload.
+- Verified the Discord category-create-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_category_create_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`28 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action category-edit` now follows OpenClaw's guild-admin
+  runtime by PATCHing the category channel with optional name and integer
+  position fields and returning the upstream `{ok: true, category}` payload.
+- Verified the Discord category-edit-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_category_edit_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`29 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action category-delete` now follows OpenClaw's guild-admin
+  runtime by deleting the category channel through the route-backed bot-token
+  REST path and returning the upstream `{ok: true, channelId}` payload.
+- Verified the Discord category-delete-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_category_delete_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`30 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action voice-status` now follows OpenClaw's guild-admin
+  runtime by reading the guild voice-state endpoint through the route-backed
+  bot-token REST path and returning the upstream `{ok: true, voice}` payload.
+- Verified the Discord voice-status-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_voice_status_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`31 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action event-list` now follows OpenClaw's guild-admin
+  runtime by reading the guild scheduled-events endpoint through the
+  route-backed bot-token REST path and returning the upstream
+  `{ok: true, events}` payload.
+- Verified the Discord event-list-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_event_list_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`32 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action event-create` now covers OpenClaw's core scheduled
+  event creation body without cover-image media resolution, including
+  description/end-time/channel/location fields, external/stage/voice entity
+  type mapping, privacy level `2`, and the upstream `{ok: true, event}`
+  payload.
+- Verified the Discord event-create-action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_event_create_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`33 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Discord `message.action timeout` now covers OpenClaw's explicit-until and
+  `durationMin`/`durationMinutes` moderation paths by PATCHing the member
+  endpoint with `communication_disabled_until` and returning the upstream
+  `{ok: true, member}` payload.
+- Verified the Discord timeout explicit-until slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "discord_timeout_route"` (`1 passed`),
+  duration alias slice with `python -m pytest tests\test_ops_mesh.py -q -k
+  "discord_timeout_duration_route"` (`1 passed`),
+  adjacent Discord action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_discord"` (`35 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - WhatsApp `message.action react` now dispatches through the native WhatsApp
   Cloud API route, normalizing direct WhatsApp JIDs to E.164 recipients and
   sending `type="reaction"` payloads for add, empty-emoji clear, and explicit
@@ -1183,14 +1329,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | CLI + operator control plane | Partial | ~90% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
-| Channels + direct announce delivery | Strong partial | ~96% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, `sticker`, gateway-backed `set-presence`, guild-admin `member-info`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
+| Channels + direct announce delivery | Strong partial | ~96% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, `sticker`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
 | Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
-- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/permissions/thread-create/sticker/set-presence/member-info/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, and Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters.
+- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/permissions/thread-create/sticker/set-presence/member-info/role-info/emoji-list/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/category-create/category-edit/category-delete/voice-status/event-list/core event-create/timeout/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, and Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters.
+- Discord scheduled-event cover image URL/path resolution remains open after
+  the core no-cover-image `event-create` payload slice.
+- Discord moderation audit-log reason headers remain open after the timeout
+  duration/explicit-until slices.
 - Remote marketplace clone/update breadth and deeper runtime plugin activation/import metadata beyond metadata-only config load-path discovery and the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.

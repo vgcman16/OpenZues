@@ -1635,6 +1635,17 @@ def _discord_apply_permission_overwrite(
     return (permissions & ~denied) | allowed
 
 
+def _discord_parent_id_param(params: dict[str, Any]) -> tuple[bool, str | None]:
+    if params.get("clearParent") is True:
+        return True, None
+    if "parentId" in params and params.get("parentId") is None:
+        return True, None
+    parent_id = _message_action_param_string(params, "parentId")
+    if parent_id is not None:
+        return True, parent_id
+    return False, None
+
+
 class GatewayDiscordPresenceRuntime(Protocol):
     def update_presence(
         self,
@@ -7407,8 +7418,20 @@ class OpsMeshService:
                 request,
             )
         if channel == "discord" and action in {
+            "category-create",
+            "category-delete",
+            "category-edit",
+            "channel-create",
+            "channel-delete",
+            "channel-edit",
+            "channel-info",
+            "channel-list",
+            "channel-move",
             "delete",
             "edit",
+            "emoji-list",
+            "event-create",
+            "event-list",
             "list-pins",
             "member-info",
             "permissions",
@@ -7416,10 +7439,15 @@ class OpsMeshService:
             "read",
             "react",
             "reactions",
+            "role-add",
+            "role-info",
+            "role-remove",
             "send",
             "sticker",
             "thread-create",
+            "timeout",
             "unpin",
+            "voice-status",
         }:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -7490,6 +7518,119 @@ class OpsMeshService:
             if action == "member-info":
                 return await asyncio.to_thread(
                     self._dispatch_discord_member_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "role-info":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_role_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action in {"role-add", "role-remove"}:
+                return await asyncio.to_thread(
+                    self._dispatch_discord_role_mutation_message_action,
+                    route,
+                    request,
+                    secret_token,
+                    cast(Literal["role-add", "role-remove"], action),
+                )
+            if action == "emoji-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_emoji_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-info":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "voice-status":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_voice_status_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "event-list":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_event_list_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "event-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_event_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "timeout":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_timeout_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "category-create":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_category_create_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "category-edit":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_category_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "category-delete":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_category_delete_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-edit":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-delete":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_delete_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "channel-move":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_channel_move_message_action,
                     route,
                     request,
                     secret_token,
@@ -9155,6 +9296,559 @@ class OpsMeshService:
         if member.get("error"):
             raise RuntimeError(str(member.get("error")))
         return {"ok": True, "member": member}
+
+    def _dispatch_discord_role_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        roles = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/roles"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(roles, dict) and roles.get("error"):
+            raise RuntimeError(str(roles.get("error")))
+        if not isinstance(roles, list):
+            raise RuntimeError("Discord API returned a non-JSON roles response.")
+        return {"ok": True, "roles": roles}
+
+    def _dispatch_discord_role_mutation_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+        action: Literal["role-add", "role-remove"],
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        role_id = _message_action_param_string(
+            request.params,
+            "roleId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}/roles/{role_id}"),
+            method="PUT" if action == "role-add" else "DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_emoji_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        emojis = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/emojis"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(emojis, dict) and emojis.get("error"):
+            raise RuntimeError(str(emojis.get("error")))
+        if not isinstance(emojis, list):
+            raise RuntimeError("Discord API returned a non-JSON emojis response.")
+        return {"ok": True, "emojis": emojis}
+
+    def _dispatch_discord_channel_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-info requires channelId.")
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_channel_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        channels = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(channels, dict) and channels.get("error"):
+            raise RuntimeError(str(channels.get("error")))
+        if not isinstance(channels, list):
+            raise RuntimeError("Discord API returned a non-JSON channels response.")
+        return {"ok": True, "channels": channels}
+
+    def _dispatch_discord_voice_status_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        voice = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/voice-states/{user_id}"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(voice, dict):
+            raise RuntimeError("Discord API returned a non-JSON voice status response.")
+        if voice.get("error"):
+            raise RuntimeError(str(voice.get("error")))
+        return {"ok": True, "voice": voice}
+
+    def _dispatch_discord_event_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        events = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/scheduled-events"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(events, dict) and events.get("error"):
+            raise RuntimeError(str(events.get("error")))
+        if not isinstance(events, list):
+            raise RuntimeError("Discord API returned a non-JSON events response.")
+        return {"ok": True, "events": events}
+
+    def _dispatch_discord_event_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(
+            request.params,
+            "name",
+            required=True,
+        )
+        start_time = _message_action_param_string(
+            request.params,
+            "startTime",
+            required=True,
+        )
+        entity_type_raw = (
+            _message_action_param_string(request.params, "entityType") or ""
+        ).lower()
+        entity_type = 1 if entity_type_raw == "stage" else 3 if entity_type_raw == "external" else 2
+        payload: dict[str, object] = {
+            "name": name or "",
+            "scheduled_start_time": start_time or "",
+            "entity_type": entity_type,
+            "privacy_level": 2,
+        }
+        description = _message_action_param_string(request.params, "description")
+        if description is not None:
+            payload["description"] = description
+        end_time = _message_action_param_string(request.params, "endTime")
+        if end_time is not None:
+            payload["scheduled_end_time"] = end_time
+        channel_id = _message_action_param_string(request.params, "channelId")
+        if channel_id is not None:
+            payload["channel_id"] = channel_id
+        location = _message_action_param_string(request.params, "location")
+        if entity_type == 3 and location:
+            payload["entity_metadata"] = {"location": location}
+        event = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/scheduled-events"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(event, dict):
+            raise RuntimeError("Discord API returned a non-JSON event response.")
+        if event.get("error"):
+            raise RuntimeError(str(event.get("error")))
+        return {"ok": True, "event": event}
+
+    def _dispatch_discord_timeout_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        until = _message_action_param_string(request.params, "until")
+        if until is None:
+            duration_minutes = _message_action_param_integer(
+                request.params,
+                "durationMinutes",
+                "durationMin",
+            )
+            if duration_minutes is not None:
+                timeout_until = datetime.now(UTC) + timedelta(minutes=duration_minutes)
+                until = timeout_until.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        member = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
+            method="PATCH",
+            payload={"communication_disabled_until": until},
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(member, dict):
+            raise RuntimeError("Discord API returned a non-JSON member response.")
+        if member.get("error"):
+            raise RuntimeError(str(member.get("error")))
+        return {"ok": True, "member": member}
+
+    def _dispatch_discord_channel_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(
+            request.params,
+            "name",
+            required=True,
+        )
+        payload: dict[str, object] = {"name": name or ""}
+        channel_type = _message_action_param_integer(request.params, "type")
+        if channel_type is not None:
+            payload["type"] = channel_type
+        parent_id = _message_action_param_string(request.params, "parentId")
+        if parent_id:
+            payload["parent_id"] = parent_id
+        topic = _message_action_param_string(request.params, "topic")
+        if topic:
+            payload["topic"] = topic
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        nsfw = request.params.get("nsfw")
+        if isinstance(nsfw, bool):
+            payload["nsfw"] = nsfw
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_category_create_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        name = _message_action_param_string(
+            request.params,
+            "name",
+            required=True,
+        )
+        payload: dict[str, object] = {"name": name or "", "type": 4}
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        category = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(category, dict):
+            raise RuntimeError("Discord API returned a non-JSON category response.")
+        if category.get("error"):
+            raise RuntimeError(str(category.get("error")))
+        return {"ok": True, "category": category}
+
+    def _dispatch_discord_category_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        category_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "categoryId",
+                required=True,
+            )
+        )
+        if category_id is None:
+            raise RuntimeError("Discord category-edit requires categoryId.")
+        payload: dict[str, object] = {}
+        name = _message_action_param_string(request.params, "name")
+        if name is not None:
+            payload["name"] = name
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        category = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{category_id}"),
+            method="PATCH",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(category, dict):
+            raise RuntimeError("Discord API returned a non-JSON category response.")
+        if category.get("error"):
+            raise RuntimeError(str(category.get("error")))
+        return {"ok": True, "category": category}
+
+    def _dispatch_discord_category_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        category_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "categoryId",
+                required=True,
+            )
+        )
+        if category_id is None:
+            raise RuntimeError("Discord category-delete requires categoryId.")
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{category_id}"),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "channelId": category_id}
+
+    def _dispatch_discord_channel_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-edit requires channelId.")
+        payload: dict[str, object] = {}
+        name = _message_action_param_string(request.params, "name")
+        if name is not None:
+            payload["name"] = name
+        topic = _message_action_param_string(request.params, "topic")
+        if topic is not None:
+            payload["topic"] = topic
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            payload["position"] = position
+        has_parent_id, parent_id = _discord_parent_id_param(request.params)
+        if has_parent_id:
+            payload["parent_id"] = parent_id
+        nsfw = request.params.get("nsfw")
+        if isinstance(nsfw, bool):
+            payload["nsfw"] = nsfw
+        rate_limit_per_user = _message_action_param_integer(
+            request.params,
+            "rateLimitPerUser",
+        )
+        if rate_limit_per_user is not None:
+            payload["rate_limit_per_user"] = rate_limit_per_user
+        archived = request.params.get("archived")
+        if isinstance(archived, bool):
+            payload["archived"] = archived
+        locked = request.params.get("locked")
+        if isinstance(locked, bool):
+            payload["locked"] = locked
+        auto_archive_duration = _message_action_param_integer(
+            request.params,
+            "autoArchiveDuration",
+        )
+        if auto_archive_duration is not None:
+            payload["auto_archive_duration"] = auto_archive_duration
+        channel = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="PATCH",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if not isinstance(channel, dict):
+            raise RuntimeError("Discord API returned a non-JSON channel response.")
+        if channel.get("error"):
+            raise RuntimeError(str(channel.get("error")))
+        return {"ok": True, "channel": channel}
+
+    def _dispatch_discord_channel_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-delete requires channelId.")
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}"),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "channelId": channel_id}
+
+    def _dispatch_discord_channel_move_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(
+                request.params,
+                "channelId",
+                required=True,
+            )
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord channel-move requires channelId.")
+        moved_channel: dict[str, object] = {"id": channel_id}
+        has_parent_id, parent_id = _discord_parent_id_param(request.params)
+        if has_parent_id:
+            moved_channel["parent_id"] = parent_id
+        position = _message_action_param_integer(request.params, "position")
+        if position is not None:
+            moved_channel["position"] = position
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/channels"),
+            method="PATCH",
+            payload=[moved_channel],
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
 
     def _dispatch_discord_thread_create_message_action(
         self,

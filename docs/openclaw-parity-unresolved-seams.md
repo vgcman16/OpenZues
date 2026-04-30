@@ -469,6 +469,55 @@ no Discord Gateway adapter is registered.
 Discord guild-admin `member-info` now dispatches through the same route-backed
 bot-token REST path and returns the upstream-shaped `{ok: true, member}`
 payload.
+Discord guild-admin `role-info` now dispatches through the same route-backed
+bot-token REST path and returns the upstream-shaped `{ok: true, roles}`
+payload.
+Discord guild-admin `emoji-list` now dispatches through the same route-backed
+bot-token REST path and returns the upstream-shaped `{ok: true, emojis}`
+payload.
+Discord guild-admin `channel-info` and `channel-list` now dispatch through the
+same route-backed bot-token REST path and return the upstream-shaped channel
+metadata payloads.
+Discord guild-admin `role-add` and `role-remove` now dispatch through the same
+route-backed bot-token REST path and return the upstream-shaped `{ok: true}`
+payloads.
+Discord guild-admin `channel-create` now dispatches through the same
+route-backed bot-token REST path, mapping OpenClaw's channel creation fields
+into the Discord channel body and returning `{ok: true, channel}`.
+Discord guild-admin `channel-edit` now dispatches through the same
+route-backed bot-token REST path, including OpenClaw's `clearParent` nulling
+and channel/thread edit body mapping.
+Discord guild-admin `channel-delete` now dispatches through the same
+route-backed bot-token REST path and returns the upstream-shaped
+`{ok: true, channelId}` payload.
+Discord guild-admin `channel-move` now dispatches through the same
+route-backed bot-token REST path, including the OpenClaw one-item guild
+channel positions body with parent clearing/assignment and integer position
+coercion.
+Discord guild-admin `category-create` now dispatches through the same
+route-backed bot-token REST path, creating a type `4` category and returning
+the upstream-shaped `{ok: true, category}` payload.
+Discord guild-admin `category-edit` now dispatches through the same
+route-backed bot-token REST path, PATCHing optional name and integer position
+fields onto the category channel and returning `{ok: true, category}`.
+Discord guild-admin `category-delete` now dispatches through the same
+route-backed bot-token REST path and returns the upstream-shaped
+`{ok: true, channelId}` payload.
+Discord guild-admin `voice-status` now dispatches through the same
+route-backed bot-token REST path, reading guild voice-state metadata and
+returning the upstream-shaped `{ok: true, voice}` payload.
+Discord guild-admin `event-list` now dispatches through the same route-backed
+bot-token REST path, reading guild scheduled events and returning the
+upstream-shaped `{ok: true, events}` payload.
+Discord guild-admin `event-create` now dispatches its core no-cover-image
+scheduled-event payload through the same route-backed bot-token REST path,
+including entity type, timing, channel, description, location, and privacy
+mapping; OpenClaw-style cover image URL/path resolution remains queued as a
+separate media seam.
+Discord moderation `timeout` now dispatches explicit-until and
+`durationMin`/`durationMinutes` paths through the same route-backed bot-token
+REST path and returns the upstream-shaped `{ok: true, member}` payload;
+audit-log reason headers remain queued.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
