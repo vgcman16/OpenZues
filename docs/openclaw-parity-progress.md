@@ -2147,6 +2147,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- OpenClaw's `tools.sessions_spawn.attachments` config block is now preserved
+  by the native control config schema and consumed by `sessions.spawn` for
+  explicit `enabled=false`, `maxFiles`, `maxFileBytes`, `maxTotalBytes`, and
+  `retainOnSessionKeep` attachment behavior while leaving absent config on the
+  existing OpenZues-compatible enabled path.
+- Verified the attachment config-limit seam with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "attachment_limits_follow_openclaw_config or
+  rejects_attachments_when_openclaw_config_disables_them"` (`2 passed`),
+  adjacent attachment coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "attachment_limits_follow_openclaw_config or
+  rejects_attachments_when_openclaw_config_disables_them or
+  sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails or
+  agent_wait_removes_spawn_attachments_when_child_run_is_kept or
+  sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_rejects_acp_attachments_before_runtime_boundary or
+  sessions_spawn_cleans_up_provisional_child_when_runtime_start_fails"` (`8
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 - Sandboxed `chat.send` attachment delivery now stages decoded base64 media
   inside the saved session workspace at `media/inbound/...`, strips inline
   payload bytes before attachment-runtime handoff, and carries sandbox-relative

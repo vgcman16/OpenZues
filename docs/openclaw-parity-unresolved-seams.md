@@ -196,6 +196,10 @@ Tracked child-run completion now also applies OpenClaw-style attachment
 retention cleanup: staged `sessions.spawn` attachment dirs are removed for
 `cleanup="delete"` and for kept sessions unless
 `tools.sessions_spawn.attachments.retainOnSessionKeep=true` is configured.
+The same OpenClaw attachment config block is now schema-preserved and consumed
+for explicit `enabled=false`, `maxFiles`, `maxFileBytes`, `maxTotalBytes`, and
+`retainOnSessionKeep` behavior; absent config stays on OpenZues' compatible
+enabled path.
 Sandboxed `chat.send` attachment delivery now stages base64 media into the
 session workspace under `media/inbound/...`, strips inline payload bytes before
 runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
@@ -992,9 +996,10 @@ workspace, writes a manifest, returns a receipt, persists the receipt in session
 metadata, and appends an untrusted-attachment prompt suffix to the child task.
 OpenClaw-style cleanup for failures after staging but before runtime dispatch is
 now closed as well, and terminal child-run cleanup removes staged attachment
-dirs unless explicit retention is configured. Remaining attachment parity is
-deeper config limit breadth; remaining spawn parity also includes ACP protocol
-breadth and deeper sandbox lifecycle guardrails.
+dirs unless explicit retention is configured. OpenClaw attachment config limits
+and explicit disabled posture are now closed for the native spawn path.
+Remaining spawn parity includes ACP protocol breadth and deeper sandbox
+lifecycle guardrails.
 
 Current queue-head adjustment: `sessions.spawn` now accepts internal
 `requesterSessionKey` context for native executor calls, resolves that requester

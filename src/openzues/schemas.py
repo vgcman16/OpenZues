@@ -1833,6 +1833,25 @@ class ControlUiToolsSessionsConfigView(BaseModel):
     visibility: Literal["self", "tree", "agent", "all"] | None = None
 
 
+class ControlUiToolsSessionsSpawnAttachmentsConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool | None = None
+    max_total_bytes: int | float | None = Field(default=None, alias="maxTotalBytes")
+    max_files: int | float | None = Field(default=None, alias="maxFiles")
+    max_file_bytes: int | float | None = Field(default=None, alias="maxFileBytes")
+    retain_on_session_keep: bool | None = Field(
+        default=None,
+        alias="retainOnSessionKeep",
+    )
+
+
+class ControlUiToolsSessionsSpawnConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    attachments: ControlUiToolsSessionsSpawnAttachmentsConfigView | None = None
+
+
 class ControlUiToolsConfigView(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1844,6 +1863,10 @@ class ControlUiToolsConfigView(BaseModel):
         alias="agentToAgent",
     )
     sessions: ControlUiToolsSessionsConfigView | None = None
+    sessions_spawn: ControlUiToolsSessionsSpawnConfigView | None = Field(
+        default=None,
+        alias="sessions_spawn",
+    )
     web: dict[str, Any] | None = None
     media: dict[str, Any] | None = None
 

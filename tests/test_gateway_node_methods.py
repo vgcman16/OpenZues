@@ -15911,6 +15911,149 @@ async def test_sessions_spawn_materializes_inline_attachments(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_attachment_limits_follow_openclaw_config(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = Database(tmp_path / "gateway-sessions-spawn-attachment-limits.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "sessions_spawn": {
+                        "attachments": {
+                            "enabled": True,
+                            "maxFiles": 1,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_called = False
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        nonlocal send_called
+        send_called = True
+        return {"runId": "should-not-run", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Reject too many attachments.",
+            "cwd": str(workspace),
+            "attachments": [
+                {"name": "one.txt", "content": "one", "encoding": "utf8"},
+                {"name": "two.txt", "content": "two", "encoding": "utf8"},
+            ],
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "error": "attachments_file_count_exceeded (maxFiles=1)",
+    }
+    assert send_called is False
+    assert not (workspace / ".openclaw" / "attachments").exists()
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_rejects_attachments_when_openclaw_config_disables_them(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    database = Database(tmp_path / "gateway-sessions-spawn-attachment-disabled.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "sessions_spawn": {
+                        "attachments": {
+                            "enabled": False,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_called = False
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        nonlocal send_called
+        send_called = True
+        return {"runId": "should-not-run", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Reject disabled attachments.",
+            "cwd": str(workspace),
+            "attachments": [
+                {"name": "disabled.txt", "content": "disabled", "encoding": "utf8"},
+            ],
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "error": (
+            "attachments are disabled for sessions_spawn "
+            "(enable tools.sessions_spawn.attachments.enabled)"
+        ),
+    }
+    assert send_called is False
+    assert not (workspace / ".openclaw" / "attachments").exists()
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_removes_materialized_attachments_when_metadata_patch_fails(
     tmp_path,
 ) -> None:
