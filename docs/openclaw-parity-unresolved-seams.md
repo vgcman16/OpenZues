@@ -424,6 +424,9 @@ path reads before the presigned upload. Slack `download-file` now dispatches
 through fresh `files.info` metadata, rejects definite channel/thread scope
 mismatches before media fetch, downloads private file URLs with the saved route
 token, and returns saved local media path metadata.
+Slack `send` now dispatches through the native Slack route as OpenClaw's generic
+action entrypoint, including `threadId` / `replyTo` routing, blocks validation,
+and the same external upload helper for media sends.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear

@@ -840,6 +840,26 @@ def _message_action_param_raw_string(
     return value
 
 
+def _message_action_param_blocks(params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    value = params.get("blocks")
+    if value is None:
+        return None
+    parsed: object = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("blocks must be a JSON array.") from exc
+    if not isinstance(parsed, list):
+        raise RuntimeError("blocks must be an array.")
+    blocks: list[dict[str, Any]] = []
+    for block in parsed:
+        if not isinstance(block, dict):
+            raise RuntimeError("blocks entries must be objects.")
+        blocks.append(dict(block))
+    return blocks
+
+
 def _message_action_param_string_or_number(
     params: dict[str, Any],
     key: str,
@@ -7199,6 +7219,7 @@ class OpsMeshService:
             "read",
             "react",
             "reactions",
+            "send",
             "unpin",
             "upload-file",
         }:
@@ -7278,6 +7299,13 @@ class OpsMeshService:
         if action == "emoji-list":
             return await asyncio.to_thread(
                 self._dispatch_slack_emoji_list_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "send":
+            return await asyncio.to_thread(
+                self._dispatch_slack_send_message_action,
                 route,
                 request,
                 secret_token,
@@ -7879,6 +7907,80 @@ class OpsMeshService:
         if content_type:
             response["contentType"] = content_type
         return response
+
+    def _dispatch_slack_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        channel_id = _slack_channel_id(target)
+        if channel_id is None:
+            raise RuntimeError("Slack send requires to.")
+        message = (
+            _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+            or ""
+        )
+        media_url = _message_action_param_raw_string(request.params, "media")
+        blocks = _message_action_param_blocks(request.params)
+        if not message and media_url is None and blocks is None:
+            raise RuntimeError("Slack send requires message, blocks, or media.")
+        if media_url is not None and blocks is not None:
+            raise RuntimeError("Slack send does not support blocks with media.")
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        if media_url is not None:
+            media_ids = self._upload_slack_media_files(
+                route=route,
+                media_urls=[media_url],
+                channel_id=channel_id,
+                initial_comment=message,
+                thread_id=thread_id,
+                secret_token=secret_token or "",
+            )
+            return {
+                "ok": True,
+                "result": {
+                    "messageId": media_ids[0],
+                    "channelId": channel_id,
+                },
+            }
+        payload: dict[str, Any] = {
+            "channel": channel_id,
+            "text": message,
+        }
+        if thread_id:
+            payload["thread_ts"] = thread_id
+        if blocks is not None:
+            payload["blocks"] = blocks
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "chat.postMessage"),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message_id = _slack_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Slack API response did not include a message timestamp.")
+        return {
+            "ok": True,
+            "result": {
+                "messageId": message_id,
+                "channelId": _slack_channel_from_result(result, channel_id),
+            },
+        }
 
     def _dispatch_slack_upload_file_message_action(
         self,
