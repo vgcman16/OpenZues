@@ -209,13 +209,17 @@ sandboxed `mode="all"` / `mode="non-main"` child targets now dispatch through
 the native sandbox runtime even when the caller uses inherited sandbox policy.
 The native sandbox adapter now preserves read-only Codex sandbox policy metadata
 when dispatched with `sandbox_mode="read-only"`; remaining staging work is
-limited to deeper OpenClaw media/workspace filesystem staging. Explicit
+limited to deeper OpenClaw provider filesystem staging. Explicit
 `workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
 while omitted/`"rw"` access keeps the writable workspace sandbox path.
 Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+Sandboxed `chat.send` now also stages managed path-backed inbound attachments
+already persisted under `openzuesSavedPath`, copying them into the child
+workspace's `media/inbound` directory and rewriting runtime attachment metadata
+to sandbox-relative media refs instead of host paths.
 If provisional child metadata/session materialization fails after inline
 attachment staging, OpenZues now removes the staged attachment directory,
 forgets provisional child state, and returns the spawn error envelope before

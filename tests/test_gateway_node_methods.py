@@ -8971,6 +8971,105 @@ async def test_chat_send_sandboxed_attachment_stages_media_in_session_workspace(
 
 
 @pytest.mark.asyncio
+async def test_chat_send_sandboxed_saved_path_attachment_stages_media_in_session_workspace(
+    tmp_path,
+) -> None:
+    child_workspace = tmp_path / "child-workspace"
+    child_workspace.mkdir()
+    source_path = tmp_path / "gateway-attachments" / "inbound" / "preview.png"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"foo")
+    database = Database(tmp_path / "gateway-chat-send-sandbox-path-attachments.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:sandbox-path-attachments"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "sandboxed": True,
+            "spawnedWorkspaceDir": str(child_workspace),
+        },
+    )
+    observed: dict[str, object | None] = {}
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "preview.png",
+            "openzuesMediaRef": "media://inbound/source-preview",
+            "openzuesSavedPath": str(source_path),
+            "openzuesSha256": hashlib.sha256(b"foo").hexdigest(),
+            "openzuesByteLength": 3,
+        }
+    ]
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        image_order: list[str] | None = None,
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "attachments": attachments,
+                "image_order": image_order,
+                "channel": channel,
+                "to": to,
+                "node_id": node_id,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": session_key,
+            "message": "Inspect this saved image.",
+            "attachments": attachments,
+            "idempotencyKey": "run-chat-send-sandbox-path-attachment-1",
+        },
+    )
+
+    staged_path = child_workspace / "media" / "inbound" / "preview.png"
+    assert payload == {"runId": "run-chat-send-sandbox-path-attachment-1", "status": "ok"}
+    assert staged_path.read_bytes() == b"foo"
+    assert "media/inbound/preview.png" in str(observed["message"])
+    assert str(source_path) not in str(observed["message"])
+    assert observed["attachments"] == [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "preview.png",
+            "openzuesMediaRef": "media://inbound/preview.png",
+            "openzuesSavedPath": str(staged_path),
+            "openzuesSha256": hashlib.sha256(b"foo").hexdigest(),
+            "openzuesByteLength": 3,
+            "openzuesSandboxPath": "media/inbound/preview.png",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments() -> None:
     observed: dict[str, object | None] = {}
     big_png = bytearray(2_100_000)

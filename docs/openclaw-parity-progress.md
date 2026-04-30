@@ -27,6 +27,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- Sandboxed `chat.send` now stages managed path-backed inbound media that the
+  app/API already persisted as `openzuesSavedPath`, copying the file into the
+  child workspace's `media/inbound` directory and rewriting the runtime
+  attachment metadata to sandbox-relative media refs.
+- Verified the sandbox saved-path media slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "saved_path_attachment_stages"` (`1
+  passed`), adjacent sandbox attachment proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sandboxed_attachment_stages_media_in_session_workspace or
+  saved_path_attachment_stages"` (`5 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 - Route-backed thread-bound spawn binding now includes LINE current-conversation
   routes. The shared binder accepts LINE notification route views, keeps the
   provider target for delivery, and stores normalized LINE conversation ids in
