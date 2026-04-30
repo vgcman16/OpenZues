@@ -420,7 +420,10 @@ info envelope. Slack `emoji-list` now dispatches through `emoji.list` and
 applies OpenClaw's sorted local result limit. Slack `upload-file` now dispatches
 through Slack's external upload flow with OpenClaw's `filePath` / `path` /
 `media`, caption, filename/title, and thread aliases, including native local
-path reads before the presigned upload.
+path reads before the presigned upload. Slack `download-file` now dispatches
+through fresh `files.info` metadata, rejects definite channel/thread scope
+mismatches before media fetch, downloads private file URLs with the saved route
+token, and returns saved local media path metadata.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear

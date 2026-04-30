@@ -1130,6 +1130,92 @@ def _slack_media_filename(media_url: str, index: int) -> str:
     return f"openzues-media-{index}.bin"
 
 
+def _safe_slack_file_label(value: str | None, fallback: str) -> str:
+    label = Path(str(value or "")).name.replace("\\", "_").replace("/", "_")
+    label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._")
+    return label[:120] if label else fallback
+
+
+def _slack_file_download_url(file_info: dict[str, Any]) -> str | None:
+    for key in ("url_private_download", "url_private"):
+        value = file_info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _slack_file_channel_scope_values(file_info: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for key in ("channels", "groups", "ims"):
+        raw_values = file_info.get(key)
+        if not isinstance(raw_values, list):
+            continue
+        ids.update(str(value).strip() for value in raw_values if str(value).strip())
+    shares = file_info.get("shares")
+    if isinstance(shares, dict):
+        for share_kind in ("public", "private"):
+            share_map = shares.get(share_kind)
+            if not isinstance(share_map, dict):
+                continue
+            ids.update(
+                str(channel_id).strip()
+                for channel_id in share_map
+                if str(channel_id).strip()
+            )
+    return ids
+
+
+def _slack_file_thread_scope_values(
+    file_info: dict[str, Any],
+    channel_id: str,
+) -> set[str]:
+    values: set[str] = set()
+    shares = file_info.get("shares")
+    if not isinstance(shares, dict):
+        return values
+    for share_kind in ("public", "private"):
+        share_map = shares.get(share_kind)
+        if not isinstance(share_map, dict):
+            continue
+        entries = share_map.get(channel_id)
+        if not isinstance(entries, list):
+            continue
+        for raw_entry in entries:
+            if not isinstance(raw_entry, dict):
+                continue
+            for key in ("thread_ts", "ts"):
+                value = raw_entry.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.add(value.strip())
+    return values
+
+
+def _slack_file_scope_mismatches(
+    file_info: dict[str, Any],
+    *,
+    channel_id: str | None,
+    thread_id: str | None,
+) -> bool:
+    normalized_channel_id = str(channel_id or "").strip()
+    if not normalized_channel_id:
+        return False
+    channel_values = _slack_file_channel_scope_values(file_info)
+    if channel_values and normalized_channel_id not in channel_values:
+        return True
+    normalized_thread_id = str(thread_id or "").strip()
+    if not normalized_thread_id:
+        return False
+    thread_values = _slack_file_thread_scope_values(file_info, normalized_channel_id)
+    return bool(thread_values and normalized_thread_id not in thread_values)
+
+
+def _slack_download_file_unavailable_result() -> dict[str, object]:
+    return {
+        "ok": False,
+        "error": "File could not be downloaded (not found, too large, or inaccessible).",
+    }
+
+
 def _telegram_bot_token(secret_token: str | None) -> str:
     token = str(secret_token or "").strip()
     if token.lower().startswith("bot"):
@@ -7104,6 +7190,7 @@ class OpsMeshService:
             )
         if channel != "slack" or action not in {
             "delete",
+            "download-file",
             "edit",
             "emoji-list",
             "list-pins",
@@ -7142,6 +7229,13 @@ class OpsMeshService:
         if action == "delete":
             return await asyncio.to_thread(
                 self._dispatch_slack_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "download-file":
+            return await asyncio.to_thread(
+                self._dispatch_slack_download_file_message_action,
                 route,
                 request,
                 secret_token,
@@ -7714,6 +7808,77 @@ class OpsMeshService:
             entries = sorted(raw_emoji.items(), key=lambda item: str(item[0]))
             emojis["emoji"] = {str(key): value for key, value in entries[:limit]}
         return {"ok": True, "emojis": emojis}
+
+    def _dispatch_slack_download_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        file_id = _message_action_param_string(request.params, "fileId", required=True)
+        channel_target = _message_action_param_string(
+            request.params,
+            "channelId",
+        ) or _message_action_param_string(request.params, "to")
+        channel_id = _slack_channel_id(channel_target) if channel_target is not None else None
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "files.info"),
+            {"file": file_id or ""},
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        file_info = result.get("file")
+        if not isinstance(file_info, dict):
+            return _slack_download_file_unavailable_result()
+        download_url = _slack_file_download_url(file_info)
+        if download_url is None:
+            return _slack_download_file_unavailable_result()
+        if _slack_file_scope_mismatches(
+            file_info,
+            channel_id=channel_id,
+            thread_id=thread_id,
+        ):
+            return _slack_download_file_unavailable_result()
+        max_bytes = 20 * 1024 * 1024
+        try:
+            file_bytes, content_type = self._download_slack_private_file(
+                download_url,
+                secret_token=secret_token,
+                max_bytes=max_bytes,
+            )
+        except (OSError, RuntimeError, ValueError):
+            return _slack_download_file_unavailable_result()
+        if not file_bytes:
+            return _slack_download_file_unavailable_result()
+        file_name = str(file_info.get("name") or file_id or "slack-file").strip()
+        saved_path = self._save_slack_downloaded_file(
+            file_id=file_id or "slack-file",
+            file_name=file_name,
+            file_bytes=file_bytes,
+        )
+        placeholder = f"[Slack file: {Path(file_name).name}]" if file_name else "[Slack file]"
+        media: dict[str, object] = {"mediaUrl": str(saved_path)}
+        if content_type:
+            media["contentType"] = content_type
+        response: dict[str, object] = {
+            "ok": True,
+            "fileId": file_id or "",
+            "path": str(saved_path),
+            "placeholder": placeholder,
+            "media": media,
+        }
+        if content_type:
+            response["contentType"] = content_type
+        return response
 
     def _dispatch_slack_upload_file_message_action(
         self,
@@ -9938,6 +10103,53 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _download_slack_private_file(
+        self,
+        url: str,
+        *,
+        secret_token: str | None,
+        max_bytes: int,
+    ) -> tuple[bytes, str | None]:
+        request = Request(
+            url,
+            headers={"Authorization": _slack_bearer_token(secret_token)},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Slack file URL returned HTTP {response.status}")
+                file_bytes = response.read(max_bytes + 1)
+                if len(file_bytes) > max_bytes:
+                    raise RuntimeError("Slack file is too large to download.")
+                content_type = response.headers.get("Content-Type")
+                return file_bytes, content_type.strip() if content_type else None
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Slack file URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Slack file URL failed: {exc.reason}") from exc
+
+    def _save_slack_downloaded_file(
+        self,
+        *,
+        file_id: str,
+        file_name: str,
+        file_bytes: bytes,
+    ) -> Path:
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else Path.cwd() / ".openzues"
+        )
+        safe_file_id = _safe_slack_file_label(file_id, "slack-file")
+        safe_file_name = _safe_slack_file_label(file_name, "download.bin")
+        stored_path = storage_root / "slack-downloads" / "inbound" / (
+            f"{safe_file_id}-{safe_file_name}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        stored_path.write_bytes(file_bytes)
+        return stored_path
 
     def _upload_slack_file_bytes(
         self,

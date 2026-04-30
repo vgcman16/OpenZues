@@ -3637,6 +3637,226 @@ async def test_ops_mesh_service_message_action_dispatches_slack_upload_file_rout
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_download_file_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-download-file"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    downloaded_urls: list[tuple[str, str | None, int]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "file": {
+                "id": "F123",
+                "name": "image.png",
+                "mimetype": "image/png",
+                "url_private_download": "https://files.slack.test/image.png",
+                "channels": ["C123"],
+                "shares": {
+                    "private": {
+                        "C123": [{"ts": "1710000000.0011", "thread_ts": "1710000000.0011"}]
+                    }
+                },
+            },
+        }
+
+    def fake_download_slack_private_file(
+        self: OpsMeshService,
+        url: str,
+        *,
+        secret_token: str | None,
+        max_bytes: int,
+    ) -> tuple[bytes, str | None]:
+        del self
+        downloaded_urls.append((url, secret_token, max_bytes))
+        return b"fake-png", "image/png"
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_slack_private_file",
+        fake_download_slack_private_file,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        canvas_state_dir=tmp_path / "data",
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="download-file",
+            params={
+                "fileId": "F123",
+                "to": "channel:C123",
+                "replyTo": "1710000000.0011",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-download-file-action",
+        )
+    )
+
+    assert isinstance(result, dict)
+    assert result["ok"] is True
+    assert result["fileId"] == "F123"
+    assert result["placeholder"] == "[Slack file: image.png]"
+    assert result["contentType"] == "image/png"
+    saved_path = Path(str(result["path"]))
+    assert saved_path.read_bytes() == b"fake-png"
+    assert result["media"] == {
+        "mediaUrl": str(saved_path),
+        "contentType": "image/png",
+    }
+    assert slack_posts == [
+        (
+            "https://slack.test/api/files.info",
+            {"file": "F123"},
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+    assert downloaded_urls == [
+        ("https://files.slack.test/image.png", "xoxb-action-token", 20 * 1024 * 1024)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_slack_download_file_scope_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-download-scope"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, target, payload, secret_header_name, secret_token
+        return {
+            "ok": True,
+            "file": {
+                "id": "F123",
+                "name": "image.png",
+                "mimetype": "image/png",
+                "url_private_download": "https://files.slack.test/image.png",
+                "channels": ["C999"],
+            },
+        }
+
+    def fail_download_slack_private_file(
+        self: OpsMeshService,
+        url: str,
+        *,
+        secret_token: str | None,
+        max_bytes: int,
+    ) -> tuple[bytes, str | None]:
+        del self, url, secret_token, max_bytes
+        raise AssertionError("scope mismatch should stop before media download")
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_slack_private_file",
+        fail_download_slack_private_file,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        canvas_state_dir=tmp_path / "data",
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="download-file",
+            params={
+                "fileId": "F123",
+                "channelId": "channel:C123",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-download-file-scope",
+        )
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "File could not be downloaded (not found, too large, or inaccessible).",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
