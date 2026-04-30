@@ -479,8 +479,12 @@ legacy config must be reported by earlier migrators first. It also covers the
 implicit heartbeat direct-policy upgrade warning for configured default and
 per-agent heartbeat delivery whose `directPolicy` is unset, plus canonical
 non-loopback gateway bind exposure without configured auth while leaving raw
-legacy bind aliases under the legacy-config migrator. Shell completion remains
-partial until production repair adapters are wired.
+legacy bind aliases under the legacy-config migrator. It now also compares
+global and per-agent `tools.exec` policy against the native
+`settings/exec-approvals.json` host policy and emits the OpenClaw-shaped
+config/host/effective-policy warning when the requested policy is broader or
+less prompt-heavy than the host permits. Shell completion remains partial until
+production repair adapters are wired.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes
 the OpenAI auth endpoint through a fakeable boundary, classifies TLS

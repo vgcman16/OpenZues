@@ -4078,6 +4078,245 @@ def _doctor_security_heartbeat_warnings(snapshot: dict[str, object]) -> list[str
     return warnings
 
 
+_DOCTOR_EXEC_SECURITY_RANK = {"deny": 0, "allowlist": 1, "full": 2}
+_DOCTOR_EXEC_ASK_RANK = {"off": 0, "on-miss": 1, "always": 2}
+_DOCTOR_EXEC_DEFAULT_SECURITY = "full"
+_DOCTOR_EXEC_DEFAULT_ASK = "off"
+
+
+def _doctor_exec_security_value(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    return normalized if normalized in _DOCTOR_EXEC_SECURITY_RANK else None
+
+
+def _doctor_exec_ask_value(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    return normalized if normalized in _DOCTOR_EXEC_ASK_RANK else None
+
+
+def _doctor_exec_policy_config(value: object) -> dict[str, str]:
+    config = _dict_config(value)
+    resolved: dict[str, str] = {}
+    security = _doctor_exec_security_value(config.get("security"))
+    if security is not None:
+        resolved["security"] = security
+    ask = _doctor_exec_ask_value(config.get("ask"))
+    if ask is not None:
+        resolved["ask"] = ask
+    return resolved
+
+
+def _doctor_security_exec_approvals_path(data_dir: Path | None) -> Path:
+    if data_dir is not None:
+        return data_dir / "settings" / "exec-approvals.json"
+    return Path.home() / ".openclaw" / "exec-approvals.json"
+
+
+def _doctor_security_read_exec_approvals_file(
+    data_dir: Path | None,
+) -> tuple[Path, dict[str, object]]:
+    path = _doctor_security_exec_approvals_path(data_dir)
+    try:
+        raw = path.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+    except (OSError, ValueError):
+        return path, {"version": 1, "agents": {}}
+    if not isinstance(parsed, dict) or parsed.get("version") != 1:
+        return path, {"version": 1, "agents": {}}
+    return path, parsed
+
+
+def _doctor_exec_requested_field(
+    *,
+    scope_config: dict[str, str],
+    global_config: dict[str, str],
+    field: Literal["security", "ask"],
+    config_path: str,
+) -> tuple[str, str]:
+    if field in scope_config:
+        return scope_config[field], f"{config_path}.{field}"
+    if field in global_config:
+        return global_config[field], f"tools.exec.{field}"
+    default_value = (
+        _DOCTOR_EXEC_DEFAULT_SECURITY
+        if field == "security"
+        else _DOCTOR_EXEC_DEFAULT_ASK
+    )
+    return default_value, f"OpenClaw default ({default_value})"
+
+
+def _doctor_exec_host_field(
+    *,
+    approvals_file: dict[str, object],
+    approvals_path: Path,
+    field: Literal["security", "ask"],
+    requested: str,
+    agent_id: str | None,
+) -> tuple[str, str]:
+    agents = _dict_config(approvals_file.get("agents"))
+    if agent_id is not None:
+        agent = _dict_config(agents.get(agent_id))
+        value = (
+            _doctor_exec_security_value(agent.get(field))
+            if field == "security"
+            else _doctor_exec_ask_value(agent.get(field))
+        )
+        if value is not None:
+            return value, f"{approvals_path} agents.{agent_id}.{field}"
+        wildcard = _dict_config(agents.get("*"))
+        value = (
+            _doctor_exec_security_value(wildcard.get(field))
+            if field == "security"
+            else _doctor_exec_ask_value(wildcard.get(field))
+        )
+        if value is not None:
+            return value, f"{approvals_path} agents.*.{field}"
+
+    defaults = _dict_config(approvals_file.get("defaults"))
+    value = (
+        _doctor_exec_security_value(defaults.get(field))
+        if field == "security"
+        else _doctor_exec_ask_value(defaults.get(field))
+    )
+    if value is not None:
+        return value, f"{approvals_path} defaults.{field}"
+    return requested, "inherits requested tool policy"
+
+
+def _doctor_security_exec_policy_warning(
+    *,
+    scope_label: str,
+    scope_config: dict[str, str],
+    global_config: dict[str, str],
+    approvals_file: dict[str, object],
+    approvals_path: Path,
+    agent_id: str | None = None,
+) -> str | None:
+    if not scope_config and not global_config:
+        return None
+
+    security_requested, security_requested_source = _doctor_exec_requested_field(
+        scope_config=scope_config,
+        global_config=global_config,
+        field="security",
+        config_path=scope_label,
+    )
+    ask_requested, ask_requested_source = _doctor_exec_requested_field(
+        scope_config=scope_config,
+        global_config=global_config,
+        field="ask",
+        config_path=scope_label,
+    )
+    security_host, security_host_source = _doctor_exec_host_field(
+        approvals_file=approvals_file,
+        approvals_path=approvals_path,
+        field="security",
+        requested=security_requested,
+        agent_id=agent_id,
+    )
+    ask_host, ask_host_source = _doctor_exec_host_field(
+        approvals_file=approvals_file,
+        approvals_path=approvals_path,
+        field="ask",
+        requested=ask_requested,
+        agent_id=agent_id,
+    )
+    security_effective = (
+        security_requested
+        if _DOCTOR_EXEC_SECURITY_RANK[security_requested]
+        <= _DOCTOR_EXEC_SECURITY_RANK[security_host]
+        else security_host
+    )
+    ask_effective = (
+        ask_requested
+        if _DOCTOR_EXEC_ASK_RANK[ask_requested] >= _DOCTOR_EXEC_ASK_RANK[ask_host]
+        else ask_host
+    )
+    security_conflict = (
+        security_requested_source != "OpenClaw default (full)"
+        and _DOCTOR_EXEC_SECURITY_RANK[security_requested]
+        > _DOCTOR_EXEC_SECURITY_RANK[security_effective]
+    )
+    ask_conflict = (
+        ask_requested_source != "OpenClaw default (off)"
+        and _DOCTOR_EXEC_ASK_RANK[ask_requested]
+        < _DOCTOR_EXEC_ASK_RANK[ask_effective]
+    )
+    if not security_conflict and not ask_conflict:
+        return None
+
+    config_parts: list[str] = []
+    host_parts: list[str] = []
+    if security_conflict:
+        config_parts.append(f'{security_requested_source}="{security_requested}"')
+        host_parts.append(f'{security_host_source}="{security_host}"')
+    if ask_conflict:
+        config_parts.append(f'{ask_requested_source}="{ask_requested}"')
+        host_parts.append(f'{ask_host_source}="{ask_host}"')
+    return "\n".join(
+        [
+            f"- {scope_label} is broader than the host exec policy.",
+            f"  Config: {', '.join(config_parts)}",
+            f"  Host: {', '.join(host_parts)}",
+            (
+                f'  Effective host exec stays security="{security_effective}" '
+                f'ask="{ask_effective}" because the stricter side wins.'
+            ),
+            (
+                "  Headless runs like isolated cron cannot answer approval prompts; "
+                "align both files or enable Web UI, terminal UI, or chat exec approvals."
+            ),
+            "  Inspect with: openclaw approvals get --gateway",
+        ]
+    )
+
+
+def _doctor_security_exec_policy_warnings(
+    snapshot: dict[str, object],
+    data_dir: Path | None,
+) -> list[str]:
+    approvals_path, approvals_file = _doctor_security_read_exec_approvals_file(data_dir)
+    tools = _dict_config(snapshot.get("tools"))
+    global_config = _doctor_exec_policy_config(tools.get("exec"))
+    warnings: list[str] = []
+    global_warning = _doctor_security_exec_policy_warning(
+        scope_label="tools.exec",
+        scope_config=global_config,
+        global_config={},
+        approvals_file=approvals_file,
+        approvals_path=approvals_path,
+    )
+    if global_warning is not None:
+        warnings.append(global_warning)
+
+    agents = _dict_config(snapshot.get("agents"))
+    for agent in _object_list(agents.get("list")):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = _optional_cli_string(agent.get("id"))
+        if agent_id is None:
+            continue
+        agent_tools = _dict_config(agent.get("tools"))
+        agent_config = _doctor_exec_policy_config(agent_tools.get("exec"))
+        agent_warning = _doctor_security_exec_policy_warning(
+            scope_label=f"agents.list.{agent_id}.tools.exec",
+            scope_config=agent_config,
+            global_config=global_config,
+            approvals_file=approvals_file,
+            approvals_path=approvals_path,
+            agent_id=agent_id,
+        )
+        if agent_warning is not None:
+            warnings.append(agent_warning)
+    return warnings
+
+
 def _doctor_security_is_loopback_host(host: str) -> bool:
     normalized = host.strip().lower().strip("[]")
     return (
@@ -4169,6 +4408,7 @@ def _doctor_security_gateway_exposure_warnings(
 
 def _build_doctor_security_payload(
     config_service: object | None = None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
     snapshot = _doctor_security_snapshot(config_service)
     if snapshot is None:
@@ -4186,6 +4426,7 @@ def _build_doctor_security_payload(
     warnings = [
         *_doctor_security_approvals_warnings(snapshot),
         *_doctor_security_heartbeat_warnings(snapshot),
+        *_doctor_security_exec_policy_warnings(snapshot, data_dir),
         *_doctor_security_gateway_exposure_warnings(snapshot),
     ]
     return {
@@ -4206,8 +4447,9 @@ def _build_doctor_security_payload(
 def _with_doctor_security_payload(
     payload: dict[str, object],
     config_service: object | None,
+    data_dir: Path | None = None,
 ) -> dict[str, object]:
-    security = _build_doctor_security_payload(config_service)
+    security = _build_doctor_security_payload(config_service, data_dir=data_dir)
     next_payload = dict(payload)
     next_payload["security"] = security
     warnings = [str(item) for item in _object_list(security.get("warnings"))]
@@ -20274,6 +20516,7 @@ def doctor(
         payload = _with_doctor_security_payload(
             payload,
             services.gateway_config,
+            data_dir if isinstance(data_dir, Path) else None,
         )
         payload = await _with_doctor_gateway_health_payload(
             payload,

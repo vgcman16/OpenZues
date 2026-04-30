@@ -2852,6 +2852,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_warns or gateway_auth or gateway_mode_is_unset"` (`39 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `doctor:security` now mirrors OpenClaw's `tools.exec` host-policy conflict
+  warning. The native doctor reads the existing
+  `settings/exec-approvals.json` runtime policy, compares global and per-agent
+  requested `security`/`ask` values against the stricter host effective policy,
+  reports the OpenClaw-shaped config/host/effective lines, and preserves
+  `tools.exec` config through the native config snapshot schema.
+- Verified the exec-policy security slice with `python -m pytest
+  tests\test_cli.py -k "exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor"` (`2
+  passed`) and adjacent security/doctor proof `python -m pytest
+  tests\test_cli.py -k "doctor_json_warns_when_approvals_exec_forwarding_is_disabled
+  or doctor_json_warns_when_heartbeat_direct_policy_is_implicit or
+  doctor_json_warns_when_gateway_bind_is_exposed_without_auth or
+  exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  legacy_gateway_bind_host_alias or legacy_thread_binding_ttl_hours"` (`10
+  passed`).
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the

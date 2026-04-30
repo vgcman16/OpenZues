@@ -19035,6 +19035,114 @@ def test_doctor_json_warns_when_gateway_bind_is_exposed_without_auth(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    approvals_path = tmp_path / "settings" / "exec-approvals.json"
+    approvals_path.parent.mkdir(parents=True)
+    approvals_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "defaults": {"security": "allowlist", "ask": "always"},
+                "agents": {
+                    "runner": {"security": "deny", "ask": "always"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "tools": {"exec": {"security": "full", "ask": "off"}},
+            "agents": {
+                "list": [
+                    {
+                        "id": "runner",
+                        "tools": {"exec": {"security": "allowlist", "ask": "off"}},
+                    }
+                ]
+            },
+        },
+        settings=SimpleNamespace(data_dir=tmp_path),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["security"]["warnings"]
+    global_warning = next(
+        warning for warning in warnings if "tools.exec is broader" in warning
+    )
+    agent_warning = next(
+        warning
+        for warning in warnings
+        if "agents.list.runner.tools.exec is broader" in warning
+    )
+    assert payload["security"]["status"] == "warning"
+    assert 'tools.exec.security="full"' in global_warning
+    assert 'tools.exec.ask="off"' in global_warning
+    assert f"{approvals_path} defaults.security=\"allowlist\"" in global_warning
+    assert f"{approvals_path} defaults.ask=\"always\"" in global_warning
+    assert 'security="allowlist" ask="always"' in global_warning
+    assert 'agents.list.runner.tools.exec.security="allowlist"' in agent_warning
+    assert 'agents.list.runner.tools.exec.ask="off"' in agent_warning
+    assert f"{approvals_path} agents.runner.security=\"deny\"" in agent_warning
+    assert f"{approvals_path} agents.runner.ask=\"always\"" in agent_warning
+    assert 'security="deny" ask="always"' in agent_warning
+    assert "openclaw approvals get --gateway" in global_warning
+    assert global_warning in payload["warnings"]
+    assert agent_warning in payload["warnings"]
+
+
+def test_gateway_config_preserves_exec_policy_config_for_security_doctor(
+    tmp_path,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    saved = gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {"exec": {"security": "full", "ask": "off"}},
+                "agents": {
+                    "list": [
+                        {
+                            "id": "runner",
+                            "tools": {
+                                "exec": {"security": "allowlist", "ask": "on-miss"}
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    snapshot = saved["config"]
+    assert snapshot["tools"]["exec"] == {"security": "full", "ask": "off"}
+    assert snapshot["agents"]["list"][0]["tools"]["exec"] == {
+        "security": "allowlist",
+        "ask": "on-miss",
+    }
+    assert gateway_config.build_snapshot() == snapshot
+
+
 def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(
     tmp_path,
     monkeypatch,

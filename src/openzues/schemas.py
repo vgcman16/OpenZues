@@ -1731,8 +1731,11 @@ class ControlUiGatewayAgentSandboxConfigView(BaseModel):
 
 
 class ControlUiToolAllowDenyConfigView(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
+    exec_: dict[str, Any] | None = Field(default=None, alias="exec")
 
 
 class ControlUiGatewayAgentDefaultsConfigView(BaseModel):
@@ -1835,6 +1838,7 @@ class ControlUiToolsConfigView(BaseModel):
 
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
+    exec_: dict[str, Any] | None = Field(default=None, alias="exec")
     agent_to_agent: ControlUiToolsAgentToAgentConfigView | None = Field(
         default=None,
         alias="agentToAgent",
