@@ -181,6 +181,25 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "threads": False,
     },
 }
+_OPENZUES_NATIVE_PLUGIN_IDS = frozenset(
+    {
+        *_CHANNEL_CAPABILITY_SUPPORT,
+        "brave",
+        "duckduckgo",
+        "exa",
+        "firecrawl",
+        "google",
+        "matrix",
+        "minimax",
+        "moonshot",
+        "ollama",
+        "perplexity",
+        "searxng",
+        "tavily",
+        "voice-call",
+        "xai",
+    }
+)
 _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
     {
         "id": "model.run",
@@ -1940,6 +1959,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "security",
         "shellCompletion",
         "legacyConfig",
+        "stalePluginConfig",
         "sandbox",
         "gatewayHealth",
         "memorySearch",
@@ -2134,6 +2154,236 @@ def _with_doctor_legacy_config_payload(
     next_payload = dict(payload)
     next_payload["legacyConfig"] = legacy_payload
     warnings = _object_list(legacy_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _stale_plugin_registry_state(
+    config_service: object | None,
+) -> tuple[set[str], list[dict[str, object]]]:
+    known_ids = set(_OPENZUES_NATIVE_PLUGIN_IDS)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return known_ids, []
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:
+        return known_ids, [
+            {
+                "level": "error",
+                "category": "pluginDiscovery",
+                "code": "plugin_manifest_registry_unavailable",
+                "message": f"Plugin manifest registry could not be read: {exc}",
+            }
+        ]
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    diagnostics: list[dict[str, object]] = []
+    for load_path in _plugin_manifest_load_paths(plugins_config):
+        manifest_path = _plugin_manifest_path_for_load_path(load_path)
+        if manifest_path is None:
+            diagnostics.append(
+                {
+                    "level": "error",
+                    "category": "pluginDiscovery",
+                    "code": "plugin_manifest_missing",
+                    "message": f"Plugin manifest not found for load path: {load_path}",
+                    "source": str(load_path),
+                }
+            )
+            continue
+        record = _plugin_record_from_openclaw_manifest(
+            manifest_path,
+            plugins_config=plugins_config,
+            config_snapshot=snapshot,
+        )
+        if record is None:
+            diagnostics.append(
+                {
+                    "level": "error",
+                    "category": "pluginDiscovery",
+                    "code": "plugin_manifest_invalid",
+                    "message": f"Plugin manifest could not be loaded: {manifest_path}",
+                    "source": str(manifest_path),
+                }
+            )
+            continue
+        plugin_id = _optional_cli_string(record.get("id"))
+        if plugin_id is not None:
+            known_ids.add(plugin_id)
+    return known_ids, diagnostics
+
+
+def _doctor_stale_plugin_config_warnings(
+    issues: list[object],
+    *,
+    auto_repair_blocked: bool,
+) -> list[str]:
+    if not issues:
+        return []
+    warnings: list[str] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        path_label = str(issue.get("pathLabel") or "").strip()
+        plugin_id = str(issue.get("pluginId") or "").strip()
+        if not path_label or not plugin_id:
+            continue
+        warnings.append(f'- {path_label}: stale plugin reference "{plugin_id}" was found.')
+    if not warnings:
+        return []
+    if auto_repair_blocked:
+        warnings.append(
+            '- Auto-removal is paused because plugin discovery currently has errors. '
+            'Fix plugin discovery first, then rerun "openzues doctor --fix".'
+        )
+    else:
+        warnings.append(
+            '- Run "openzues doctor --fix" to remove stale plugins.allow and '
+            "plugins.entries ids."
+        )
+    return warnings
+
+
+def _build_doctor_stale_plugin_config_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:stale-plugin-config",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "autoRepairBlocked": False,
+        "issues": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for stale plugin config checks.",
+        }
+    known_plugin_ids, diagnostics = _stale_plugin_registry_state(config_service)
+    auto_repair_blocked = any(
+        isinstance(diagnostic, dict)
+        and str(diagnostic.get("level") or "").strip() == "error"
+        for diagnostic in diagnostics
+    )
+    if should_repair:
+        repair = getattr(config_service, "repair_stale_plugin_config", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Stale plugin config repair runtime is unavailable.",
+                "autoRepairBlocked": auto_repair_blocked,
+            }
+        try:
+            result = repair(
+                known_plugin_ids,
+                auto_repair_blocked=auto_repair_blocked,
+            )
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Stale plugin config repair failed: {exc}",
+                "autoRepairBlocked": auto_repair_blocked,
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        changes = _object_list(result_payload.get("changes"))
+        issues = [] if changed else _object_list(result_payload.get("issues"))
+        warnings = _doctor_stale_plugin_config_warnings(
+            issues,
+            auto_repair_blocked=auto_repair_blocked,
+        )
+        payload = {
+            **base_payload,
+            "status": "warn" if issues else "ok",
+            "summary": (
+                "Removed stale plugin config references."
+                if changed
+                else (
+                    "Stale plugin config references found."
+                    if issues
+                    else "No stale plugin config references found."
+                )
+            ),
+            "repairAvailable": True,
+            "autoRepairBlocked": auto_repair_blocked,
+            "changed": changed,
+            "changes": changes,
+            "issues": issues,
+            "warnings": warnings,
+            "path": result_payload.get("path"),
+        }
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        return payload
+
+    detect = getattr(config_service, "detect_stale_plugin_config", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Stale plugin config detection runtime is unavailable.",
+            "autoRepairBlocked": auto_repair_blocked,
+        }
+    try:
+        result = detect(
+            known_plugin_ids,
+            auto_repair_blocked=auto_repair_blocked,
+        )
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Stale plugin config detection failed: {exc}",
+            "autoRepairBlocked": auto_repair_blocked,
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    issues = _object_list(result_payload.get("issues"))
+    warnings = _doctor_stale_plugin_config_warnings(
+        issues,
+        auto_repair_blocked=auto_repair_blocked,
+    )
+    payload = {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Stale plugin config references found."
+            if issues
+            else "No stale plugin config references found."
+        ),
+        "repairAvailable": True,
+        "autoRepairBlocked": auto_repair_blocked,
+        "issues": issues,
+        "warnings": warnings,
+        "path": result_payload.get("path"),
+    }
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+    return payload
+
+
+def _with_doctor_stale_plugin_config_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    stale_payload = _build_doctor_stale_plugin_config_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["stalePluginConfig"] = stale_payload
+    warnings = _object_list(stale_payload.get("warnings"))
     if warnings:
         next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
     return next_payload
@@ -16968,6 +17218,11 @@ def doctor(
             view = await services.hermes_platform.get_doctor_view()
         payload = _with_doctor_legacy_config_payload(
             view.model_dump(mode="json"),
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_stale_plugin_config_payload(
+            payload,
             services.gateway_config,
             should_repair=fix,
         )

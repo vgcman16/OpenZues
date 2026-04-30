@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -241,6 +241,28 @@ class GatewayConfigService:
             "issues": _collect_legacy_config_issues(payload),
         }
 
+    def detect_stale_plugin_config(
+        self,
+        known_plugin_ids: Iterable[str],
+        *,
+        auto_repair_blocked: bool = False,
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "issues": [],
+                "autoRepairBlocked": bool(auto_repair_blocked),
+            }
+        payload = self._read_raw_config_object(label="stale plugin config detection")
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "issues": _collect_stale_plugin_config_issues(payload, known_plugin_ids),
+            "autoRepairBlocked": bool(auto_repair_blocked),
+        }
+
     def repair_legacy_thread_binding_ttl_hours(self) -> dict[str, Any]:
         config_path = self._require_config_path()
         if not config_path.exists():
@@ -327,6 +349,60 @@ class GatewayConfigService:
             "path": str(config_path),
             "changed": True,
             "changes": changes,
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
+    def repair_stale_plugin_config(
+        self,
+        known_plugin_ids: Iterable[str],
+        *,
+        auto_repair_blocked: bool = False,
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            snapshot = self._default_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "issues": [],
+                "autoRepairBlocked": bool(auto_repair_blocked),
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        payload = self._read_raw_config_object(label="stale plugin config repair")
+        issues = _collect_stale_plugin_config_issues(payload, known_plugin_ids)
+        changes = (
+            []
+            if auto_repair_blocked
+            else _remove_stale_plugin_config(payload, issues=issues)
+        )
+        if not changes:
+            snapshot = self.build_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "issues": issues,
+                "autoRepairBlocked": bool(auto_repair_blocked),
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        snapshot = self._validated_snapshot(payload)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changed": True,
+            "changes": changes,
+            "issues": [],
+            "autoRepairBlocked": bool(auto_repair_blocked),
             "config": snapshot,
             "hash": self._snapshot_hash(snapshot),
         }
@@ -1619,6 +1695,105 @@ def _uninstall_plugin_in_snapshot(
         "actions": actions,
         "warnings": [],
     }
+
+
+def _normalize_stale_plugin_id(plugin_id: str) -> str:
+    return plugin_id.strip()
+
+
+def _known_stale_plugin_ids(known_plugin_ids: Iterable[str]) -> set[str]:
+    return {
+        normalized
+        for raw_plugin_id in known_plugin_ids
+        if (normalized := _normalize_stale_plugin_id(str(raw_plugin_id)))
+    }
+
+
+def _collect_stale_plugin_config_issues(
+    payload: dict[str, Any],
+    known_plugin_ids: Iterable[str],
+) -> list[dict[str, str]]:
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, dict):
+        return []
+    known_ids = _known_stale_plugin_ids(known_plugin_ids)
+    issues: list[dict[str, str]] = []
+    allow = plugins.get("allow")
+    if isinstance(allow, list):
+        for raw_plugin_id in allow:
+            if not isinstance(raw_plugin_id, str):
+                continue
+            plugin_id = _normalize_stale_plugin_id(raw_plugin_id)
+            if not plugin_id or plugin_id in known_ids:
+                continue
+            issues.append(
+                {
+                    "pluginId": raw_plugin_id,
+                    "pathLabel": "plugins.allow",
+                    "surface": "allow",
+                }
+            )
+    entries = plugins.get("entries")
+    if not isinstance(entries, dict):
+        return issues
+    for raw_plugin_id in entries:
+        plugin_id = _normalize_stale_plugin_id(str(raw_plugin_id))
+        if not plugin_id or plugin_id in known_ids:
+            continue
+        issues.append(
+            {
+                "pluginId": str(raw_plugin_id),
+                "pathLabel": f"plugins.entries.{raw_plugin_id}",
+                "surface": "entries",
+            }
+        )
+    return issues
+
+
+def _remove_stale_plugin_config(
+    payload: dict[str, Any],
+    *,
+    issues: list[dict[str, str]],
+) -> list[str]:
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, dict):
+        return []
+    allow_ids = [issue["pluginId"] for issue in issues if issue.get("surface") == "allow"]
+    entry_ids = [issue["pluginId"] for issue in issues if issue.get("surface") == "entries"]
+    if allow_ids:
+        allow = plugins.get("allow")
+        if isinstance(allow, list):
+            stale_allow_ids = {_normalize_stale_plugin_id(plugin_id) for plugin_id in allow_ids}
+            plugins["allow"] = [
+                plugin_id
+                for plugin_id in allow
+                if not (
+                    isinstance(plugin_id, str)
+                    and _normalize_stale_plugin_id(plugin_id) in stale_allow_ids
+                )
+            ]
+    if entry_ids:
+        entries = plugins.get("entries")
+        if isinstance(entries, dict):
+            stale_entry_ids = {_normalize_stale_plugin_id(plugin_id) for plugin_id in entry_ids}
+            for plugin_id in list(entries):
+                if _normalize_stale_plugin_id(str(plugin_id)) in stale_entry_ids:
+                    entries.pop(plugin_id, None)
+
+    changes: list[str] = []
+    if allow_ids:
+        changes.append(
+            "- plugins.allow: removed "
+            f"{len(allow_ids)} stale plugin id{'s' if len(allow_ids) != 1 else ''} "
+            f"({', '.join(allow_ids)})"
+        )
+    if entry_ids:
+        changes.append(
+            "- plugins.entries: removed "
+            f"{len(entry_ids)} stale plugin entr{'y' if len(entry_ids) == 1 else 'ies'} "
+            f"({', '.join(entry_ids)})"
+        )
+    return changes
 
 
 def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:

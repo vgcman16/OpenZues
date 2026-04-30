@@ -3288,6 +3288,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_config.py
   src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- Top-level `doctor --json` now includes OpenClaw's stale plugin config
+  contribution. It scans `plugins.allow` and `plugins.entries.<id>` against
+  native and manifest-backed plugin ids, formats the upstream warning/hint
+  shape, removes stale refs during `doctor --fix`, and pauses auto-removal
+  when manifest discovery reports errors.
+- Verified the stale plugin config doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_pauses_stale_plugin_config_repair_when_discovery_has_errors
+  -q` (`3 passed`), adjacent doctor/plugin coverage `python -m pytest
+  tests\test_cli.py -q -k "stale_plugin_config or
+  legacy_web_search_provider_config or legacy_tts_provider_config or
+  bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces"` (`9 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
 - Route-backed `sessions.spawn thread=true` now persists an OpenClaw-shaped
   current-conversation `sessionBinding` record on child session metadata in
   addition to `threadBinding` and `completionDelivery`. Records include
