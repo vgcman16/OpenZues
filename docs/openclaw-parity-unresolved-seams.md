@@ -120,9 +120,13 @@ preservation.
 Top-level `memorySearch` now migrates into
 `agents.defaults.memorySearch`, merging only missing nested fields when defaults
 already exist.
+Top-level `heartbeat` now splits into `agents.defaults.heartbeat` and
+`channels.defaults.heartbeat`, with existing defaults receiving only missing
+fields and empty legacy heartbeat blocks removed.
 Remaining legacy-config parity is broader doctor migration breadth from
 OpenClaw's compatibility migrator; the next small source-backed head is
-top-level `heartbeat` migration into agent/channel defaults.
+TTS provider config normalization into `messages.tts.providers` and
+`plugins.entries.voice-call.config.tts.providers`.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

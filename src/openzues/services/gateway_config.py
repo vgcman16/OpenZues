@@ -19,6 +19,23 @@ _EXEC_CONTROL_CHARS_PATTERN = re.compile(r"[\r\n]")
 _EXEC_QUOTE_CHARS_PATTERN = re.compile(r"['\"]")
 _EXEC_BARE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._+-]+$")
 _EXEC_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
+_AGENT_HEARTBEAT_KEYS = {
+    "every",
+    "activeHours",
+    "model",
+    "session",
+    "includeReasoning",
+    "target",
+    "directPolicy",
+    "to",
+    "accountId",
+    "prompt",
+    "ackMaxChars",
+    "suppressToolErrorWarnings",
+    "lightContext",
+    "isolatedSession",
+}
+_CHANNEL_HEARTBEAT_KEYS = {"showOk", "showAlerts", "useIndicator"}
 _OPENCLAW_CHANNEL_PLUGIN_ALIASES = {
     "discord": "discord",
     "feishu": "feishu",
@@ -260,6 +277,7 @@ class GatewayConfigService:
             *_migrate_legacy_audio_transcription(payload),
             *_migrate_legacy_sandbox_per_session(payload),
             *_migrate_legacy_memory_search(payload),
+            *_migrate_legacy_heartbeat(payload),
             *_migrate_gateway_control_ui_allowed_origins(payload),
             *_migrate_legacy_gateway_bind_alias(payload),
         ]
@@ -1733,6 +1751,14 @@ def _legacy_memory_search_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_heartbeat_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": "agents.defaults.heartbeat",
+        "message": "top-level heartbeat is legacy; use defaults heartbeat config.",
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1766,6 +1792,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_memory_search_issue(path)
             for path in _iter_legacy_memory_search_paths(payload)
+        ],
+        *[
+            _legacy_heartbeat_issue(path)
+            for path in _iter_legacy_heartbeat_paths(payload)
         ],
         *[
             _legacy_gateway_bind_alias_issue(path)
@@ -2207,6 +2237,10 @@ def _iter_legacy_memory_search_paths(payload: dict[str, Any]) -> list[str]:
     return ["memorySearch"] if "memorySearch" in payload else []
 
 
+def _iter_legacy_heartbeat_paths(payload: dict[str, Any]) -> list[str]:
+    return ["heartbeat"] if "heartbeat" in payload else []
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2560,6 +2594,82 @@ def _merge_missing_config_values(target: dict[str, Any], source: dict[str, Any])
         existing = target[key]
         if isinstance(existing, dict) and isinstance(value, dict):
             _merge_missing_config_values(existing, value)
+
+
+def _migrate_legacy_heartbeat(payload: dict[str, Any]) -> list[str]:
+    legacy_heartbeat = payload.get("heartbeat")
+    if not isinstance(legacy_heartbeat, dict):
+        return []
+    agent_heartbeat, channel_heartbeat = _split_legacy_heartbeat(legacy_heartbeat)
+    changes: list[str] = []
+    if agent_heartbeat:
+        _merge_legacy_record_into_defaults(
+            payload,
+            root_key="agents",
+            field_key="heartbeat",
+            legacy_value=agent_heartbeat,
+            changes=changes,
+            moved_message="Moved heartbeat to agents.defaults.heartbeat.",
+            merged_message=(
+                "Merged heartbeat to agents.defaults.heartbeat "
+                "(filled missing fields from legacy; kept explicit agents.defaults values)."
+            ),
+        )
+    if channel_heartbeat:
+        _merge_legacy_record_into_defaults(
+            payload,
+            root_key="channels",
+            field_key="heartbeat",
+            legacy_value=channel_heartbeat,
+            changes=changes,
+            moved_message="Moved heartbeat visibility to channels.defaults.heartbeat.",
+            merged_message=(
+                "Merged heartbeat visibility to channels.defaults.heartbeat "
+                "(filled missing fields from legacy; kept explicit channels.defaults values)."
+            ),
+        )
+    if not agent_heartbeat and not channel_heartbeat:
+        changes.append("Removed empty top-level heartbeat.")
+    del payload["heartbeat"]
+    return changes
+
+
+def _split_legacy_heartbeat(
+    legacy_heartbeat: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    agent_heartbeat: dict[str, Any] = {}
+    channel_heartbeat: dict[str, Any] = {}
+    for key, value in legacy_heartbeat.items():
+        if key in _CHANNEL_HEARTBEAT_KEYS:
+            channel_heartbeat[key] = value
+        elif key in _AGENT_HEARTBEAT_KEYS:
+            agent_heartbeat[key] = value
+        else:
+            agent_heartbeat[key] = value
+    return agent_heartbeat, channel_heartbeat
+
+
+def _merge_legacy_record_into_defaults(
+    payload: dict[str, Any],
+    *,
+    root_key: str,
+    field_key: str,
+    legacy_value: dict[str, Any],
+    changes: list[str],
+    moved_message: str,
+    merged_message: str,
+) -> None:
+    root = _ensure_config_record(payload, root_key)
+    defaults = _ensure_config_record(root, "defaults")
+    existing = defaults.get(field_key)
+    if not isinstance(existing, dict):
+        defaults[field_key] = legacy_value
+        changes.append(moved_message)
+        return
+    merged = copy.deepcopy(existing)
+    _merge_missing_config_values(merged, legacy_value)
+    defaults[field_key] = merged
+    changes.append(merged_message)
 
 
 def _migrate_gateway_control_ui_allowed_origins(payload: dict[str, Any]) -> list[str]:
