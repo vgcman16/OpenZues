@@ -2275,6 +2275,34 @@ def test_acp_client_spawn_plan_preserves_provider_auth_for_custom_server() -> No
     assert plan.stripped_env_keys == ()
 
 
+def test_acp_client_spawn_invocation_unwraps_windows_cmd_shim(tmp_path: Path) -> None:
+    from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
+
+    script_path = tmp_path / "openzues" / "entry.py"
+    shim_path = tmp_path / "openzues.cmd"
+    script_path.parent.mkdir(parents=True)
+    script_path.write_text("print('ok')\n", encoding="utf-8")
+    shim_path.write_text(
+        '@ECHO off\r\n"%~dp0\\openzues\\entry.py" %*\r\n',
+        encoding="utf-8",
+    )
+
+    invocation = resolve_acp_client_spawn_invocation(
+        server_command=str(shim_path),
+        server_args=("acp", "--verbose"),
+        platform="win32",
+        env={"PATH": str(tmp_path), "PATHEXT": ".CMD;.EXE;.BAT"},
+        executable=r"C:\Python312\python.exe",
+    )
+
+    assert invocation == {
+        "command": r"C:\Python312\python.exe",
+        "args": (str(script_path), "acp", "--verbose"),
+        "shell": False,
+        "windowsHide": True,
+    }
+
+
 def test_acp_client_command_passes_spawn_plan_to_registered_runner(monkeypatch) -> None:
     from openzues.services.acp_client_runtime import AcpClientSpawnPlan
 

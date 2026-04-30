@@ -1927,9 +1927,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   default OpenZues ACP launches use `openzues acp`, set
   `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys,
   and preserve provider auth for explicit custom ACP servers.
+- `acp client` spawn preflight now also mirrors OpenClaw's Windows-safe spawn
+  invocation resolver by unwrapping `.cmd` shims to the Python executable with
+  `windowsHide=true` and without shell execution.
 - Verified the ACP client spawn-plan slice with `python -m pytest
-  tests\test_cli.py -q -k "acp_client"` (`4 passed`), adjacent ACP CLI pack
-  `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"` (`8
+  tests\test_cli.py -q -k "acp_client"` (`5 passed`), adjacent ACP CLI pack
+  `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"` (`9
   passed`), `ruff check src\openzues\cli.py
   src\openzues\services\acp_client_runtime.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py src\openzues\services\acp_client_runtime.py`.
