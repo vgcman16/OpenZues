@@ -7088,7 +7088,7 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel != "slack" or action not in {"edit", "react", "reactions"}:
+        if channel != "slack" or action not in {"delete", "edit", "react", "reactions"}:
             return None
         route = await self._provider_route_for_channel_account(
             channel=channel,
@@ -7109,6 +7109,13 @@ class OpsMeshService:
         if action == "edit":
             return await asyncio.to_thread(
                 self._dispatch_slack_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "delete":
+            return await asyncio.to_thread(
+                self._dispatch_slack_delete_message_action,
                 route,
                 request,
                 secret_token,
@@ -7385,6 +7392,46 @@ class OpsMeshService:
         return {
             "ok": True,
             "edited": True,
+            "channelId": delivered_channel,
+            "messageId": delivered_message_id,
+        }
+
+    def _dispatch_slack_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack delete requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "chat.delete"),
+            {
+                "channel": channel_id,
+                "ts": message_id or "",
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        delivered_channel = str(result.get("channel") or channel_id).strip() or channel_id
+        delivered_message_id = str(result.get("ts") or message_id or "").strip()
+        return {
+            "ok": True,
+            "deleted": True,
             "channelId": delivered_channel,
             "messageId": delivered_message_id,
         }
