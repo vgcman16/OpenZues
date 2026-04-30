@@ -405,6 +405,32 @@ class GatewayNodeMethodRequester:
     message_thread_id: str | None = None
 
 
+_SESSION_MUTATION_CONTROL_CLIENT_IDS = frozenset(
+    {"openclaw-control-ui", "openzues-control-ui"}
+)
+
+
+def _reject_webchat_session_mutation(
+    *,
+    action: str,
+    requester: GatewayNodeMethodRequester,
+) -> None:
+    client_mode = str(requester.client_mode or "").strip().lower()
+    if client_mode != "webchat":
+        return
+    client_id = str(requester.client_id or "").strip().lower()
+    if client_id in _SESSION_MUTATION_CONTROL_CLIENT_IDS:
+        return
+    raise GatewayNodeMethodError(
+        code="INVALID_REQUEST",
+        message=(
+            f"webchat clients cannot {action} sessions; use chat.send for "
+            "session-scoped updates"
+        ),
+        status_code=400,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GatewayTrackedChatRun:
     run_id: str
@@ -6709,6 +6735,10 @@ class GatewayNodeMethodService:
                 label="deleteTranscript",
             )
             _optional_bool(payload.get("emitLifecycleHooks"), label="emitLifecycleHooks")
+            _reject_webchat_session_mutation(
+                action="delete",
+                requester=resolved_requester,
+            )
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
@@ -8330,6 +8360,10 @@ class GatewayNodeMethodService:
                 _normalize_session_patch_send_policy(payload.get("sendPolicy"))
             if "groupActivation" in payload:
                 _normalize_session_patch_group_activation(payload.get("groupActivation"))
+            _reject_webchat_session_mutation(
+                action="patch",
+                requester=resolved_requester,
+            )
             if self._database is None or self._sessions_service is None:
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",

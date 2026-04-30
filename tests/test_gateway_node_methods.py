@@ -11727,6 +11727,46 @@ async def test_sessions_reset_closes_acp_runtime_before_resetting_metadata(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "action"),
+    [
+        ("sessions.patch", {"key": "agent:main:main", "label": "Blocked"}, "patch"),
+        ("sessions.delete", {"key": "agent:main:main"}, "delete"),
+    ],
+)
+async def test_sessions_mutations_reject_webchat_clients(
+    tmp_path: Path,
+    method: str,
+    params: dict[str, object],
+    action: str,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-webchat-mutation.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    with pytest.raises(GatewayNodeMethodError) as exc_info:
+        await service.call(
+            method,
+            params,
+            requester=GatewayNodeMethodRequester(
+                client_id="webchat-ui",
+                client_mode="webchat",
+            ),
+        )
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+    assert str(exc_info.value) == (
+        f"webchat clients cannot {action} sessions; use chat.send for "
+        "session-scoped updates"
+    )
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_removes_metadata_backed_session_and_transcript() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-delete-service"
     shutil.rmtree(tmp_path, ignore_errors=True)

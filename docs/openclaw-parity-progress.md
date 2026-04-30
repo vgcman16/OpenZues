@@ -2332,6 +2332,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_message_uses_known_channel_default_account"` (`6
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- `sessions.patch` and `sessions.delete` now reject non-control webchat
+  clients before storage mutation, matching OpenClaw's `use chat.send for
+  session-scoped updates` policy boundary while allowing the control UI client
+  ids to continue managing sessions.
+- Verified the webchat session-mutation guard with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_mutations_reject_webchat_clients -q`
+  (`2 passed`), adjacent sessions mutation coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_mutations_reject_webchat_clients or sessions_delete or
+  sessions_patch"` (`22 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

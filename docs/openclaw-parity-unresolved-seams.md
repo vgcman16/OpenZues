@@ -207,7 +207,10 @@ the production `sessions.list` gateway method owner, and still exposes
 `GatewayNodeMethodService` owner instead of duplicating runtime logic. The CLI
 service builder wires the same native ACP spawn, sandbox-required child-turn,
 route-backed thread binder, direct send/poll, config, model inventory, and
-control-chat submit seams used by the app-server path. `sessions cleanup`
+control-chat submit seams used by the app-server path. Gateway `sessions.patch`
+and `sessions.delete` now reject non-control webchat clients with the upstream
+`use chat.send for session-scoped updates` error before mutating session
+storage. `sessions cleanup`
 now accepts the upstream command shape and returns OpenClaw-shaped no-mutation
 maintenance summaries from the native `sessions.list` owner for both dry-run
 preview and enforce/apply no-op cases. `--fix-missing` now maps OpenClaw's
