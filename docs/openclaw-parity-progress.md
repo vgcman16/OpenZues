@@ -21,7 +21,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Gateway method registry, method policy wiring, strict parameter guards, config lookup/mutation, node invoke guard rails, device pairing, device-token rotation/revoke, plugin approval lifecycle, exec approval lifecycle, and node/global exec approval policy are landed and verified.
 - Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, system-event session-key wake routing, retry/backoff, one-shot cleanup, and OpenClaw-style CLI add/edit schedule parsing.
-- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
+- Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, plugin node-host browser command/cap inventory, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, abort partial metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id plus requester ownership validation.
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
@@ -1362,6 +1362,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `pytest tests/test_gateway_method_policy.py -q`: 18 passed after adding auth save/login/delete methods to the OpenZues-only method registry proof.
 - `ruff check` on the touched cron/browser command/method/policy/test files: clean.
 - `mypy` on the touched cron/browser command/method/policy files: clean.
+- `pytest tests/test_gateway_capability.py::test_gateway_capability_browser_runtime_projects_plugin_node_host_inventory tests/test_gateway_bootstrap.py::test_get_view_surfaces_browser_service_inventory_from_runtime_status -q`: 2 passed after surfacing plugin-published browser node-host commands/caps through native capability/bootstrap inventory and keeping saved-launch browser method counts tied to plugin runtime methods.
+- `pytest tests/test_gateway_capability.py -q -k "browser_runtime or callable_method_catalog or catalog_item_name"`: 8 passed.
+- `pytest tests/test_gateway_bootstrap.py -q -k "runtime_inventory or browser_service_inventory or cached_mcp_plugin_source"`: 3 passed.
+- `ruff check src/openzues/schemas.py src/openzues/services/gateway_capability.py src/openzues/services/gateway_bootstrap.py tests/test_gateway_capability.py tests/test_gateway_bootstrap.py`: clean.
+- `mypy src/openzues/schemas.py src/openzues/services/gateway_capability.py src/openzues/services/gateway_bootstrap.py`: clean.
 - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "session_message or chat_inject"`: 6 passed after adding OpenClaw nested transcript identity metadata to live `session.message` payloads.
 - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the nested `session.message` metadata seam.
 - `mypy src/openzues/services/gateway_sessions.py`: clean after the nested `session.message` metadata seam.
@@ -1572,6 +1577,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Injected plugin executors can now declare custom owner-only metadata for `tools.invoke`, keeping allowed custom tools hidden from scoped non-admin callers while preserving admin/internal owner execution.
 - `chat.inject`, `chat.history`, and live session message projection now strip trailing OpenClaw external-untrusted metadata suffix blocks from visible transcript text.
 - `chat.send` now strips trailing OpenClaw external-untrusted metadata suffix blocks from returned final payload text blocks while preserving normal run-ack payloads.
+- `chat.send` now projects media-only final reply payloads with stale
+  `NO_REPLY` text into OpenClaw-style `MEDIA:<url>` assistant transcript text.
+- Verified the media-only final reply seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_projects_media_only_final_payload_text_like_openclaw
+  -q` (`1 passed`), adjacent chat-send proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "chat_send and (final_payload or
+  returns_run_ack or attachment_runtime or inherited_delivery_context)"` (`4
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `chat.send deliver=true` now inherits persisted channel-scoped `deliveryContext` routes when the session key is scoped to the same external channel.
 - Gateway requester metadata now carries `clientMode`, allowing configured-main CLI `chat.send` delivery inheritance while keeping UI/webchat callers route-local.
 - Session snapshots now derive missing delivery context from `origin.provider/accountId/threadId` metadata, allowing older configured-main routes to resume external delivery.
@@ -1831,16 +1846,132 @@ These are complete within the bounded OpenZues-local parity contract verified in
   session; omitted or `"rw"` access stays on the writable workspace sandbox
   path.
 - Verified the workspace-access mapping seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn_maps_read_only_workspace_access_to_sandbox_mode"`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_spawn"`, `python -m pytest tests\test_gateway_sandbox_spawn.py -q`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Sandboxed `sessions.spawn` calls that omit `cwd` now resolve the configured
+  child sandbox `workspaceRoot` before staging inline attachments, persist that
+  workspace as `spawnedWorkspaceDir`, pass it into the sandbox dispatch, and
+  preserve the OpenClaw untrusted-attachment prompt suffix.
+- Verified the sandbox attachment workspace-staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_sandboxed_attachments_stage_in_child_workspace_when_cwd_omitted
+  or sessions_spawn_materializes_inline_attachments or
+  sessions_spawn_inherit_dispatches_sandboxed_config_target or
+  sessions_spawn_rejects_acp_attachments_before_runtime_boundary"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Sandboxed `chat.send` attachment delivery now stages decoded base64 media
+  inside the saved session workspace at `media/inbound/...`, strips inline
+  payload bytes before attachment-runtime handoff, and carries sandbox-relative
+  media paths in the runtime prompt so sandboxed turns can reference staged
+  media without host gateway attachment paths.
+- Verified the sandboxed chat-send media staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "chat_send_sandboxed_attachment_stages_media_in_session_workspace or
+  chat_send_uses_attachment_runtime_when_wired or
+  chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments or
+  chat_send_effective_attachments_fail_as_unavailable_runtime or
+  chat_send_ignores_inert_attachments_without_effective_content"`, endpoint
+  proof `python -m pytest tests\test_gateway_nodes_api.py -q -k
+  "effective_chat_send_attachments or preserves_chat_send_attachment_image_order
+  or sessions_send_effective_attachments"`, `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py`.
+- Sandboxed `sessions.send` attachment delivery now reuses the same
+  `media/inbound/...` workspace staging path as `chat.send`, so inter-session
+  sends into sandboxed sessions strip inline payload bytes before attachment
+  runtime handoff and carry sandbox-relative media paths in the runtime prompt.
+- Verified the sandboxed sessions-send media staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_send_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_send_sandboxed_attachment_stages_media_in_session_workspace or
+  sessions_send_uses_attachment_runtime_when_wired or
+  sessions_send_effective_attachments_fail_as_unavailable_runtime or
+  sessions_send_ignores_inert_attachments_without_effective_content or
+  chat_send_sandboxed_attachment_stages_media_in_session_workspace"`, endpoint
+  proof `python -m pytest tests\test_gateway_nodes_api.py -q -k
+  "sessions_send_effective_attachments or effective_chat_send_attachments"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Sandboxed `sessions.steer` attachment delivery now reuses the same
+  `media/inbound/...` workspace staging path for steered follow-up messages,
+  preserving interruption behavior while giving the runtime sandbox-relative
+  media paths instead of inline payload bytes.
+- Verified the sandboxed sessions-steer media staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_steer_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_steer_sandboxed_attachment_stages_media_in_session_workspace or
+  sessions_steer_uses_attachment_runtime_when_wired or
+  sessions_steer_effective_attachments_fail_as_unavailable_runtime or
+  sessions_steer_ignores_inert_attachments_without_effective_content or
+  sessions_send_sandboxed_attachment_stages_media_in_session_workspace or
+  chat_send_sandboxed_attachment_stages_media_in_session_workspace"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Sandboxed node `agent.request` attachment delivery now stages decoded media
+  into the target session workspace before runtime handoff, so iOS/node-origin
+  share requests into sandboxed sessions carry `media/inbound/...` paths and no
+  inline payload bytes.
+- Verified the sandboxed node-agent-request media staging seam with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_node_event_agent_request_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "node_event_agent_request_sandboxed_attachment_stages_media_in_session_workspace
+  or node_event_agent_request_uses_attachment_runtime_when_wired or
+  node_event_agent_request_effective_attachments_fail_as_unavailable_runtime or
+  sessions_steer_sandboxed_attachment_stages_media_in_session_workspace or
+  sessions_send_sandboxed_attachment_stages_media_in_session_workspace or
+  chat_send_sandboxed_attachment_stages_media_in_session_workspace"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Telegram native `sendPoll` topic-qualified targets are now covered by the
   same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload
   carries Bot API `message_thread_id`.
 - Verified the Telegram topic poll proof with `python -m pytest tests\test_ops_mesh.py -q -k "send_direct_channel_poll_parses_telegram_topic_target"`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k "telegram_topic_target or topic_to_parent or send_direct_channel_poll_uses_telegram_native_route or send_direct_channel_poll_parses_telegram_topic_target"`, and `ruff check tests\test_ops_mesh.py`.
+- Provider-backed `gateway.send` now resolves sandbox container media paths
+  from source-session metadata before runtime dispatch: `/workspace/...` and
+  `file:///workspace/...` are mapped to the saved sandbox workspace root,
+  equivalent aliases dedupe after mapping, and remote media URLs stay intact.
+- Verified the sandbox outbound-media normalization seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_normalizes_sandbox_workspace_media_paths_from_session_metadata
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "send_normalizes_sandbox_workspace_media_paths_from_session_metadata or
+  send_uses_channel_message_runtime_for_media_payloads or
+  send_preserves_provider_native_reply_thread_and_document_options"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `update.run` now returns the OpenClaw-shaped runtime update envelope with
   `ok`, native update result stats, restart scheduling metadata, and a restart
   sentinel payload/file carrying session delivery context, thread id, note, and
   the upstream 1000ms minimum timeout normalization.
+- `update.run` now also executes a native fakeable update runner before
+  restart projection: app/CLI construction wires
+  `RuntimeUpdateService.run_update`, successful git/install/build results
+  schedule restart payloads, and dirty worktrees return OpenClaw-shaped
+  `status="skipped"` / `reason="dirty"`.
 - Verified the update-run envelope/sentinel slice with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Verified the native update-runner seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_update_run_executes_native_update_runner_before_restart_scheduling
+  tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps
+  tests\test_runtime_updates.py::test_runtime_update_run_update_skips_dirty_worktree_before_fetch
+  -q` (`3 passed`), adjacent runtime proof `python -m pytest
+  tests\test_runtime_updates.py -q` (`4 passed`), endpoint proof `python -m
+  pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py
+  -q -k "update_run"` (`6 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py tests\test_runtime_updates.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py`.
 - `config.patch` and `config.apply` now return OpenClaw-shaped restart
   sentinel payloads/files with `config-patch` / `config-apply` kind, session
   delivery context, thread id, note, config path stats, and the existing honest
@@ -1892,9 +2023,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   default OpenZues ACP launches use `openzues acp`, set
   `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys,
   and preserve provider auth for explicit custom ACP servers.
+- `acp client` spawn preflight now also mirrors OpenClaw's Windows-safe spawn
+  invocation resolver by unwrapping `.cmd` shims to the Python executable with
+  `windowsHide=true` and without shell execution.
 - Verified the ACP client spawn-plan slice with `python -m pytest
-  tests\test_cli.py -q -k "acp_client"` (`4 passed`), adjacent ACP CLI pack
-  `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"` (`8
+  tests\test_cli.py -q -k "acp_client"` (`5 passed`), adjacent ACP CLI pack
+  `python -m pytest tests\test_cli.py -q -k "acp_bridge or acp_client"` (`9
   passed`), `ruff check src\openzues\cli.py
   src\openzues\services\acp_client_runtime.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py src\openzues\services\acp_client_runtime.py`.
@@ -2590,6 +2724,65 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or telegram_topic or telegram_media_group or invalid_telegram_durations"`
   (`10 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Thread-bound `sessions.spawn` now mirrors OpenClaw's startup-failure cleanup
+  path after a binding has been prepared: the fakeable
+  `GatewaySubagentThreadBinder` protocol exposes `unbind`, route-backed
+  stateless binders report a no-op cleanup result, and runtime startup failures
+  invoke best-effort binding cleanup before deleting the provisional child
+  session metadata/transcript while preserving the original spawn error.
+- Verified the bound-thread failure cleanup seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_cleans_up_binding_when_runtime_start_fails -q`
+  (`1 passed`), adjacent thread-bound coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode"`
+  (`6 passed`), route-binder coverage `python -m pytest
+  tests\test_gateway_thread_binding.py -q` (`3 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_thread_binding.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_thread_binding.py`.
+- RuntimeManager-backed ACP `thread=true` spawns now enforce OpenClaw's
+  provider-context preflight: persistent thread-bound ACP sessions require a
+  requester channel context and return `errorCode="thread_binding_invalid"`
+  without starting a RuntimeManager thread/turn when that context is missing.
+  Existing session-mode RuntimeManager tests now provide explicit requester
+  route context when exercising accepted persistent ACP sessions.
+- Verified the ACP channel-context guard with `python -m pytest
+  tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_rejects_thread_session_without_channel_context -q`
+  (`1 passed`), adjacent ACP runtime coverage `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`9 passed`), node-method ACP coverage
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp_runtime or
+  acp_stream or acp_default or acp_runtime_tracks_wait_cleanup_and_completion"`
+  (`5 passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
+- Gateway-level ACP `thread=true` spawns now honor OpenClaw's explicit channel
+  spawn policy before runtime dispatch: when
+  `channels.<channel>.threadBindings.spawnAcpSessions=false`, `sessions.spawn`
+  returns `errorCode="thread_binding_invalid"` and the native ACP spawn service
+  is not called.
+- Verified the ACP channel spawn-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy -q`
+  (`1 passed`), adjacent ACP gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`6 passed`),
+  ACP adapter coverage `python -m pytest tests\test_gateway_acp_spawn.py -q`
+  (`9 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_acp_spawn.py`.
+- Gateway-level subagent `thread=true` spawns now honor OpenClaw's explicit
+  channel spawn policy before route binding or child dispatch: when
+  `channels.<channel>.threadBindings.spawnSubagentSessions=false`,
+  `sessions.spawn` returns the upstream-shaped policy error and the native
+  thread binder/runtime path is not called.
+- Verified the subagent channel spawn-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_honors_channel_spawn_policy -q`
+  (`1 passed`), adjacent gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or
+  sessions_spawn_acp"` (`13 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

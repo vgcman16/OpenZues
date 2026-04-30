@@ -1006,6 +1006,18 @@ async def _build_services(app_settings: Settings) -> CliServices:
         manager,
         hub,
     )
+    runtime_updates = RuntimeUpdateService(
+        database,
+        enabled=app_settings.auto_self_update_enabled,
+        poll_interval_seconds=app_settings.auto_self_update_poll_interval_seconds,
+        restart_callback=lambda: asyncio.sleep(0),
+    )
+
+    async def run_runtime_update(
+        *,
+        timeout_ms: int | None = None,
+    ) -> dict[str, object]:
+        return await runtime_updates.run_update(timeout_ms=timeout_ms)
 
     async def submit_gateway_chat_message(
         *,
@@ -1079,15 +1091,10 @@ async def _build_services(app_settings: Settings) -> CliServices:
             list_notification_route_views=ops_mesh.list_notification_route_views
         ),
         chat_send_service=submit_gateway_chat_message,
+        runtime_update_runner=run_runtime_update,
     )
     ops_mesh.session_delivery_service = control_chat.append_session_assistant_message
     recall = RecallService(mission_service, database)
-    runtime_updates = RuntimeUpdateService(
-        database,
-        enabled=app_settings.auto_self_update_enabled,
-        poll_interval_seconds=app_settings.auto_self_update_poll_interval_seconds,
-        restart_callback=lambda: asyncio.sleep(0),
-    )
     hermes_platform = HermesPlatformService(
         database,
         manager,

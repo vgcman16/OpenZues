@@ -220,6 +220,43 @@ def test_gateway_capability_browser_runtime_uses_plugin_ids_and_service_ids_from
     assert payload.servers == ["browser-runtime"]
 
 
+def test_gateway_capability_browser_runtime_projects_plugin_node_host_inventory(
+) -> None:
+    instance = _instance_view(
+        instance_id=14,
+        name="Browser Node Host Lane",
+        mcp_servers=[{"id": "browser-runtime"}],
+    )
+
+    payload = _build_browser_runtime_view(
+        [instance],
+        {
+            14: [
+                {
+                    "id": "node-host-runtime",
+                    "pluginId": "browser",
+                    "tools": [{"function": {"name": "browser.request"}}],
+                    "services": [{"serviceId": "browser-control"}],
+                    "nodeHostCommands": [
+                        "browser.proxy",
+                        "photos.proxy",
+                        "browser.inspect",
+                    ],
+                    "nodeHostCaps": ["browser", "photos"],
+                }
+            ]
+        },
+    )
+
+    assert payload is not None
+    assert payload.node_host_commands == ["browser.inspect", "browser.proxy"]
+    assert payload.node_host_caps == ["browser"]
+    assert payload.node_host_command_count == 2
+    assert payload.node_host_cap_count == 1
+    assert payload.lanes[0].node_host_commands == ["browser.inspect", "browser.proxy"]
+    assert payload.lanes[0].node_host_caps == ["browser"]
+
+
 def test_gateway_capability_browser_runtime_accepts_wrapped_inner_string_catalogs() -> None:
     instance = _instance_view(
         instance_id=13,

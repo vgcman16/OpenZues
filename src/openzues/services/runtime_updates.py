@@ -4,6 +4,8 @@ import asyncio
 import logging
 import shutil
 import subprocess
+import sys
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -12,6 +14,13 @@ from pathlib import Path
 from openzues.database import Database
 
 logger = logging.getLogger(__name__)
+_UPDATE_LOG_TAIL_CHARS = 8000
+
+
+RuntimeUpdateCommandRunner = Callable[
+    [list[str], Path, int | None],
+    Awaitable[dict[str, object]],
+]
 
 
 def _utcnow_iso() -> str:
@@ -47,6 +56,79 @@ def _resolve_git_revision(repo_root: Path) -> str | None:
     return revision or None
 
 
+def _trim_update_log_tail(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return value[-_UPDATE_LOG_TAIL_CHARS:]
+
+
+def _update_command_exit_code(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _update_step_log(step: dict[str, object]) -> dict[str, object]:
+    log = step.get("log")
+    return log if isinstance(log, dict) else {}
+
+
+def _update_step_exit_code(step: dict[str, object]) -> int | None:
+    return _update_command_exit_code(_update_step_log(step).get("exitCode"))
+
+
+def _update_step_stdout_tail(step: dict[str, object]) -> str | None:
+    stdout_tail = _update_step_log(step).get("stdoutTail")
+    if not isinstance(stdout_tail, str):
+        return None
+    return stdout_tail.strip() or None
+
+
+async def _default_update_command_runner(
+    argv: list[str],
+    cwd: Path,
+    timeout_ms: int | None,
+) -> dict[str, object]:
+    timeout_seconds = timeout_ms / 1000 if timeout_ms is not None else None
+
+    def run() -> dict[str, object]:
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = (
+                exc.stdout.decode(errors="replace")
+                if isinstance(exc.stdout, bytes)
+                else exc.stdout
+            )
+            stderr = (
+                exc.stderr.decode(errors="replace")
+                if isinstance(exc.stderr, bytes)
+                else exc.stderr
+            )
+            return {
+                "stdout": stdout or "",
+                "stderr": stderr or "command timed out",
+                "exitCode": None,
+            }
+        except OSError as exc:
+            return {"stdout": "", "stderr": str(exc), "exitCode": 1}
+        return {
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "exitCode": completed.returncode,
+        }
+
+    return await asyncio.to_thread(run)
+
+
 @dataclass(slots=True)
 class RuntimeUpdateSnapshot:
     enabled: bool
@@ -76,11 +158,13 @@ class RuntimeUpdateService:
         restart_callback: Callable[[], Awaitable[None]],
         repo_root: Path | None = None,
         revision_resolver: Callable[[Path], str | None] = _resolve_git_revision,
+        update_command_runner: RuntimeUpdateCommandRunner | None = None,
     ) -> None:
         self.database = database
         self.poll_interval_seconds = max(5, int(poll_interval_seconds))
         self._restart_callback = restart_callback
         self._revision_resolver = revision_resolver
+        self._update_command_runner = update_command_runner or _default_update_command_runner
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self.repo_root = repo_root or _default_repo_root()
@@ -105,6 +189,152 @@ class RuntimeUpdateService:
 
     def snapshot(self) -> dict[str, object]:
         return self._snapshot.to_dict()
+
+    async def run_update(self, *, timeout_ms: int | None = None) -> dict[str, object]:
+        started_at = time.monotonic()
+        steps: list[dict[str, object]] = []
+        root = self.repo_root
+        if root is None:
+            return {
+                "status": "error",
+                "mode": "unknown",
+                "reason": "repo-root-unavailable",
+                "steps": steps,
+                "durationMs": 0,
+            }
+        before_sha = self._snapshot.current_revision or self.startup_revision
+        before = {"sha": before_sha, "version": None}
+
+        status_step = await self._run_update_command_step(
+            "git status",
+            ["git", "status", "--porcelain"],
+            timeout_ms=timeout_ms,
+        )
+        steps.append(status_step)
+        if _update_step_exit_code(status_step) != 0:
+            return self._build_update_command_result(
+                status="error",
+                reason="git-status-failed",
+                root=root,
+                before=before,
+                after=None,
+                steps=steps,
+                started_at=started_at,
+            )
+        status_stdout = _update_step_stdout_tail(status_step)
+        if status_stdout:
+            return self._build_update_command_result(
+                status="skipped",
+                reason="dirty",
+                root=root,
+                before=before,
+                after=before,
+                steps=steps,
+                started_at=started_at,
+            )
+
+        for name, argv, reason in (
+            ("git fetch", ["git", "fetch", "--all", "--prune", "--tags"], "fetch-failed"),
+            ("git pull", ["git", "pull", "--ff-only"], "pull-failed"),
+            (
+                "deps install",
+                [sys.executable, "-m", "pip", "install", "-e", "."],
+                "deps-install-failed",
+            ),
+            ("build", [sys.executable, "-m", "compileall", "-q", "src"], "build-failed"),
+        ):
+            step = await self._run_update_command_step(name, argv, timeout_ms=timeout_ms)
+            steps.append(step)
+            if _update_step_exit_code(step) != 0:
+                return self._build_update_command_result(
+                    status="error",
+                    reason=reason,
+                    root=root,
+                    before=before,
+                    after=None,
+                    steps=steps,
+                    started_at=started_at,
+                )
+
+        after_sha = await asyncio.to_thread(self._revision_resolver, root)
+        after = {"sha": after_sha, "version": None}
+        self._snapshot.last_checked_at = _utcnow_iso()
+        self._snapshot.current_revision = after_sha
+        self._snapshot.safe_to_restart = await self._is_safe_restart_boundary()
+        self._snapshot.pending_revision = (
+            after_sha
+            if after_sha is not None and after_sha != self.startup_revision
+            else None
+        )
+        self._snapshot.pending_restart = self._snapshot.pending_revision is not None
+        self._snapshot.last_error = None
+        return self._build_update_command_result(
+            status="ok",
+            reason=None,
+            root=root,
+            before=before,
+            after=after,
+            steps=steps,
+            started_at=started_at,
+        )
+
+    async def _run_update_command_step(
+        self,
+        name: str,
+        argv: list[str],
+        *,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        root = self.repo_root
+        if root is None:
+            return {
+                "name": name,
+                "command": " ".join(argv),
+                "cwd": "",
+                "durationMs": 0,
+                "log": {
+                    "stdoutTail": None,
+                    "stderrTail": "repo root unavailable",
+                    "exitCode": 1,
+                },
+            }
+        started_at = time.monotonic()
+        result = await self._update_command_runner(argv, root, timeout_ms)
+        return {
+            "name": name,
+            "command": " ".join(argv),
+            "cwd": str(root),
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+            "log": {
+                "stdoutTail": _trim_update_log_tail(result.get("stdout")),
+                "stderrTail": _trim_update_log_tail(result.get("stderr")),
+                "exitCode": _update_command_exit_code(result.get("exitCode")),
+            },
+        }
+
+    def _build_update_command_result(
+        self,
+        *,
+        status: str,
+        reason: str | None,
+        root: Path,
+        before: dict[str, str | None],
+        after: dict[str, str | None] | None,
+        steps: list[dict[str, object]],
+        started_at: float,
+    ) -> dict[str, object]:
+        result: dict[str, object] = {
+            "status": status,
+            "mode": "git",
+            "root": str(root),
+            "before": before,
+            "after": after,
+            "steps": steps,
+            "durationMs": int((time.monotonic() - started_at) * 1000),
+        }
+        if reason is not None:
+            result["reason"] = reason
+        return result
 
     async def start(self) -> None:
         if self._task is not None:

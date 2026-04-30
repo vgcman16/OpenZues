@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -122,3 +123,94 @@ async def test_runtime_update_waits_for_idle_boundary_before_restart(tmp_path) -
     assert restart_calls == ["restart"]
     assert idle_snapshot["safe_to_restart"] is True
     assert idle_snapshot["restart_in_progress"] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_executes_native_git_install_build_steps(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[tuple[list[str], Path, int | None]] = []
+    revision_probe = RevisionProbe("rev-a", "rev-b")
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        command_calls.append((argv, cwd, timeout_ms))
+        return {"stdout": "", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("run_update should report restart posture, not exec immediately")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=revision_probe,
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "ok"
+    assert result["mode"] == "git"
+    assert result["root"] == str(tmp_path)
+    assert result["before"] == {"sha": "rev-a", "version": None}
+    assert result["after"] == {"sha": "rev-b", "version": None}
+    assert [step["name"] for step in result["steps"]] == [
+        "git status",
+        "git fetch",
+        "git pull",
+        "deps install",
+        "build",
+    ]
+    assert command_calls == [
+        (["git", "status", "--porcelain"], tmp_path, 1000),
+        (["git", "fetch", "--all", "--prune", "--tags"], tmp_path, 1000),
+        (["git", "pull", "--ff-only"], tmp_path, 1000),
+        ([sys.executable, "-m", "pip", "install", "-e", "."], tmp_path, 1000),
+        ([sys.executable, "-m", "compileall", "-q", "src"], tmp_path, 1000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_run_update_skips_dirty_worktree_before_fetch(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "openzues.db")
+    await database.initialize()
+    command_calls: list[list[str]] = []
+
+    async def fake_command_runner(
+        argv: list[str],
+        cwd: Path,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del cwd, timeout_ms
+        command_calls.append(argv)
+        return {"stdout": " M README.md\n", "stderr": "", "exitCode": 0}
+
+    async def restart_callback() -> None:
+        raise AssertionError("dirty update should not schedule immediate restart")
+
+    service = RuntimeUpdateService(
+        database,
+        enabled=True,
+        poll_interval_seconds=20,
+        restart_callback=restart_callback,
+        repo_root=tmp_path,
+        revision_resolver=RevisionProbe("rev-a"),
+        update_command_runner=fake_command_runner,
+    )
+
+    result = await service.run_update(timeout_ms=1000)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "dirty"
+    assert [step["name"] for step in result["steps"]] == ["git status"]
+    assert command_calls == [["git", "status", "--porcelain"]]

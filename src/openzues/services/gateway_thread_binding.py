@@ -21,6 +21,13 @@ class GatewaySubagentThreadBinder(Protocol):
     ) -> dict[str, object]:
         """Prepare a persistent subagent thread binding and return delivery metadata."""
 
+    async def unbind(
+        self,
+        target: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        """Best-effort cleanup for a prepared binding after spawn failure."""
+
 
 def _optional_string(value: object) -> str | None:
     if not isinstance(value, str):
@@ -140,6 +147,14 @@ class GatewaySubagentThreadBinderRegistry:
             **binding,
             "deliveryOrigin": dict(binding),
         }
+
+    async def unbind(
+        self,
+        target: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        del target, context
+        return {"status": "ok", "unbound": False, "reason": "stateless_route_binding"}
 
 
 def resolve_thread_binding_result(

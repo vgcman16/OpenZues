@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-29
+Updated: 2026-04-30
 
 Current percentage rollup:
 
@@ -59,6 +59,26 @@ mode-specific accepted notes for ordinary run spawns and persistent
 thread-bound session spawns. Remaining ACP presentation parity is deeper
 bridge server/client protocol metadata, replay behavior, and parent-stream
 relay breadth.
+RuntimeManager-backed ACP `thread=true` spawns now also match OpenClaw's
+provider-context preflight: persistent thread-bound ACP sessions require a
+requester channel context and return `errorCode="thread_binding_invalid"`
+before any RuntimeManager thread or turn is started when that context is
+missing. Remaining ACP binding parity is provider-adapter capability/placement
+policy, persistent session binding records, unbind lifecycle breadth, and the
+standalone ACP bridge server/client runtime.
+Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
+thread-binding spawn policy for explicit
+`channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same
+`thread_binding_invalid` error before runtime dispatch. Remaining ACP binding
+parity is provider-adapter capability/placement defaults, persistent session
+binding records, and unbind lifecycle breadth.
+Gateway-level subagent `thread=true` spawns now also honor OpenClaw's channel
+thread-binding spawn policy for explicit
+`channels.<channel>.threadBindings.spawnSubagentSessions=false`, returning the
+same no-dispatch policy error before route binding or child runtime dispatch.
+Remaining thread-binding parity is provider-adapter capability/placement
+defaults, persistent session binding records, and unbind/end-hook lifecycle
+breadth.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
@@ -80,6 +100,18 @@ when dispatched with `sandbox_mode="read-only"`; remaining staging work is
 limited to deeper OpenClaw media/workspace filesystem staging. Explicit
 `workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
 while omitted/`"rw"` access keeps the writable workspace sandbox path.
+Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
+inside the resolved child sandbox workspace from `workspaceRoot`, persist that
+workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
+and keep the OpenClaw untrusted-attachment prompt suffix.
+Sandboxed `chat.send` attachment delivery now stages base64 media into the
+session workspace under `media/inbound/...`, strips inline payload bytes before
+runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
+The sibling `sessions.send` attachment path now uses the same sandbox workspace
+staging behavior, and `sessions.steer` now does the same for steered follow-up
+messages. Node `agent.request` attachment delivery now also stages sandboxed
+media into the target session workspace before runtime handoff. Remaining
+sandbox media staging work is deeper inbound provider media staging.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,
@@ -110,6 +142,14 @@ starting as an unbound control-chat-only turn.
 Terminal `agent.wait` completion announcements now also use the saved
 `completionDelivery` route through the direct channel-send service and persist
 the provider delivery result/error on the child session metadata.
+Thread-bound subagent startup failures now also run best-effort binding cleanup
+after a binding has been prepared but before the child run is accepted: the
+fakeable binder protocol exposes `unbind`, the production route-backed binder
+returns a stateless no-op cleanup result, and the provisional child transcript
+and metadata are still deleted with the original actionable startup error.
+Remaining lifecycle parity is deeper persistent provider binding records,
+provider-native end-hook/farewell behavior on reset/delete, and ACP/session
+binding policy breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
@@ -127,7 +167,10 @@ including reply/thread/media/silent/document/idempotency options. Direct
 provider-backed `gateway.send` calls with an explicit `sessionKey` now
 canonicalize and pass that key as the runtime/mirror session while keeping the
 saved delivery row attached to the channel-derived target session for history
-and replay. Remaining
+and replay. Provider-backed `gateway.send` calls from sandboxed source sessions
+now normalize `/workspace/...` and `file:///workspace/...` media references
+through the saved sandbox workspace root before dispatch, deduping equivalent
+container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
@@ -296,8 +339,10 @@ password flags are used.
 unavailable boundary: default OpenZues ACP server launches use `openzues acp`,
 set `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys
 case-insensitively, and preserve provider auth when callers choose an explicit
-custom ACP server. Remaining ACP CLI parity is still the real bridge
-client/server protocol runtime rather than the spawn preflight contract.
+custom ACP server. The spawn preflight now also mirrors OpenClaw's Windows-safe
+ACP client invocation resolver by unwrapping `.cmd` shims to the Python
+executable without shell execution. Remaining ACP CLI parity is still the real
+bridge client/server protocol runtime rather than the spawn preflight contract.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
@@ -1152,11 +1197,22 @@ session/runtime mismatch.
 
 | Priority | Seam | Status | Why it still matters | Next exact move |
 | --- | --- | --- | --- | --- |
-| P1 | Browser/canvas/nodes/voice OpenClaw feature-family seam | Active | OpenZues now routes direct text send, multi-media URL send, `poll`, explicit cron announce, saved session-like delivery replays, provider-shaped send/poll callbacks, opt-in route-backed gateway webhook adapters, account/channel-specific native adapter bindings, Slack Web API delivery/uploads, Telegram Bot API delivery/media groups, Discord webhook delivery/polls, and WhatsApp Cloud API text/media/interactive-button delivery through one shared outbound runtime owner; full Ops Mesh, CLI, and adjacent gateway node/session/model/log/presence sweeps now prove no smaller provider-runtime blocker remains in this queue. The first browser/canvas/nodes/voice slices are now landed: `node.event` honors upstream-style `chat.subscribe` / `chat.unsubscribe`, the registry can route session-scoped events back to subscribed nodes, node `exec.started` / `exec.finished` / `exec.denied` events queue session-scoped next-heartbeat system notifications with duplicate `exec.finished` suppression, `notifications.changed` events become session-scoped notification wakes, `voice.transcript` events route into the chat runtime with stable node-voice idempotency plus near-duplicate suppression, text `agent.request` deep-links route into the chat runtime with route-safe delivery plus receipt/thinking/timeout hints, effective `agent.request` attachments keep an honest default unavailable boundary and can now pass through an injected attachment runtime, direct `chat.send`, `sessions.send`, and `sessions.steer` can use that injected attachment runtime when wired, `create_app()` now persists effective base64 attachments to durable local media files and passes bounded `media://`/hash/path metadata into control chat instead of raw blob text, recorded `push.apns.register` events move `push.test` from missing-registration to the honest sender-runtime boundary, registered nodes can complete `push.test` through an injected APNS sender adapter, app-level direct plus relay registrations now send OpenClaw-compatible APNS requests with ES256 bearer tokens, bearer relay grants, gateway signatures, and provider response metadata, disconnected APNS-registered nodes can wake/reconnect before `node.invoke`, `node.invoke` retries an available APNS-backed wake once when the first nudge does not reconnect, direct APNS registrations are cleared on upstream-style `400 BadDeviceToken` / `410` invalidation results from alert or wake sends, failed background wake retries send one throttled foreground APNS reopen nudge, assistant control-chat shortcodes now produce structured canvas previews rendered in the web transcript, `/__openclaw__/a2ui` serves a traversal-safe A2UI scaffold plus bundle, `/__openclaw__/ws` exposes the live-reload upgrade boundary plus websocket accept path and reload broadcast owner, `/__openclaw__/canvas/` serves a default canvas host page from the traversal-safe canvas state root, the app now runs a filesystem-backed debounce watcher that publishes `canvas/reload` into connected canvas clients, served canvas HTML now carries the OpenClaw live-reload/action bridge hook, scoped capability URLs now consume minted node canvas tokens for canvas/A2UI/WS paths, malformed `canvas.a2ui.push*` JSONL is rejected before node dispatch, configured node allow/deny command lists now flow into node invoke plus node catalog/scope-upgrade logic, node list/describe/API catalog/pairing surfaces now advertise only allowlisted commands instead of raw rejected declarations, and advertised native browser commands now have gateway-method runtimes backed by `agent-browser` with a truthful unavailable boundary. The broad family is still minimal compared with OpenClaw and remains the highest-leverage repo-wide parity head. | Continue with the next upstream browser/canvas/voice gap, likely richer `browser.status`/`browser.verify` method runtime productization or node-host plugin command inventory, and land the next smallest focused proof. |
+| P1 | Browser/canvas/nodes/voice OpenClaw feature-family seam | Active | OpenZues now routes direct text send, multi-media URL send, `poll`, explicit cron announce, saved session-like delivery replays, provider-shaped send/poll callbacks, opt-in route-backed gateway webhook adapters, account/channel-specific native adapter bindings, Slack Web API delivery/uploads, Telegram Bot API delivery/media groups, Discord webhook delivery/polls, and WhatsApp Cloud API text/media/interactive-button delivery through one shared outbound runtime owner; full Ops Mesh, CLI, and adjacent gateway node/session/model/log/presence sweeps now prove no smaller provider-runtime blocker remains in this queue. The first browser/canvas/nodes/voice slices are now landed: `node.event` honors upstream-style `chat.subscribe` / `chat.unsubscribe`, the registry can route session-scoped events back to subscribed nodes, node `exec.started` / `exec.finished` / `exec.denied` events queue session-scoped next-heartbeat system notifications with duplicate `exec.finished` suppression, `notifications.changed` events become session-scoped notification wakes, `voice.transcript` events route into the chat runtime with stable node-voice idempotency plus near-duplicate suppression, text `agent.request` deep-links route into the chat runtime with route-safe delivery plus receipt/thinking/timeout hints, effective `agent.request` attachments keep an honest default unavailable boundary and can now pass through an injected attachment runtime, direct `chat.send`, `sessions.send`, and `sessions.steer` can use that injected attachment runtime when wired, `create_app()` now persists effective base64 attachments to durable local media files and passes bounded `media://`/hash/path metadata into control chat instead of raw blob text, recorded `push.apns.register` events move `push.test` from missing-registration to the honest sender-runtime boundary, registered nodes can complete `push.test` through an injected APNS sender adapter, app-level direct plus relay registrations now send OpenClaw-compatible APNS requests with ES256 bearer tokens, bearer relay grants, gateway signatures, and provider response metadata, disconnected APNS-registered nodes can wake/reconnect before `node.invoke`, `node.invoke` retries an available APNS-backed wake once when the first nudge does not reconnect, direct APNS registrations are cleared on upstream-style `400 BadDeviceToken` / `410` invalidation results from alert or wake sends, failed background wake retries send one throttled foreground APNS reopen nudge, assistant control-chat shortcodes now produce structured canvas previews rendered in the web transcript, `/__openclaw__/a2ui` serves a traversal-safe A2UI scaffold plus bundle, `/__openclaw__/ws` exposes the live-reload upgrade boundary plus websocket accept path and reload broadcast owner, `/__openclaw__/canvas/` serves a default canvas host page from the traversal-safe canvas state root, the app now runs a filesystem-backed debounce watcher that publishes `canvas/reload` into connected canvas clients, served canvas HTML now carries the OpenClaw live-reload/action bridge hook, scoped capability URLs now consume minted node canvas tokens for canvas/A2UI/WS paths, malformed `canvas.a2ui.push*` JSONL is rejected before node dispatch, configured node allow/deny command lists now flow into node invoke plus node catalog/scope-upgrade logic, node list/describe/API catalog/pairing surfaces now advertise only allowlisted commands instead of raw rejected declarations, advertised native browser commands now have gateway-method runtimes backed by `agent-browser` with a truthful unavailable boundary, plugin-published node-host browser commands/caps are visible in capability/bootstrap inventory, `chat.send` media-only final replies now project stale `NO_REPLY` plus media into OpenClaw-style `MEDIA:<url>` transcript text, `update.run` now drives a native fakeable git/install/build runner before sentinel/restart projection, and ACP client spawn preflight now resolves Windows `.cmd` shims without shell execution. The broad family is still minimal compared with OpenClaw and remains an active repo-wide parity family. | Rotate to the next source-backed runtime/session seam, currently ACP interactive protocol replay or sandboxed spawn media/workspace staging. |
 
 Current queue-head adjustment: `browser.status` is now productized as a read-only gateway method backed by the existing browser posture in operator status, with method/API/policy verification. The next small browser-runtime seam is `browser.verify` / `browser.doctor` productization or a richer node-host plugin command inventory proof.
 
 Current queue-head adjustment: `browser.verify` and `browser.doctor` are now productized as read-scope gateway methods. `browser.verify` runs a bounded `agent-browser` verification, and `browser.doctor` combines existing browser posture with optional verification, so the next small browser/canvas/node seam shifts to richer node-host plugin inventory or the next unimplemented upstream browser command family.
+
+Current queue-head adjustment: plugin node-host browser command inventory is
+now surfaced through the native capability and bootstrap read models. OpenZues
+projects OpenClaw-style plugin-declared `nodeHostCommands` and `nodeHostCaps`
+into `browser_runtime.node_host_commands` / `node_host_caps`, filters them to
+the browser cap family, carries the per-lane counts, and avoids inflating the
+saved-launch runtime method count with locally built-in browser gateway
+methods. The next browser/canvas/node pass should only reopen this family for
+new source-backed runtime inventory gaps; the active next repo-level seam can
+rotate to ACP client harness replay, sandboxed spawn media/workspace staging,
+or another bounded runtime-control queue head.
 
 Current queue-head adjustment: `browser.tabs` is now productized as the first read-only browser command-breadth slice beyond status/verify/open/snapshot/console/errors. The next small browser/canvas/node seam is likely another upstream browser command family such as lifecycle/profile/screenshot/action commands, or richer plugin node-host inventory.
 
@@ -1869,6 +1925,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
 - Injected plugin executors can now declare custom owner-only metadata, so OpenZues can mirror OpenClaw's `ownerOnly: true` custom tool behavior without exposing those tools to scoped non-admin callers.
 - `chat.inject`, `chat.history`, and live session transcript projection now strip trailing OpenClaw external-untrusted metadata suffix blocks from visible message text.
 - `chat.send` final payload projection now strips trailing OpenClaw external-untrusted metadata suffix blocks from returned text blocks while preserving normal run-ack payloads.
+- `chat.send` media-only final reply projection now mirrors OpenClaw's
+  transcript builder: final payloads whose only reply content is media, even
+  when stale text says `NO_REPLY`, return assistant text as `MEDIA:<url>`
+  instead of leaking the control sentinel.
+- Verified the media-only final reply seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_projects_media_only_final_payload_text_like_openclaw
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "chat_send and (final_payload or returns_run_ack or attachment_runtime or
+  inherited_delivery_context)"`, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `chat.send deliver=true` now inherits persisted channel-scoped `deliveryContext` routes when the resolved session key is scoped to the same external channel token.
 - Gateway requester metadata now carries `clientMode`, so configured-main CLI `chat.send` delivery can inherit saved external routes while UI/webchat callers remain route-local.
 - Session snapshots now derive missing `deliveryContext` fields from `origin.provider/accountId/threadId` route metadata, allowing configured-main delivery inheritance for older route records.
@@ -2212,7 +2280,26 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   data-dir restart sentinel payload with session delivery/note/thread context,
   and only reports a restart object when the native update tick actually
   requested one.
+- `update.run` now also executes a native fakeable update runner before
+  restart projection: the app/CLI wire through `RuntimeUpdateService.run_update`,
+  the service performs git clean/fetch/pull plus Python install/build steps,
+  dirty worktrees return `status="skipped"` / `reason="dirty"`, and successful
+  runner results drive the OpenClaw-shaped restart payload plus sentinel stats.
 - Verified the `update.run` envelope/sentinel seam with `python -m pytest tests\test_gateway_node_methods.py -q -k "update_run"`, endpoint proof `python -m pytest tests\test_gateway_nodes_api.py -q -k "update_run"`, adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "update_run or config_write_methods_persist_control_ui_config_with_base_hash or supports_config_set_patch_apply"`, `ruff check src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py`.
+- Verified the native update-runner seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_update_run_executes_native_update_runner_before_restart_scheduling
+  tests\test_runtime_updates.py::test_runtime_update_run_update_executes_native_git_install_build_steps
+  tests\test_runtime_updates.py::test_runtime_update_run_update_skips_dirty_worktree_before_fetch
+  -q`, adjacent `python -m pytest tests\test_runtime_updates.py -q`,
+  endpoint proof `python -m pytest tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py -q -k "update_run"`, `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py tests\test_gateway_node_methods.py
+  tests\test_gateway_nodes_api.py tests\test_runtime_updates.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\runtime_updates.py src\openzues\app.py
+  src\openzues\cli.py`.
 - `config.patch` and `config.apply` now consume the same OpenClaw restart
   request fields they already validated, returning `config-patch` /
   `config-apply` restart sentinels with session delivery context, note,

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 DEFAULT_ACP_SERVER_COMMAND = "openzues"
 DEFAULT_ACP_SERVER_ARGS = ("acp",)
@@ -137,3 +141,80 @@ def build_acp_client_spawn_plan(
         verbose=verbose,
         server_verbose=server_verbose,
     )
+
+
+def resolve_acp_client_spawn_invocation(
+    *,
+    server_command: str,
+    server_args: Sequence[str],
+    platform: str | None = None,
+    env: Mapping[str, str] | None = None,
+    executable: str | None = None,
+) -> dict[str, object]:
+    resolved_platform = platform or sys.platform
+    args = tuple(str(arg) for arg in server_args)
+    if resolved_platform != "win32":
+        return {
+            "command": server_command,
+            "args": args,
+            "shell": False,
+            "windowsHide": False,
+        }
+    command_path = _resolve_windows_acp_client_command_path(server_command, env or os.environ)
+    if command_path is None or command_path.suffix.lower() not in {".cmd", ".bat"}:
+        return {
+            "command": server_command,
+            "args": args,
+            "shell": False,
+            "windowsHide": True,
+        }
+    entry_path = _resolve_windows_acp_client_shim_entry(command_path)
+    if entry_path is None:
+        raise ValueError(
+            f"Cannot resolve ACP client wrapper {command_path} without shell execution."
+        )
+    return {
+        "command": executable or sys.executable,
+        "args": (str(entry_path), *args),
+        "shell": False,
+        "windowsHide": True,
+    }
+
+
+def _resolve_windows_acp_client_command_path(
+    command: str,
+    env: Mapping[str, str],
+) -> Path | None:
+    command_path = Path(command)
+    if command_path.is_absolute() or command_path.parent != Path("."):
+        return command_path if command_path.exists() else None
+    path_value = env.get("PATH") or env.get("Path") or ""
+    pathext = env.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+    extensions = [entry.lower() for entry in pathext.split(";") if entry]
+    for directory in path_value.split(os.pathsep):
+        if not directory:
+            continue
+        base = Path(directory) / command
+        candidates = [base]
+        if base.suffix.lower() not in extensions:
+            candidates.extend(Path(f"{base}{extension.lower()}") for extension in extensions)
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+    resolved = shutil.which(command, path=path_value)
+    return Path(resolved) if resolved else None
+
+
+def _resolve_windows_acp_client_shim_entry(shim_path: Path) -> Path | None:
+    try:
+        content = shim_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    match = re.search(r'"%~dp0\\([^"]+)"\s+%[*]', content, flags=re.IGNORECASE)
+    if match is None:
+        match = re.search(r'"%~dp0([^"]+)"\s+%[*]', content, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    relative = match.group(1).lstrip("\\/")
+    entry_path = shim_path.parent / Path(relative)
+    return entry_path if entry_path.exists() else None

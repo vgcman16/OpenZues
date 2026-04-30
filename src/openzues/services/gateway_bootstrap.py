@@ -101,16 +101,31 @@ def _catalog_item_name(item: object) -> str | None:
         return name or None
     if not isinstance(item, dict):
         return None
-    for key in ("name", "id", "uri", "method", "title", "serviceId"):
+    for key in ("name", "id", "uri", "method", "command", "cap", "title", "serviceId"):
         raw = item.get(key)
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
-    nested_service = item.get("service")
-    if isinstance(nested_service, dict):
-        for key in ("name", "id", "uri", "title"):
-            raw = nested_service.get(key)
-            if isinstance(raw, str) and raw.strip():
-                return raw.strip()
+    for nested_key in ("service", "function", "tool", "plugin", "command"):
+        nested = item.get(nested_key)
+        if isinstance(nested, dict):
+            for key in ("name", "id", "uri", "method", "command", "cap", "title", "serviceId"):
+                raw = nested.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip()
+    return None
+
+
+def _catalog_command_cap(item: object) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    raw = item.get("cap")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    command = item.get("command")
+    if isinstance(command, dict):
+        raw = command.get("cap")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
     return None
 
 
@@ -127,6 +142,54 @@ def _catalog_entry_names(value: Any) -> list[str]:
             if name:
                 names.append(name)
     return names
+
+
+def _node_host_catalog_names(entry: dict[str, Any], *, kind: str) -> list[str]:
+    if kind == "commands":
+        top_level_keys = ("nodeHostCommands", "node_host_commands")
+        nested_keys = ("commands", "nodeHostCommands", "node_host_commands")
+    else:
+        top_level_keys = ("nodeHostCaps", "node_host_caps")
+        nested_keys = ("caps", "nodeHostCaps", "node_host_caps")
+    names: list[str] = []
+    for key in top_level_keys:
+        names.extend(_catalog_entry_names(entry.get(key)))
+    for container_key in ("nodeHost", "node_host", "nodeHostRegistry", "node_host_registry"):
+        nested = entry.get(container_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in nested_keys:
+            names.extend(_catalog_entry_names(nested.get(key)))
+    if kind == "caps":
+        for key in ("nodeHostCommands", "node_host_commands"):
+            raw_commands = entry.get(key)
+            command_items = raw_commands if isinstance(raw_commands, list) else []
+            for item in command_items:
+                if cap := _catalog_command_cap(item):
+                    names.append(cap)
+    return names
+
+
+def _browser_node_host_commands(status_entries: list[dict[str, Any]] | None) -> list[str]:
+    commands: dict[str, str] = {}
+    for entry in status_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        for command in _node_host_catalog_names(entry, kind="commands"):
+            if _is_browser_runtime_name(command) or command.lower().startswith("browser."):
+                commands.setdefault(command.lower(), command)
+    return sorted(commands.values(), key=str.lower)
+
+
+def _browser_node_host_caps(status_entries: list[dict[str, Any]] | None) -> list[str]:
+    caps: dict[str, str] = {}
+    for entry in status_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        for cap in _node_host_catalog_names(entry, kind="caps"):
+            if _is_browser_runtime_name(cap):
+                caps.setdefault(cap.lower(), cap)
+    return sorted(caps.values(), key=str.lower)
 
 
 def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
@@ -268,7 +331,7 @@ def _build_runtime_browser_runtime(
     *,
     plugin_names: list[str],
     service_names: list[str],
-    resolved_methods: list[str],
+    runtime_methods: list[str],
 ) -> GatewayCapabilityBrowserRuntimeView | None:
     if instance is None:
         return None
@@ -276,7 +339,7 @@ def _build_runtime_browser_runtime(
     methods = sorted(
         [
             method_name
-            for method_name in resolved_methods
+            for method_name in runtime_methods
             if _is_browser_runtime_name(method_name)
             or method_name.lower().startswith("browser.")
         ],
@@ -294,6 +357,8 @@ def _build_runtime_browser_runtime(
         [plugin_name for plugin_name in plugin_names if _is_browser_runtime_name(plugin_name)],
         key=str.lower,
     )
+    node_host_commands = _browser_node_host_commands(mcp_server_status)
+    node_host_caps = _browser_node_host_caps(mcp_server_status)
     servers = sorted(
         {
             server_name
@@ -322,7 +387,7 @@ def _build_runtime_browser_runtime(
         recommended_action = (
             "Use this saved launch lane for browser-led verification and browser-control work."
         )
-    elif methods or services or plugins or servers:
+    elif methods or services or node_host_commands or node_host_caps or plugins or servers:
         if instance.connected:
             status = "warn"
             headline = "Browser runtime is partial on the saved launch lane"
@@ -331,6 +396,10 @@ def _build_runtime_browser_runtime(
                 summary_parts.append(f"{len(methods)} method(s)")
             if services:
                 summary_parts.append(f"{len(services)} service(s)")
+            if node_host_commands:
+                summary_parts.append(f"{len(node_host_commands)} node-host command(s)")
+            if node_host_caps:
+                summary_parts.append(f"{len(node_host_caps)} node-host cap(s)")
             if plugins:
                 summary_parts.append(f"{len(plugins)} plugin signal(s)")
             if servers:
@@ -369,6 +438,10 @@ def _build_runtime_browser_runtime(
         summary += f" Plugin signals: {', '.join(plugins[:3])}."
     if servers:
         summary += f" MCP servers: {', '.join(servers[:3])}."
+    if node_host_commands:
+        summary += f" Node-host commands: {', '.join(node_host_commands[:3])}."
+    if node_host_caps:
+        summary += f" Node-host caps: {', '.join(node_host_caps[:3])}."
 
     return GatewayCapabilityBrowserRuntimeView(
         headline=headline,
@@ -379,10 +452,14 @@ def _build_runtime_browser_runtime(
         ready_lane_count=1 if ready else 0,
         method_count=len(methods),
         service_count=len(services),
+        node_host_command_count=len(node_host_commands),
+        node_host_cap_count=len(node_host_caps),
         plugin_count=len(plugins),
         server_count=len(servers),
         methods=methods,
         services=services,
+        node_host_commands=node_host_commands,
+        node_host_caps=node_host_caps,
         plugins=plugins,
         servers=servers,
         recommended_action=recommended_action,
@@ -395,8 +472,12 @@ def _build_runtime_browser_runtime(
                 ready=ready,
                 method_count=len(methods),
                 service_count=len(services),
+                node_host_command_count=len(node_host_commands),
+                node_host_cap_count=len(node_host_caps),
                 methods=methods,
                 services=services,
+                node_host_commands=node_host_commands,
+                node_host_caps=node_host_caps,
                 plugins=plugins,
                 servers=servers,
                 summary=summary,
@@ -451,12 +532,21 @@ def _build_runtime_inventory(
     )
     base_methods = list(base_method_catalog.tools or list_known_gateway_methods())
     resolved_methods = list(method_catalog.tools or base_methods)
+    runtime_methods = sorted(
+        {
+            method_name
+            for entry in mcp_server_status or []
+            if isinstance(entry, dict)
+            for method_name, _scope in _catalog_method_scope_entries(entry.get("tools"))
+        },
+        key=str.lower,
+    )
     browser_runtime = _build_runtime_browser_runtime(
         instance,
         mcp_server_status,
         plugin_names=plugin_names,
         service_names=service_names,
-        resolved_methods=resolved_methods,
+        runtime_methods=runtime_methods,
     )
     lane_label = instance.name if instance is not None else "the saved launch route"
     if instance is None:

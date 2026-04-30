@@ -161,6 +161,8 @@ def _catalog_item_name(item: object) -> str | None:
         "id",
         "uri",
         "method",
+        "command",
+        "cap",
         "title",
         "serviceId",
         "toolName",
@@ -179,6 +181,8 @@ def _catalog_item_name(item: object) -> str | None:
             "id",
             "uri",
             "method",
+            "command",
+            "cap",
             "title",
             "serviceId",
             "toolName",
@@ -306,6 +310,63 @@ def _catalog_names(value: Any) -> list[str]:
             return names
         return [str(key).strip() for key in value if str(key).strip()]
     return []
+
+
+def _node_host_catalog_names(entry: dict[str, Any], *, kind: str) -> list[str]:
+    if kind == "commands":
+        top_level_keys = ("nodeHostCommands", "node_host_commands")
+        nested_keys = ("commands", "nodeHostCommands", "node_host_commands")
+    else:
+        top_level_keys = ("nodeHostCaps", "node_host_caps")
+        nested_keys = ("caps", "nodeHostCaps", "node_host_caps")
+    names: list[str] = []
+    for key in top_level_keys:
+        names.extend(_catalog_names(entry.get(key)))
+    for container_key in ("nodeHost", "node_host", "nodeHostRegistry", "node_host_registry"):
+        nested = entry.get(container_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in nested_keys:
+            names.extend(_catalog_names(nested.get(key)))
+    if kind == "caps":
+        for key in ("nodeHostCommands", "node_host_commands"):
+            raw_commands = entry.get(key)
+            command_items = raw_commands if isinstance(raw_commands, list) else []
+            for item in command_items:
+                if not isinstance(item, dict):
+                    continue
+                raw_cap = item.get("cap")
+                if isinstance(raw_cap, str) and raw_cap.strip():
+                    names.append(raw_cap.strip())
+                    continue
+                command = item.get("command")
+                if isinstance(command, dict):
+                    raw_cap = command.get("cap")
+                    if isinstance(raw_cap, str) and raw_cap.strip():
+                        names.append(raw_cap.strip())
+    return names
+
+
+def _browser_node_host_commands(status_entries: list[dict[str, Any]]) -> list[str]:
+    commands: dict[str, str] = {}
+    for entry in status_entries:
+        if not isinstance(entry, dict):
+            continue
+        for command in _node_host_catalog_names(entry, kind="commands"):
+            if _is_browser_runtime_name(command) or command.lower().startswith("browser."):
+                commands.setdefault(command.lower(), command)
+    return sorted(commands.values(), key=str.lower)
+
+
+def _browser_node_host_caps(status_entries: list[dict[str, Any]]) -> list[str]:
+    caps: dict[str, str] = {}
+    for entry in status_entries:
+        if not isinstance(entry, dict):
+            continue
+        for cap in _node_host_catalog_names(entry, kind="caps"):
+            if _is_browser_runtime_name(cap):
+                caps.setdefault(cap.lower(), cap)
+    return sorted(caps.values(), key=str.lower)
 
 
 def _catalog_method_scope_entries(value: Any) -> list[tuple[str, str | None]]:
@@ -465,6 +526,8 @@ def _build_browser_runtime_view(
     lane_views: list[GatewayCapabilityBrowserLaneView] = []
     methods_by_name: dict[str, str] = {}
     services_by_name: dict[str, str] = {}
+    node_host_commands_by_name: dict[str, str] = {}
+    node_host_caps_by_name: dict[str, str] = {}
     plugins_by_name: dict[str, str] = {}
     servers_by_name: dict[str, str] = {}
 
@@ -494,6 +557,8 @@ def _build_browser_runtime_view(
             for name in _lane_plugin_names(instance, status_entries)
             if _is_browser_runtime_name(name)
         ]
+        browser_node_host_commands = _browser_node_host_commands(status_entries)
+        browser_node_host_caps = _browser_node_host_caps(status_entries)
         browser_servers = sorted(
             {
                 server_name
@@ -509,6 +574,8 @@ def _build_browser_runtime_view(
         if not (
             browser_methods
             or browser_services
+            or browser_node_host_commands
+            or browser_node_host_caps
             or browser_plugins
             or browser_servers
         ):
@@ -518,6 +585,10 @@ def _build_browser_runtime_view(
             methods_by_name.setdefault(method_name.lower(), method_name)
         for service_name in browser_services:
             services_by_name.setdefault(service_name.lower(), service_name)
+        for command_name in browser_node_host_commands:
+            node_host_commands_by_name.setdefault(command_name.lower(), command_name)
+        for cap_name in browser_node_host_caps:
+            node_host_caps_by_name.setdefault(cap_name.lower(), cap_name)
         for plugin_name in browser_plugins:
             plugins_by_name.setdefault(plugin_name.lower(), plugin_name)
         for server_name in browser_servers:
@@ -537,6 +608,10 @@ def _build_browser_runtime_view(
                 summary_parts.append(f"{len(browser_methods)} method(s)")
             if browser_services:
                 summary_parts.append(f"{len(browser_services)} service(s)")
+            if browser_node_host_commands:
+                summary_parts.append(f"{len(browser_node_host_commands)} node-host command(s)")
+            if browser_node_host_caps:
+                summary_parts.append(f"{len(browser_node_host_caps)} node-host cap(s)")
             if browser_plugins:
                 summary_parts.append(f"{len(browser_plugins)} plugin signal(s)")
             if browser_servers:
@@ -560,8 +635,12 @@ def _build_browser_runtime_view(
                 ready=ready,
                 method_count=len(browser_methods),
                 service_count=len(browser_services),
+                node_host_command_count=len(browser_node_host_commands),
+                node_host_cap_count=len(browser_node_host_caps),
                 methods=browser_methods,
                 services=browser_services,
+                node_host_commands=browser_node_host_commands,
+                node_host_caps=browser_node_host_caps,
                 plugins=browser_plugins,
                 servers=browser_servers,
                 summary=summary,
@@ -578,6 +657,8 @@ def _build_browser_runtime_view(
     partial_connected_count = sum(lane.connected and not lane.ready for lane in lane_views)
     methods = sorted(methods_by_name.values(), key=str.lower)
     services = sorted(services_by_name.values(), key=str.lower)
+    node_host_commands = sorted(node_host_commands_by_name.values(), key=str.lower)
+    node_host_caps = sorted(node_host_caps_by_name.values(), key=str.lower)
     plugins = sorted(plugins_by_name.values(), key=str.lower)
     servers = sorted(servers_by_name.values(), key=str.lower)
 
@@ -630,6 +711,10 @@ def _build_browser_runtime_view(
         summary += f" Plugin signals: {_join_list(plugins[:3])}."
     if servers:
         summary += f" MCP servers: {_join_list(servers[:3])}."
+    if node_host_commands:
+        summary += f" Node-host commands: {_join_list(node_host_commands[:3])}."
+    if node_host_caps:
+        summary += f" Node-host caps: {_join_list(node_host_caps[:3])}."
 
     return GatewayCapabilityBrowserRuntimeView(
         headline=headline,
@@ -640,10 +725,14 @@ def _build_browser_runtime_view(
         ready_lane_count=ready_lane_count,
         method_count=len(methods),
         service_count=len(services),
+        node_host_command_count=len(node_host_commands),
+        node_host_cap_count=len(node_host_caps),
         plugin_count=len(plugins),
         server_count=len(servers),
         methods=methods,
         services=services,
+        node_host_commands=node_host_commands,
+        node_host_caps=node_host_caps,
         plugins=plugins,
         servers=servers,
         recommended_action=recommended_action,

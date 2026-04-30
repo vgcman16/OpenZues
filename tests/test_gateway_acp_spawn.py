@@ -8,6 +8,15 @@ import pytest
 from openzues.services.gateway_acp_spawn import RuntimeManagerAcpSpawnService
 
 
+def _acp_thread_context() -> dict[str, object]:
+    return {
+        "requesterChannel": "slack",
+        "requesterAccountId": "default",
+        "requesterTo": "channel:C123",
+        "requesterThreadId": "1710000000.000400",
+    }
+
+
 class FakeManager:
     def __init__(self) -> None:
         self.start_thread_calls: list[dict[str, object]] = []
@@ -164,6 +173,30 @@ async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_run_
 
 
 @pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_rejects_thread_session_without_channel_context() -> None:
+    manager = FakeManager()
+    service = RuntimeManagerAcpSpawnService(manager)
+
+    payload = await service.spawn(
+        {
+            "task": "Keep this ACP session alive in a provider thread.",
+            "agentId": "codex",
+            "mode": "session",
+            "thread": True,
+        },
+        {},
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "thread_binding_invalid",
+        "error": "thread=true for ACP sessions requires a channel context.",
+    }
+    assert manager.start_thread_calls == []
+    assert manager.start_turn_calls == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_session_mode() -> None:
     manager = FakeManager()
     service = RuntimeManagerAcpSpawnService(manager)
@@ -176,7 +209,7 @@ async def test_runtime_manager_acp_spawn_returns_openclaw_accepted_note_for_sess
             "mode": "session",
             "thread": True,
         },
-        {},
+        _acp_thread_context(),
     )
 
     assert payload["note"] == (
@@ -198,7 +231,7 @@ async def test_runtime_manager_acp_spawn_resumes_existing_thread() -> None:
             "mode": "session",
             "thread": True,
         },
-        {},
+        _acp_thread_context(),
     )
 
     assert payload["status"] == "accepted"

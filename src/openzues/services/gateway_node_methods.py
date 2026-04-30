@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, NoReturn, cast
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -109,6 +109,7 @@ from openzues.services.gateway_wake import GatewayWakeService
 from openzues.services.gateway_wizard import GatewayWizardService
 from openzues.services.hub import BroadcastHub
 from openzues.services.session_keys import (
+    DEFAULT_ACCOUNT_ID,
     DEFAULT_AGENT_ID,
     DEFAULT_MAIN_KEY,
     build_agent_main_session_key,
@@ -165,6 +166,7 @@ _CHAT_HISTORY_DEFAULT_MAX_CHARS = 8_000
 _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024
 _CHAT_HISTORY_MAX_TOTAL_BYTES = 6 * 1024 * 1024
 _CHAT_HISTORY_OVERSIZED_PLACEHOLDER = "[chat.history omitted: message too large]"
+_CHAT_ATTACHMENT_MAX_BYTES = 5_000_000
 _ASSISTANT_VISIBLE_TOOL_RESULT_BLOCK_RE = re.compile(
     r"<\s*tool_result\b[^>]*>.*?(?:<\s*/\s*(?:tool_result|tool_call)\s*>|\Z)",
     re.IGNORECASE | re.DOTALL,
@@ -189,6 +191,14 @@ _SESSIONS_SPAWN_ACCEPTED_NOTE = (
     "completions arrive. If a child completion event arrives AFTER your final "
     "answer, reply ONLY with NO_REPLY."
 )
+_CHAT_ATTACHMENT_EXTENSIONS_BY_MIME = {
+    "image/gif": "gif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
 _SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound session stays active after this task; continue in-thread for follow-ups."
 )
@@ -1351,6 +1361,7 @@ class GatewayNodeMethodService:
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
         runtime_update_tick: Callable[[], Awaitable[bool]] | None = None,
         runtime_update_view: Callable[[], Awaitable[dict[str, object]]] | None = None,
+        runtime_update_runner: Callable[..., Awaitable[dict[str, object]]] | None = None,
         wizard_service: GatewayWizardService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
         wake_service: GatewayWakeService | None = None,
@@ -1458,6 +1469,7 @@ class GatewayNodeMethodService:
         self._status_service = status_service
         self._runtime_update_tick = runtime_update_tick
         self._runtime_update_view = runtime_update_view
+        self._runtime_update_runner = runtime_update_runner
         self._wizard_service = wizard_service
         self._voicewake_service = voicewake_service
         self._wake_service = wake_service
@@ -2141,6 +2153,33 @@ class GatewayNodeMethodService:
             if target is not None:
                 return target
         return _sessions_send_announce_target_from_key(session_key)
+
+    async def _cleanup_failed_thread_binding(
+        self,
+        *,
+        session_key: str,
+        agent_id: str,
+        thread_binding: Mapping[str, object] | None,
+        reason: str,
+    ) -> None:
+        if thread_binding is None or self._subagent_thread_binder is None:
+            return
+        unbind = getattr(self._subagent_thread_binder, "unbind", None)
+        if not callable(unbind):
+            return
+        context: dict[str, object] = {"reason": reason}
+        for key in ("channel", "to", "accountId", "threadId"):
+            value = _string_or_none(thread_binding.get(key))
+            if value is not None:
+                context[key] = value
+        try:
+            await cast(Any, unbind)(
+                {"sessionKey": session_key, "agentId": agent_id},
+                context,
+            )
+        except Exception:
+            # Best-effort cleanup: preserve the actionable spawn failure.
+            return
 
     async def _invoke_gateway_tool(
         self,
@@ -4157,7 +4196,9 @@ class GatewayNodeMethodService:
                 payload,
                 include_timeout_ms=True,
             )
-            if self._runtime_update_tick is None or self._runtime_update_view is None:
+            if self._runtime_update_runner is None and (
+                self._runtime_update_tick is None or self._runtime_update_view is None
+            ):
                 raise GatewayNodeMethodError(
                     code="UNAVAILABLE",
                     message=(
@@ -4173,15 +4214,27 @@ class GatewayNodeMethodService:
             )
             started_at = time.monotonic()
             try:
-                restarted = await self._runtime_update_tick()
-                update_view = await self._runtime_update_view()
-                duration_ms = int((time.monotonic() - started_at) * 1000)
-                update_result = _build_update_run_result(
-                    update_view,
-                    restarted=restarted,
-                    timeout_ms=timeout_ms,
-                    duration_ms=duration_ms,
-                )
+                if self._runtime_update_runner is not None:
+                    raw_update_result = await self._runtime_update_runner(
+                        timeout_ms=timeout_ms,
+                    )
+                    update_result = _normalize_update_run_runner_result(
+                        raw_update_result,
+                        timeout_ms=timeout_ms,
+                    )
+                    restarted = update_result.get("status") == "ok"
+                else:
+                    assert self._runtime_update_tick is not None
+                    assert self._runtime_update_view is not None
+                    restarted = await self._runtime_update_tick()
+                    update_view = await self._runtime_update_view()
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    update_result = _build_update_run_result(
+                        update_view,
+                        restarted=restarted,
+                        timeout_ms=timeout_ms,
+                        duration_ms=duration_ms,
+                    )
             except Exception as exc:
                 restarted = False
                 duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -5677,12 +5730,6 @@ class GatewayNodeMethodService:
                 if "mediaUrls" in payload and payload.get("mediaUrls") is not None
                 else []
             )
-            normalized_media_urls = _normalize_gateway_send_media_urls(
-                media_url=media_url,
-                media_urls=media_urls,
-            )
-            if not message.strip() and not normalized_media_urls:
-                raise ValueError("invalid send params: text or media is required")
             gif_playback = (
                 _optional_bool(payload.get("gifPlayback"), label="gifPlayback")
                 if "gifPlayback" in payload
@@ -5737,6 +5784,16 @@ class GatewayNodeMethodService:
                 source_session_key,
                 now_ms=now_ms,
             )
+            sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                source_session_key
+            )
+            normalized_media_urls = _normalize_gateway_send_media_urls(
+                media_url=media_url,
+                media_urls=media_urls,
+                sandbox_root=sandbox_media_root,
+            )
+            if not message.strip() and not normalized_media_urls:
+                raise ValueError("invalid send params: text or media is required")
             idempotency_key = _require_non_empty_string(
                 payload.get("idempotencyKey"),
                 label="idempotencyKey",
@@ -6185,6 +6242,22 @@ class GatewayNodeMethodService:
                         status_code=503,
                     )
                 assert isinstance(attachments, list)
+                image_order = _chat_attachment_image_order(attachments)
+                sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                    session_key
+                )
+                runtime_attachments = attachments
+                if sandbox_media_root is not None:
+                    runtime_attachments, sandbox_media_paths = (
+                        _stage_gateway_chat_sandbox_attachments(
+                            sandbox_root=sandbox_media_root,
+                            attachments=attachments,
+                        )
+                    )
+                    message_for_runtime = _format_gateway_chat_sandbox_media_paths(
+                        message_for_runtime,
+                        sandbox_media_paths,
+                    )
                 send_result = await self._chat_attachment_send_service(
                     session_key=session_key,
                     message=message_for_runtime,
@@ -6192,8 +6265,8 @@ class GatewayNodeMethodService:
                     thinking=thinking,
                     deliver=deliver,
                     timeout_ms=timeout_ms,
-                    attachments=attachments,
-                    image_order=_chat_attachment_image_order(attachments),
+                    attachments=runtime_attachments,
+                    image_order=image_order,
                     channel=delivery_channel,
                     to=delivery_to,
                     node_id=None,
@@ -6427,6 +6500,21 @@ class GatewayNodeMethodService:
                         status_code=503,
                     )
                 assert isinstance(attachments, list)
+                sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                    session_key
+                )
+                runtime_attachments = attachments
+                if sandbox_media_root is not None:
+                    runtime_attachments, sandbox_media_paths = (
+                        _stage_gateway_chat_sandbox_attachments(
+                            sandbox_root=sandbox_media_root,
+                            attachments=attachments,
+                        )
+                    )
+                    runtime_message = _format_gateway_chat_sandbox_media_paths(
+                        runtime_message,
+                        sandbox_media_paths,
+                    )
                 send_result = await self._chat_attachment_send_service(
                     session_key=session_key,
                     message=runtime_message,
@@ -6434,7 +6522,7 @@ class GatewayNodeMethodService:
                     thinking=thinking,
                     deliver=None,
                     timeout_ms=timeout_ms,
-                    attachments=attachments,
+                    attachments=runtime_attachments,
                     channel=None,
                     to=None,
                     node_id=None,
@@ -6581,14 +6669,30 @@ class GatewayNodeMethodService:
                         status_code=503,
                     )
                 assert isinstance(attachments, list)
+                sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                    session_key
+                )
+                runtime_attachments = attachments
+                runtime_message = message
+                if sandbox_media_root is not None:
+                    runtime_attachments, sandbox_media_paths = (
+                        _stage_gateway_chat_sandbox_attachments(
+                            sandbox_root=sandbox_media_root,
+                            attachments=attachments,
+                        )
+                    )
+                    runtime_message = _format_gateway_chat_sandbox_media_paths(
+                        message,
+                        sandbox_media_paths,
+                    )
                 steer_result = await self._chat_attachment_send_service(
                     session_key=session_key,
-                    message=message,
+                    message=runtime_message,
                     idempotency_key=idempotency_key,
                     thinking=thinking,
                     deliver=None,
                     timeout_ms=timeout_ms,
-                    attachments=attachments,
+                    attachments=runtime_attachments,
                     channel=None,
                     to=None,
                     node_id=None,
@@ -7471,6 +7575,19 @@ class GatewayNodeMethodService:
                     else _sessions_spawn_default_run_timeout_seconds(self._config_service)
                 )
                 requester_origin = _requester_route_context(resolved_requester)
+                if thread:
+                    acp_thread_policy_error = _sessions_spawn_thread_policy_error(
+                        self._config_service,
+                        requester_origin=requester_origin,
+                        kind="acp",
+                    )
+                    if acp_thread_policy_error is not None:
+                        return {
+                            "status": "error",
+                            "errorCode": "thread_binding_invalid",
+                            "error": acp_thread_policy_error,
+                            **role_context,
+                        }
                 acp_result = await self._acp_spawn_service.spawn(
                     {
                         "task": task,
@@ -7739,6 +7856,9 @@ class GatewayNodeMethodService:
             model = _optional_non_empty_string(payload.get("model"), label="model")
             thinking = _optional_non_empty_string(payload.get("thinking"), label="thinking")
             cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
+            spawned_workspace_dir = cwd
+            if spawned_workspace_dir is None and child_sandbox_status.sandboxed:
+                spawned_workspace_dir = child_sandbox_status.workspace_root
             mode = _optional_enum_value(
                 payload.get("mode"),
                 label="mode",
@@ -7845,6 +7965,18 @@ class GatewayNodeMethodService:
                     metadata["lastThreadId"] = requester_origin["threadId"]
             thread_binding: dict[str, Any] | None = None
             if thread:
+                subagent_thread_policy_error = _sessions_spawn_thread_policy_error(
+                    self._config_service,
+                    requester_origin=requester_origin,
+                    kind="subagent",
+                )
+                if subagent_thread_policy_error is not None:
+                    thread_policy_response: dict[str, Any] = {
+                        "status": "error",
+                        "error": subagent_thread_policy_error,
+                    }
+                    thread_policy_response.update(role_context)
+                    return thread_policy_response
                 assert self._subagent_thread_binder is not None
                 raw_thread_binding = await self._subagent_thread_binder(
                     {"sessionKey": spawn_parent_session_key, "agentId": requester_agent_id},
@@ -7883,8 +8015,8 @@ class GatewayNodeMethodService:
                 metadata["model"] = model
             if thinking is not None:
                 metadata["thinkingLevel"] = thinking
-            if cwd is not None:
-                metadata["spawnedWorkspaceDir"] = cwd
+            if spawned_workspace_dir is not None:
+                metadata["spawnedWorkspaceDir"] = spawned_workspace_dir
             if agent_id is not None:
                 metadata["agentId"] = agent_id
             if light_context:
@@ -7903,7 +8035,11 @@ class GatewayNodeMethodService:
             attachment_suffix: str | None = None
             attachment_dir: Path | None = None
             if payload.get("attachments") not in (None, []):
-                workspace_dir = Path(cwd).expanduser() if cwd is not None else Path.cwd()
+                workspace_dir = (
+                    Path(spawned_workspace_dir).expanduser()
+                    if spawned_workspace_dir is not None
+                    else Path.cwd()
+                )
                 attachment_receipt, attachment_suffix = _materialize_sessions_spawn_attachments(
                     workspace_dir=workspace_dir,
                     attachments=payload.get("attachments"),
@@ -7950,7 +8086,7 @@ class GatewayNodeMethodService:
                         "sandbox": "require",
                         "sandbox_mode": child_native_sandbox_mode,
                         "agent_id": target_agent_id,
-                        "cwd": cwd,
+                        "cwd": spawned_workspace_dir,
                         "model": model,
                     }
                     if child_sandbox_status.sandboxed
@@ -7986,6 +8122,12 @@ class GatewayNodeMethodService:
                     **sandbox_kwargs,
                 )
             except Exception as exc:  # noqa: BLE001 - preserve actionable spawn error.
+                await self._cleanup_failed_thread_binding(
+                    session_key=canonical_key,
+                    agent_id=target_agent_id,
+                    thread_binding=thread_binding,
+                    reason="spawn-failed",
+                )
                 if attachment_dir is not None:
                     shutil.rmtree(attachment_dir, ignore_errors=True)
                 await self._database.delete_control_chat_messages(session_key=canonical_key)
@@ -8016,6 +8158,12 @@ class GatewayNodeMethodService:
                 else "error"
             )
             if status != "accepted":
+                await self._cleanup_failed_thread_binding(
+                    session_key=canonical_key,
+                    agent_id=target_agent_id,
+                    thread_binding=thread_binding,
+                    reason="spawn-failed",
+                )
                 if attachment_dir is not None:
                     shutil.rmtree(attachment_dir, ignore_errors=True)
                 await self._database.delete_control_chat_messages(session_key=canonical_key)
@@ -11572,14 +11720,30 @@ class GatewayNodeMethodService:
         if has_effective_attachments:
             assert self._chat_attachment_send_service is not None
             assert isinstance(attachments, list)
+            sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                session_key
+            )
+            runtime_attachments = attachments
+            runtime_message = message
+            if sandbox_media_root is not None:
+                runtime_attachments, sandbox_media_paths = (
+                    _stage_gateway_chat_sandbox_attachments(
+                        sandbox_root=sandbox_media_root,
+                        attachments=attachments,
+                    )
+                )
+                runtime_message = _format_gateway_chat_sandbox_media_paths(
+                    message,
+                    sandbox_media_paths,
+                )
             send_result = await self._chat_attachment_send_service(
                 session_key=session_key,
-                message=message,
+                message=runtime_message,
                 idempotency_key=idempotency_key,
                 thinking=thinking,
                 deliver=deliver,
                 timeout_ms=timeout_ms,
-                attachments=attachments,
+                attachments=runtime_attachments,
                 channel=delivery_channel,
                 to=delivery_to,
                 node_id=node_id,
@@ -11678,6 +11842,20 @@ class GatewayNodeMethodService:
                 return resolved_alias_key
             return session_key
         return str(existing_entry.get("key") or session_key)
+
+    async def _gateway_session_sandbox_media_root(
+        self,
+        session_key: str | None,
+    ) -> str | None:
+        if session_key is None or self._database is None:
+            return None
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("sandboxed") is not True:
+            return None
+        return _string_or_none(metadata.get("sandboxWorkspaceRoot")) or _string_or_none(
+            metadata.get("spawnedWorkspaceDir")
+        )
 
     async def _resolve_unique_session_id_alias_key(
         self,
@@ -12868,6 +13046,121 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_thread_policy_error(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str] | None,
+    kind: Literal["acp", "subagent"],
+) -> str | None:
+    channel = (
+        _string_or_none(requester_origin.get("channel"))
+        if requester_origin is not None
+        else None
+    )
+    if channel is None:
+        if kind == "acp":
+            return "thread=true for ACP sessions requires a channel context."
+        return None
+    channel = channel.lower()
+    account_id = (
+        _string_or_none(requester_origin.get("accountId"))
+        if requester_origin is not None
+        else None
+    ) or DEFAULT_ACCOUNT_ID
+    snapshot = config_service.build_snapshot() if config_service is not None else {}
+    session_thread_bindings = _thread_binding_config(
+        _mapping_or_none(snapshot.get("session")),
+    )
+    channel_config = _channel_config_for_thread_binding(snapshot, channel)
+    root_thread_bindings = _thread_binding_config(channel_config)
+    account_thread_bindings = _thread_binding_account_config(
+        channel_config,
+        account_id=account_id,
+    )
+    enabled = (
+        _bool_or_none(account_thread_bindings.get("enabled"))
+        if account_thread_bindings is not None
+        else None
+    )
+    if enabled is None and root_thread_bindings is not None:
+        enabled = _bool_or_none(root_thread_bindings.get("enabled"))
+    if enabled is None and session_thread_bindings is not None:
+        enabled = _bool_or_none(session_thread_bindings.get("enabled"))
+    if enabled is False:
+        return (
+            f"Thread bindings are disabled for {channel} "
+            f"(set channels.{channel}.threadBindings.enabled=true to override "
+            "for this account, or session.threadBindings.enabled=true globally)."
+        )
+    spawn_enabled = (
+        _bool_or_none(account_thread_bindings.get(_thread_binding_spawn_flag_key(kind)))
+        if account_thread_bindings is not None
+        else None
+    )
+    if spawn_enabled is None and root_thread_bindings is not None:
+        spawn_enabled = _bool_or_none(
+            root_thread_bindings.get(_thread_binding_spawn_flag_key(kind))
+        )
+    if spawn_enabled is False:
+        spawn_flag_key = _thread_binding_spawn_flag_key(kind)
+        return (
+            f"Thread-bound {kind} spawns are disabled for {channel} "
+            f"(set channels.{channel}.threadBindings.{spawn_flag_key}=true to enable)."
+        )
+    return None
+
+
+def _thread_binding_spawn_flag_key(kind: Literal["acp", "subagent"]) -> str:
+    return "spawnAcpSessions" if kind == "acp" else "spawnSubagentSessions"
+
+
+def _mapping_or_none(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _thread_binding_config(
+    container: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    if container is None:
+        return None
+    return _mapping_or_none(container.get("threadBindings"))
+
+
+def _channel_config_for_thread_binding(
+    snapshot: Mapping[str, object],
+    channel: str,
+) -> Mapping[str, object] | None:
+    channels = _mapping_or_none(snapshot.get("channels"))
+    if channels is None:
+        return None
+    exact = _mapping_or_none(channels.get(channel))
+    if exact is not None:
+        return exact
+    for key, value in channels.items():
+        if isinstance(key, str) and key.strip().lower() == channel:
+            return _mapping_or_none(value)
+    return None
+
+
+def _thread_binding_account_config(
+    channel_config: Mapping[str, object] | None,
+    *,
+    account_id: str,
+) -> Mapping[str, object] | None:
+    if channel_config is None:
+        return None
+    accounts = _mapping_or_none(channel_config.get("accounts"))
+    if accounts is None:
+        return None
+    exact = _mapping_or_none(accounts.get(account_id))
+    if exact is None:
+        for key, value in accounts.items():
+            if isinstance(key, str) and key.strip().lower() == account_id.lower():
+                exact = _mapping_or_none(value)
+                break
+    return _thread_binding_config(exact)
 
 
 def _sessions_spawn_sandbox_runtime_status(
@@ -14527,6 +14820,26 @@ def _build_update_run_result(
     return result
 
 
+def _normalize_update_run_runner_result(
+    result: dict[str, object],
+    *,
+    timeout_ms: int | None,
+) -> dict[str, object]:
+    normalized = dict(result)
+    if "steps" not in normalized or not isinstance(normalized.get("steps"), list):
+        normalized["steps"] = []
+    if "durationMs" not in normalized:
+        normalized["durationMs"] = 0
+    if "status" not in normalized:
+        normalized["status"] = "error"
+        normalized.setdefault("reason", "missing-status")
+    if "mode" not in normalized:
+        normalized["mode"] = "unknown"
+    if timeout_ms is not None:
+        normalized["timeoutMs"] = timeout_ms
+    return normalized
+
+
 def _build_update_run_error_result(
     exc: Exception,
     *,
@@ -15695,8 +16008,147 @@ def _sanitize_gateway_chat_send_message_input(message: str) -> str:
 def _sanitize_gateway_chat_result_payload(payload: dict[str, object]) -> dict[str, object]:
     sanitized = _sanitize_gateway_chat_result_value(payload)
     if isinstance(sanitized, dict):
-        return cast(dict[str, object], sanitized)
+        return _project_gateway_chat_result_media_only_final_payload(
+            cast(dict[str, object], sanitized)
+        )
     return payload
+
+
+def _project_gateway_chat_result_media_only_final_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    media_urls = _gateway_chat_result_media_urls(payload)
+    if not media_urls:
+        return payload
+    top_text = _string_or_none(payload.get("text"))
+    message_texts = _gateway_chat_result_message_texts(payload.get("message"))
+    has_real_text = (
+        top_text is not None
+        and not _is_gateway_chat_suppressed_reply_text(top_text)
+    ) or any(not _is_gateway_chat_suppressed_reply_text(text) for text in message_texts)
+    if has_real_text:
+        return payload
+    if top_text is None and not _is_gateway_chat_assistant_message(payload.get("message")):
+        return payload
+    transcript_text = _build_gateway_chat_result_media_transcript_text(
+        payload,
+        media_urls=media_urls,
+    )
+    if not transcript_text:
+        return payload
+    projected = dict(payload)
+    projected["text"] = transcript_text
+    message = _project_gateway_chat_result_message_text(
+        projected.get("message"),
+        transcript_text,
+    )
+    if message is not None:
+        projected["message"] = message
+    return projected
+
+
+def _build_gateway_chat_result_media_transcript_text(
+    payload: dict[str, object],
+    *,
+    media_urls: list[str],
+) -> str:
+    lines: list[str] = []
+    reply_to_id = _string_or_none(payload.get("replyToId")) or _string_or_none(
+        payload.get("reply_to_id")
+    )
+    if reply_to_id is not None:
+        lines.append(f"[[reply_to:{reply_to_id}]]")
+    elif payload.get("replyToCurrent") is True or payload.get("reply_to_current") is True:
+        lines.append("[[reply_to_current]]")
+    for media_url in media_urls:
+        if media_url:
+            lines.append(f"MEDIA:{media_url}")
+    return "\n".join(lines).strip()
+
+
+def _gateway_chat_result_media_urls(payload: Mapping[str, object]) -> list[str]:
+    media_url = _string_or_none(payload.get("mediaUrl")) or _string_or_none(
+        payload.get("media_url")
+    )
+    media_urls: list[str] = []
+    for key in ("mediaUrls", "media_urls"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        media_urls.extend(entry for entry in value if isinstance(entry, str))
+    return _normalize_gateway_send_media_urls(
+        media_url=media_url,
+        media_urls=media_urls,
+    )
+
+
+def _is_gateway_chat_suppressed_reply_text(text: str) -> bool:
+    return text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS
+
+
+def _gateway_chat_result_message_texts(message: object) -> list[str]:
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content.strip()
+        return [text] if text else []
+    if not isinstance(content, list):
+        return []
+    texts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_text = _string_or_none(item.get("text"))
+        if item_text is not None:
+            texts.append(item_text)
+    return texts
+
+
+def _is_gateway_chat_assistant_message(message: object) -> bool:
+    if not isinstance(message, dict):
+        return False
+    role = _string_or_none(message.get("role"))
+    return role is None or role == "assistant"
+
+
+def _project_gateway_chat_result_message_text(
+    message: object,
+    transcript_text: str,
+) -> dict[str, object] | None:
+    if not isinstance(message, dict) or not _is_gateway_chat_assistant_message(message):
+        return None
+    projected = dict(cast(dict[str, object], message))
+    content = projected.get("content")
+    if isinstance(content, str):
+        if not content.strip() or _is_gateway_chat_suppressed_reply_text(content):
+            projected["content"] = transcript_text
+        return projected
+    if not isinstance(content, list):
+        projected["content"] = [{"type": "text", "text": transcript_text}]
+        return projected
+    projected_content: list[object] = []
+    replaced_text = False
+    for item in content:
+        if not isinstance(item, dict):
+            projected_content.append(item)
+            continue
+        text = item.get("text")
+        if (
+            isinstance(text, str)
+            and not replaced_text
+            and (not text.strip() or _is_gateway_chat_suppressed_reply_text(text))
+        ):
+            projected_item = dict(cast(dict[str, object], item))
+            projected_item["text"] = transcript_text
+            projected_content.append(projected_item)
+            replaced_text = True
+            continue
+        projected_content.append(item)
+    if not replaced_text:
+        projected_content.insert(0, {"type": "text", "text": transcript_text})
+    projected["content"] = projected_content
+    return projected
 
 
 def _sanitize_gateway_chat_result_value(
@@ -16483,10 +16935,150 @@ def _chat_attachment_image_order(attachments: list[dict[str, object]]) -> list[s
     return image_order
 
 
+def _stage_gateway_chat_sandbox_attachments(
+    *,
+    sandbox_root: str,
+    attachments: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[str]]:
+    staged: list[dict[str, object]] = []
+    sandbox_paths: list[str] = []
+    used_names: set[str] = set()
+    inbound_dir = Path(sandbox_root).expanduser() / "media" / "inbound"
+    for index, attachment in enumerate(attachments, start=1):
+        base64_value = _chat_attachment_base64_value(attachment)
+        decoded = (
+            _decode_gateway_chat_attachment_base64(base64_value)
+            if base64_value is not None
+            else None
+        )
+        if decoded is None:
+            staged.append(dict(attachment))
+            continue
+        safe_name = _safe_gateway_chat_sandbox_attachment_name(
+            attachment,
+            index=index,
+            used_names=used_names,
+        )
+        target_path = inbound_dir / safe_name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(decoded)
+        rel_path = f"media/inbound/{safe_name}"
+        digest = hashlib.sha256(decoded).hexdigest()
+        staged_attachment = _copy_chat_attachment_without_inline_payload(attachment)
+        staged_attachment.update(
+            {
+                "openzuesMediaRef": f"media://inbound/{safe_name}",
+                "openzuesSavedPath": str(target_path),
+                "openzuesSandboxPath": rel_path,
+                "openzuesSha256": digest,
+                "openzuesByteLength": len(decoded),
+            }
+        )
+        staged.append(staged_attachment)
+        sandbox_paths.append(rel_path)
+    return staged, sandbox_paths
+
+
+def _decode_gateway_chat_attachment_base64(value: str) -> bytes | None:
+    candidate = value.strip()
+    if candidate.lower().startswith("data:") and "," in candidate:
+        candidate = candidate.split(",", 1)[1].strip()
+    if not candidate:
+        return None
+    padded = f"{candidate}{'=' * (-len(candidate) % 4)}"
+    try:
+        decoded = base64.b64decode(padded, validate=True)
+    except Exception:
+        return None
+    if not decoded or len(decoded) > _CHAT_ATTACHMENT_MAX_BYTES:
+        return None
+    return decoded
+
+
+def _safe_gateway_chat_sandbox_attachment_name(
+    attachment: Mapping[str, object],
+    *,
+    index: int,
+    used_names: set[str],
+) -> str:
+    raw_name = _chat_attachment_file_name(attachment)
+    if raw_name is None:
+        extension = _chat_attachment_extension(attachment)
+        raw_name = f"attachment-{index}.{extension}"
+    name = Path(raw_name).name.replace("\\", "_").replace("/", "_")
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    if not name:
+        name = f"attachment-{index}.{_chat_attachment_extension(attachment)}"
+    stem = Path(name).stem or f"attachment-{index}"
+    suffix = Path(name).suffix
+    candidate = name
+    dedupe_index = 2
+    while candidate in used_names:
+        candidate = f"{stem}-{dedupe_index}{suffix}"
+        dedupe_index += 1
+    used_names.add(candidate)
+    return candidate
+
+
+def _chat_attachment_file_name(attachment: Mapping[str, object]) -> str | None:
+    for key in ("fileName", "filename", "name"):
+        value = _chat_attachment_text_value(attachment.get(key))
+        if value is not None:
+            return value
+    source = attachment.get("source")
+    if isinstance(source, Mapping):
+        for key in ("fileName", "filename", "name"):
+            value = _chat_attachment_text_value(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _chat_attachment_extension(attachment: Mapping[str, object]) -> str:
+    file_name = _chat_attachment_file_name(attachment)
+    if file_name is not None:
+        suffix = Path(file_name).suffix.lower().lstrip(".")
+        if suffix and re.fullmatch(r"[a-z0-9]{1,8}", suffix):
+            return suffix
+    mime = _chat_attachment_mime_type(attachment)
+    if mime is None:
+        return "bin"
+    return _CHAT_ATTACHMENT_EXTENSIONS_BY_MIME.get(mime.lower(), "bin")
+
+
+def _copy_chat_attachment_without_inline_payload(
+    attachment: Mapping[str, object],
+) -> dict[str, object]:
+    copied = dict(attachment)
+    copied.pop("content", None)
+    copied.pop("data", None)
+    source = copied.get("source")
+    if isinstance(source, Mapping):
+        source_copy = dict(source)
+        source_copy.pop("data", None)
+        copied["source"] = source_copy
+    return copied
+
+
+def _format_gateway_chat_sandbox_media_paths(
+    message: str,
+    sandbox_paths: list[str],
+) -> str:
+    if not sandbox_paths:
+        return message
+    lines = ["Sandbox media staged in this workspace:"]
+    lines.extend(f"- {path}" for path in sandbox_paths)
+    block = "\n".join(lines)
+    if message.strip():
+        return f"{message.rstrip()}\n\n{block}"
+    return block
+
+
 def _normalize_gateway_send_media_urls(
     *,
     media_url: str | None = None,
     media_urls: list[str] | None = None,
+    sandbox_root: str | None = None,
 ) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -16497,11 +17089,58 @@ def _normalize_gateway_send_media_urls(
         candidates.extend(media_urls)
     for candidate in candidates:
         trimmed = str(candidate).strip()
-        if not trimmed or trimmed in seen:
+        if not trimmed:
             continue
-        seen.add(trimmed)
-        normalized.append(trimmed)
+        resolved = _normalize_gateway_sandbox_media_source(
+            trimmed,
+            sandbox_root=sandbox_root,
+        )
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized.append(resolved)
     return normalized
+
+
+def _normalize_gateway_sandbox_media_source(
+    media_source: str,
+    *,
+    sandbox_root: str | None,
+) -> str:
+    if sandbox_root is None:
+        return media_source
+    root = _string_or_none(sandbox_root)
+    if root is None:
+        return media_source
+    if re.match(r"^data:", media_source, flags=re.IGNORECASE):
+        raise ValueError("data: URLs are not supported for sandbox media")
+    candidate = media_source
+    if re.match(r"^file://", candidate, flags=re.IGNORECASE):
+        parsed = urlsplit(candidate)
+        host = parsed.netloc.strip().lower()
+        if host and host != "localhost":
+            raise ValueError("remote hosts are not allowed for sandbox media file URLs")
+        lower_path = parsed.path.lower()
+        if "%2f" in lower_path or "%5c" in lower_path:
+            raise ValueError("file:// URLs cannot encode path separators")
+        try:
+            candidate = unquote(parsed.path)
+        except Exception as exc:
+            raise ValueError("Invalid file:// URL for sandbox media") from exc
+    normalized_candidate = candidate.replace("\\", "/")
+    if normalized_candidate == "/workspace":
+        return str(Path(root).expanduser())
+    workspace_prefix = "/workspace/"
+    if not normalized_candidate.startswith(workspace_prefix):
+        return media_source
+    relative_parts = [
+        part
+        for part in normalized_candidate[len(workspace_prefix) :].split("/")
+        if part not in {"", "."}
+    ]
+    if any(part == ".." for part in relative_parts):
+        raise ValueError("sandbox media path escapes sandbox root")
+    return str(Path(root).expanduser().joinpath(*relative_parts))
 
 
 def _normalize_gateway_chat_channel_id(raw: str) -> str | None:

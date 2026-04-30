@@ -17,6 +17,7 @@ _ACP_SPAWN_ACCEPTED_NOTE = (
 _ACP_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound ACP session stays active after this task; continue in-thread for follow-ups."
 )
+_ACP_THREAD_CONTEXT_REQUIRED_ERROR = "thread=true for ACP sessions requires a channel context."
 
 
 class GatewayAcpSpawnService(Protocol):
@@ -61,6 +62,14 @@ def _optional_string(value: object) -> str | None:
 def _optional_agent_id(value: object) -> str | None:
     normalized = _optional_string(value)
     return normalize_agent_id(normalized) if normalized is not None else None
+
+
+def _requester_channel_from_context(context: Mapping[str, object]) -> str | None:
+    for key in ("requesterChannel", "channel", "agentChannel"):
+        channel = _optional_string(context.get(key))
+        if channel is not None:
+            return channel.lower()
+    return None
 
 
 def _read_thread_id(result: object) -> str | None:
@@ -110,7 +119,6 @@ class RuntimeManagerAcpSpawnService:
         params: Mapping[str, object],
         context: Mapping[str, object],
     ) -> dict[str, object]:
-        del context
         task = _optional_string(params.get("task"))
         if task is None:
             return {"status": "error", "error": "task is required"}
@@ -127,6 +135,12 @@ class RuntimeManagerAcpSpawnService:
                     'mode="session" requires thread=true so the ACP session can stay '
                     "bound to a thread."
                 ),
+            }
+        if thread_requested and _requester_channel_from_context(context) is None:
+            return {
+                "status": "error",
+                "errorCode": "thread_binding_invalid",
+                "error": _ACP_THREAD_CONTEXT_REQUIRED_ERROR,
             }
         target_agent_id = _optional_agent_id(params.get("agentId"))
         if target_agent_id is None:
