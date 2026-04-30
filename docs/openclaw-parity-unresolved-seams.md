@@ -288,6 +288,11 @@ Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
 from the preserved session entry.
+Matrix route-backed thread-bound subagent bindings now also persist
+OpenClaw's bundled `placement="child"` default in the `sessionBinding`
+metadata instead of treating Matrix as a current-conversation channel. Remaining
+thread-binding parity is deeper provider-native child-thread creation and
+provider-owned binding stores for ACP/session runtimes.
 Reset/delete lifecycle now also emits the OpenClaw-shaped `subagent_ended`
 event through a fakeable native lifecycle service after session mutation,
 including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;

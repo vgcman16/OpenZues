@@ -105,6 +105,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_channels.py
   tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_channels.py`.
+- Matrix route-backed thread-bound subagent bindings now persist
+  OpenClaw's bundled child-placement default in `sessionBinding.metadata`, and
+  the gateway `sessions.spawn` path preserves that metadata on the child
+  session.
+- Verified the Matrix child-placement metadata slice with `python -m pytest
+  tests\test_gateway_thread_binding.py -k "matrix_provider_thread" -q` (`1
+  passed`), full binder proof `python -m pytest tests\test_gateway_thread_binding.py
+  -q` (`5 passed`), adjacent gateway spawn proof `python -m pytest
+  tests\test_gateway_node_methods.py -k
+  "thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_route_backed_thread_binder or
+  thread_mode_delivers_initial_child_run_to_bound_origin" -q` (`3 passed`),
+  `ruff check src\openzues\services\gateway_thread_binding.py
+  tests\test_gateway_thread_binding.py tests\test_gateway_node_methods.py`, and
+  `mypy src\openzues\services\gateway_thread_binding.py`.
 - ACP `sessions.spawn streamTo="parent"` now uses the full accepted-run
   tracking path: OpenZues persists the child session metadata, stores
   `streamTo` / `streamLogPath`, registers the run for `agent.wait`, applies

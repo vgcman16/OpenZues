@@ -45,6 +45,7 @@ def _assert_session_binding_record(
     account_id: str,
     conversation_id: str,
     thread_id: str | None,
+    placement: str = "current",
 ) -> None:
     assert isinstance(value, dict)
     record_separator = "\u241f"
@@ -63,7 +64,7 @@ def _assert_session_binding_record(
     assert isinstance(value["boundAt"], int)
     metadata = value["metadata"]
     assert isinstance(metadata, dict)
-    assert metadata["placement"] == "current"
+    assert metadata["placement"] == placement
     if thread_id is None:
         assert "threadId" not in metadata
     else:
@@ -158,6 +159,7 @@ async def test_thread_binder_registry_resolves_matrix_provider_thread() -> None:
         account_id="bot-alpha",
         conversation_id="room:!room:example.org",
         thread_id="$thread-root",
+        placement="child",
     )
 
 

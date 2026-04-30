@@ -19711,6 +19711,9 @@ async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder
         "accountId": "bot-alpha",
         "threadId": "$thread-root",
     }
+    session_binding = metadata["sessionBinding"]
+    assert isinstance(session_binding, dict)
+    assert session_binding["metadata"]["placement"] == "child"
 
 
 @pytest.mark.asyncio

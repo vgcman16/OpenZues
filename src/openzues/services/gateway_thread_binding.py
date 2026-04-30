@@ -15,6 +15,7 @@ SUPPORTED_THREAD_BINDING_CHANNELS = frozenset(
 )
 _CURRENT_BINDINGS_ID_PREFIX = "generic:"
 _CONVERSATION_KEY_SEPARATOR = "\u241f"
+_CHILD_SESSION_BINDING_PLACEMENT_CHANNELS = frozenset({"matrix"})
 _LINE_CONVERSATION_TARGET_PREFIXES = (
     "line:",
     "channel:",
@@ -104,8 +105,11 @@ def _session_binding_record(
         "accountId": account_id,
         "conversationId": conversation_id,
     }
+    placement = (
+        "child" if channel in _CHILD_SESSION_BINDING_PLACEMENT_CHANNELS else "current"
+    )
     metadata: dict[str, object] = {
-        "placement": "current",
+        "placement": placement,
         "lastActivityAt": bound_at,
     }
     if thread_id is not None:
