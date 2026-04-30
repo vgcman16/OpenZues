@@ -1867,6 +1867,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "delivery",
         "security",
         "shellCompletion",
+        "bundledPluginRuntimeDependencies",
         "acp",
         "extras",
     ):
@@ -2200,6 +2201,86 @@ def _build_doctor_shell_completion_payload() -> dict[str, object]:
         "openClawContribution": "doctor:shell-completion",
         "repairAvailable": False,
     }
+
+
+def _doctor_bundled_plugin_runtime_dependency_summary(
+    *,
+    missing: list[object],
+    conflicts: list[object],
+) -> str:
+    if missing and conflicts:
+        return "Bundled plugin runtime deps are missing and use conflicting versions."
+    if conflicts:
+        return "Bundled plugin runtime deps use conflicting versions."
+    if missing:
+        return "Bundled plugin runtime deps are missing."
+    return "Bundled plugin runtime deps are present."
+
+
+def _build_doctor_bundled_plugin_runtime_dependency_payload(
+    config_service: object | None,
+) -> dict[str, object]:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            "status": "unavailable",
+            "summary": (
+                "Gateway config is unavailable for bundled plugin runtime dependency "
+                "checks."
+            ),
+            "source": "openzues-native",
+            "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+            "repairAvailable": False,
+            "missing": [],
+            "conflicts": [],
+            "diagnostics": [],
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "status": "unavailable",
+            "summary": f"Gateway config could not be read: {exc}",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+            "repairAvailable": False,
+            "missing": [],
+            "conflicts": [],
+            "diagnostics": [],
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    plugin_rows = _plugin_records_from_config_snapshot(snapshot)
+    runtime_payload, diagnostics = _build_plugin_runtime_dependency_doctor_payload(
+        list(plugin_rows)
+    )
+    raw_missing = runtime_payload.get("missing")
+    raw_conflicts = runtime_payload.get("conflicts")
+    missing = raw_missing if isinstance(raw_missing, list) else []
+    conflicts = raw_conflicts if isinstance(raw_conflicts, list) else []
+    return {
+        "status": "error" if missing or conflicts else "ok",
+        "summary": _doctor_bundled_plugin_runtime_dependency_summary(
+            missing=missing,
+            conflicts=conflicts,
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+        "repairAvailable": False,
+        "missing": missing,
+        "conflicts": conflicts,
+        "diagnostics": diagnostics,
+    }
+
+
+def _with_doctor_bundled_plugin_runtime_dependencies(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["bundledPluginRuntimeDependencies"] = (
+        _build_doctor_bundled_plugin_runtime_dependency_payload(config_service)
+    )
+    return next_payload
 
 
 def _with_doctor_contribution_surfaces(payload: dict[str, object]) -> dict[str, object]:
@@ -16106,6 +16187,10 @@ def doctor(
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
             payload = _with_doctor_session_lock_health(payload, data_dir)
+        payload = _with_doctor_bundled_plugin_runtime_dependencies(
+            payload,
+            services.gateway_config,
+        )
         payload = _with_doctor_contribution_surfaces(payload)
         return payload
 

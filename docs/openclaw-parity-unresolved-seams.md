@@ -2432,9 +2432,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime_dependencies or plugins_doctor or
   plugins_inspect_json_projects_runtime_executor_tools"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the top-level bundled plugin runtime dependency doctor contribution
+  seam from OpenClaw `doctor-health-contributions.ts`: `doctor --json` now
+  includes the `doctor:bundled-plugin-runtime-deps` contribution, reusing the
+  native dependency scanner and reporting missing deps, conflicts, diagnostics,
+  and a truthful no-install repair boundary. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_and_update_status_json_include_hermes_sections or
+  plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
+  plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`, `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
-  announce consistency, top-level runtime bridge doctor/packaging checks, and
+  announce consistency, remaining runtime bridge doctor/packaging checks, and
   session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency

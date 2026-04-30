@@ -130,6 +130,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or runtime_deps or runtime_dependencies or plugins_doctor or
   plugins_inspect_json_projects_runtime_executor_tools"` (`8 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now includes the OpenClaw
+  `doctor:bundled-plugin-runtime-deps` contribution, reusing the native
+  bundled plugin dependency scanner and reporting `ok` / `error` posture,
+  missing deps, conflicts, diagnostics, and the current no-install repair
+  boundary.
+- Verified the top-level bundled plugin runtime dependency doctor contribution
+  with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution
+  -q` (`1 passed`), adjacent doctor/plugin proof `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_includes_bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_and_update_status_json_include_hermes_sections or
+  plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
+  plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"` (`5
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Native WhatsApp route sends now split text-only payloads into OpenClaw-style
   4000-character chunks instead of truncating at 4096 characters, and return
   the last provider message id from the chunked send sequence.
@@ -439,6 +456,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "plugins_list_json_discovers_openclaw_manifest_load_paths or runtime_deps or runtime_dependencies or plugins_doctor or plugins_inspect_json_projects_runtime_executor_tools"`: 8 passed after rechecking adjacent plugin CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the bundled plugin runtime dependency doctor slice.
 - `mypy src\openzues\cli.py`: clean after the bundled plugin runtime dependency doctor slice.
+- `python -m pytest tests\test_cli.py::test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution -q`: 1 passed after adding the top-level `doctor:bundled-plugin-runtime-deps` contribution.
+- `python -m pytest tests\test_cli.py -q -k "doctor_json_includes_bundled_plugin_runtime_dependency_contribution or doctor_json_includes_security_and_shell_completion_surfaces or doctor_and_update_status_json_include_hermes_sections or plugins_doctor_json_reports_missing_bundled_runtime_dependencies or plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`: 5 passed after rechecking adjacent top-level doctor/plugin surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the top-level bundled plugin runtime dependency doctor contribution slice.
+- `mypy src\openzues\cli.py`: clean after the top-level bundled plugin runtime dependency doctor contribution slice.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain_json_projects_config_sandbox_tool_policy"`: 1 passed after adding config-backed `sandbox explain` mode/scope/workspace/tool-policy projection.
 - `python -m pytest tests\test_cli.py -q -k "sandbox_explain or sandbox_list or sandbox_recreate"`: 8 passed after rechecking adjacent sandbox CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the config-backed sandbox explain slice.

@@ -13904,6 +13904,109 @@ def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch
     }
 
 
+def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "openclaw-runtime"
+    plugin_dir = package_root / "dist" / "extensions" / "alpha"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="alpha",
+        dependencies={"alpha-only": "1.0.0"},
+    )
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["bundledPluginRuntimeDependencies"] == {
+        "status": "error",
+        "summary": "Bundled plugin runtime deps are missing.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bundled-plugin-runtime-deps",
+        "repairAvailable": False,
+        "missing": [
+            {
+                "name": "alpha-only",
+                "version": "1.0.0",
+                "pluginIds": ["alpha"],
+                "installRoot": str(package_root),
+                "spec": "alpha-only@1.0.0",
+            }
+        ],
+        "conflicts": [],
+        "diagnostics": [
+            {
+                "level": "error",
+                "category": "runtimeDependencies",
+                "code": "bundled_plugin_runtime_dependency_missing",
+                "message": "Bundled plugin runtime deps are missing.",
+                "missing": [
+                    {
+                        "name": "alpha-only",
+                        "version": "1.0.0",
+                        "pluginIds": ["alpha"],
+                        "installRoot": str(package_root),
+                        "spec": "alpha-only@1.0.0",
+                    }
+                ],
+                "action": "Fix: run openzues doctor --fix to install them.",
+            }
+        ],
+    }
+
+
 def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     sessions_dir = data_dir / "agents" / "main" / "sessions"
