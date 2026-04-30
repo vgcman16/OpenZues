@@ -1917,6 +1917,12 @@ def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
     return tuple(str(scope).strip() for scope in value if str(scope).strip())
 
 
+def _normalize_optional_payload_string(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value).strip() or None
+
+
 def _optional_int_payload_value(payload: dict[str, Any], key: str) -> int | None:
     value = payload.get(key)
     if isinstance(value, int) and not isinstance(value, bool):
@@ -7730,6 +7736,18 @@ class OpsMeshService:
             payload["sessionKey"] = request.session_key
         if request.agent_id is not None:
             payload["agentId"] = request.agent_id
+        if request.requester_session_key is not None:
+            payload["requesterSessionKey"] = request.requester_session_key
+        if request.requester_account_id is not None:
+            payload["requesterAccountId"] = request.requester_account_id
+        if request.requester_sender_id is not None:
+            payload["requesterSenderId"] = request.requester_sender_id
+        if request.requester_sender_name is not None:
+            payload["requesterSenderName"] = request.requester_sender_name
+        if request.requester_sender_username is not None:
+            payload["requesterSenderUsername"] = request.requester_sender_username
+        if request.requester_sender_e164 is not None:
+            payload["requesterSenderE164"] = request.requester_sender_e164
         payload["gatewayClientScopes"] = list(request.gateway_client_scopes)
         return await self._post_provider_route_event(
             event_type="gateway/send",
@@ -7944,6 +7962,22 @@ class OpsMeshService:
         gateway_client_scopes = _normalize_gateway_client_scopes(
             payload.get("gatewayClientScopes")
         )
+        requester_session_key = canonicalize_session_key(payload.get("requesterSessionKey"))
+        requester_account_id = _normalize_optional_payload_string(
+            payload.get("requesterAccountId")
+        )
+        requester_sender_id = _normalize_optional_payload_string(
+            payload.get("requesterSenderId")
+        )
+        requester_sender_name = _normalize_optional_payload_string(
+            payload.get("requesterSenderName")
+        )
+        requester_sender_username = _normalize_optional_payload_string(
+            payload.get("requesterSenderUsername")
+        )
+        requester_sender_e164 = _normalize_optional_payload_string(
+            payload.get("requesterSenderE164")
+        )
         if route_scope_extra:
             for key, value in route_scope_extra.items():
                 if value is not None:
@@ -8041,6 +8075,12 @@ class OpsMeshService:
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
+                    requester_session_key=requester_session_key,
+                    requester_account_id=requester_account_id,
+                    requester_sender_id=requester_sender_id,
+                    requester_sender_name=requester_sender_name,
+                    requester_sender_username=requester_sender_username,
+                    requester_sender_e164=requester_sender_e164,
                     gateway_client_scopes=gateway_client_scopes,
                 )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
@@ -8114,6 +8154,12 @@ class OpsMeshService:
         agent_id: str | None = None,
         thread_id: str | int | None = None,
         session_key: str | None = None,
+        requester_session_key: str | None = None,
+        requester_account_id: str | None = None,
+        requester_sender_id: str | None = None,
+        requester_sender_name: str | None = None,
+        requester_sender_username: str | None = None,
+        requester_sender_e164: str | None = None,
         gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
@@ -8159,6 +8205,35 @@ class OpsMeshService:
         source_session_key = canonicalize_session_key(session_key)
         if source_session_key is not None:
             payload["sourceSessionKey"] = source_session_key
+        normalized_requester_session_key = canonicalize_session_key(requester_session_key)
+        if normalized_requester_session_key is not None:
+            payload["requesterSessionKey"] = normalized_requester_session_key
+        normalized_requester_account_id = _normalize_optional_payload_string(
+            requester_account_id
+        )
+        if normalized_requester_account_id is None and any(
+            _normalize_optional_payload_string(value) is not None
+            for value in (
+                requester_session_key,
+                requester_sender_id,
+                requester_sender_name,
+                requester_sender_username,
+                requester_sender_e164,
+            )
+        ):
+            normalized_requester_account_id = _normalize_optional_payload_string(account_id)
+        if normalized_requester_account_id is not None:
+            payload["requesterAccountId"] = normalized_requester_account_id
+        requester_sender_fields = {
+            "requesterSenderId": requester_sender_id,
+            "requesterSenderName": requester_sender_name,
+            "requesterSenderUsername": requester_sender_username,
+            "requesterSenderE164": requester_sender_e164,
+        }
+        for key, value in requester_sender_fields.items():
+            normalized_value = _normalize_optional_payload_string(value)
+            if normalized_value is not None:
+                payload[key] = normalized_value
         if idempotency_key is not None:
             payload["idempotencyKey"] = idempotency_key
         result = await self._deliver_direct_channel_message(

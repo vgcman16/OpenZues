@@ -2403,6 +2403,95 @@ async def test_ops_mesh_service_send_direct_channel_message_mirrors_explicit_ses
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_forwards_requester_context(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-requester-context"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, str]:
+        provider_requests.append(request)
+        return {"messageId": "provider-requester-context-42"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Carry requester context.",
+        account_id="destination-workspace",
+        session_key="agent:work:slack:channel:C123",
+        requester_session_key="agent:main:discord:channel:ops",
+        requester_account_id="source-workspace",
+        requester_sender_id="discord-user-1",
+        requester_sender_name="Alice",
+        requester_sender_username="alice_u",
+        requester_sender_e164="+15551234567",
+        idempotency_key="idem-provider-requester-context",
+    )
+
+    expected_runtime_session_key = "agent:work:slack:channel:c123"
+    expected_target_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="slack",
+            account_id="destination-workspace",
+            peer_kind="channel",
+            peer_id="channel:C123",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["sessionKey"] == expected_target_session_key
+    assert result["transport"]["sessionKey"] == expected_runtime_session_key
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="slack",
+            target="channel:C123",
+            message="Carry requester context.",
+            account_id="destination-workspace",
+            session_key=expected_runtime_session_key,
+            requester_session_key="agent:main:discord:channel:ops",
+            requester_account_id="source-workspace",
+            requester_sender_id="discord-user-1",
+            requester_sender_name="Alice",
+            requester_sender_username="alice_u",
+            requester_sender_e164="+15551234567",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["sessionKey"] == expected_target_session_key
+    assert delivery["event_payload"]["sourceSessionKey"] == expected_runtime_session_key
+    assert delivery["event_payload"]["requesterSessionKey"] == "agent:main:discord:channel:ops"
+    assert delivery["event_payload"]["requesterAccountId"] == "source-workspace"
+    assert delivery["event_payload"]["requesterSenderId"] == "discord-user-1"
+    assert delivery["event_payload"]["requesterSenderName"] == "Alice"
+    assert delivery["event_payload"]["requesterSenderUsername"] == "alice_u"
+    assert delivery["event_payload"]["requesterSenderE164"] == "+15551234567"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

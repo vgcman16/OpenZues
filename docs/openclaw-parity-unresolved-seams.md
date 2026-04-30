@@ -2538,6 +2538,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py`.
+- Closed the provider-native requester context seam from OpenClaw
+  `infra/outbound/outbound-send-service.ts`: direct send now distinguishes the
+  runtime delivery `sessionKey` from requester metadata and forwards
+  `requesterSessionKey`, `requesterAccountId`, `requesterSenderId`, and
+  sender display fields into provider runtime requests, route-backed provider
+  event payloads, and persisted delivery payloads. Verified with `python -m
+  pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_forwards_requester_context
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "requester_context or send_direct_channel_message_mirrors_explicit_session_key
+  or send_direct_channel_message_prefers_provider_runtime or
+  send_direct_channel_message_preserves_provider_native_options or
+  send_direct_channel_message_uses_native_adapter_binding"`, `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

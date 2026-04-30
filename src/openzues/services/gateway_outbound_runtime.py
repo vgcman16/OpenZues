@@ -129,6 +129,12 @@ class GatewayOutboundRuntimeMessageRequest:
     thread_id: str | None = None
     session_key: str | None = None
     agent_id: str | None = None
+    requester_session_key: str | None = None
+    requester_account_id: str | None = None
+    requester_sender_id: str | None = None
+    requester_sender_name: str | None = None
+    requester_sender_username: str | None = None
+    requester_sender_e164: str | None = None
     gateway_client_scopes: tuple[str, ...] = ()
 
 
@@ -306,6 +312,12 @@ class GatewayOutboundRuntimeService:
         account_id: str | None = None,
         thread_id: str | None = None,
         agent_id: str | None = None,
+        requester_session_key: str | None = None,
+        requester_account_id: str | None = None,
+        requester_sender_id: str | None = None,
+        requester_sender_name: str | None = None,
+        requester_sender_username: str | None = None,
+        requester_sender_e164: str | None = None,
         gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
     ) -> GatewayOutboundRuntimeDeliveryResult:
         normalized_channel = _normalize_optional_string(channel)
@@ -331,6 +343,24 @@ class GatewayOutboundRuntimeService:
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
                         agent_id=_normalize_optional_string(agent_id),
+                        requester_session_key=_normalize_optional_string(
+                            requester_session_key
+                        ),
+                        requester_account_id=_normalize_optional_string(
+                            requester_account_id
+                        ),
+                        requester_sender_id=_normalize_optional_string(
+                            requester_sender_id
+                        ),
+                        requester_sender_name=_normalize_optional_string(
+                            requester_sender_name
+                        ),
+                        requester_sender_username=_normalize_optional_string(
+                            requester_sender_username
+                        ),
+                        requester_sender_e164=_normalize_optional_string(
+                            requester_sender_e164
+                        ),
                         gateway_client_scopes=normalized_gateway_client_scopes,
                     )
                 )
@@ -376,6 +406,24 @@ class GatewayOutboundRuntimeService:
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
                         agent_id=_normalize_optional_string(agent_id),
+                        requester_session_key=_normalize_optional_string(
+                            requester_session_key
+                        ),
+                        requester_account_id=_normalize_optional_string(
+                            requester_account_id
+                        ),
+                        requester_sender_id=_normalize_optional_string(
+                            requester_sender_id
+                        ),
+                        requester_sender_name=_normalize_optional_string(
+                            requester_sender_name
+                        ),
+                        requester_sender_username=_normalize_optional_string(
+                            requester_sender_username
+                        ),
+                        requester_sender_e164=_normalize_optional_string(
+                            requester_sender_e164
+                        ),
                         gateway_client_scopes=normalized_gateway_client_scopes,
                     )
                 )
