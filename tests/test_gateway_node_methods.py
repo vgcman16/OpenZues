@@ -17372,6 +17372,76 @@ async def test_sessions_spawn_acp_respects_disabled_policy(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_session_mode_requires_thread_before_runtime(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-session-thread-required.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("mode=session should reject before ACP runtime dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try a persistent ACP session without a bound thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "mode": "session",
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "thread_required",
+        "error": (
+            'mode="session" requires thread=true so the ACP session can stay '
+            "bound to a thread."
+        ),
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-acp-thread-policy.db")
     await database.initialize()

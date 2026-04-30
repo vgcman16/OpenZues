@@ -3455,6 +3455,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- The ACP `mode="session"` guard now lives at the gateway method boundary as
+  well as in the concrete RuntimeManager adapter, preserving OpenClaw's
+  `thread_required` preflight even when a fakeable or alternate ACP service is
+  registered.
+- Verified the gateway ACP `thread_required` preflight with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_session_mode_requires_thread_before_runtime
+  -q` (`1 passed`), adjacent ACP preflight coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_session_mode_requires_thread_before_runtime or
+  sessions_spawn_acp_respects_disabled_policy or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_uses_configured_default_agent or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_acp_thread_mode_honors_channel_spawn_policy"` (`6 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the

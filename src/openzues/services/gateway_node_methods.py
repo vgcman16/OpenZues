@@ -7675,6 +7675,16 @@ class GatewayNodeMethodService:
                     Literal["run", "session"],
                     mode or ("session" if thread else "run"),
                 )
+                if tracked_mode == "session" and not thread:
+                    return {
+                        "status": "error",
+                        "errorCode": "thread_required",
+                        "error": (
+                            'mode="session" requires thread=true so the ACP session '
+                            "can stay bound to a thread."
+                        ),
+                        **role_context,
+                    }
                 cleanup = _optional_enum_value(
                     payload.get("cleanup"),
                     label="cleanup",

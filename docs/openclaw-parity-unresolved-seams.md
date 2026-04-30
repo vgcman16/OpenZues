@@ -260,6 +260,9 @@ mirror OpenClaw's `resolveAcpSpawnChannelAccountId`: the native gateway uses
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.
+The ACP `mode="session"` / `thread=true` preflight is now enforced by the
+gateway method owner itself, so fakeable or alternate ACP services cannot
+receive a persistent ACP request that lacks a bound thread.
 Remaining lifecycle parity is deeper provider-native binding record stores,
 provider-native child-thread creation, and production ACP provider binding
 creation breadth.
