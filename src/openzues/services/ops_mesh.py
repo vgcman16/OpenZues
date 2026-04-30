@@ -7592,6 +7592,9 @@ class OpsMeshService:
         if channel_id is None:
             raise RuntimeError("Slack read requires channelId.")
         payload: dict[str, object] = {"channel": channel_id}
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            payload["ts"] = thread_id
         limit = _message_action_param_positive_int(request.params, "limit")
         if limit is not None:
             payload["limit"] = limit
@@ -7602,7 +7605,10 @@ class OpsMeshService:
         if after is not None:
             payload["oldest"] = after
         result = self._post_json_webhook(
-            _slack_api_endpoint(str(route.get("target") or ""), "conversations.history"),
+            _slack_api_endpoint(
+                str(route.get("target") or ""),
+                "conversations.replies" if thread_id is not None else "conversations.history",
+            ),
             payload,
             secret_header_name="Authorization",
             secret_token=_slack_bearer_token(secret_token),
@@ -7613,6 +7619,12 @@ class OpsMeshService:
             error = str(result.get("error") or "unknown_error")
             raise RuntimeError(f"Slack API returned {error}.")
         messages = result.get("messages")
+        if isinstance(messages, list) and thread_id is not None:
+            messages = [
+                message
+                for message in messages
+                if not (isinstance(message, dict) and message.get("ts") == thread_id)
+            ]
         return {
             "ok": True,
             "channelId": channel_id,
