@@ -445,6 +445,9 @@ Discord `edit` now dispatches through the route-backed bot-token REST path,
 mapping `message` to the upstream `content` edit payload.
 Discord `delete` now dispatches through the same route-backed bot-token REST
 path and returns the upstream-shaped `{ok: true}` payload.
+Discord `pin`, `unpin`, and `list-pins` now dispatch through the same
+route-backed bot-token REST path, including upstream-shaped `{ok: true}` pin
+mutations and normalized pinned-message timestamps for `list-pins`.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and

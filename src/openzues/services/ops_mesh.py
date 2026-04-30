@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -1426,6 +1427,71 @@ def _discord_reaction_identifier_from_payload(emoji: object) -> str | None:
     if name and emoji_id:
         return f"{name}:{emoji_id}"
     return name or None
+
+
+def _discord_normalized_timestamp(raw: object) -> tuple[int, str] | None:
+    timestamp_ms: int | None = None
+    if isinstance(raw, datetime):
+        candidate = raw if raw.tzinfo is not None else raw.replace(tzinfo=UTC)
+        timestamp_ms = round(candidate.timestamp() * 1000)
+    elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        numeric = float(raw)
+        if math.isfinite(numeric):
+            timestamp_ms = round(
+                numeric * 1000 if numeric < 1_000_000_000_000 else numeric
+            )
+    elif isinstance(raw, str):
+        trimmed = raw.strip()
+        if not trimmed:
+            return None
+        if re.match(r"^\d+(\.\d+)?$", trimmed):
+            numeric = float(trimmed)
+            if math.isfinite(numeric):
+                timestamp_ms = round(
+                    numeric
+                    if "." not in trimmed and len(trimmed) >= 13
+                    else numeric * 1000
+                )
+        else:
+            try:
+                parsed = datetime.fromisoformat(trimmed.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                candidate = (
+                    parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+                )
+                timestamp_ms = round(candidate.timestamp() * 1000)
+    if timestamp_ms is None or not math.isfinite(timestamp_ms):
+        return None
+    timestamp_utc = (
+        datetime.fromtimestamp(timestamp_ms / 1000, UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+    return timestamp_ms, timestamp_utc
+
+
+def _discord_message_with_normalized_timestamp(message: object) -> object:
+    if not isinstance(message, dict):
+        return message
+    normalized = _discord_normalized_timestamp(message.get("timestamp"))
+    if normalized is None:
+        return message
+    timestamp_ms, timestamp_utc = normalized
+    result: dict[str, object] = dict(message)
+    current_ms = result.get("timestampMs")
+    has_valid_ms = (
+        isinstance(current_ms, (int, float))
+        and not isinstance(current_ms, bool)
+        and math.isfinite(float(current_ms))
+    )
+    if not has_valid_ms:
+        result["timestampMs"] = timestamp_ms
+    current_utc = result.get("timestampUtc")
+    if not isinstance(current_utc, str) or not current_utc.strip():
+        result["timestampUtc"] = timestamp_utc
+    return result
 
 
 def _parse_discord_channel_resolve_input(raw: str) -> dict[str, object]:
@@ -7188,9 +7254,12 @@ class OpsMeshService:
         if channel == "discord" and action in {
             "delete",
             "edit",
+            "list-pins",
+            "pin",
             "react",
             "reactions",
             "send",
+            "unpin",
         }:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -7225,6 +7294,21 @@ class OpsMeshService:
             if action == "delete":
                 return await asyncio.to_thread(
                     self._dispatch_discord_delete_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action in {"pin", "unpin"}:
+                return await asyncio.to_thread(
+                    self._dispatch_discord_pin_mutation_message_action,
+                    route,
+                    request,
+                    secret_token,
+                    cast(Literal["pin", "unpin"], action),
+                )
+            if action == "list-pins":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_list_pins_message_action,
                     route,
                     request,
                     secret_token,
@@ -8537,6 +8621,66 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error")))
         return {"ok": True}
+
+    def _dispatch_discord_pin_mutation_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+        action: Literal["pin", "unpin"],
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError(f"Discord {action} requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/pins/{message_id}"),
+            method="PUT" if action == "pin" else "DELETE",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        channel_id = _discord_action_channel_id(
+            _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Discord list-pins requires channelId.")
+        result = self._request_json_provider_url(
+            _discord_api_endpoint(f"channels/{channel_id}/pins"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if not isinstance(result, list):
+            raise RuntimeError("Discord API returned a non-JSON pins response.")
+        return {
+            "ok": True,
+            "pins": [
+                _discord_message_with_normalized_timestamp(message)
+                for message in result
+            ],
+        }
 
     async def _post_provider_route_event(
         self,
