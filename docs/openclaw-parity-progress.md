@@ -2741,6 +2741,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_thread_binding.py`.
+- RuntimeManager-backed ACP `thread=true` spawns now enforce OpenClaw's
+  provider-context preflight: persistent thread-bound ACP sessions require a
+  requester channel context and return `errorCode="thread_binding_invalid"`
+  without starting a RuntimeManager thread/turn when that context is missing.
+  Existing session-mode RuntimeManager tests now provide explicit requester
+  route context when exercising accepted persistent ACP sessions.
+- Verified the ACP channel-context guard with `python -m pytest
+  tests\test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_rejects_thread_session_without_channel_context -q`
+  (`1 passed`), adjacent ACP runtime coverage `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`9 passed`), node-method ACP coverage
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp_runtime or
+  acp_stream or acp_default or acp_runtime_tracks_wait_cleanup_and_completion"`
+  (`5 passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  tests\test_gateway_acp_spawn.py`, and `mypy
+  src\openzues\services\gateway_acp_spawn.py`.
 
 ## References
 

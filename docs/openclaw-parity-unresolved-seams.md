@@ -59,6 +59,13 @@ mode-specific accepted notes for ordinary run spawns and persistent
 thread-bound session spawns. Remaining ACP presentation parity is deeper
 bridge server/client protocol metadata, replay behavior, and parent-stream
 relay breadth.
+RuntimeManager-backed ACP `thread=true` spawns now also match OpenClaw's
+provider-context preflight: persistent thread-bound ACP sessions require a
+requester channel context and return `errorCode="thread_binding_invalid"`
+before any RuntimeManager thread or turn is started when that context is
+missing. Remaining ACP binding parity is provider-adapter capability/placement
+policy, persistent session binding records, unbind lifecycle breadth, and the
+standalone ACP bridge server/client runtime.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex
