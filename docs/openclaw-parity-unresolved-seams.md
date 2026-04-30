@@ -85,9 +85,11 @@ session binding records, and unbind/end-hook lifecycle breadth.
 OpenClaw's canonical `session.threadBindings` config keys now survive native
 config writes for `enabled`, `idleHours`, and `maxAgeHours`, while legacy
 `threadBindings.ttlHours` is rejected at session, channel, and channel-account
-paths before snapshot validation. Remaining legacy-config parity is the
-doctor `--fix` raw-file migration path that rewrites `ttlHours` to
-`idleHours` for already-persisted config files.
+paths before snapshot validation. The doctor surface now also reports a native
+`legacyConfig` contribution for already-persisted `ttlHours` keys and
+`doctor --fix` rewrites them to `idleHours` before the rest of doctor reads the
+validated snapshot. Remaining legacy-config parity is broader non-thread-binding
+doctor migration breadth from OpenClaw's compatibility migrator.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

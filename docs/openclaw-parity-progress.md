@@ -2901,6 +2901,36 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_config.py
   src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- `doctor --json` now includes a native OpenClaw-shaped `legacyConfig`
+  contribution for persisted `threadBindings.ttlHours` config keys, warning
+  operators to run `openzues doctor --fix`; repair mode rewrites session,
+  channel, and channel-account `ttlHours` to `idleHours` before the rest of
+  doctor reads the validated config snapshot.
+- Verified the legacy thread-binding doctor repair seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_thread_binding_ttl_hours
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_thread_binding_ttl_hours
+  -q` (`2 passed`), adjacent doctor coverage `python -m pytest
+  tests\test_cli.py -q -k
+  "doctor_json_warns_about_legacy_thread_binding_ttl_hours or
+  doctor_fix_migrates_legacy_thread_binding_ttl_hours or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_warns_about_shared_sandbox_agent_overrides or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`8
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
 
 ## References
 

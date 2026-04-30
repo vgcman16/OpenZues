@@ -1939,6 +1939,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "delivery",
         "security",
         "shellCompletion",
+        "legacyConfig",
         "sandbox",
         "gatewayHealth",
         "memorySearch",
@@ -2004,7 +2005,11 @@ def _doctor_sandbox_warning_from_config(
 ) -> str | None:
     if config_service is None:
         return None
-    sandbox_config = _doctor_sandbox_config_from_snapshot(config_service.build_snapshot())
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return None
+    sandbox_config = _doctor_sandbox_config_from_snapshot(snapshot)
     if sandbox_config is None:
         return None
     mode = _doctor_sandbox_mode(sandbox_config.get("mode"))
@@ -2023,7 +2028,147 @@ def _doctor_sandbox_scope_warnings_from_config(
 ) -> list[str]:
     if config_service is None:
         return []
-    return _doctor_sandbox_scope_warnings_from_snapshot(config_service.build_snapshot())
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return []
+    return _doctor_sandbox_scope_warnings_from_snapshot(snapshot)
+
+
+def _build_doctor_legacy_config_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:legacy-config",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "issues": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for legacy config checks.",
+        }
+    if should_repair:
+        repair = getattr(config_service, "repair_legacy_thread_binding_ttl_hours", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Legacy config repair runtime is unavailable.",
+            }
+        try:
+            result = repair()
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Legacy config repair failed: {exc}",
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changes = _object_list(result_payload.get("changes"))
+        changed = result_payload.get("changed") is True
+        summary = (
+            "Migrated legacy thread binding config."
+            if changed
+            else "No legacy thread binding config keys found."
+        )
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": summary,
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": changes,
+            "path": result_payload.get("path"),
+        }
+
+    detect = getattr(config_service, "detect_legacy_thread_binding_ttl_hours", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Legacy config detection runtime is unavailable.",
+        }
+    try:
+        result = detect()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Legacy config detection failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    issues = _object_list(result_payload.get("issues"))
+    warning = (
+        "Legacy thread binding config uses ttlHours; run openzues doctor --fix."
+        if issues
+        else None
+    )
+    return {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Legacy thread binding config uses ttlHours."
+            if issues
+            else "No legacy thread binding config keys found."
+        ),
+        "repairAvailable": True,
+        "issues": issues,
+        "warnings": [warning] if warning else [],
+        "path": result_payload.get("path"),
+    }
+
+
+def _with_doctor_legacy_config_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    legacy_payload = _build_doctor_legacy_config_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["legacyConfig"] = legacy_payload
+    warnings = _object_list(legacy_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _with_doctor_added_warnings(
+    payload: dict[str, object],
+    warnings_to_add: list[str],
+) -> dict[str, object]:
+    if not warnings_to_add:
+        return payload
+    next_payload = dict(payload)
+    existing = next_payload.get("warnings")
+    if isinstance(existing, list):
+        warnings = list(existing)
+    elif existing is None:
+        warnings = []
+    else:
+        warnings = [existing]
+    existing_warnings = {str(item) for item in warnings}
+    for warning in warnings_to_add:
+        if warning in existing_warnings:
+            continue
+        warnings.append(warning)
+        existing_warnings.add(warning)
+    next_payload["warnings"] = warnings
+    return next_payload
+
+
+def _object_list(value: object) -> list[object]:
+    return list(value) if isinstance(value, list) else []
 
 
 def _doctor_sandbox_scope_warnings_from_snapshot(snapshot: dict[str, Any]) -> list[str]:
@@ -16679,8 +16824,13 @@ def doctor(
         view = await _try_live_hermes_doctor_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_doctor_view()
-        payload = _with_doctor_sandbox_warnings(
+        payload = _with_doctor_legacy_config_payload(
             view.model_dump(mode="json"),
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_sandbox_warnings(
+            payload,
             services.gateway_config,
         )
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)

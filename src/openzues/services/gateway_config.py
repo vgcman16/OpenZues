@@ -168,6 +168,57 @@ class GatewayConfigService:
         result["sentinel"] = None
         return result
 
+    def detect_legacy_thread_binding_ttl_hours(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            return {"ok": True, "path": str(config_path), "issues": []}
+        payload = self._read_raw_config_object(label="legacy thread binding config detection")
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "issues": [
+                _legacy_thread_binding_ttl_hour_issue(path)
+                for path in _iter_legacy_thread_binding_ttl_hour_paths(payload)
+            ],
+        }
+
+    def repair_legacy_thread_binding_ttl_hours(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": self._default_snapshot(),
+                "hash": self._snapshot_hash(self._default_snapshot()),
+            }
+        payload = self._read_raw_config_object(label="legacy thread binding config repair")
+        changes = _migrate_legacy_thread_binding_ttl_hours(payload)
+        if not changes:
+            snapshot = self.build_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        snapshot = self._validated_snapshot(payload)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changed": True,
+            "changes": changes,
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
     def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()
@@ -605,6 +656,14 @@ class GatewayConfigService:
         if not isinstance(parsed, dict):
             raise ValueError(f"{label} raw must be an object")
         return parsed
+
+    def _read_raw_config_object(self, *, label: str) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        try:
+            raw = config_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"{label} could not read config file") from exc
+        return self._parse_raw_object(raw, label=label)
 
     def _write_snapshot(self, snapshot: dict[str, Any], *, base_hash: str | None) -> dict[str, Any]:
         config_path = self._require_config_path()
@@ -1517,3 +1576,64 @@ def _iter_legacy_thread_binding_ttl_hour_paths(payload: dict[str, Any]) -> list[
                     f"channels.{channel_id}.accounts.{account_id}.threadBindings.ttlHours"
                 )
     return paths
+
+
+def _legacy_thread_binding_ttl_hour_issue(path: str) -> dict[str, str]:
+    replacement = path.removesuffix(".ttlHours") + ".idleHours"
+    return {
+        "path": path,
+        "replacement": replacement,
+        "message": f"{path} is legacy; use {replacement}.",
+    }
+
+
+def _migrate_legacy_thread_binding_ttl_hours(payload: dict[str, Any]) -> list[str]:
+    changes: list[str] = []
+    session = payload.get("session")
+    if isinstance(session, dict):
+        _migrate_thread_binding_ttl_hours_at(
+            session,
+            path_label="session",
+            changes=changes,
+        )
+
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return changes
+    for raw_channel_id, raw_channel in channels.items():
+        channel_id = str(raw_channel_id)
+        if channel_id == "defaults" or not isinstance(raw_channel, dict):
+            continue
+        channel_path = f"channels.{channel_id}"
+        _migrate_thread_binding_ttl_hours_at(
+            raw_channel,
+            path_label=channel_path,
+            changes=changes,
+        )
+        accounts = raw_channel.get("accounts")
+        if not isinstance(accounts, dict):
+            continue
+        for raw_account_id, raw_account in accounts.items():
+            if not isinstance(raw_account, dict):
+                continue
+            _migrate_thread_binding_ttl_hours_at(
+                raw_account,
+                path_label=f"{channel_path}.accounts.{raw_account_id}",
+                changes=changes,
+            )
+    return changes
+
+
+def _migrate_thread_binding_ttl_hours_at(
+    container: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    thread_bindings = container.get("threadBindings")
+    if not isinstance(thread_bindings, dict) or "ttlHours" not in thread_bindings:
+        return
+    if "idleHours" not in thread_bindings:
+        thread_bindings["idleHours"] = thread_bindings["ttlHours"]
+    del thread_bindings["ttlHours"]
+    changes.append(f"Moved {path_label}.threadBindings.ttlHours to idleHours.")
