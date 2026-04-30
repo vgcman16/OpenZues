@@ -1911,6 +1911,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `sessions.history` now matches OpenClaw `sessions_history` tool-message
   filtering for `toolResult`: hidden by default and preserved only when
   `includeTools=true`.
+- `sessions.history` now also applies OpenClaw's `session-transcript-repair`
+  redaction for structured `sessions_spawn` tool-call inputs: inline
+  `attachments[].content` is replaced with `__OPENCLAW_REDACTED__`, only safe
+  attachment metadata is preserved, and the original attachment bytes do not
+  replay through the history read model.
 - `sessions.list` now accepts OpenClaw numeric filters for `limit`,
   `activeMinutes`, and `messageLimit`, flooring/clamping them instead of
   rejecting non-integer numbers.

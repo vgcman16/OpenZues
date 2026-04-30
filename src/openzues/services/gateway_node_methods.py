@@ -186,6 +186,8 @@ _ASSISTANT_VISIBLE_THINK_BLOCK_RE = re.compile(
 _SESSIONS_HISTORY_MAX_BYTES = 80 * 1024
 _SESSIONS_HISTORY_TEXT_MAX_CHARS = 4_000
 _SESSIONS_HISTORY_OVERSIZED_PLACEHOLDER = "[sessions_history omitted: message too large]"
+_SESSIONS_SPAWN_ATTACHMENT_REDACTED_CONTENT = "__OPENCLAW_REDACTED__"
+_SESSIONS_SPAWN_ATTACHMENT_METADATA_KEYS = ("name", "encoding", "mimeType")
 _SESSIONS_SPAWN_MAX_ATTACHMENTS = 50
 _SESSIONS_SPAWN_MAX_ATTACHMENT_BYTES = 1024 * 1024
 _SESSIONS_SPAWN_MAX_TOTAL_ATTACHMENT_BYTES = 5 * 1024 * 1024
@@ -15098,6 +15100,16 @@ def _project_sessions_history_messages(
         text = _chat_history_display_text(str(row.get("content") or ""))
         if role == "assistant" and text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS:
             continue
+        structured_content = _sessions_history_structured_content(text)
+        if structured_content is not None:
+            content_redacted = content_redacted or structured_content["redacted"]
+            messages.append(
+                {
+                    "role": role,
+                    "content": structured_content["content"],
+                }
+            )
+            continue
         sanitized = _sessions_history_sanitized_text(text)
         content_truncated = content_truncated or sanitized["truncated"]
         content_redacted = content_redacted or sanitized["redacted"]
@@ -15125,6 +15137,77 @@ def _sessions_history_display_role(role: str) -> str:
 
 def _sessions_history_is_tool_role(role: str) -> bool:
     return role in {"tool", "toolResult"}
+
+
+def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
+    if not text.lstrip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        return None
+    redacted = False
+    content: list[dict[str, Any]] = []
+    for item in parsed:
+        block, block_redacted = _sessions_history_sanitize_tool_call_block(item)
+        redacted = redacted or block_redacted
+        content.append(block)
+    return {"content": content, "redacted": redacted}
+
+
+def _sessions_history_sanitize_tool_call_block(
+    block: Mapping[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    next_block = dict(block)
+    block_type = _string_or_none(block.get("type"))
+    if block_type not in {"toolCall", "toolUse", "functionCall"}:
+        return next_block, False
+    name = _string_or_none(block.get("name"))
+    if name is not None and name != block.get("name"):
+        next_block["name"] = name
+    if str(name or "").lower() != "sessions_spawn":
+        return next_block, False
+
+    redacted = False
+    for key in ("arguments", "input"):
+        sanitized, field_redacted = _sessions_history_redact_sessions_spawn_args(
+            block.get(key)
+        )
+        if field_redacted:
+            next_block[key] = sanitized
+            redacted = True
+    return next_block, redacted
+
+
+def _sessions_history_redact_sessions_spawn_args(value: object) -> tuple[object, bool]:
+    if not isinstance(value, Mapping):
+        return value, False
+    raw_attachments = value.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return value, False
+    sanitized = dict(value)
+    sanitized["attachments"] = [
+        _sessions_history_redacted_sessions_spawn_attachment(attachment)
+        for attachment in raw_attachments
+    ]
+    return sanitized, True
+
+
+def _sessions_history_redacted_sessions_spawn_attachment(
+    attachment: object,
+) -> dict[str, Any]:
+    redacted: dict[str, Any] = {
+        "content": _SESSIONS_SPAWN_ATTACHMENT_REDACTED_CONTENT,
+    }
+    if not isinstance(attachment, Mapping):
+        return redacted
+    for key in _SESSIONS_SPAWN_ATTACHMENT_METADATA_KEYS:
+        value = _string_or_none(attachment.get(key))
+        if value is not None:
+            redacted[key] = value
+    return redacted
 
 
 def _sessions_history_sanitized_text(text: str) -> dict[str, Any]:

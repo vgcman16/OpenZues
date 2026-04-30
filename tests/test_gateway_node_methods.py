@@ -6966,6 +6966,59 @@ async def test_sessions_history_filters_openclaw_tool_result_role_by_default(tmp
 
 
 @pytest.mark.asyncio
+async def test_sessions_history_redacts_sessions_spawn_tool_call_attachments(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-history-spawn-attachments.db")
+    await database.initialize()
+    session_key = "agent:main:main"
+    secret = "SUPER_SECRET_ATTACHMENT_CONTENT"
+    await database.append_control_chat_message(
+        role="assistant",
+        content=json.dumps(
+            [
+                {
+                    "type": "toolCall",
+                    "id": "call_1",
+                    "name": "sessions_spawn",
+                    "arguments": {
+                        "task": "Read this.",
+                        "attachments": [
+                            {
+                                "name": "secret.txt",
+                                "encoding": "utf8",
+                                "mimeType": "text/plain",
+                                "content": secret,
+                                "nested": {"secret": secret},
+                            }
+                        ],
+                    },
+                }
+            ]
+        ),
+        session_key=session_key,
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+    )
+
+    payload = await service.call("sessions.history", {"sessionKey": session_key})
+
+    tool_call = payload["messages"][0]["content"][0]
+    attachment = tool_call["arguments"]["attachments"][0]
+    assert attachment == {
+        "name": "secret.txt",
+        "encoding": "utf8",
+        "mimeType": "text/plain",
+        "content": "__OPENCLAW_REDACTED__",
+    }
+    assert payload["contentRedacted"] is True
+    assert secret not in json.dumps(payload["messages"])
+
+
+@pytest.mark.asyncio
 async def test_sessions_history_supports_tool_opt_in_and_text_truncation(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-history-tools.db")
     await database.initialize()

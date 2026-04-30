@@ -2257,6 +2257,24 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   default history hides them and `includeTools=true` preserves the original
   `toolResult` role instead of leaking them as `other`.
 - Verified `toolResult` filtering parity with `python -m pytest tests\test_gateway_node_methods.py -q -k "tool_result_role_by_default"`, focused `python -m pytest tests\test_gateway_node_methods.py -q -k "sessions_history"`, the adjacent `python -m pytest tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py -q -k "tools_invoke or sessions_send or sessions_history or session_status or sessions_list or sessions_spawn"`, `ruff check src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py tests\test_gateway_node_methods.py tests\test_gateway_nodes_api.py`, and `mypy src\openzues\services\gateway_node_methods.py src\openzues\schemas.py src\openzues\services\hermes_toolsets.py`.
+- `sessions.history` now applies OpenClaw `session-transcript-repair`
+  redaction to structured `sessions_spawn` tool-call blocks, replacing inline
+  attachment content with `__OPENCLAW_REDACTED__` while preserving only
+  `name`, `encoding`, and `mimeType`.
+- Verified the `sessions_spawn` attachment transcript redaction seam with
+  `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_history_redacts_sessions_spawn_tool_call_attachments"` (`1
+  passed`), adjacent history coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_history_redacts_sessions_spawn_tool_call_attachments or
+  sessions_history_returns_redacted_agent_tool_projection or
+  sessions_history_filters_openclaw_tool_result_role_by_default or
+  sessions_history_supports_tool_opt_in_and_text_truncation or
+  sessions_history_floors_numeric_openclaw_limit or
+  sessions_history_uses_resolved_subagent_store_key or chat_history"` (`18
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `sessions.list` now mirrors OpenClaw's numeric filter parsing for `limit`,
   `activeMinutes`, and `messageLimit`: finite numbers are floored, minimums
   are enforced with OpenClaw-style lower bounds, and capped fields clamp at the
