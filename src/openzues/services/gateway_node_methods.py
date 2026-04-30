@@ -13103,6 +13103,8 @@ def _sessions_spawn_thread_policy_error(
         spawn_enabled = _bool_or_none(
             root_thread_bindings.get(_thread_binding_spawn_flag_key(kind))
         )
+    if spawn_enabled is None:
+        spawn_enabled = _thread_binding_default_top_level_placement(channel) != "child"
     if spawn_enabled is False:
         spawn_flag_key = _thread_binding_spawn_flag_key(kind)
         return (
@@ -13114,6 +13116,14 @@ def _sessions_spawn_thread_policy_error(
 
 def _thread_binding_spawn_flag_key(kind: Literal["acp", "subagent"]) -> str:
     return "spawnAcpSessions" if kind == "acp" else "spawnSubagentSessions"
+
+
+def _thread_binding_default_top_level_placement(
+    channel: str,
+) -> Literal["current", "child"]:
+    # OpenClaw channel plugins declare Discord and Matrix room-level spawns as
+    # child-thread placement by default; those require explicit spawn flags.
+    return "child" if channel in {"discord", "matrix"} else "current"
 
 
 def _mapping_or_none(value: object) -> Mapping[str, object] | None:

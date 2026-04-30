@@ -2783,6 +2783,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   sessions_spawn_acp"` (`13 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Gateway ACP and subagent `thread=true` spawn policy now also mirrors
+  OpenClaw's child-placement default from channel plugins: Discord and Matrix
+  require explicit `spawnAcpSessions=true` / `spawnSubagentSessions=true` when
+  the spawn flag is unset, so top-level child-thread creation does not silently
+  run on channels whose upstream placement policy requires an opt-in.
+- Verified the child-placement spawn-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement -q`
+  (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement -q`
+  (`1 passed`), adjacent gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_thread_mode or
+  sessions_spawn_acp"` (`15 passed`), ACP adapter coverage `python -m pytest
+  tests\test_gateway_acp_spawn.py -q` (`9 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 
 ## References
 
