@@ -84,6 +84,12 @@ Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
 and keep the OpenClaw untrusted-attachment prompt suffix.
+Sandboxed `chat.send` attachment delivery now stages base64 media into the
+session workspace under `media/inbound/...`, strips inline payload bytes before
+runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
+Remaining sandbox media staging work is the sibling `sessions.send`,
+`sessions.steer`, and node `agent.request` attachment paths plus deeper inbound
+provider media staging.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,

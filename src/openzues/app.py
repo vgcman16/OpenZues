@@ -1735,11 +1735,17 @@ def _gateway_attachment_content_preview(attachment: dict[str, object]) -> str | 
 def _gateway_attachment_stored_preview(attachment: dict[str, object]) -> str | None:
     media_ref = _gateway_attachment_text_value(attachment.get("openzuesMediaRef"))
     saved_path = _gateway_attachment_text_value(attachment.get("openzuesSavedPath"))
+    sandbox_path = _gateway_attachment_text_value(attachment.get("openzuesSandboxPath"))
     digest = _gateway_attachment_text_value(attachment.get("openzuesSha256"))
     byte_length = attachment.get("openzuesByteLength")
-    if media_ref is None or saved_path is None or digest is None:
+    if media_ref is None or digest is None:
         return None
-    parts = [f"mediaRef={media_ref}", f"savedPath={saved_path}", f"sha256={digest}"]
+    if sandbox_path is not None:
+        parts = [f"mediaRef={media_ref}", f"sandboxPath={sandbox_path}", f"sha256={digest}"]
+    elif saved_path is not None:
+        parts = [f"mediaRef={media_ref}", f"savedPath={saved_path}", f"sha256={digest}"]
+    else:
+        return None
     if isinstance(byte_length, int) and byte_length >= 0:
         parts.append(f"bytes={byte_length}")
     return ", ".join(parts)
@@ -1800,6 +1806,9 @@ def _persist_gateway_chat_attachments(
     persisted: list[dict[str, object]] = []
     storage_dir = data_dir / "gateway-attachments" / "inbound"
     for attachment in attachments:
+        if _gateway_attachment_text_value(attachment.get("openzuesSandboxPath")) is not None:
+            persisted.append(dict(attachment))
+            continue
         base64_value = _gateway_attachment_base64_value(attachment)
         decoded = (
             _decode_gateway_attachment_base64(base64_value)

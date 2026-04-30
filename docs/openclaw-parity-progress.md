@@ -1860,6 +1860,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Sandboxed `chat.send` attachment delivery now stages decoded base64 media
+  inside the saved session workspace at `media/inbound/...`, strips inline
+  payload bytes before attachment-runtime handoff, and carries sandbox-relative
+  media paths in the runtime prompt so sandboxed turns can reference staged
+  media without host gateway attachment paths.
+- Verified the sandboxed chat-send media staging seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "chat_send_sandboxed_attachment_stages_media_in_session_workspace or
+  chat_send_uses_attachment_runtime_when_wired or
+  chat_send_passes_image_order_for_mixed_inline_and_offloaded_attachments or
+  chat_send_effective_attachments_fail_as_unavailable_runtime or
+  chat_send_ignores_inert_attachments_without_effective_content"`, endpoint
+  proof `python -m pytest tests\test_gateway_nodes_api.py -q -k
+  "effective_chat_send_attachments or preserves_chat_send_attachment_image_order
+  or sessions_send_effective_attachments"`, `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py`.
 - Telegram native `sendPoll` topic-qualified targets are now covered by the
   same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload

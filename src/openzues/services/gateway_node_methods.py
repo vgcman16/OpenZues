@@ -165,6 +165,7 @@ _CHAT_HISTORY_DEFAULT_MAX_CHARS = 8_000
 _CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024
 _CHAT_HISTORY_MAX_TOTAL_BYTES = 6 * 1024 * 1024
 _CHAT_HISTORY_OVERSIZED_PLACEHOLDER = "[chat.history omitted: message too large]"
+_CHAT_ATTACHMENT_MAX_BYTES = 5_000_000
 _ASSISTANT_VISIBLE_TOOL_RESULT_BLOCK_RE = re.compile(
     r"<\s*tool_result\b[^>]*>.*?(?:<\s*/\s*(?:tool_result|tool_call)\s*>|\Z)",
     re.IGNORECASE | re.DOTALL,
@@ -189,6 +190,14 @@ _SESSIONS_SPAWN_ACCEPTED_NOTE = (
     "completions arrive. If a child completion event arrives AFTER your final "
     "answer, reply ONLY with NO_REPLY."
 )
+_CHAT_ATTACHMENT_EXTENSIONS_BY_MIME = {
+    "image/gif": "gif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
 _SESSIONS_SPAWN_SESSION_ACCEPTED_NOTE = (
     "thread-bound session stays active after this task; continue in-thread for follow-ups."
 )
@@ -5747,7 +5756,7 @@ class GatewayNodeMethodService:
                 source_session_key,
                 now_ms=now_ms,
             )
-            sandbox_media_root = await self._gateway_send_sandbox_media_root(
+            sandbox_media_root = await self._gateway_session_sandbox_media_root(
                 source_session_key
             )
             normalized_media_urls = _normalize_gateway_send_media_urls(
@@ -6205,6 +6214,22 @@ class GatewayNodeMethodService:
                         status_code=503,
                     )
                 assert isinstance(attachments, list)
+                image_order = _chat_attachment_image_order(attachments)
+                sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                    session_key
+                )
+                runtime_attachments = attachments
+                if sandbox_media_root is not None:
+                    runtime_attachments, sandbox_media_paths = (
+                        _stage_gateway_chat_sandbox_attachments(
+                            sandbox_root=sandbox_media_root,
+                            attachments=attachments,
+                        )
+                    )
+                    message_for_runtime = _format_gateway_chat_sandbox_media_paths(
+                        message_for_runtime,
+                        sandbox_media_paths,
+                    )
                 send_result = await self._chat_attachment_send_service(
                     session_key=session_key,
                     message=message_for_runtime,
@@ -6212,8 +6237,8 @@ class GatewayNodeMethodService:
                     thinking=thinking,
                     deliver=deliver,
                     timeout_ms=timeout_ms,
-                    attachments=attachments,
-                    image_order=_chat_attachment_image_order(attachments),
+                    attachments=runtime_attachments,
+                    image_order=image_order,
                     channel=delivery_channel,
                     to=delivery_to,
                     node_id=None,
@@ -11706,7 +11731,7 @@ class GatewayNodeMethodService:
             return session_key
         return str(existing_entry.get("key") or session_key)
 
-    async def _gateway_send_sandbox_media_root(
+    async def _gateway_session_sandbox_media_root(
         self,
         session_key: str | None,
     ) -> str | None:
@@ -16681,6 +16706,145 @@ def _chat_attachment_image_order(attachments: list[dict[str, object]]) -> list[s
             else "inline"
         )
     return image_order
+
+
+def _stage_gateway_chat_sandbox_attachments(
+    *,
+    sandbox_root: str,
+    attachments: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[str]]:
+    staged: list[dict[str, object]] = []
+    sandbox_paths: list[str] = []
+    used_names: set[str] = set()
+    inbound_dir = Path(sandbox_root).expanduser() / "media" / "inbound"
+    for index, attachment in enumerate(attachments, start=1):
+        base64_value = _chat_attachment_base64_value(attachment)
+        decoded = (
+            _decode_gateway_chat_attachment_base64(base64_value)
+            if base64_value is not None
+            else None
+        )
+        if decoded is None:
+            staged.append(dict(attachment))
+            continue
+        safe_name = _safe_gateway_chat_sandbox_attachment_name(
+            attachment,
+            index=index,
+            used_names=used_names,
+        )
+        target_path = inbound_dir / safe_name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(decoded)
+        rel_path = f"media/inbound/{safe_name}"
+        digest = hashlib.sha256(decoded).hexdigest()
+        staged_attachment = _copy_chat_attachment_without_inline_payload(attachment)
+        staged_attachment.update(
+            {
+                "openzuesMediaRef": f"media://inbound/{safe_name}",
+                "openzuesSavedPath": str(target_path),
+                "openzuesSandboxPath": rel_path,
+                "openzuesSha256": digest,
+                "openzuesByteLength": len(decoded),
+            }
+        )
+        staged.append(staged_attachment)
+        sandbox_paths.append(rel_path)
+    return staged, sandbox_paths
+
+
+def _decode_gateway_chat_attachment_base64(value: str) -> bytes | None:
+    candidate = value.strip()
+    if candidate.lower().startswith("data:") and "," in candidate:
+        candidate = candidate.split(",", 1)[1].strip()
+    if not candidate:
+        return None
+    padded = f"{candidate}{'=' * (-len(candidate) % 4)}"
+    try:
+        decoded = base64.b64decode(padded, validate=True)
+    except Exception:
+        return None
+    if not decoded or len(decoded) > _CHAT_ATTACHMENT_MAX_BYTES:
+        return None
+    return decoded
+
+
+def _safe_gateway_chat_sandbox_attachment_name(
+    attachment: Mapping[str, object],
+    *,
+    index: int,
+    used_names: set[str],
+) -> str:
+    raw_name = _chat_attachment_file_name(attachment)
+    if raw_name is None:
+        extension = _chat_attachment_extension(attachment)
+        raw_name = f"attachment-{index}.{extension}"
+    name = Path(raw_name).name.replace("\\", "_").replace("/", "_")
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    if not name:
+        name = f"attachment-{index}.{_chat_attachment_extension(attachment)}"
+    stem = Path(name).stem or f"attachment-{index}"
+    suffix = Path(name).suffix
+    candidate = name
+    dedupe_index = 2
+    while candidate in used_names:
+        candidate = f"{stem}-{dedupe_index}{suffix}"
+        dedupe_index += 1
+    used_names.add(candidate)
+    return candidate
+
+
+def _chat_attachment_file_name(attachment: Mapping[str, object]) -> str | None:
+    for key in ("fileName", "filename", "name"):
+        value = _chat_attachment_text_value(attachment.get(key))
+        if value is not None:
+            return value
+    source = attachment.get("source")
+    if isinstance(source, Mapping):
+        for key in ("fileName", "filename", "name"):
+            value = _chat_attachment_text_value(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _chat_attachment_extension(attachment: Mapping[str, object]) -> str:
+    file_name = _chat_attachment_file_name(attachment)
+    if file_name is not None:
+        suffix = Path(file_name).suffix.lower().lstrip(".")
+        if suffix and re.fullmatch(r"[a-z0-9]{1,8}", suffix):
+            return suffix
+    mime = _chat_attachment_mime_type(attachment)
+    if mime is None:
+        return "bin"
+    return _CHAT_ATTACHMENT_EXTENSIONS_BY_MIME.get(mime.lower(), "bin")
+
+
+def _copy_chat_attachment_without_inline_payload(
+    attachment: Mapping[str, object],
+) -> dict[str, object]:
+    copied = dict(attachment)
+    copied.pop("content", None)
+    copied.pop("data", None)
+    source = copied.get("source")
+    if isinstance(source, Mapping):
+        source_copy = dict(source)
+        source_copy.pop("data", None)
+        copied["source"] = source_copy
+    return copied
+
+
+def _format_gateway_chat_sandbox_media_paths(
+    message: str,
+    sandbox_paths: list[str],
+) -> str:
+    if not sandbox_paths:
+        return message
+    lines = ["Sandbox media staged in this workspace:"]
+    lines.extend(f"- {path}" for path in sandbox_paths)
+    block = "\n".join(lines)
+    if message.strip():
+        return f"{message.rstrip()}\n\n{block}"
+    return block
 
 
 def _normalize_gateway_send_media_urls(
