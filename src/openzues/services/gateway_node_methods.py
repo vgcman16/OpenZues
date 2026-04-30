@@ -8398,13 +8398,16 @@ class GatewayNodeMethodService:
                     if child_sandbox_status.sandboxed
                     else {}
                 )
-                delivery_kwargs: dict[str, object] = {"deliver": None}
+                delivery_kwargs: dict[str, object] = {
+                    "deliver": False if thread_binding is not None else None
+                }
                 if thread_binding:
-                    delivery_kwargs["deliver"] = True
                     bound_channel = _string_or_none(thread_binding.get("channel"))
                     bound_to = _string_or_none(thread_binding.get("to"))
                     bound_account_id = _string_or_none(thread_binding.get("accountId"))
                     bound_thread_id = _string_or_none(thread_binding.get("threadId"))
+                    if bound_channel is not None and bound_to is not None:
+                        delivery_kwargs["deliver"] = True
                     if bound_channel is not None:
                         delivery_kwargs["channel"] = bound_channel
                     if bound_to is not None:
@@ -8413,6 +8416,19 @@ class GatewayNodeMethodService:
                         delivery_kwargs["account_id"] = bound_account_id
                     if bound_thread_id is not None:
                         delivery_kwargs["thread_id"] = bound_thread_id
+                elif thread_binding is not None and requester_origin is not None:
+                    origin_channel = _string_or_none(requester_origin.get("channel"))
+                    origin_to = _string_or_none(requester_origin.get("to"))
+                    origin_account_id = _string_or_none(requester_origin.get("accountId"))
+                    origin_thread_id = _string_or_none(requester_origin.get("threadId"))
+                    if origin_channel is not None:
+                        delivery_kwargs["channel"] = origin_channel
+                    if origin_to is not None:
+                        delivery_kwargs["to"] = origin_to
+                    if origin_account_id is not None:
+                        delivery_kwargs["account_id"] = origin_account_id
+                    if origin_thread_id is not None:
+                        delivery_kwargs["thread_id"] = origin_thread_id
                 send_result = await effective_chat_send_service(
                     session_key=canonical_key,
                     message=(

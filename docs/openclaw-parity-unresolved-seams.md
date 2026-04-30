@@ -235,6 +235,11 @@ ACP/session binding policy breadth.
 Initial thread-bound child runs now dispatch through the chat-send adapter with
 the bound `channel`, `to`, `account_id`, and `thread_id` kwargs instead of
 starting as an unbound control-chat-only turn.
+Thread-bound child runs whose binding hook reports readiness without a
+routable delivery origin now also follow OpenClaw's generic-binding fallback:
+the initial child turn receives the requester channel context with
+`deliver=false`, stays persistent with `cleanup="keep"`, and keeps parent
+completion announcements enabled.
 Terminal `agent.wait` completion announcements now also use the saved
 `completionDelivery` route through the direct channel-send service and persist
 the provider delivery result/error on the child session metadata.

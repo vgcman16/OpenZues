@@ -18984,6 +18984,67 @@ async def test_sessions_spawn_thread_mode_delivers_initial_child_run_to_bound_or
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_without_delivery_origin_keeps_completion(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-generic-binding.db")
+    await database.initialize()
+    send_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-thread-generic-binding-1", "status": "ok"}
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        del parent, child, context
+        return {
+            "status": "ok",
+            "threadBindingReady": True,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay available through the generic binding.",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="slack",
+            message_to="channel:generic-parent",
+            message_account_id="work",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert payload["mode"] == "session"
+    assert payload["cleanup"] == "keep"
+    assert send_calls[0]["deliver"] is False
+    assert send_calls[0]["channel"] == "slack"
+    assert send_calls[0]["to"] == "channel:generic-parent"
+    assert send_calls[0]["account_id"] == "work"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {}
+    assert metadata["completionDelivery"] == {"mode": "thread"}
+    assert metadata.get("expectsCompletionMessage") is not False
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_cleans_up_binding_when_runtime_start_fails(
     tmp_path,
 ) -> None:

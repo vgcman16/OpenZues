@@ -3872,6 +3872,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Thread-bound `sessions.spawn` now also mirrors OpenClaw's generic-binding
+  fallback: when a hook reports `threadBindingReady=true` but supplies no
+  routable delivery origin, the initial child run is queued with
+  `deliver=false` while carrying the requester channel/account target and
+  leaving completion announcements enabled.
+- Verified the generic thread-binding fallback seam with `python -m pytest
+  tests\test_gateway_node_methods.py -k
+  "thread_mode_without_delivery_origin_keeps_completion" -q` (`1 passed`),
+  adjacent thread/completion coverage `python -m pytest
+  tests\test_gateway_node_methods.py -k "thread_mode_without_delivery_origin_keeps_completion
+  or thread_mode_delivers_initial_child_run_to_bound_origin or
+  thread_mode_cleans_up_binding_when_runtime_start_fails or
+  thread_mode_uses_route_backed_thread_binder or
+  thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_target_agent_bound_account or
+  agent_wait_thread_bound_completion_uses_completion_delivery_route or
+  agent_wait_announces_spawn_completion_to_parent_session or
+  agent_wait_skips_spawn_completion_announcement_when_not_expected" -q` (`10
+  passed`), `python -m pytest tests\test_gateway_thread_binding.py -q` (`4
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses that
   same OpenClaw `resolveRequesterOriginForChild` account selection before
   native thread-binding policy checks and ACP runtime dispatch, so
