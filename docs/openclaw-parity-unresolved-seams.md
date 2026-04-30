@@ -2577,6 +2577,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   message_action_dispatches_slack"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the Telegram route-backed media/force-document seam from OpenClaw
+  `src/plugin-sdk/reply-payload.ts`, `extensions/telegram/src/outbound-adapter.ts`,
+  and `extensions/telegram/src/send.ts`: native route-backed multi-media sends
+  now use individual Telegram `sendPhoto`/`sendDocument` calls with the caption
+  on the first send, return the final send's message id, preserve ordered media
+  ids, and include `disable_content_type_detection` for forced document sends.
+  Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_native_options
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_native_route or telegram_native_options or telegram_topic or
+  telegram_media_group or invalid_telegram_durations"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

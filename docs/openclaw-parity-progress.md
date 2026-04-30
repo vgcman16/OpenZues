@@ -2577,6 +2577,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or message_action_dispatches_slack"` (`9 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Telegram route-backed native multi-media sends now match OpenClaw's
+  sequential media delivery contract: each media URL is sent individually,
+  the caption rides on the first send, the final send's message id is the
+  canonical `messageId`, and returned `mediaIds` stay ordered. Forced
+  document sends also pass Telegram's `disable_content_type_detection` flag.
+- Verified the Telegram media/force-document seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_native_options
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+  -q` (`2 passed`), adjacent Telegram coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_native_route or telegram_native_options
+  or telegram_topic or telegram_media_group or invalid_telegram_durations"`
+  (`10 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

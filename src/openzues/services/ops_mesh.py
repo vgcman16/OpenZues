@@ -1192,8 +1192,13 @@ def _telegram_result_payload(result: object) -> dict[str, Any]:
     return items[0] if items else {}
 
 
+def _telegram_terminal_result_payload(result: object) -> dict[str, Any]:
+    items = _telegram_result_items(result)
+    return items[-1] if items else {}
+
+
 def _telegram_message_id(result: object) -> str | None:
-    payload = _telegram_result_payload(result)
+    payload = _telegram_terminal_result_payload(result)
     candidate = payload.get("message_id")
     if candidate is None:
         return None
@@ -9685,26 +9690,43 @@ class OpsMeshService:
             if silent is not None:
                 payload["disable_notification"] = silent
             if len(media_urls) > 1:
-                media: list[dict[str, str]] = []
-                for index, media_url in enumerate(media_urls[:10]):
-                    item = {
-                        "type": "document" if force_document else "photo",
-                        "media": media_url,
-                    }
+                result_items: list[dict[str, Any]] = []
+                for index, media_url in enumerate(media_urls):
+                    media_payload = dict(payload)
+                    media_payload["document" if force_document else "photo"] = media_url
+                    if force_document:
+                        media_payload["disable_content_type_detection"] = True
                     if index == 0 and text:
-                        item["caption"] = text[:1024]
-                    media.append(item)
-                payload["media"] = media
-                result = self._post_json_webhook(
-                    _telegram_api_endpoint(
-                        str(route.get("target") or ""),
-                        token,
-                        "sendMediaGroup",
-                    ),
-                    payload,
-                )
+                        media_payload["caption"] = text[:1024]
+                    media_result = self._post_json_webhook(
+                        _telegram_api_endpoint(
+                            str(route.get("target") or ""),
+                            token,
+                            "sendDocument" if force_document else "sendPhoto",
+                        ),
+                        media_payload,
+                    )
+                    if not isinstance(media_result, dict):
+                        raise RuntimeError("Telegram API returned a non-JSON response.")
+                    if media_result.get("ok") is False:
+                        error = str(
+                            media_result.get("description")
+                            or media_result.get("error_code")
+                            or "unknown"
+                        )
+                        raise RuntimeError(f"Telegram API returned {error}.")
+                    result_payload = media_result.get("result")
+                    if isinstance(result_payload, dict):
+                        result_items.append(result_payload)
+                    elif isinstance(result_payload, list):
+                        result_items.extend(
+                            item for item in result_payload if isinstance(item, dict)
+                        )
+                result = {"ok": True, "result": result_items}
             elif media_urls:
                 payload["document" if force_document else "photo"] = media_urls[0]
+                if force_document:
+                    payload["disable_content_type_detection"] = True
                 if text:
                     payload["caption"] = text[:1024]
                 result = self._post_json_webhook(

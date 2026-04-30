@@ -4871,6 +4871,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
                 "reply_to_message_id": "41",
                 "disable_notification": True,
                 "document": "https://example.com/report.pdf",
+                "disable_content_type_detection": True,
                 "caption": (
                     "Ship native Telegram document parity.\n\n"
                     "Media:\n"
@@ -5068,20 +5069,22 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
     ) -> dict[str, object]:
         del self, secret_header_name, secret_token
         telegram_posts.append((target, payload))
-        return {
-            "ok": True,
-            "result": [
-                {
+        if len(telegram_posts) == 1:
+            return {
+                "ok": True,
+                "result": {
                     "message_id": 44,
                     "chat": {"id": -100123},
                     "photo": [{"file_id": "small-one"}, {"file_id": "large-one"}],
                 },
-                {
-                    "message_id": 45,
-                    "chat": {"id": -100123},
-                    "photo": [{"file_id": "small-two"}, {"file_id": "large-two"}],
-                },
-            ],
+            }
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 45,
+                "chat": {"id": -100123},
+                "photo": [{"file_id": "small-two"}, {"file_id": "large-two"}],
+            },
         }
 
     monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
@@ -5109,7 +5112,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
 
     delivery = await database.get_outbound_delivery(1)
 
-    assert result["messageId"] == "44"
+    assert result["messageId"] == "45"
     assert result["mediaIds"] == ["large-one", "large-two"]
     assert result["mediaUrls"] == [
         "https://example.com/one.png",
@@ -5117,25 +5120,23 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
     ]
     assert telegram_posts == [
         (
-            "https://api.telegram.org/bot123456:telegram-token/sendMediaGroup",
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
             {
                 "chat_id": "-100123",
-                "media": [
-                    {
-                        "type": "photo",
-                        "media": "https://example.com/one.png",
-                        "caption": (
-                            "Ship the media bundle.\n\n"
-                            "Media:\n"
-                            "1. https://example.com/one.png\n"
-                            "2. https://example.com/two.png"
-                        ),
-                    },
-                    {
-                        "type": "photo",
-                        "media": "https://example.com/two.png",
-                    },
-                ],
+                "photo": "https://example.com/one.png",
+                "caption": (
+                    "Ship the media bundle.\n\n"
+                    "Media:\n"
+                    "1. https://example.com/one.png\n"
+                    "2. https://example.com/two.png"
+                ),
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            {
+                "chat_id": "-100123",
+                "photo": "https://example.com/two.png",
             },
         )
     ]
