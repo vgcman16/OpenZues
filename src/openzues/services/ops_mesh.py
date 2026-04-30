@@ -7425,6 +7425,7 @@ class OpsMeshService:
                 request,
             )
         if channel == "discord" and action in {
+            "ban",
             "category-create",
             "category-delete",
             "category-edit",
@@ -7597,6 +7598,13 @@ class OpsMeshService:
             if action == "kick":
                 return await asyncio.to_thread(
                     self._dispatch_discord_kick_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "ban":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_ban_message_action,
                     route,
                     request,
                     secret_token,
@@ -9640,6 +9648,55 @@ class OpsMeshService:
             result = self._request_json_provider_url(
                 _discord_api_endpoint(f"guilds/{guild_id}/members/{user_id}"),
                 method="DELETE",
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+            )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True}
+
+    def _dispatch_discord_ban_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        payload: dict[str, object] | None = None
+        delete_message_days = _message_action_param_integer(
+            request.params,
+            "deleteMessageDays",
+            "deleteDays",
+        )
+        if delete_message_days is not None:
+            payload = {"delete_message_days": min(max(delete_message_days, 0), 7)}
+        extra_headers = _discord_audit_reason_headers(
+            _message_action_param_string(request.params, "reason")
+        )
+        if extra_headers:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/bans/{user_id}"),
+                method="PUT",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=_discord_bot_authorization(secret_token),
+                extra_headers=extra_headers,
+            )
+        else:
+            result = self._request_json_provider_url(
+                _discord_api_endpoint(f"guilds/{guild_id}/bans/{user_id}"),
+                method="PUT",
+                payload=payload,
                 secret_header_name="Authorization",
                 secret_token=_discord_bot_authorization(secret_token),
             )

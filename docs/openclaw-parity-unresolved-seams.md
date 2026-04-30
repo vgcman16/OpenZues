@@ -521,6 +521,9 @@ same route-backed bot-token REST path and returns the upstream-shaped
 Discord moderation `kick` now dispatches through the same route-backed
 bot-token REST path, including encoded audit-log reason headers and the
 upstream-shaped `{ok: true}` payload.
+Discord moderation `ban` now dispatches through the same route-backed bot-token
+REST path, including clamped `delete_message_days`, encoded audit-log reason
+headers, and the upstream-shaped `{ok: true}` payload.
 WhatsApp route-backed action parity now includes `react` add/remove dispatch
 via the native WhatsApp Cloud API messages endpoint, including direct JID
 normalization to E.164 recipients, the upstream empty-emoji/remove shape, and
