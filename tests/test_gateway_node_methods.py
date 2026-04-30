@@ -12546,6 +12546,117 @@ async def test_sessions_delete_removes_metadata_backed_session_and_transcript() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "reason"),
+    [
+        ("sessions.reset", "session-reset"),
+        ("sessions.delete", "session-delete"),
+    ],
+)
+async def test_sessions_reset_delete_unbinds_thread_bound_sessions(
+    tmp_path: Path,
+    method: str,
+    reason: str,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-thread-unbind.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    session_binding = {
+        "bindingId": "generic:slack\u241fdefault\u241f\u241fchannel:C123",
+        "targetSessionKey": session_key,
+        "targetKind": "subagent",
+        "conversation": {
+            "channel": "slack",
+            "accountId": "default",
+            "conversationId": "channel:C123",
+        },
+        "status": "active",
+        "boundAt": 1770000000000,
+        "metadata": {
+            "placement": "current",
+            "threadId": "1710000000.000100",
+            "lastActivityAt": 1770000000000,
+        },
+    }
+    thread_binding = {
+        "channel": "slack",
+        "accountId": "default",
+        "to": "channel:C123",
+        "threadId": "1710000000.000100",
+    }
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "label": "Bound child",
+            "sessionBinding": session_binding,
+            "threadBinding": thread_binding,
+            "completionDelivery": {"mode": "thread", **thread_binding},
+        },
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This bound session exists before mutation.",
+        session_key=session_key,
+    )
+    unbind_calls: list[dict[str, object]] = []
+
+    class FakeThreadBinder:
+        async def __call__(
+            self,
+            parent: dict[str, object],
+            child: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            raise AssertionError("reset/delete should not prepare a new binding")
+
+        async def unbind(
+            self,
+            target: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            unbind_calls.append({"target": dict(target), "context": dict(context)})
+            return {"status": "ok", "unbound": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        subagent_thread_binder=FakeThreadBinder(),
+    )
+
+    payload = await service.call(method, {"key": "subagent:child"}, now_ms=999)
+
+    assert payload["ok"] is True
+    assert payload["key"] == session_key
+    assert unbind_calls == [
+        {
+            "target": {
+                "targetSessionKey": session_key,
+                "reason": reason,
+                "sessionBinding": session_binding,
+                "threadBinding": thread_binding,
+            },
+            "context": {
+                "reason": reason,
+                "targetSessionKey": session_key,
+                "bindingId": session_binding["bindingId"],
+                **thread_binding,
+            },
+        }
+    ]
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    if method == "sessions.delete":
+        assert metadata_row is None
+    else:
+        assert metadata_row is not None
+        metadata = metadata_row["metadata"]
+        assert metadata["label"] == "Bound child"
+        assert "sessionBinding" not in metadata
+        assert "threadBinding" not in metadata
+        assert "completionDelivery" not in metadata
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_closes_acp_runtime_before_metadata_delete(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-delete-acp-cleanup.db")
     await database.initialize()

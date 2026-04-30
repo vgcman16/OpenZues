@@ -3313,6 +3313,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_thread_binding.py
   src\openzues\services\gateway_node_methods.py`.
+- Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
+  lifecycle cleanup for thread-bound child sessions using the saved
+  `sessionBinding` and `threadBinding` metadata before mutating or deleting the
+  local session. Reset also clears stale binding/completion metadata so a reset
+  session does not continue advertising a bound conversation that has been
+  unbound.
+- Verified the route-backed unbind lifecycle seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_reset_delete_unbinds_thread_bound_sessions
+  -q` (`2 passed`), adjacent reset/delete/thread-binding coverage `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "sessions_reset or
+  sessions_delete or thread_binding"` (`20 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
+  and `mypy src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

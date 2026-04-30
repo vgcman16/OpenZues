@@ -2202,6 +2202,46 @@ class GatewayNodeMethodService:
             # Best-effort cleanup: preserve the actionable spawn failure.
             return
 
+    async def _unbind_thread_binding_before_session_mutation(
+        self,
+        *,
+        session_key: str,
+        metadata: Mapping[str, object],
+        reason: Literal["session-delete", "session-reset"],
+    ) -> None:
+        if self._subagent_thread_binder is None:
+            return
+        unbind = getattr(self._subagent_thread_binder, "unbind", None)
+        if not callable(unbind):
+            return
+        session_binding = metadata.get("sessionBinding")
+        thread_binding = metadata.get("threadBinding")
+        if not isinstance(session_binding, Mapping) and not isinstance(
+            thread_binding,
+            Mapping,
+        ):
+            return
+        target: dict[str, object] = {
+            "targetSessionKey": session_key,
+            "reason": reason,
+        }
+        context: dict[str, object] = {
+            "reason": reason,
+            "targetSessionKey": session_key,
+        }
+        if isinstance(session_binding, Mapping):
+            target["sessionBinding"] = json.loads(json.dumps(dict(session_binding)))
+            binding_id = _string_or_none(session_binding.get("bindingId"))
+            if binding_id is not None:
+                context["bindingId"] = binding_id
+        if isinstance(thread_binding, Mapping):
+            target["threadBinding"] = json.loads(json.dumps(dict(thread_binding)))
+            for key in ("channel", "to", "accountId", "threadId"):
+                value = _string_or_none(thread_binding.get(key))
+                if value is not None:
+                    context[key] = value
+        await cast(Any, unbind)(target, context)
+
     async def _invoke_gateway_tool(
         self,
         payload: dict[str, Any],
@@ -6848,6 +6888,11 @@ class GatewayNodeMethodService:
                     metadata=restored_metadata,
                     reason="session-reset",
                 )
+                await self._unbind_thread_binding_before_session_mutation(
+                    session_key=canonical_key,
+                    metadata=restored_metadata,
+                    reason="session-reset",
+                )
             restored_metadata = _reset_session_metadata(restored_metadata)
             await self._database.delete_control_chat_messages(session_key=canonical_key)
             await self._database.upsert_gateway_session_metadata(
@@ -6926,6 +6971,11 @@ class GatewayNodeMethodService:
             )
             if isinstance(metadata_value, dict):
                 await self._cleanup_acp_runtime_session_before_mutation(
+                    session_key=canonical_key,
+                    metadata=metadata_value,
+                    reason="session-delete",
+                )
+                await self._unbind_thread_binding_before_session_mutation(
                     session_key=canonical_key,
                     metadata=metadata_value,
                     reason="session-delete",
@@ -12662,6 +12712,16 @@ def _provider_model_override(value: object) -> tuple[str, str] | None:
 
 def _reset_session_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(metadata)
+    for key in (
+        "sessionBinding",
+        "threadBinding",
+        "completionDelivery",
+        "completionDeliveryResult",
+        "completionDeliveryError",
+        "completionAnnouncedRunId",
+        "completionAnnouncedAtMs",
+    ):
+        normalized.pop(key, None)
     has_provider_model_override = (
         _string_or_none(normalized.get("providerOverride")) is not None
         and _string_or_none(normalized.get("modelOverride")) is not None

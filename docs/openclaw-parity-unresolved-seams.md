@@ -209,7 +209,11 @@ current-conversation `sessionBinding` record on the child session metadata,
 including `bindingId`, `targetSessionKey`, `targetKind`, `conversation`,
 `status`, `boundAt`, and `metadata.lastActivityAt` alongside the existing
 delivery metadata.
-Remaining lifecycle parity is deeper provider-native unbind record stores,
+Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
+`unbind` hook with the saved `sessionBinding` / `threadBinding` record before
+mutating or deleting metadata, and reset strips stale binding/completion fields
+from the preserved session entry.
+Remaining lifecycle parity is deeper provider-native binding record stores,
 provider-native child-thread creation, target-agent bound-account selection,
 end-hook/farewell behavior on reset/delete, and ACP/session binding policy
 breadth.
