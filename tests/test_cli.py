@@ -14343,6 +14343,26 @@ def test_doctor_json_keeps_secretref_gateway_token_read_only_when_unresolved(
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_reports_browser_health_unavailable_when_facade_missing(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "browser": {
+                "defaultProfile": "user",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["browser"]["warnings"][0]
+    assert payload["browser"]["status"] == "unavailable"
+    assert "Browser health check is unavailable" in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

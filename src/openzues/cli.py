@@ -3989,6 +3989,71 @@ def _with_doctor_gateway_auth_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+def _doctor_browser_health_configured(snapshot: dict[str, object]) -> bool:
+    browser = _dict_config(snapshot.get("browser"))
+    if _optional_cli_string(browser.get("defaultProfile")) is not None:
+        return True
+    profiles = browser.get("profiles")
+    profile_values = profiles.values() if isinstance(profiles, dict) else []
+    return any(
+        isinstance(profile, dict)
+        and _optional_cli_string(profile.get("driver")) == "existing-session"
+        for profile in profile_values
+    )
+
+
+def _doctor_browser_unavailable_payload(message: str) -> dict[str, object]:
+    warning = f"- Browser health check is unavailable: {message}"
+    return {
+        "status": "unavailable",
+        "summary": "Browser health check is unavailable.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:browser",
+        "warnings": [warning],
+    }
+
+
+async def _build_doctor_browser_payload(
+    config_service: object | None,
+    browser_doctor_adapter: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    if not _doctor_browser_health_configured(snapshot):
+        return None
+    check = getattr(browser_doctor_adapter, "check", None)
+    if not callable(check):
+        check = getattr(browser_doctor_adapter, "note_chrome_mcp_browser_readiness", None)
+    if not callable(check):
+        return _doctor_browser_unavailable_payload("browser doctor facade is unavailable.")
+    try:
+        result = check(snapshot)
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return _doctor_browser_unavailable_payload(str(exc))
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    result_payload.setdefault("source", "openzues-native")
+    result_payload.setdefault("openClawContribution", "doctor:browser")
+    return result_payload
+
+
+async def _with_doctor_browser_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    browser_doctor_adapter: object | None,
+) -> dict[str, object]:
+    browser_payload = await _build_doctor_browser_payload(config_service, browser_doctor_adapter)
+    if browser_payload is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["browser"] = browser_payload
+    warnings = [
+        str(warning)
+        for warning in _object_list(browser_payload.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
     data_dir: Path | None = None,
@@ -18057,6 +18122,11 @@ def doctor(
         payload = _with_doctor_gateway_auth_payload(
             payload,
             services.gateway_config,
+        )
+        payload = await _with_doctor_browser_payload(
+            payload,
+            services.gateway_config,
+            getattr(services, "browser_doctor", None),
         )
         data_dir = getattr(services.settings, "data_dir", None)
         payload = _with_doctor_provider_override_warnings(

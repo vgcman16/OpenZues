@@ -2798,6 +2798,25 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_json_includes_gateway_health_contribution_and_channel_warnings or
   doctor_and_update_status_json_include_hermes_sections"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the browser doctor facade fallback seam from OpenClaw
+  `doctor-browser.ts` and
+  `doctor.warns-state-directory-is-missing.e2e.test.ts`: top-level
+  `doctor --json` now reports a structured `doctor:browser` unavailable
+  contribution when browser health is configured via `browser.defaultProfile`
+  or an `existing-session` profile but no native browser doctor facade/adapter
+  is registered. Verified with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_browser_health_unavailable_when_facade_missing
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "browser_health_unavailable or gateway_auth_missing_local_token or
+  gateway_auth_warning_when_env_token or gateway_auth_mode_is_ambiguous or
+  secretref_gateway_token or codex_provider_override or codex_inline_model or
+  codex_override_warning or opencode_provider_overrides or
+  state_directory_is_missing or sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Closed the provider-native `gatewayClientScopes` seam from OpenClaw
   `gateway/server-methods/send.ts`: direct send and poll now pass normalized
   gateway client scopes into provider runtime requests, route-backed provider
