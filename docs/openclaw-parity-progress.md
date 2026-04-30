@@ -3320,6 +3320,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.
+- Top-level `doctor --json` now also includes OpenClaw's open-policy
+  `allowFrom` repair contribution. It reports pending wildcard additions for
+  `dmPolicy="open"`, writes top-level or nested `allowFrom=["*"]` according to
+  channel mode during `doctor --fix`, and canonicalizes nested `dm.policy` for
+  top-level-capable channels.
+- Verified the open-policy allowFrom doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_open_policy_allow_from
+  tests\test_cli.py::test_doctor_fix_repairs_open_policy_allow_from -q` (`2
+  passed`), adjacent doctor repair coverage `python -m pytest tests\test_cli.py
+  -q -k "open_policy_allow_from or bundled_plugin_load_paths or
+  stale_plugin_config or legacy_channel_allow_aliases"` (`9 passed`), `ruff
+  check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
 - Route-backed `sessions.spawn thread=true` now persists an OpenClaw-shaped
   current-conversation `sessionBinding` record on child session metadata in
   addition to `threadBinding` and `completionDelivery`. Records include

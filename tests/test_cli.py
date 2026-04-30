@@ -17441,6 +17441,179 @@ def test_doctor_fix_pauses_stale_plugin_config_repair_when_discovery_has_errors(
     assert unrepaired["plugins"]["entries"] == {"acpx": {"enabled": True}}
 
 
+def test_doctor_json_warns_about_open_policy_allow_from(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "signal": {"dmPolicy": "open"},
+                    "matrix": {"dm": {"policy": "open"}},
+                    "discord": {"accounts": {"work": {"dmPolicy": "open"}}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["openPolicyAllowFrom"] == {
+        "status": "warn",
+        "summary": "Open DM policies are missing allowFrom wildcards.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:open-policy-allowfrom",
+        "repairRequested": False,
+        "repairAvailable": True,
+        "changes": [
+            '- channels.signal.allowFrom: set to ["*"] (required by dmPolicy="open")',
+            '- channels.matrix.dm.allowFrom: set to ["*"] (required by dmPolicy="open")',
+            '- channels.discord.accounts.work.allowFrom: set to ["*"] '
+            '(required by dmPolicy="open")',
+        ],
+        "warnings": [
+            '- channels.signal.allowFrom: set to ["*"] (required by dmPolicy="open")',
+            '- channels.matrix.dm.allowFrom: set to ["*"] (required by dmPolicy="open")',
+            '- channels.discord.accounts.work.allowFrom: set to ["*"] '
+            '(required by dmPolicy="open")',
+            '- Run "openzues doctor --fix" to add missing allowFrom wildcards.',
+        ],
+        "path": str(config_path),
+    }
+
+
+def test_doctor_fix_repairs_open_policy_allow_from(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_path = tmp_path / "settings" / "control-ui-config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "slack": {"dmPolicy": "open", "allowFrom": ["U123"]},
+                    "googlechat": {"dm": {"policy": "open"}},
+                    "discord": {"dm": {"policy": "open", "allowFrom": ["123"]}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["openPolicyAllowFrom"]["status"] == "ok"
+    assert payload["openPolicyAllowFrom"]["changed"] is True
+    assert payload["openPolicyAllowFrom"]["changes"] == [
+        '- channels.slack.allowFrom: added "*" (required by dmPolicy="open")',
+        '- channels.googlechat.dm.allowFrom: set to ["*"] (required by dmPolicy="open")',
+        '- channels.discord.dmPolicy: set to "open" '
+        "(migrated from channels.discord.dm.policy)",
+        '- channels.discord.dm.allowFrom: added "*" (required by dmPolicy="open")',
+    ]
+    repaired = json.loads(config_path.read_text(encoding="utf-8"))
+    assert repaired["channels"]["slack"]["allowFrom"] == ["U123", "*"]
+    assert repaired["channels"]["googlechat"]["dm"]["allowFrom"] == ["*"]
+    assert repaired["channels"]["discord"]["dmPolicy"] == "open"
+    assert repaired["channels"]["discord"]["dm"]["allowFrom"] == ["123", "*"]
+    assert "policy" not in repaired["channels"]["discord"]["dm"]
+
+
 def test_doctor_json_warns_about_shared_sandbox_agent_overrides(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

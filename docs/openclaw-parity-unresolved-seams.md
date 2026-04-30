@@ -142,6 +142,11 @@ OpenClaw's stale plugin config doctor helper is now covered by a native
 `plugins.allow` and `plugins.entries.<id>` against native/bundled plugin
 registry ids, `doctor --fix` removes stale allow/entry references, and repair
 pauses with the upstream warning when plugin manifest discovery has errors.
+Open DM policy wildcard repair now also follows OpenClaw's
+`open-policy-allowfrom` helper: `doctor --json` reports the missing
+`allowFrom` wildcard changes, `doctor --fix` writes top-level or nested
+wildcards based on channel mode, and nested `dm.policy="open"` is
+canonicalized for channels that support top-level `dmPolicy`.
 The currently identified OpenClaw legacy-config doctor migrator files are now
 covered by native OpenZues repair paths. Future config work should come from a
 new upstream migration file or validation seam rather than this closed queue.

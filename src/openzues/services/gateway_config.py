@@ -448,6 +448,55 @@ class GatewayConfigService:
             "hash": self._snapshot_hash(snapshot),
         }
 
+    def detect_open_policy_allow_from(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            return {"ok": True, "path": str(config_path), "changes": []}
+        payload = self._read_raw_config_object(label="open policy allowFrom detection")
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changes": _collect_open_policy_allow_from_changes(payload),
+        }
+
+    def repair_open_policy_allow_from(self) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        if not config_path.exists():
+            snapshot = self._default_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        payload = self._read_raw_config_object(label="open policy allowFrom repair")
+        changes = _repair_open_policy_allow_from(payload)
+        if not changes:
+            snapshot = self.build_snapshot()
+            return {
+                "ok": True,
+                "path": str(config_path),
+                "changed": False,
+                "changes": [],
+                "config": snapshot,
+                "hash": self._snapshot_hash(snapshot),
+            }
+        snapshot = self._validated_snapshot(payload)
+        config_path.write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "changed": True,
+            "changes": changes,
+            "config": snapshot,
+            "hash": self._snapshot_hash(snapshot),
+        }
+
     def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> dict[str, Any]:
         config_path = self._require_config_path()
         current = self.build_snapshot()
@@ -1902,6 +1951,131 @@ def _rewrite_bundled_plugin_load_paths(
         f"to {replacement['toPath']}"
         for replacement in applied
     ]
+
+
+def _open_policy_allow_from_mode(channel_name: str) -> str:
+    normalized = channel_name.strip().lower()
+    return "nestedOnly" if normalized in {"googlechat", "matrix"} else "topOrNested"
+
+
+def _open_policy_has_wildcard(values: object) -> bool:
+    if not isinstance(values, list):
+        return False
+    return any(str(value).strip() == "*" for value in values)
+
+
+def _open_policy_list(values: object) -> list[Any] | None:
+    return list(values) if isinstance(values, list) else None
+
+
+def _ensure_open_policy_allow_from(
+    account: dict[str, Any],
+    *,
+    prefix: str,
+    mode: str,
+    changes: list[str],
+) -> None:
+    dm_value = account.get("dm")
+    dm = dm_value if isinstance(dm_value, dict) else None
+    dm_policy_value = account.get("dmPolicy")
+    dm_policy = dm_policy_value if isinstance(dm_policy_value, str) else None
+    if dm_policy is None and dm is not None:
+        nested_policy = dm.get("policy")
+        dm_policy = nested_policy if isinstance(nested_policy, str) else None
+    if dm_policy != "open":
+        return
+
+    top_allow_from = _open_policy_list(account.get("allowFrom"))
+    nested_allow_from = _open_policy_list(dm.get("allowFrom") if dm is not None else None)
+    can_canonicalize_top_level = mode != "nestedOnly"
+    had_nested_open_policy = (
+        can_canonicalize_top_level
+        and "dmPolicy" not in account
+        and dm is not None
+        and dm.get("policy") == "open"
+    )
+
+    if had_nested_open_policy and dm is not None:
+        account["dmPolicy"] = "open"
+        dm.pop("policy", None)
+        changes.append(f'- {prefix}.dmPolicy: set to "open" (migrated from {prefix}.dm.policy)')
+
+    if (
+        can_canonicalize_top_level
+        and top_allow_from is None
+        and nested_allow_from is not None
+        and _open_policy_has_wildcard(nested_allow_from)
+        and dm is not None
+    ):
+        account["allowFrom"] = list(nested_allow_from)
+        dm.pop("allowFrom", None)
+        changes.append(
+            f"- {prefix}.allowFrom: moved wildcard allowlist from {prefix}.dm.allowFrom"
+        )
+
+    if dm is not None and not dm:
+        account.pop("dm", None)
+
+    if mode == "nestedOnly":
+        if _open_policy_has_wildcard(nested_allow_from):
+            return
+        if dm is not None and nested_allow_from is not None:
+            dm["allowFrom"] = [*nested_allow_from, "*"]
+            changes.append(f'- {prefix}.dm.allowFrom: added "*" (required by dmPolicy="open")')
+        else:
+            next_dm = dict(dm) if dm is not None else {}
+            next_dm["allowFrom"] = ["*"]
+            account["dm"] = next_dm
+            changes.append(f'- {prefix}.dm.allowFrom: set to ["*"] (required by dmPolicy="open")')
+        return
+
+    if _open_policy_has_wildcard(top_allow_from) or _open_policy_has_wildcard(nested_allow_from):
+        return
+    if top_allow_from is not None:
+        account["allowFrom"] = [*top_allow_from, "*"]
+        changes.append(f'- {prefix}.allowFrom: added "*" (required by dmPolicy="open")')
+    elif dm is not None and nested_allow_from is not None:
+        dm["allowFrom"] = [*nested_allow_from, "*"]
+        changes.append(f'- {prefix}.dm.allowFrom: added "*" (required by dmPolicy="open")')
+    else:
+        account["allowFrom"] = ["*"]
+        changes.append(f'- {prefix}.allowFrom: set to ["*"] (required by dmPolicy="open")')
+
+
+def _repair_open_policy_allow_from(payload: dict[str, Any]) -> list[str]:
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return []
+    changes: list[str] = []
+    for channel_name, channel_config in channels.items():
+        if not isinstance(channel_config, dict):
+            continue
+        channel_key = str(channel_name)
+        mode = _open_policy_allow_from_mode(channel_key)
+        _ensure_open_policy_allow_from(
+            channel_config,
+            prefix=f"channels.{channel_key}",
+            mode=mode,
+            changes=changes,
+        )
+        accounts = channel_config.get("accounts")
+        if not isinstance(accounts, dict):
+            continue
+        for account_name, account_config in accounts.items():
+            if not isinstance(account_config, dict):
+                continue
+            _ensure_open_policy_allow_from(
+                account_config,
+                prefix=f"channels.{channel_key}.accounts.{account_name}",
+                mode=mode,
+                changes=changes,
+            )
+    return changes
+
+
+def _collect_open_policy_allow_from_changes(payload: dict[str, Any]) -> list[str]:
+    candidate = copy.deepcopy(payload)
+    return _repair_open_policy_allow_from(candidate)
 
 
 def _normalize_openclaw_channel_plugin_id(plugin_id: str) -> str | None:
