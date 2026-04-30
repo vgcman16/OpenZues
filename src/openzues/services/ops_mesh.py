@@ -6833,7 +6833,7 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
-        if channel != "slack" or action != "react":
+        if channel != "slack" or action not in {"react", "reactions"}:
             return None
         route = await self._provider_route_for_channel_account(
             channel=channel,
@@ -6841,9 +6841,16 @@ class OpsMeshService:
         )
         if route is None:
             raise GatewayOutboundRuntimeUnavailableError(
-                "No native Slack route is configured for message.action react."
+                f"No native Slack route is configured for message.action {action}."
             )
         secret_token = await self._notification_route_secret_token(route)
+        if action == "reactions":
+            return await asyncio.to_thread(
+                self._dispatch_slack_reactions_message_action,
+                route,
+                request,
+                secret_token,
+            )
         return await asyncio.to_thread(
             self._dispatch_slack_react_message_action,
             route,
@@ -6890,6 +6897,45 @@ class OpsMeshService:
             error = str(result.get("error") or "unknown_error")
             raise RuntimeError(f"Slack API returned {error}.")
         return {"ok": True, "removed" if remove else "added": emoji}
+
+    def _dispatch_slack_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        channel_id = _slack_channel_id(
+            _message_action_param_string(request.params, "channelId", required=True)
+        )
+        if channel_id is None:
+            raise RuntimeError("Slack reactions requires channelId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "reactions.get"),
+            {
+                "channel": channel_id,
+                "timestamp": message_id or "",
+                "full": True,
+            },
+            secret_header_name="Authorization",
+            secret_token=_slack_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message = result.get("message")
+        reactions: object = []
+        if isinstance(message, dict):
+            raw_reactions = message.get("reactions")
+            if isinstance(raw_reactions, list):
+                reactions = raw_reactions
+        return {"ok": True, "reactions": reactions}
 
     async def _post_provider_route_event(
         self,
