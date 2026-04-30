@@ -2519,6 +2519,25 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   startup_channel_maintenance or
   channels_status_json_calls_gateway_method_owner_with_probe"`, `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the provider-native `gatewayClientScopes` seam from OpenClaw
+  `gateway/server-methods/send.ts`: direct send and poll now pass normalized
+  gateway client scopes into provider runtime requests, route-backed provider
+  event payloads, and persisted delivery payloads, including explicit empty
+  arrays when the caller has no scopes. Verified with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_prefers_provider_runtime
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtime
+  -q`, adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_message_prefers_provider_runtime or
+  send_direct_channel_poll_prefers_provider_runtime or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one or
+  send_direct_channel_message_uses_native_adapter_binding or
+  send_direct_channel_poll_uses_native_adapter_binding or
+  send_direct_channel_message_uses_gateway_route_adapter or
+  send_direct_channel_message_preserves_provider_native_options"`, `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

@@ -1911,6 +1911,12 @@ def _normalize_direct_channel_media_urls(
     return normalized
 
 
+def _normalize_gateway_client_scopes(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(scope).strip() for scope in value if str(scope).strip())
+
+
 def _optional_int_payload_value(payload: dict[str, Any], key: str) -> int | None:
     value = payload.get(key)
     if isinstance(value, int) and not isinstance(value, bool):
@@ -7724,6 +7730,7 @@ class OpsMeshService:
             payload["sessionKey"] = request.session_key
         if request.agent_id is not None:
             payload["agentId"] = request.agent_id
+        payload["gatewayClientScopes"] = list(request.gateway_client_scopes)
         return await self._post_provider_route_event(
             event_type="gateway/send",
             conversation_target=conversation_target,
@@ -7771,6 +7778,7 @@ class OpsMeshService:
             payload["threadId"] = request.thread_id
         if request.session_key is not None:
             payload["sessionKey"] = request.session_key
+        payload["gatewayClientScopes"] = list(request.gateway_client_scopes)
         return await self._post_provider_route_event(
             event_type="gateway/poll",
             conversation_target=conversation_target,
@@ -7933,6 +7941,9 @@ class OpsMeshService:
             route_scope["thread_id"] = normalized_thread_id
         if requested_account_id is None and resolved_target.account_id is not None:
             route_scope["resolved_account_id"] = resolved_target.account_id
+        gateway_client_scopes = _normalize_gateway_client_scopes(
+            payload.get("gatewayClientScopes")
+        )
         if route_scope_extra:
             for key, value in route_scope_extra.items():
                 if value is not None:
@@ -7994,6 +8005,7 @@ class OpsMeshService:
                     is_anonymous=_optional_bool_payload_value(payload, "isAnonymous"),
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
             else:
                 raw_media_url = payload.get("mediaUrl")
@@ -8029,6 +8041,7 @@ class OpsMeshService:
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
@@ -8101,6 +8114,7 @@ class OpsMeshService:
         agent_id: str | None = None,
         thread_id: str | int | None = None,
         session_key: str | None = None,
+        gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
         if not self._outbound_runtime_available():
@@ -8121,6 +8135,7 @@ class OpsMeshService:
             "message": message,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
+            "gatewayClientScopes": list(_normalize_gateway_client_scopes(gateway_client_scopes)),
         }
         if normalized_media_urls:
             if len(normalized_media_urls) == 1:
@@ -8204,6 +8219,7 @@ class OpsMeshService:
         is_anonymous: bool | None = None,
         account_id: str | None = None,
         thread_id: str | int | None = None,
+        gateway_client_scopes: list[str] | tuple[str, ...] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
         if not self._outbound_runtime_available():
@@ -8244,6 +8260,7 @@ class OpsMeshService:
             "options": normalized_options,
             "channel": conversation_target.channel,
             "to": str(to).strip(),
+            "gatewayClientScopes": list(_normalize_gateway_client_scopes(gateway_client_scopes)),
         }
         if account_id is not None:
             payload["accountId"] = account_id

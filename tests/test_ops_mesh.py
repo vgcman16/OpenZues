@@ -2247,6 +2247,7 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
         account_id="default",
         agent_id="release-bot",
         thread_id="1710000000.9999",
+        gateway_client_scopes=["operator.write"],
         idempotency_key="idem-provider-runtime-send",
     )
 
@@ -2300,12 +2301,14 @@ async def test_ops_mesh_service_send_direct_channel_message_prefers_provider_run
             thread_id="1710000000.9999",
             session_key=expected_session_key,
             agent_id="release-bot",
+            gateway_client_scopes=("operator.write",),
         )
     ]
     assert delivery is not None
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "provider-send-42"
     assert delivery["event_payload"]["agentId"] == "release-bot"
+    assert delivery["event_payload"]["gatewayClientScopes"] == ["operator.write"]
 
 
 @pytest.mark.asyncio
@@ -6465,6 +6468,7 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
         is_anonymous=True,
         account_id="workspace-bot",
         thread_id="1710000000.9999",
+        gateway_client_scopes=[],
         idempotency_key="idem-provider-runtime-poll",
     )
 
@@ -6515,12 +6519,14 @@ async def test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtim
             account_id="workspace-bot",
             thread_id="1710000000.9999",
             session_key=expected_session_key,
+            gateway_client_scopes=(),
         )
     ]
     assert delivery is not None
     assert delivery["delivery_state"] == "delivered"
     assert delivery["delivery_message_id"] == "provider-poll-77"
     assert delivery["event_payload"]["durationSeconds"] == 3600
+    assert delivery["event_payload"]["gatewayClientScopes"] == []
 
 
 @pytest.mark.asyncio

@@ -2518,6 +2518,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   channels_status_json_calls_gateway_method_owner_with_probe"` (`7 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Provider-native direct send/poll now carries OpenClaw-style
+  `gatewayClientScopes` through the public OpsMesh direct delivery surface, the
+  saved delivery payload, generic/native provider runtime requests, and
+  route-backed provider event payloads, including explicit empty scope arrays.
+- Verified the provider scope seam with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_prefers_provider_runtime
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_prefers_provider_runtime -q`
+  (`2 passed`), adjacent provider runtime coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "send_direct_channel_message_prefers_provider_runtime
+  or send_direct_channel_poll_prefers_provider_runtime or
+  gateway_outbound_runtime_poll_defaults_max_selections_to_one or
+  send_direct_channel_message_uses_native_adapter_binding or
+  send_direct_channel_poll_uses_native_adapter_binding or
+  send_direct_channel_message_uses_gateway_route_adapter or
+  send_direct_channel_message_preserves_provider_native_options"` (`7 passed`),
+  `ruff check src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
