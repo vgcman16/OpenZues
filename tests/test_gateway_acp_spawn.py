@@ -18,10 +18,11 @@ def _acp_thread_context() -> dict[str, object]:
 
 
 class FakeManager:
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
         self.start_thread_calls: list[dict[str, object]] = []
         self.start_turn_calls: list[dict[str, object]] = []
         self.interrupt_turn_calls: list[dict[str, object]] = []
+        self.events = events if events is not None else []
 
     async def list_views(self) -> list[SimpleNamespace]:
         return [
@@ -37,6 +38,7 @@ class FakeManager:
         reasoning_effort: str | None,
         collaboration_mode: str | None,
     ) -> dict[str, object]:
+        self.events.append("thread")
         self.start_thread_calls.append(
             {
                 "instance_id": instance_id,
@@ -59,6 +61,7 @@ class FakeManager:
         reasoning_effort: str | None,
         collaboration_mode: str | None,
     ) -> dict[str, object]:
+        self.events.append("turn")
         self.start_turn_calls.append(
             {
                 "instance_id": instance_id,
@@ -220,6 +223,114 @@ async def test_runtime_manager_acp_spawn_rejects_parent_stream_without_requester
     }
     assert manager.start_thread_calls == []
     assert manager.start_turn_calls == []
+
+
+class FakeAcpParentStreamRelayHandle:
+    def __init__(self, events: list[str], run_id: str) -> None:
+        self.events = events
+        self.run_id = run_id
+        self.disposed = False
+        self.started = False
+
+    def dispose(self) -> None:
+        self.disposed = True
+        self.events.append(f"dispose:{self.run_id}")
+
+    def notify_started(self) -> None:
+        self.started = True
+        self.events.append(f"notify:{self.run_id}")
+
+
+class FakeAcpParentStreamRelay:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events if events is not None else []
+        self.resolve_calls: list[dict[str, object]] = []
+        self.start_calls: list[dict[str, object]] = []
+        self.handles: list[FakeAcpParentStreamRelayHandle] = []
+
+    def resolve_log_path(self, *, child_session_key: str) -> str:
+        self.resolve_calls.append({"child_session_key": child_session_key})
+        self.events.append("resolve")
+        return "C:/tmp/agent-main-acp-stream.jsonl"
+
+    def start(
+        self,
+        *,
+        run_id: str,
+        parent_session_key: str,
+        child_session_key: str,
+        agent_id: str,
+        log_path: str,
+        delivery_context: dict[str, object] | None,
+        emit_start_notice: bool,
+    ) -> FakeAcpParentStreamRelayHandle:
+        self.events.append(f"relay:{run_id}")
+        handle = FakeAcpParentStreamRelayHandle(self.events, run_id)
+        self.handles.append(handle)
+        self.start_calls.append(
+            {
+                "run_id": run_id,
+                "parent_session_key": parent_session_key,
+                "child_session_key": child_session_key,
+                "agent_id": agent_id,
+                "log_path": log_path,
+                "delivery_context": delivery_context,
+                "emit_start_notice": emit_start_notice,
+            }
+        )
+        return handle
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_acp_spawn_stream_to_parent_runs_parent_stream_relay() -> None:
+    events: list[str] = []
+    manager = FakeManager(events)
+    relay = FakeAcpParentStreamRelay(events)
+    service = RuntimeManagerAcpSpawnService(manager, parent_stream_relay=relay)
+
+    payload = await service.spawn(
+        {
+            "task": "Investigate flaky tests.",
+            "agentId": "codex",
+            "streamTo": "parent",
+        },
+        {
+            "requesterSessionKey": "agent:main:main",
+            "requesterChannel": "discord",
+            "requesterAccountId": "default",
+            "requesterTo": "channel:parent-channel",
+        },
+    )
+
+    assert payload["status"] == "accepted"
+    assert payload["runId"] == "turn-acp-new"
+    assert payload["streamLogPath"] == "C:/tmp/agent-main-acp-stream.jsonl"
+    child_session_key = payload["childSessionKey"]
+    assert child_session_key == "agent:codex:acp:thread-acp-new"
+    assert relay.resolve_calls == [{"child_session_key": child_session_key}]
+    assert [call["run_id"] for call in relay.start_calls] == [
+        relay.start_calls[0]["run_id"],
+        "turn-acp-new",
+    ]
+    assert relay.start_calls[0]["run_id"] != "turn-acp-new"
+    assert relay.start_calls[0] == {
+        "run_id": relay.start_calls[0]["run_id"],
+        "parent_session_key": "agent:main:main",
+        "child_session_key": child_session_key,
+        "agent_id": "codex",
+        "log_path": "C:/tmp/agent-main-acp-stream.jsonl",
+        "delivery_context": {
+            "channel": "discord",
+            "to": "channel:parent-channel",
+            "accountId": "default",
+        },
+        "emit_start_notice": False,
+    }
+    assert relay.handles[0].disposed is True
+    assert relay.handles[0].started is False
+    assert relay.handles[1].disposed is False
+    assert relay.handles[1].started is True
+    assert events.index(f"relay:{relay.start_calls[0]['run_id']}") < events.index("turn")
 
 
 @pytest.mark.asyncio

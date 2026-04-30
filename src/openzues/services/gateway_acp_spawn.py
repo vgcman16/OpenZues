@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import re
 import time
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -67,6 +70,32 @@ class GatewayAcpSpawnService(Protocol):
         """Close ACP runtime handles before local session state is removed."""
 
 
+class GatewayAcpParentStreamRelayHandle(Protocol):
+    def dispose(self) -> None:
+        """Stop a provisional ACP parent stream relay."""
+
+    def notify_started(self) -> None:
+        """Mark the accepted child run as started for parent progress delivery."""
+
+
+class GatewayAcpParentStreamRelay(Protocol):
+    def resolve_log_path(self, *, child_session_key: str) -> str:
+        """Return the JSONL stream log used to relay ACP progress to the parent."""
+
+    def start(
+        self,
+        *,
+        run_id: str,
+        parent_session_key: str,
+        child_session_key: str,
+        agent_id: str,
+        log_path: str,
+        delivery_context: Mapping[str, object] | None,
+        emit_start_notice: bool,
+    ) -> GatewayAcpParentStreamRelayHandle:
+        """Register a parent relay for one ACP child run."""
+
+
 def _optional_string(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -125,6 +154,24 @@ def _requester_group_id_from_context(context: Mapping[str, object]) -> str | Non
         if group_id is not None:
             return group_id
     return None
+
+
+def _parent_delivery_context_from_context(
+    context: Mapping[str, object],
+) -> dict[str, object] | None:
+    channel = _requester_channel_from_context(context)
+    to = _requester_to_from_context(context)
+    if channel is None or to is None:
+        return None
+    delivery_context: dict[str, object] = {
+        "channel": channel,
+        "to": to,
+        "accountId": _requester_account_id_from_context(context),
+    }
+    thread_id = _requester_thread_id_from_context(context)
+    if thread_id is not None:
+        delivery_context["threadId"] = thread_id
+    return delivery_context
 
 
 def _read_thread_id(result: object) -> str | None:
@@ -482,15 +529,111 @@ def _child_acp_thread_binding_metadata(
     }
 
 
+def _safe_acp_stream_log_stem(value: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
+    return stem or "acp-stream"
+
+
+class FileAcpParentStreamRelayHandle:
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        parent_session_key: str,
+        child_session_key: str,
+        agent_id: str,
+        log_path: str,
+        delivery_context: Mapping[str, object] | None,
+        emit_start_notice: bool,
+    ) -> None:
+        self._run_id = run_id
+        self._parent_session_key = parent_session_key
+        self._child_session_key = child_session_key
+        self._agent_id = agent_id
+        self._log_path = Path(log_path)
+        self._delivery_context = (
+            dict(delivery_context) if delivery_context is not None else None
+        )
+        self._emit_start_notice = emit_start_notice
+        self._disposed = False
+        self._started = False
+        self._append_event("registered")
+
+    def dispose(self) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        self._append_event("disposed")
+
+    def notify_started(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        self._append_event("started")
+
+    def _append_event(self, event: str) -> None:
+        self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, object] = {
+            "event": event,
+            "runtime": "acp",
+            "runId": self._run_id,
+            "parentSessionKey": self._parent_session_key,
+            "childSessionKey": self._child_session_key,
+            "agentId": self._agent_id,
+            "emitStartNotice": self._emit_start_notice,
+            "timestampMs": int(time.time() * 1000),
+        }
+        if self._delivery_context is not None:
+            payload["deliveryContext"] = dict(self._delivery_context)
+        with self._log_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+            stream.write("\n")
+
+
+class FileAcpParentStreamRelay:
+    def __init__(self, data_dir: Path | str | None = None) -> None:
+        root = Path(data_dir) if data_dir is not None else Path.cwd() / ".openzues"
+        self._stream_dir = root / "acp-streams"
+
+    def resolve_log_path(self, *, child_session_key: str) -> str:
+        self._stream_dir.mkdir(parents=True, exist_ok=True)
+        path = self._stream_dir / f"{_safe_acp_stream_log_stem(child_session_key)}.jsonl"
+        path.touch(exist_ok=True)
+        return str(path)
+
+    def start(
+        self,
+        *,
+        run_id: str,
+        parent_session_key: str,
+        child_session_key: str,
+        agent_id: str,
+        log_path: str,
+        delivery_context: Mapping[str, object] | None,
+        emit_start_notice: bool,
+    ) -> GatewayAcpParentStreamRelayHandle:
+        return FileAcpParentStreamRelayHandle(
+            run_id=run_id,
+            parent_session_key=parent_session_key,
+            child_session_key=child_session_key,
+            agent_id=agent_id,
+            log_path=log_path,
+            delivery_context=delivery_context,
+            emit_start_notice=emit_start_notice,
+        )
+
+
 class RuntimeManagerAcpSpawnService:
     def __init__(
         self,
         manager: Any,
         *,
         default_model: str = "gpt-5.4",
+        parent_stream_relay: GatewayAcpParentStreamRelay | None = None,
     ) -> None:
         self._manager = manager
         self._default_model = default_model
+        self._parent_stream_relay = parent_stream_relay or FileAcpParentStreamRelay()
 
     async def spawn(
         self,
@@ -502,13 +645,12 @@ class RuntimeManagerAcpSpawnService:
             return {"status": "error", "error": "task is required"}
         requested_mode = _optional_string(params.get("mode"))
         thread_requested = params.get("thread") is True
+        stream_to_parent = _optional_string(params.get("streamTo")) == "parent"
+        parent_session_key = _requester_session_key_from_context(context)
         mode = requested_mode if requested_mode in {"run", "session"} else (
             "session" if thread_requested else "run"
         )
-        if (
-            _optional_string(params.get("streamTo")) == "parent"
-            and _requester_session_key_from_context(context) is None
-        ):
+        if stream_to_parent and parent_session_key is None:
             return {
                 "status": "error",
                 "errorCode": "requester_session_required",
@@ -545,6 +687,9 @@ class RuntimeManagerAcpSpawnService:
         label = _optional_string(params.get("label"))
         cwd = _optional_string(params.get("cwd"))
         resume_session_id = _optional_string(params.get("resumeSessionId"))
+        stream_log_path: str | None = None
+        parent_relay: GatewayAcpParentStreamRelayHandle | None = None
+        provisional_run_id: str | None = None
         try:
             thread_id: str | None
             if resume_session_id is not None:
@@ -563,6 +708,21 @@ class RuntimeManagerAcpSpawnService:
                         "status": "error",
                         "error": "ACP runtime did not return a thread id.",
                     }
+            child_session_key = f"agent:{target_agent_id}:acp:{thread_id}"
+            if stream_to_parent and parent_session_key is not None:
+                provisional_run_id = str(uuid.uuid4())
+                stream_log_path = self._parent_stream_relay.resolve_log_path(
+                    child_session_key=child_session_key,
+                )
+                parent_relay = self._parent_stream_relay.start(
+                    run_id=provisional_run_id,
+                    parent_session_key=parent_session_key,
+                    child_session_key=child_session_key,
+                    agent_id=target_agent_id,
+                    log_path=stream_log_path,
+                    delivery_context=_parent_delivery_context_from_context(context),
+                    emit_start_notice=False,
+                )
             turn_result = await self._manager.start_turn(
                 instance_id,
                 thread_id=thread_id,
@@ -573,13 +733,37 @@ class RuntimeManagerAcpSpawnService:
                 collaboration_mode=None,
             )
         except Exception as exc:  # noqa: BLE001 - surface runtime failures to tool callers.
+            if parent_relay is not None:
+                parent_relay.dispose()
             return {
                 "status": "error",
                 "error": str(exc).strip() or type(exc).__name__,
             }
 
-        run_id = extract_turn_id(turn_result) or thread_id
-        child_session_key = f"agent:{target_agent_id}:acp:{thread_id}"
+        run_id = (
+            extract_turn_id(turn_result)
+            or (provisional_run_id if stream_to_parent else None)
+            or thread_id
+        )
+        if (
+            stream_to_parent
+            and parent_session_key is not None
+            and stream_log_path is not None
+            and provisional_run_id is not None
+        ):
+            if parent_relay is not None and run_id != provisional_run_id:
+                parent_relay.dispose()
+                parent_relay = self._parent_stream_relay.start(
+                    run_id=run_id,
+                    parent_session_key=parent_session_key,
+                    child_session_key=child_session_key,
+                    agent_id=target_agent_id,
+                    log_path=stream_log_path,
+                    delivery_context=_parent_delivery_context_from_context(context),
+                    emit_start_notice=False,
+                )
+            if parent_relay is not None:
+                parent_relay.notify_started()
         payload: dict[str, object] = {
             "status": "accepted",
             "childSessionKey": child_session_key,
@@ -593,6 +777,8 @@ class RuntimeManagerAcpSpawnService:
                 else _ACP_SPAWN_ACCEPTED_NOTE
             ),
         }
+        if stream_log_path is not None:
+            payload["streamLogPath"] = stream_log_path
         if thread_requested:
             binding_metadata = _current_acp_thread_binding_metadata(
                 context=context,

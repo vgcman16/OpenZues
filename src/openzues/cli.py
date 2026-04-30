@@ -58,7 +58,10 @@ from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
-from openzues.services.gateway_acp_spawn import RuntimeManagerAcpSpawnService
+from openzues.services.gateway_acp_spawn import (
+    FileAcpParentStreamRelay,
+    RuntimeManagerAcpSpawnService,
+)
 from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
@@ -1109,7 +1112,10 @@ async def _build_services(app_settings: Settings) -> CliServices:
         send_channel_message_service=ops_mesh.send_direct_channel_message,
         send_channel_poll_service=ops_mesh.send_direct_channel_poll,
         message_action_dispatcher=ops_mesh.dispatch_message_action,
-        acp_spawn_service=RuntimeManagerAcpSpawnService(manager),
+        acp_spawn_service=RuntimeManagerAcpSpawnService(
+            manager,
+            parent_stream_relay=FileAcpParentStreamRelay(app_settings.data_dir),
+        ),
         sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
         subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
             list_notification_route_views=ops_mesh.list_notification_route_views

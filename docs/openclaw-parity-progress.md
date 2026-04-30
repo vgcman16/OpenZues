@@ -4808,6 +4808,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -k "message_action_dispatches_discord"` (`49 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- ACP `streamTo="parent"` now has a native RuntimeManager parent-stream relay
+  path: the service resolves a child JSONL stream log, starts a provisional
+  parent relay before dispatch, restarts it when the returned Codex turn id
+  differs from the provisional run id, notifies the accepted relay, and surfaces
+  `streamLogPath` through the gateway metadata path. App and CLI construction
+  now wire the file-backed relay under the OpenZues data dir.
+- Verified the ACP parent-stream relay seam with `python -m pytest
+  tests/test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_stream_to_parent_runs_parent_stream_relay
+  -q` (`1 passed`), adjacent ACP spawn coverage `python -m pytest
+  tests/test_gateway_acp_spawn.py -q` (`19 passed`),
+  `tests/test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_tracks_child_run`
+  (`1 passed`), `tests/test_cli.py::test_sessions_spawn_json_calls_gateway_method_owner`
+  (`1 passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  src\openzues\app.py src\openzues\cli.py tests\test_gateway_acp_spawn.py`,
+  and `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\app.py
+  src\openzues\cli.py`.
 
 ## References
 

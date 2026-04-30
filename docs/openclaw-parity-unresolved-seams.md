@@ -343,6 +343,12 @@ forum-topic conversations whether the requester supplies a topic-qualified
 `to` target or a group plus `threadId`; persisted `sessionBinding`
 conversation ids use OpenClaw's `chatId:topic:threadId` shape without a
 self-parent conversation record.
+ACP `streamTo="parent"` spawns now also run a native parent-stream relay path:
+the RuntimeManager-backed service resolves a child stream log path, registers a
+provisional relay before dispatch, restarts the relay if the final Codex turn id
+differs from the provisional run id, notifies the accepted relay, and returns
+`streamLogPath` for gateway metadata persistence. App and CLI construction wire
+the file-backed relay into the ACP spawn service.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

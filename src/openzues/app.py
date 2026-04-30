@@ -164,7 +164,10 @@ from openzues.services.followups import (
     operator_blocked_missions,
     operator_ready_handoff_missions,
 )
-from openzues.services.gateway_acp_spawn import RuntimeManagerAcpSpawnService
+from openzues.services.gateway_acp_spawn import (
+    FileAcpParentStreamRelay,
+    RuntimeManagerAcpSpawnService,
+)
 from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_apns import GatewayApnsPushService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
@@ -2345,7 +2348,10 @@ def create_app(
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
             message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
-            acp_spawn_service=RuntimeManagerAcpSpawnService(active_manager),
+            acp_spawn_service=RuntimeManagerAcpSpawnService(
+                active_manager,
+                parent_stream_relay=FileAcpParentStreamRelay(active_settings.data_dir),
+            ),
             sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
             subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
                 list_notification_route_views=active_ops_mesh_service.list_notification_route_views
