@@ -7416,6 +7416,7 @@ class OpsMeshService:
             "read",
             "react",
             "reactions",
+            "role-info",
             "send",
             "sticker",
             "thread-create",
@@ -7490,6 +7491,13 @@ class OpsMeshService:
             if action == "member-info":
                 return await asyncio.to_thread(
                     self._dispatch_discord_member_info_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "role-info":
+                return await asyncio.to_thread(
+                    self._dispatch_discord_role_info_message_action,
                     route,
                     request,
                     secret_token,
@@ -9155,6 +9163,30 @@ class OpsMeshService:
         if member.get("error"):
             raise RuntimeError(str(member.get("error")))
         return {"ok": True, "member": member}
+
+    def _dispatch_discord_role_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del route
+        guild_id = _message_action_param_string(
+            request.params,
+            "guildId",
+            required=True,
+        )
+        roles = self._request_json_provider_url(
+            _discord_api_endpoint(f"guilds/{guild_id}/roles"),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_discord_bot_authorization(secret_token),
+        )
+        if isinstance(roles, dict) and roles.get("error"):
+            raise RuntimeError(str(roles.get("error")))
+        if not isinstance(roles, list):
+            raise RuntimeError("Discord API returned a non-JSON roles response.")
+        return {"ok": True, "roles": roles}
 
     def _dispatch_discord_thread_create_message_action(
         self,
