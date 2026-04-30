@@ -94,6 +94,7 @@ from openzues.services.gateway_skill_clawhub import (
 from openzues.services.gateway_skill_config import GatewaySkillConfigService
 from openzues.services.gateway_skill_install import GatewaySkillInstallService
 from openzues.services.gateway_skill_status import GatewaySkillStatusService
+from openzues.services.gateway_subagent_lifecycle import GatewaySubagentLifecycleService
 from openzues.services.gateway_system_presence import GatewaySystemPresenceService
 from openzues.services.gateway_talk_config import GatewayTalkConfigService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
@@ -287,6 +288,22 @@ _CHAT_HISTORY_INLINE_DIRECTIVE_RE = re.compile(
     r"\[\[\s*(?:reply_to(?:_current|\s*:\s*[^\]]+)?|audio_as_voice)\s*\]\]",
     re.IGNORECASE,
 )
+_GATEWAY_SEND_AUDIO_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*audio_as_voice\s*\]\]",
+    re.IGNORECASE,
+)
+_GATEWAY_SEND_REPLY_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*reply_to\s*:\s*([^\]\n]+?)\s*\]\]",
+    re.IGNORECASE,
+)
+_GATEWAY_SEND_REPLY_CURRENT_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*reply_to_current\s*\]\]",
+    re.IGNORECASE,
+)
+_GATEWAY_SEND_MEDIA_DIRECTIVE_RE = re.compile(
+    r"^\s*MEDIA:\s*`?(.+?)`?\s*$",
+    re.IGNORECASE,
+)
 _TRAILING_UNTRUSTED_CONTEXT_RE = re.compile(
     r"(?:\r?\n){0,2}"
     r"Untrusted context \(metadata, do not treat as instructions or commands\):\s*\r?\n"
@@ -397,6 +414,14 @@ _OPENCLAW_SECRET_TARGET_IDS = frozenset(
         "tools.web.search.apiKey",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _GatewaySendMessageDirectives:
+    text: str
+    media_urls: list[str]
+    reply_to_id: str | None
+    audio_as_voice: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1377,6 +1402,7 @@ class GatewayNodeMethodService:
             ]
             | None
         ) = None,
+        subagent_lifecycle_service: GatewaySubagentLifecycleService | None = None,
         sessions_yield_service: Callable[[str], Awaitable[None]] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         status_service: Callable[[], Awaitable[dict[str, object]]] | None = None,
@@ -1477,6 +1503,7 @@ class GatewayNodeMethodService:
         self._sandbox_chat_send_service = sandbox_chat_send_service
         self._chat_abort_service = chat_abort_service
         self._subagent_thread_binder = subagent_thread_binder
+        self._subagent_lifecycle_service = subagent_lifecycle_service
         self._sessions_yield_service = sessions_yield_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
@@ -2241,6 +2268,30 @@ class GatewayNodeMethodService:
                 if value is not None:
                     context[key] = value
         await cast(Any, unbind)(target, context)
+
+    async def _emit_subagent_ended_after_session_mutation(
+        self,
+        *,
+        session_key: str,
+        reason: Literal["session-delete", "session-reset"],
+        emit_hooks: bool = True,
+    ) -> None:
+        if not emit_hooks or self._subagent_lifecycle_service is None:
+            return
+        event: dict[str, object] = {
+            "targetSessionKey": session_key,
+            "targetKind": "subagent" if is_subagent_session_key(session_key) else "acp",
+            "reason": reason,
+            "sendFarewell": True,
+            "outcome": "reset" if reason == "session-reset" else "deleted",
+        }
+        context: dict[str, object] = {
+            "childSessionKey": session_key,
+        }
+        try:
+            await self._subagent_lifecycle_service.emit_subagent_ended(event, context)
+        except Exception:
+            return
 
     async def _invoke_gateway_tool(
         self,
@@ -5762,6 +5813,7 @@ class GatewayNodeMethodService:
                     "mediaUrl",
                     "mediaUrls",
                     "gifPlayback",
+                    "audioAsVoice",
                     "messageThreadId",
                     "replyToId",
                     "replyToMessageId",
@@ -5801,6 +5853,17 @@ class GatewayNodeMethodService:
                 if "gifPlayback" in payload
                 else None
             )
+            audio_as_voice = (
+                _optional_bool(payload.get("audioAsVoice"), label="audioAsVoice")
+                if "audioAsVoice" in payload
+                else None
+            )
+            message_directives = _parse_gateway_send_message_directives(message)
+            message = message_directives.text
+            if not media_urls and message_directives.media_urls:
+                media_urls = message_directives.media_urls
+            if audio_as_voice is None or message_directives.audio_as_voice:
+                audio_as_voice = True if message_directives.audio_as_voice else audio_as_voice
             resolved_channel = await self._resolve_gateway_outbound_channel(
                 payload.get("channel"),
                 reject_webchat_as_internal_only=True,
@@ -5832,6 +5895,8 @@ class GatewayNodeMethodService:
                     label="replyToId",
                 )
             )
+            if reply_to_id is None:
+                reply_to_id = message_directives.reply_to_id
             silent = (
                 _optional_bool(payload.get("silent"), label="silent")
                 if "silent" in payload
@@ -5887,6 +5952,8 @@ class GatewayNodeMethodService:
                 send_payload["media_urls"] = normalized_media_urls
                 if gif_playback is not None:
                     send_payload["gif_playback"] = gif_playback
+                if audio_as_voice is not None:
+                    send_payload["audio_as_voice"] = audio_as_voice
             if reply_to_id is not None:
                 send_payload["reply_to_id"] = reply_to_id
             if silent is not None:
@@ -6905,6 +6972,10 @@ class GatewayNodeMethodService:
                 now_ms=_timestamp_ms(now_ms),
             )
             assert entry is not None
+            await self._emit_subagent_ended_after_session_mutation(
+                session_key=canonical_key,
+                reason="session-reset",
+            )
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
                 reason=reset_reason,
@@ -6992,6 +7063,11 @@ class GatewayNodeMethodService:
             if metadata_row is not None:
                 await self._database.delete_gateway_session_metadata(canonical_key)
             self._forget_gateway_chat_run(canonical_key)
+            await self._emit_subagent_ended_after_session_mutation(
+                session_key=canonical_key,
+                reason="session-delete",
+                emit_hooks=payload.get("emitLifecycleHooks") is not False,
+            )
             await self._publish_sessions_changed_event(
                 session_key=canonical_key,
                 reason="delete",
@@ -7541,6 +7617,13 @@ class GatewayNodeMethodService:
                         ),
                         **role_context,
                     }
+                if _sessions_spawn_acp_disabled_by_policy(self._config_service):
+                    return {
+                        "status": "forbidden",
+                        "errorCode": "acp_disabled",
+                        "error": "ACP is disabled by policy (`acp.enabled=false`).",
+                        **role_context,
+                    }
                 if self._acp_spawn_service is None:
                     return {
                         "status": "error",
@@ -7632,6 +7715,16 @@ class GatewayNodeMethodService:
                     Literal["run", "session"],
                     mode or ("session" if thread else "run"),
                 )
+                if tracked_mode == "session" and not thread:
+                    return {
+                        "status": "error",
+                        "errorCode": "thread_required",
+                        "error": (
+                            'mode="session" requires thread=true so the ACP session '
+                            "can stay bound to a thread."
+                        ),
+                        **role_context,
+                    }
                 cleanup = _optional_enum_value(
                     payload.get("cleanup"),
                     label="cleanup",
@@ -7657,8 +7750,19 @@ class GatewayNodeMethodService:
                     if run_timeout_seconds_value is not None
                     else _sessions_spawn_default_run_timeout_seconds(self._config_service)
                 )
+                requester_agent_id = resolve_agent_id_from_session_key(spawn_parent_session_key)
                 requester_origin = _requester_route_context(resolved_requester)
+                requester_origin = _sessions_spawn_origin_for_target_agent(
+                    self._config_service,
+                    requester_origin=requester_origin,
+                    requester_agent_id=requester_agent_id,
+                    target_agent_id=acp_agent_id,
+                )
                 if thread:
+                    requester_origin = _sessions_spawn_origin_with_channel_default_account(
+                        self._config_service,
+                        requester_origin=requester_origin,
+                    )
                     acp_thread_policy_error = _sessions_spawn_thread_policy_error(
                         self._config_service,
                         requester_origin=requester_origin,
@@ -7760,6 +7864,37 @@ class GatewayNodeMethodService:
                         acp_metadata["lastAccountId"] = requester_origin["accountId"]
                     if "threadId" in requester_origin:
                         acp_metadata["lastThreadId"] = requester_origin["threadId"]
+                raw_acp_thread_binding = acp_result.get("threadBinding")
+                acp_thread_binding: dict[str, Any] | None = None
+                if isinstance(raw_acp_thread_binding, Mapping):
+                    acp_thread_binding = json.loads(
+                        json.dumps(dict(raw_acp_thread_binding))
+                    )
+                    acp_metadata["threadBinding"] = acp_thread_binding
+                    raw_acp_session_binding = acp_result.get("sessionBinding")
+                    if isinstance(raw_acp_session_binding, Mapping):
+                        acp_metadata["sessionBinding"] = json.loads(
+                            json.dumps(dict(raw_acp_session_binding))
+                        )
+                    raw_completion_delivery = acp_result.get("completionDelivery")
+                    if isinstance(raw_completion_delivery, Mapping):
+                        acp_metadata["completionDelivery"] = json.loads(
+                            json.dumps(dict(raw_completion_delivery))
+                        )
+                    else:
+                        acp_metadata["completionDelivery"] = {
+                            "mode": "thread",
+                            **acp_thread_binding,
+                        }
+                    acp_metadata["deliveryContext"] = dict(acp_thread_binding)
+                    if "channel" in acp_thread_binding:
+                        acp_metadata["lastChannel"] = acp_thread_binding["channel"]
+                    if "to" in acp_thread_binding:
+                        acp_metadata["lastTo"] = acp_thread_binding["to"]
+                    if "accountId" in acp_thread_binding:
+                        acp_metadata["lastAccountId"] = acp_thread_binding["accountId"]
+                    if "threadId" in acp_thread_binding:
+                        acp_metadata["lastThreadId"] = acp_thread_binding["threadId"]
                 label = _optional_session_label(payload.get("label"), label="label")
                 if label is not None:
                     acp_metadata["label"] = label
@@ -8035,6 +8170,12 @@ class GatewayNodeMethodService:
             if run_timeout_seconds is not None:
                 metadata["runTimeoutSeconds"] = run_timeout_seconds
             requester_origin = _requester_route_context(resolved_requester)
+            requester_origin = _sessions_spawn_origin_for_target_agent(
+                self._config_service,
+                requester_origin=requester_origin,
+                requester_agent_id=requester_agent_id,
+                target_agent_id=target_agent_id,
+            )
             if requester_origin is not None:
                 metadata["requesterOrigin"] = dict(requester_origin)
                 metadata["deliveryContext"] = dict(requester_origin)
@@ -13114,6 +13255,12 @@ def _sessions_spawn_acp_config(
     return acp_config if isinstance(acp_config, dict) else {}
 
 
+def _sessions_spawn_acp_disabled_by_policy(
+    config_service: GatewayConfigService | None,
+) -> bool:
+    return _bool_or_none(_sessions_spawn_acp_config(config_service).get("enabled")) is False
+
+
 def _sessions_spawn_acp_target_agent_id(
     *,
     requested_agent_id: str | None,
@@ -13209,6 +13356,200 @@ def _sessions_spawn_thread_policy_error(
             f"Thread-bound {kind} spawns are disabled for {channel} "
             f"(set channels.{channel}.threadBindings.{spawn_flag_key}=true to enable)."
         )
+    return None
+
+
+_THREAD_BINDING_KIND_PREFIX_TO_PEER_KIND = {
+    "room:": "channel",
+    "channel:": "channel",
+    "conversation:": "channel",
+    "chat:": "channel",
+    "thread:": "channel",
+    "topic:": "channel",
+    "group:": "group",
+    "team:": "group",
+    "user:": "direct",
+    "dm:": "direct",
+    "pm:": "direct",
+}
+_THREAD_BINDING_GENERIC_PREFIX_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*:", re.IGNORECASE)
+
+
+def _sessions_spawn_origin_for_target_agent(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str] | None,
+    requester_agent_id: str,
+    target_agent_id: str,
+) -> dict[str, str] | None:
+    if requester_origin is None:
+        return None
+    origin = dict(requester_origin)
+    bound_account_id = _sessions_spawn_target_bound_account_id(
+        config_service,
+        requester_origin=origin,
+        requester_agent_id=requester_agent_id,
+        target_agent_id=target_agent_id,
+    )
+    if bound_account_id is None:
+        return origin
+    origin["accountId"] = bound_account_id
+    return origin
+
+
+def _sessions_spawn_origin_with_channel_default_account(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str] | None,
+) -> dict[str, str] | None:
+    if requester_origin is None:
+        return None
+    origin = dict(requester_origin)
+    if _string_or_none(origin.get("accountId")) is not None:
+        return origin
+    channel = _string_or_none(origin.get("channel"))
+    if channel is None:
+        return origin
+    default_account_id: str | None = None
+    if config_service is not None:
+        try:
+            snapshot = config_service.build_snapshot()
+        except Exception:
+            snapshot = {}
+        channel_config = _channel_config_for_thread_binding(snapshot, channel.lower())
+        if channel_config is not None:
+            default_account_id = _string_or_none(channel_config.get("defaultAccount"))
+    origin["accountId"] = default_account_id or DEFAULT_ACCOUNT_ID
+    return origin
+
+
+def _sessions_spawn_target_bound_account_id(
+    config_service: GatewayConfigService | None,
+    *,
+    requester_origin: Mapping[str, str],
+    requester_agent_id: str,
+    target_agent_id: str,
+) -> str | None:
+    if config_service is None or target_agent_id == requester_agent_id:
+        return None
+    channel = _string_or_none(requester_origin.get("channel"))
+    if channel is None:
+        return None
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return None
+    bindings = snapshot.get("bindings")
+    if not isinstance(bindings, list):
+        return None
+    peer_id, peer_kind, peer_aliases = _sessions_spawn_requester_peer(
+        channel,
+        _string_or_none(requester_origin.get("to")),
+    )
+    del peer_id
+    channel_token = channel.lower()
+    target_token = normalize_agent_id(target_agent_id)
+    best_score = -1
+    best_account_id: str | None = None
+    for binding in bindings:
+        if not isinstance(binding, Mapping):
+            continue
+        binding_type = str(binding.get("type") or "route").strip().lower()
+        if binding_type != "route":
+            continue
+        binding_agent_id = _string_or_none(binding.get("agentId"))
+        if binding_agent_id is None or normalize_agent_id(binding_agent_id) != target_token:
+            continue
+        match = _mapping_or_none(binding.get("match"))
+        if match is None:
+            continue
+        match_channel = _string_or_none(match.get("channel"))
+        if match_channel is None or match_channel.lower() != channel_token:
+            continue
+        account_id = _string_or_none(match.get("accountId"))
+        if account_id is None:
+            continue
+        score = _sessions_spawn_route_binding_match_score(
+            match,
+            peer_kind=peer_kind,
+            peer_aliases=peer_aliases,
+        )
+        if score is None or score <= best_score:
+            continue
+        best_score = score
+        best_account_id = account_id
+    return best_account_id
+
+
+def _sessions_spawn_requester_peer(
+    channel_id: str,
+    requester_to: str | None,
+) -> tuple[str | None, str | None, set[str]]:
+    if requester_to is None:
+        return None, None, set()
+    raw = requester_to.strip()
+    if not raw:
+        return None, None, set()
+    channel_prefix = f"{channel_id.strip().lower()}:"
+    value = raw
+    inferred_kind: str | None = None
+    allow_bare_kind_override = False
+    while True:
+        match = _THREAD_BINDING_GENERIC_PREFIX_PATTERN.match(value)
+        if match is None:
+            break
+        prefix = match.group(0).lower()
+        kind_from_prefix = _THREAD_BINDING_KIND_PREFIX_TO_PEER_KIND.get(prefix)
+        if kind_from_prefix is None and prefix != channel_prefix:
+            break
+        if kind_from_prefix is not None and inferred_kind is None:
+            inferred_kind = kind_from_prefix
+        allow_bare_kind_override = allow_bare_kind_override or prefix in {
+            channel_prefix,
+            "room:",
+        }
+        value = value[len(match.group(0)) :].strip()
+    bare_kind = _sessions_spawn_bare_peer_kind(value)
+    if bare_kind is not None and (inferred_kind is None or allow_bare_kind_override):
+        inferred_kind = bare_kind
+    aliases = {raw}
+    if value:
+        aliases.add(value)
+    return value or None, inferred_kind, aliases
+
+
+def _sessions_spawn_bare_peer_kind(value: str) -> str | None:
+    if value.startswith("@"):
+        return "direct"
+    if value.startswith(("!", "#")):
+        return "channel"
+    return None
+
+
+def _sessions_spawn_route_binding_match_score(
+    match: Mapping[str, object],
+    *,
+    peer_kind: str | None,
+    peer_aliases: set[str],
+) -> int | None:
+    peer = _mapping_or_none(match.get("peer"))
+    if peer is None:
+        return 0
+    peer_id = _string_or_none(peer.get("id"))
+    if peer_id is None:
+        return None
+    configured_kind = _string_or_none(peer.get("kind"))
+    if (
+        configured_kind is not None
+        and peer_kind is not None
+        and configured_kind.lower() != peer_kind
+    ):
+        return None
+    if peer_id == "*":
+        return 1
+    normalized_aliases = {alias.lower() for alias in peer_aliases}
+    if peer_id.lower() in normalized_aliases:
+        return 2
     return None
 
 
@@ -17180,6 +17521,53 @@ def _format_gateway_chat_sandbox_media_paths(
     if message.strip():
         return f"{message.rstrip()}\n\n{block}"
     return block
+
+
+def _parse_gateway_send_message_directives(message: str) -> _GatewaySendMessageDirectives:
+    media_urls: list[str] = []
+    kept_lines: list[str] = []
+    for line in message.splitlines():
+        media_match = _GATEWAY_SEND_MEDIA_DIRECTIVE_RE.match(line)
+        if media_match:
+            media_url = _clean_gateway_send_media_directive_source(
+                media_match.group(1),
+            )
+            if media_url:
+                media_urls.append(media_url)
+            continue
+        kept_lines.append(line)
+    text = "\n".join(kept_lines)
+    audio_as_voice = _GATEWAY_SEND_AUDIO_DIRECTIVE_RE.search(text) is not None
+    reply_to_id: str | None = None
+
+    def replace_reply(match: re.Match[str]) -> str:
+        nonlocal reply_to_id
+        candidate = str(match.group(1) or "").strip()
+        if candidate:
+            reply_to_id = candidate
+        return " "
+
+    text = _GATEWAY_SEND_REPLY_DIRECTIVE_RE.sub(replace_reply, text)
+    text = _GATEWAY_SEND_REPLY_CURRENT_DIRECTIVE_RE.sub(" ", text)
+    text = _GATEWAY_SEND_AUDIO_DIRECTIVE_RE.sub(" ", text)
+    return _GatewaySendMessageDirectives(
+        text=_normalize_gateway_send_directive_text(text),
+        media_urls=media_urls,
+        reply_to_id=reply_to_id,
+        audio_as_voice=audio_as_voice,
+    )
+
+
+def _clean_gateway_send_media_directive_source(value: str) -> str:
+    return str(value or "").strip().strip("`\"'").rstrip("`\"'\\})],")
+
+
+def _normalize_gateway_send_directive_text(text: str) -> str:
+    return (
+        text.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .strip()
+    )
 
 
 def _normalize_gateway_send_media_urls(

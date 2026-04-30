@@ -1950,6 +1950,7 @@ def _format_direct_channel_send_message(
     message: str,
     media_urls: list[str],
     gif_playback: bool | None = None,
+    audio_as_voice: bool | None = None,
 ) -> str:
     if not media_urls:
         return message
@@ -1961,6 +1962,8 @@ def _format_direct_channel_send_message(
     settings: list[str] = []
     if gif_playback is not None:
         settings.append(f"gifPlayback={str(gif_playback).lower()}")
+    if audio_as_voice is not None:
+        settings.append(f"audioAsVoice={str(audio_as_voice).lower()}")
     if settings:
         lines.extend(("", "Settings: " + ", ".join(settings)))
     return "\n".join(lines)
@@ -1985,10 +1988,13 @@ def _format_direct_channel_send_replay_message(payload: dict[str, Any]) -> str |
         return None
     gif_playback = payload.get("gifPlayback")
     resolved_gif_playback = gif_playback if isinstance(gif_playback, bool) else None
+    audio_as_voice = payload.get("audioAsVoice")
+    resolved_audio_as_voice = audio_as_voice if isinstance(audio_as_voice, bool) else None
     return _format_direct_channel_send_message(
         message=message,
         media_urls=media_urls,
         gif_playback=resolved_gif_playback,
+        audio_as_voice=resolved_audio_as_voice,
     )
 
 
@@ -4866,6 +4872,7 @@ class OpsMeshService:
                         )
                     ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
+                    audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
@@ -7734,6 +7741,8 @@ class OpsMeshService:
             payload["mediaUrls"] = list(request.media_urls)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
+        if request.audio_as_voice is not None:
+            payload["audioAsVoice"] = request.audio_as_voice
         if request.reply_to_id is not None:
             payload["replyToId"] = request.reply_to_id
         if request.silent is not None:
@@ -8084,6 +8093,7 @@ class OpsMeshService:
                     target=runtime_target,
                     media_urls=normalized_media_urls,
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
+                    audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
@@ -8162,6 +8172,7 @@ class OpsMeshService:
         message: str,
         media_urls: list[str] | None = None,
         gif_playback: bool | None = None,
+        audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
@@ -8204,6 +8215,8 @@ class OpsMeshService:
             payload["mediaUrls"] = normalized_media_urls
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
+            if audio_as_voice is not None:
+                payload["audioAsVoice"] = audio_as_voice
             if not message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
@@ -8261,6 +8274,7 @@ class OpsMeshService:
                 message=message,
                 media_urls=normalized_media_urls,
                 gif_playback=gif_playback if normalized_media_urls else None,
+                audio_as_voice=audio_as_voice if normalized_media_urls else None,
             ),
             route_scope_extra={
                 "source": "gateway.send",

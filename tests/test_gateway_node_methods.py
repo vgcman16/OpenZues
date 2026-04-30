@@ -3800,7 +3800,6 @@ async def test_tools_invoke_sessions_send_runs_announce_step_after_reply(
         }
     ]
 
-
 @pytest.mark.asyncio
 async def test_tools_invoke_sessions_send_zero_timeout_announces_after_later_reply(
     tmp_path,
@@ -12657,6 +12656,112 @@ async def test_sessions_reset_delete_unbinds_thread_bound_sessions(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "reason", "outcome"),
+    [
+        ("sessions.reset", {"key": "subagent:child"}, "session-reset", "reset"),
+        ("sessions.delete", {"key": "subagent:child"}, "session-delete", "deleted"),
+    ],
+)
+async def test_sessions_reset_delete_emit_subagent_ended_lifecycle_hook(
+    tmp_path: Path,
+    method: str,
+    params: dict[str, object],
+    reason: str,
+    outcome: str,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-subagent-ended.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Lifecycle child"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This child is active before mutation.",
+        session_key=session_key,
+    )
+    lifecycle_calls: list[dict[str, object]] = []
+
+    class FakeSubagentLifecycleService:
+        async def emit_subagent_ended(
+            self,
+            event: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            lifecycle_calls.append({"event": dict(event), "context": dict(context)})
+            return {"status": "ok"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        subagent_lifecycle_service=FakeSubagentLifecycleService(),
+    )
+
+    payload = await service.call(method, params, now_ms=1111)
+
+    assert payload["ok"] is True
+    assert lifecycle_calls == [
+        {
+            "event": {
+                "targetSessionKey": session_key,
+                "targetKind": "subagent",
+                "reason": reason,
+                "sendFarewell": True,
+                "outcome": outcome,
+            },
+            "context": {
+                "childSessionKey": session_key,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_emit_lifecycle_hooks_false_skips_subagent_ended_hook(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-subagent-ended-skip.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:child"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={"label": "Lifecycle child"},
+    )
+    await database.append_control_chat_message(
+        role="assistant",
+        content="This child is active before deletion.",
+        session_key=session_key,
+    )
+
+    class FakeSubagentLifecycleService:
+        async def emit_subagent_ended(
+            self,
+            event: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            raise AssertionError("emitLifecycleHooks=false should skip subagent_ended")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        subagent_lifecycle_service=FakeSubagentLifecycleService(),
+    )
+
+    payload = await service.call(
+        "sessions.delete",
+        {"key": "subagent:child", "emitLifecycleHooks": False},
+        now_ms=1111,
+    )
+
+    assert payload["ok"] is True
+    assert payload["deleted"] is True
+
+
+@pytest.mark.asyncio
 async def test_sessions_delete_closes_acp_runtime_before_metadata_delete(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-delete-acp-cleanup.db")
     await database.initialize()
@@ -17202,6 +17307,140 @@ async def test_sessions_spawn_acp_rejects_agent_outside_acp_allowlist(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_respects_disabled_policy(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-disabled.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": False,
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("disabled ACP policy should reject before runtime dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try ACP when policy disables it.",
+            "runtime": "acp",
+            "agentId": "codex",
+        },
+    )
+
+    assert payload == {
+        "status": "forbidden",
+        "errorCode": "acp_disabled",
+        "error": "ACP is disabled by policy (`acp.enabled=false`).",
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_session_mode_requires_thread_before_runtime(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-session-thread-required.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            raise AssertionError("mode=session should reject before ACP runtime dispatch")
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Try a persistent ACP session without a bound thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "mode": "session",
+        },
+    )
+
+    assert payload == {
+        "status": "error",
+        "errorCode": "thread_required",
+        "error": (
+            'mode="session" requires thread=true so the ACP session can stay '
+            "bound to a thread."
+        ),
+        "role": "codex",
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_thread_mode_honors_channel_spawn_policy(tmp_path) -> None:
     database = Database(tmp_path / "gateway-sessions-spawn-acp-thread-policy.db")
     await database.initialize()
@@ -17371,6 +17610,349 @@ async def test_sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_pl
         "role": "main",
     }
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_uses_target_agent_bound_account(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-bound-account.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["bot-alpha"],
+                },
+                "bindings": [
+                    {
+                        "type": "route",
+                        "agentId": "bot-alpha",
+                        "match": {
+                            "channel": "matrix",
+                            "accountId": "bot-alpha",
+                            "peer": {
+                                "kind": "channel",
+                                "id": "!room:example.org",
+                            },
+                        },
+                    },
+                ],
+                "channels": {
+                    "matrix": {
+                        "accounts": {
+                            "bot-alpha": {
+                                "threadBindings": {
+                                    "enabled": True,
+                                    "spawnAcpSessions": True,
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:bot-alpha:acp:thread-bound-account",
+                "runId": "run-acp-bound-account-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-bound-account",
+                "runtimeSessionId": "thread-bound-account",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay bound to the target agent's Matrix account.",
+            "runtime": "acp",
+            "agentId": "bot-alpha",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_account_id="bot-beta",
+            message_to="room:!room:example.org",
+            message_thread_id="$thread-root",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    assert calls[0]["context"] == {
+        "requesterSessionKey": "launch:mode:workspace_affinity",
+        "requesterChannel": "matrix",
+        "requesterAccountId": "bot-alpha",
+        "requesterTo": "room:!room:example.org",
+        "requesterThreadId": "$thread-root",
+    }
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:bot-alpha:acp:thread-bound-account"
+    )
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["requesterOrigin"]["accountId"] == "bot-alpha"
+    assert metadata["deliveryContext"]["accountId"] == "bot-alpha"
+    assert metadata["lastAccountId"] == "bot-alpha"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-session-binding.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnAcpSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-session-binding",
+                "runId": "run-acp-session-binding-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-session-binding",
+                "runtimeSessionId": "thread-session-binding",
+                "threadBinding": {
+                    "channel": "matrix",
+                    "accountId": "default",
+                    "to": "room:!room:example.org",
+                    "threadId": "$child-thread",
+                },
+                "sessionBinding": {
+                    "bindingId": "matrix-binding-1",
+                    "targetSessionKey": "agent:codex:acp:thread-session-binding",
+                    "targetKind": "session",
+                    "conversation": {
+                        "channel": "matrix",
+                        "accountId": "default",
+                        "conversationId": "$child-thread",
+                        "parentConversationId": "!room:example.org",
+                    },
+                    "status": "active",
+                    "boundAt": 123,
+                    "metadata": {
+                        "placement": "child",
+                        "agentId": "codex",
+                    },
+                },
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind this ACP session to a child Matrix thread.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_account_id="default",
+            message_to="room:!room:example.org",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-session-binding"
+    )
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example.org",
+        "threadId": "$child-thread",
+    }
+    assert metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "accountId": "default",
+        "to": "room:!room:example.org",
+        "threadId": "$child-thread",
+    }
+    assert metadata["sessionBinding"]["targetKind"] == "session"
+    assert metadata["sessionBinding"]["conversation"]["conversationId"] == "$child-thread"
+    assert metadata["deliveryContext"]["threadId"] == "$child-thread"
+    assert metadata["lastThreadId"] == "$child-thread"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_acp_thread_mode_uses_channel_default_account(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-default-account.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "acp": {
+                    "enabled": True,
+                    "allowedAgents": ["codex"],
+                },
+                "channels": {
+                    "matrix": {
+                        "defaultAccount": "work",
+                        "accounts": {
+                            "work": {
+                                "threadBindings": {
+                                    "enabled": True,
+                                    "spawnAcpSessions": True,
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append({"params": dict(params), "context": dict(context)})
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-default-account",
+                "runId": "run-acp-default-account-1",
+                "mode": "session",
+                "runtimeThreadId": "thread-default-account",
+                "runtimeSessionId": "thread-default-account",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Bind ACP through the configured channel default account.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_to="room:!room:example.org",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    assert calls[0]["context"]["requesterAccountId"] == "work"
+    metadata_row = await database.get_gateway_session_metadata(
+        "agent:codex:acp:thread-default-account"
+    )
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["requesterOrigin"]["accountId"] == "work"
+    assert metadata["deliveryContext"]["accountId"] == "work"
+    assert metadata["lastAccountId"] == "work"
 
 
 @pytest.mark.asyncio
@@ -18398,6 +18980,139 @@ async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder
         "accountId": "bot-alpha",
         "threadId": "$thread-root",
     }
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_uses_target_agent_bound_account(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-bound-account.db")
+    await database.initialize()
+    agents_service = GatewayAgentsService(database=database)
+    await agents_service.create_agent(
+        name="Bot Alpha",
+        workspace=str(tmp_path / "bot-alpha"),
+        model=None,
+        emoji=None,
+        avatar=None,
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "gateway": {
+                    "agents": {
+                        "defaults": {
+                            "subagents": {
+                                "allowAgents": ["bot-alpha"],
+                            },
+                        },
+                    },
+                },
+                "bindings": [
+                    {
+                        "type": "route",
+                        "agentId": "bot-alpha",
+                        "match": {
+                            "channel": "matrix",
+                            "accountId": "bot-alpha",
+                            "peer": {
+                                "kind": "channel",
+                                "id": "!room:example.org",
+                            },
+                        },
+                    },
+                ],
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_calls: list[dict[str, object]] = []
+    binder_calls: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-matrix-bound-account-1", "status": "ok"}
+
+    async def fake_subagent_thread_binder(
+        parent: dict[str, object],
+        child: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        binder_calls.append(
+            {
+                "parent": dict(parent),
+                "child": dict(child),
+                "context": dict(context),
+            }
+        )
+        return {
+            "status": "ok",
+            "threadBindingReady": True,
+            "channel": context["channel"],
+            "to": context["to"],
+            "accountId": context["accountId"],
+            "threadId": context["threadId"],
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        agents_service=agents_service,
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=fake_subagent_thread_binder,
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in the target agent's Matrix room.",
+            "agentId": "bot-alpha",
+            "thread": True,
+            "mode": "session",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_to="room:!room:example.org",
+            message_account_id="bot-beta",
+            message_thread_id="$thread-root",
+        ),
+    )
+
+    assert payload["status"] == "accepted", payload
+    assert binder_calls[0]["context"] == {
+        "channel": "matrix",
+        "accountId": "bot-alpha",
+        "to": "room:!room:example.org",
+        "threadId": "$thread-root",
+    }
+    assert send_calls[0]["channel"] == "matrix"
+    assert send_calls[0]["to"] == "room:!room:example.org"
+    assert send_calls[0]["account_id"] == "bot-alpha"
+    assert send_calls[0]["thread_id"] == "$thread-root"
 
 
 @pytest.mark.asyncio
@@ -38658,6 +39373,165 @@ async def test_send_uses_channel_message_runtime_for_media_payloads() -> None:
         "messageId": "77",
         "sessionKey": "launch:mode:workspace_affinity:channel:slack:peer:channel:channel:c123",
         "deliveryId": 9,
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_preserves_audio_as_voice_for_media_payloads() -> None:
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        media_urls: list[str] | None = None,
+        audio_as_voice: bool | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "media_urls": media_urls,
+                "audio_as_voice": audio_as_voice,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "voice-77",
+            "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+            "deliveryId": 11,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " chat:ops ",
+            "message": "voice caption",
+            "mediaUrl": " file:///tmp/clip.mp3 ",
+            "audioAsVoice": True,
+            "channel": "telegram",
+            "idempotencyKey": "idem-send-audio-as-voice",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "chat:ops",
+            "message": "voice caption",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": None,
+            "session_key": None,
+            "idempotency_key": "idem-send-audio-as-voice",
+            "media_urls": ["file:///tmp/clip.mp3"],
+            "audio_as_voice": True,
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "voice-77",
+        "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+        "deliveryId": 11,
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_parses_inline_reply_audio_and_media_directives() -> None:
+    calls: list[dict[str, object | None]] = []
+
+    async def fake_send_channel_message_service(
+        *,
+        channel: str,
+        to: str,
+        message: str,
+        account_id: str | None,
+        agent_id: str | None,
+        thread_id: str | None,
+        session_key: str | None,
+        idempotency_key: str,
+        media_urls: list[str] | None = None,
+        audio_as_voice: bool | None = None,
+        reply_to_id: str | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "channel": channel,
+                "to": to,
+                "message": message,
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "session_key": session_key,
+                "idempotency_key": idempotency_key,
+                "media_urls": media_urls,
+                "audio_as_voice": audio_as_voice,
+                "reply_to_id": reply_to_id,
+            }
+        )
+        return {
+            "ok": True,
+            "messageId": "voice-directive-77",
+            "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+            "deliveryId": 12,
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    payload = await service.call(
+        "send",
+        {
+            "to": " chat:ops ",
+            "message": (
+                "[[reply_to: message-99]] voice caption [[audio_as_voice]]\n"
+                "MEDIA:https://example.com/clip.mp3"
+            ),
+            "mediaUrl": " https://example.com/clip.mp3 ",
+            "channel": "telegram",
+            "idempotencyKey": "idem-send-inline-directives",
+        },
+    )
+
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "chat:ops",
+            "message": "voice caption",
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": None,
+            "session_key": None,
+            "idempotency_key": "idem-send-inline-directives",
+            "media_urls": ["https://example.com/clip.mp3"],
+            "audio_as_voice": True,
+            "reply_to_id": "message-99",
+        }
+    ]
+    assert payload == {
+        "ok": True,
+        "messageId": "voice-directive-77",
+        "sessionKey": "launch:mode:workspace_affinity:channel:telegram:peer:chat:ops",
+        "deliveryId": 12,
     }
 
 

@@ -131,6 +131,27 @@ entry `webSearch` config: global `apiKey` maps to Brave, provider-scoped
 records such as `grok` and `kimi` map through the OpenClaw manifest ownership
 table to `xai` and `moonshot`, existing plugin config wins, and modern
 `openaiCodex` search config stays under `tools.web.search`.
+OpenClaw's bundled plugin load-path doctor helper is now covered by a native
+`bundledPluginLoadPaths` contribution: legacy `plugins.load.paths` entries
+that still point at source-style `extensions/<plugin>` are detected, warned,
+and rewritten to packaged `dist/extensions/<plugin>` or
+`dist-runtime/extensions/<plugin>` paths before stale plugin config cleanup
+runs.
+OpenClaw's stale plugin config doctor helper is now covered by a native
+`stalePluginConfig` doctor contribution: `doctor --json` scans
+`plugins.allow` and `plugins.entries.<id>` against native/bundled plugin
+registry ids, `doctor --fix` removes stale allow/entry references, and repair
+pauses with the upstream warning when plugin manifest discovery has errors.
+Open DM policy wildcard repair now also follows OpenClaw's
+`open-policy-allowfrom` helper: `doctor --json` reports the missing
+`allowFrom` wildcard changes, `doctor --fix` writes top-level or nested
+wildcards based on channel mode, and nested `dm.policy="open"` is
+canonicalized for channels that support top-level `dmPolicy`.
+Allowlist DM policy sender recovery now also follows OpenClaw's
+`allowlist-policy-repair` helper: `doctor --fix` restores missing
+`allowFrom` sender lists from the saved channel pairing store, dedupes and
+normalizes stored senders, and writes top-level or nested `allowFrom` based on
+the channel mode.
 The currently identified OpenClaw legacy-config doctor migrator files are now
 covered by native OpenZues repair paths. Future config work should come from a
 new upstream migration file or validation seam rather than this closed queue.
@@ -213,14 +234,43 @@ Route-backed `sessions.reset` and `sessions.delete` now also call the binder's
 `unbind` hook with the saved `sessionBinding` / `threadBinding` record before
 mutating or deleting metadata, and reset strips stale binding/completion fields
 from the preserved session entry.
+Reset/delete lifecycle now also emits the OpenClaw-shaped `subagent_ended`
+event through a fakeable native lifecycle service after session mutation,
+including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;
+`sessions.delete emitLifecycleHooks=false` still skips only that hook while the
+delete/unbind path proceeds.
+Cross-agent thread-bound subagent spawns now also resolve the requester origin
+through OpenClaw-style route `bindings`: when the target agent has a configured
+route binding for the requester channel/peer, the binder context and initial
+child run use the target agent's bound account instead of the caller's inbound
+account.
+Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses the same
+target-agent route-bound requester origin before thread-binding policy checks
+and RuntimeManager dispatch, so account-scoped ACP spawn policy and ACP
+requester context use the target agent account instead of the caller account.
+ACP accepted results that include a prepared thread binding now persist
+OpenClaw-shaped `threadBinding`, `sessionBinding targetKind="session"`,
+`completionDelivery`, and bound delivery context metadata on the child session,
+so downstream wait/reset/delete lifecycle paths can see the ACP session binding
+record instead of only requester-origin metadata.
+ACP thread-bound spawns with a channel context but no explicit account id now
+mirror OpenClaw's `resolveAcpSpawnChannelAccountId`: the native gateway uses
+`channels.<channel>.defaultAccount` when present and otherwise falls back to
+`default` before account-scoped spawn policy checks and ACP runtime dispatch.
+Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
+boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
+response without selecting a target agent or dispatching RuntimeManager work.
+The ACP `mode="session"` / `thread=true` preflight is now enforced by the
+gateway method owner itself, so fakeable or alternate ACP services cannot
+receive a persistent ACP request that lacks a bound thread.
 Remaining lifecycle parity is deeper provider-native binding record stores,
-provider-native child-thread creation, target-agent bound-account selection,
-end-hook/farewell behavior on reset/delete, and ACP/session binding policy
-breadth.
+provider-native child-thread creation, and production ACP provider binding
+creation breadth.
 
 Current queue-head adjustment: provider-native direct `send` now preserves
 OpenClaw runtime delivery fields (`messageThreadId`, `replyToId`,
-`replyToMessageId`, `silent`, `forceDocument`, media, account, and thread)
+`replyToMessageId`, `silent`, `forceDocument`, media, `audioAsVoice`, account,
+and thread)
 through gateway `send`, `OpsMeshService`, shared outbound runtime requests,
 route-backed providers, and Telegram native document/reply/silent/thread
 payloads. The provider runtime result envelope now also persists `messageId`,
@@ -240,6 +290,14 @@ through the saved sandbox workspace root before dispatch, deduping equivalent
 container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+Direct audio-as-voice media sends now also preserve OpenClaw's
+`audioAsVoice` hint from gateway `send` through OpsMesh saved payloads,
+`GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
+provider-backed runtime delivery, and saved failed-send replay formatting.
+Gateway `send` message bodies now also run the bounded OpenClaw outbound
+payload directive normalization for `[[reply_to:...]]`, `[[reply_to_current]]`,
+`[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel delivery,
+so directive markers do not leak as visible outbound text.
 Telegram native poll route sends now also forward OpenClaw's multi-select
 intent to Bot API payloads with `allows_multiple_answers`, preserving explicit
 multi-select and default single-choice behavior alongside anonymous, duration,
@@ -398,6 +456,10 @@ Sandbox warning text while preserving the existing warning surface. The
 top-level human/JSON doctor view now also reports OpenClaw-style session lock
 health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
 liveness, age, stale posture, and read-only guidance without removing files.
+The same state-integrity doctor surface now reports a structured
+`stateDirectory` payload and CRITICAL warning when the configured OpenZues data
+directory is missing, mirroring OpenClaw's missing-state-directory doctor
+warning.
 Top-level doctor output now also includes the upstream `doctor:security` and
 `doctor:shell-completion` contribution surfaces as stable native read models,
 currently marked honest unavailable/partial until production security and shell

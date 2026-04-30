@@ -77,6 +77,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_warns_when_sandbox_enabled_without_docker or
   doctor_and_update_status_json_include_hermes_sections"` (`3 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now reports the OpenClaw state-integrity warning
+  for a missing configured state/data directory, including a structured
+  `stateDirectory` payload and the CRITICAL warning text from
+  `C:\Users\skull\OneDrive\Documents\openclaw-main\src\commands\doctor.warns-state-directory-is-missing.e2e.test.ts`.
+- Verified the missing-state-directory doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_state_directory_is_missing -q`
+  (`1 passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q
+  -k "doctor_json_warns_when_state_directory_is_missing or
+  doctor_json_warns_when_sandbox_enabled_without_docker or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.
@@ -2688,6 +2703,45 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py`.
+- Provider-native direct media sends now preserve OpenClaw's `audioAsVoice`
+  hint from gateway `send` through `OpsMeshService`, saved outbound payloads,
+  `GatewayOutboundRuntimeMessageRequest`, route-backed provider events, and
+  saved failed-send replay formatting. Source anchor:
+  `C:\Users\skull\OneDrive\Documents\openclaw-main\src\infra\outbound\deliver.test.ts`
+  and `payloads.ts`.
+- Verified the audio-as-voice send seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_preserves_audio_as_voice_for_media_payloads
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_preserves_audio_as_voice -q`
+  (`2 passed`), adjacent provider replay/send coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "send_direct_channel_message_preserves_provider_native_options
+  or send_direct_channel_message_preserves_audio_as_voice or
+  replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime"`
+  (`3 passed`), gateway send coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_send_"` (`17 passed`),
+  OpsMesh direct-send coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "send_direct_channel_message"` (`27 passed`), `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py`.
+- Gateway `send` now runs the bounded OpenClaw outbound payload directive
+  normalization for message-body `[[reply_to:...]]`, `[[reply_to_current]]`,
+  `[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel
+  delivery, matching the upstream `createOutboundPayloadPlan` path in
+  `C:\Users\skull\OneDrive\Documents\openclaw-main\src\gateway\server-methods\send.ts`
+  and `infra\outbound\payloads.ts`.
+- Verified the inline send-directive seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_parses_inline_reply_audio_and_media_directives -q`
+  (`1 passed`), adjacent gateway send coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "test_send_"` (`18 passed`),
+  adjacent OpsMesh direct-send coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "send_direct_channel_message"` (`27 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - WhatsApp multi-media sends now report the final provider message id as the
   canonical `messageId` while preserving the full ordered `mediaIds` list,
   matching OpenClaw's outbound payload contract for iterated media sends.
@@ -3288,6 +3342,65 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_config.py
   src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- Top-level `doctor --json` now includes OpenClaw's bundled plugin load-path
+  repair contribution. It detects legacy source-style
+  `plugins.load.paths=.../extensions/<plugin>` entries, reports the current
+  packaged target, rewrites them to `dist/extensions` or `dist-runtime/extensions`
+  during `doctor --fix`, and runs before stale plugin config cleanup.
+- Verified the bundled plugin load-path doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_bundled_plugin_load_paths
+  tests\test_cli.py::test_doctor_fix_rewrites_legacy_bundled_plugin_load_paths_before_stale_scan
+  -q` (`2 passed`), adjacent doctor/plugin coverage `python -m pytest
+  tests\test_cli.py -q -k "bundled_plugin_load_paths or stale_plugin_config or
+  bundled_plugin_runtime_dependency_contribution or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`7 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- Top-level `doctor --json` now includes OpenClaw's stale plugin config
+  contribution. It scans `plugins.allow` and `plugins.entries.<id>` against
+  native and manifest-backed plugin ids, formats the upstream warning/hint
+  shape, removes stale refs during `doctor --fix`, and pauses auto-removal
+  when manifest discovery reports errors.
+- Verified the stale plugin config doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_pauses_stale_plugin_config_repair_when_discovery_has_errors
+  -q` (`3 passed`), adjacent doctor/plugin coverage `python -m pytest
+  tests\test_cli.py -q -k "stale_plugin_config or
+  legacy_web_search_provider_config or legacy_tts_provider_config or
+  bundled_plugin_runtime_dependency_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces"` (`9 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- Top-level `doctor --json` now also includes OpenClaw's open-policy
+  `allowFrom` repair contribution. It reports pending wildcard additions for
+  `dmPolicy="open"`, writes top-level or nested `allowFrom=["*"]` according to
+  channel mode during `doctor --fix`, and canonicalizes nested `dm.policy` for
+  top-level-capable channels.
+- Verified the open-policy allowFrom doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_open_policy_allow_from
+  tests\test_cli.py::test_doctor_fix_repairs_open_policy_allow_from -q` (`2
+  passed`), adjacent doctor repair coverage `python -m pytest tests\test_cli.py
+  -q -k "open_policy_allow_from or bundled_plugin_load_paths or
+  stale_plugin_config or legacy_channel_allow_aliases"` (`9 passed`), `ruff
+  check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- Top-level `doctor --fix` now also covers OpenClaw's allowlist-policy
+  `allowFrom` recovery helper. It reads saved channel pairing stores, dedupes
+  stored senders, restores missing allowlists for `dmPolicy="allowlist"` or
+  nested `dm.policy="allowlist"`, and writes nested-only channel allowlists
+  where OpenClaw keeps them.
+- Verified the allowlist-policy allowFrom doctor seam with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_recovers_allowlist_policy_allow_from_from_store
+  -q` (`1 passed`), adjacent doctor repair coverage `python -m pytest
+  tests\test_cli.py -q -k "allowlist_policy_allow_from or
+  open_policy_allow_from or bundled_plugin_load_paths or stale_plugin_config"`
+  (`8 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\gateway_config.py`.
 - Route-backed `sessions.spawn thread=true` now persists an OpenClaw-shaped
   current-conversation `sessionBinding` record on child session metadata in
   addition to `threadBinding` and `completionDelivery`. Records include
@@ -3313,6 +3426,106 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_thread_binding.py
   src\openzues\services\gateway_node_methods.py`.
+- Cross-agent `sessions.spawn thread=true` now mirrors OpenClaw's
+  `resolveRequesterOriginForChild` account selection for route bindings:
+  top-level `bindings` survive the native config snapshot, Matrix-style
+  `room:` targets are matched against configured peer ids, and the binder plus
+  initial child run use the target agent's bound account when it differs from
+  the caller account.
+- Verified the target-agent bound-account seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_thread_mode_uses_target_agent_bound_account
+  -q` (`1 passed`), adjacent thread-spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "target_agent_bound_account or
+  sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder or
+  sessions_spawn_thread_mode_uses_route_backed_thread_binder or
+  sessions_spawn_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_thread_mode_requires_spawn_policy_for_child_placement"` (`5
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\schemas.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- Cross-agent ACP `sessions.spawn runtime="acp" thread=true` now uses that
+  same OpenClaw `resolveRequesterOriginForChild` account selection before
+  native thread-binding policy checks and ACP runtime dispatch, so
+  account-scoped Matrix ACP spawn config can authorize the target agent's
+  bound account even when the caller arrives from a different account.
+- Verified the ACP target-agent bound-account seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_uses_target_agent_bound_account
+  -q` (`1 passed`), adjacent ACP coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run"` (`5 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- ACP accepted results that carry a prepared thread binding now persist the
+  OpenClaw-shaped child metadata envelope: `threadBinding`, `sessionBinding`
+  with `targetKind="session"`, derived `completionDelivery`, and bound
+  delivery context / last-channel fields.
+- Verified the ACP session-binding metadata seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_persists_session_binding_metadata
+  -q` (`1 passed`), adjacent ACP lifecycle coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_runtime_tracks_wait_cleanup_and_completion or
+  sessions_spawn_acp_stream_to_parent_tracks_child_run or
+  sessions_reset_closes_acp_runtime_before_resetting_metadata or
+  sessions_delete_closes_acp_runtime_before_metadata_delete"` (`6 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- ACP `thread=true` spawns now also mirror OpenClaw's
+  `resolveAcpSpawnChannelAccountId` fallback: when channel context omits an
+  account id, `channels.<channel>.defaultAccount` is applied before
+  account-scoped spawn policy checks and before the native ACP runtime context
+  is dispatched.
+- Verified the ACP default-account seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_thread_mode_uses_channel_default_account
+  -q` (`1 passed`), adjacent ACP account-policy coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_thread_mode_uses_channel_default_account or
+  sessions_spawn_acp_thread_mode_uses_target_agent_bound_account or
+  sessions_spawn_acp_thread_mode_persists_session_binding_metadata or
+  sessions_spawn_acp_thread_mode_honors_channel_spawn_policy or
+  sessions_spawn_acp_thread_mode_requires_spawn_policy_for_child_placement"`
+  (`5 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Gateway ACP spawns now honor OpenClaw's `acp.enabled=false` runtime policy
+  before the service boundary, returning `errorCode="acp_disabled"` and
+  avoiding target/runtime dispatch.
+- Verified the ACP disabled-policy seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_respects_disabled_policy
+  -q` (`1 passed`), adjacent ACP policy coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_respects_disabled_policy or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_uses_configured_default_agent or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_rejects_acp_required_sandbox_policy"` (`5 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- The ACP `mode="session"` guard now lives at the gateway method boundary as
+  well as in the concrete RuntimeManager adapter, preserving OpenClaw's
+  `thread_required` preflight even when a fakeable or alternate ACP service is
+  registered.
+- Verified the gateway ACP `thread_required` preflight with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_session_mode_requires_thread_before_runtime
+  -q` (`1 passed`), adjacent ACP preflight coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_spawn_acp_session_mode_requires_thread_before_runtime or
+  sessions_spawn_acp_respects_disabled_policy or
+  sessions_spawn_acp_requires_target_agent_without_default or
+  sessions_spawn_acp_uses_configured_default_agent or
+  sessions_spawn_acp_rejects_agent_outside_acp_allowlist or
+  sessions_spawn_acp_thread_mode_honors_channel_spawn_policy"` (`6 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Route-backed `sessions.reset` and `sessions.delete` now run binder `unbind`
   lifecycle cleanup for thread-bound child sessions using the saved
   `sessionBinding` and `threadBinding` metadata before mutating or deleting the
@@ -3326,6 +3539,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   sessions_delete or thread_binding"` (`20 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Route-backed `sessions.reset` and `sessions.delete` now also emit
+  OpenClaw-shaped `subagent_ended` lifecycle events through a fakeable native
+  service after session mutation, with `targetKind`, `sendFarewell=true`, and
+  `outcome=reset/deleted`; `sessions.delete emitLifecycleHooks=false` skips
+  only that hook.
+- Verified the reset/delete subagent-ended lifecycle seam with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_reset_delete_emit_subagent_ended_lifecycle_hook
+  tests\test_gateway_node_methods.py::test_sessions_delete_emit_lifecycle_hooks_false_skips_subagent_ended_hook
+  -q` (`3 passed`) and adjacent reset/delete/thread-binding coverage `python
+  -m pytest tests\test_gateway_node_methods.py -q -k "sessions_reset or
+  sessions_delete or thread_binding"` (`23 passed`).
 
 ## References
 

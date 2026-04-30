@@ -4134,6 +4134,90 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_n
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_preserves_audio_as_voice(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-audio-voice"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "messageId": "provider-send-audio-voice-1",
+            "conversationId": "chat:ops",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:ops",
+        message="voice caption",
+        media_urls=["file:///tmp/clip.mp3"],
+        audio_as_voice=True,
+        idempotency_key="idem-provider-runtime-audio-voice",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="telegram",
+            peer_kind="channel",
+            peer_id="chat:ops",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert len(provider_requests) == 1
+    assert provider_requests[0] == GatewayOutboundRuntimeMessageRequest(
+        channel="telegram",
+        target="chat:ops",
+        message="voice caption\n\nMedia:\n1. file:///tmp/clip.mp3\n\nSettings: audioAsVoice=true",
+        media_urls=("file:///tmp/clip.mp3",),
+        audio_as_voice=True,
+        session_key=expected_session_key,
+    )
+    assert result == {
+        "ok": True,
+        "runId": "idem-provider-runtime-audio-voice",
+        "channel": "telegram",
+        "messageId": "provider-send-audio-voice-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "provider-backed",
+            "channel": "telegram",
+            "target": "chat:ops",
+            "sessionKey": expected_session_key,
+        },
+        "conversationId": "chat:ops",
+    }
+    assert delivery is not None
+    assert delivery["event_payload"]["audioAsVoice"] is True
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_native_adapter_binding(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-native-adapter"

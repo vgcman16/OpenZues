@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -181,6 +181,25 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "threads": False,
     },
 }
+_OPENZUES_NATIVE_PLUGIN_IDS = frozenset(
+    {
+        *_CHANNEL_CAPABILITY_SUPPORT,
+        "brave",
+        "duckduckgo",
+        "exa",
+        "firecrawl",
+        "google",
+        "matrix",
+        "minimax",
+        "moonshot",
+        "ollama",
+        "perplexity",
+        "searxng",
+        "tavily",
+        "voice-call",
+        "xai",
+    }
+)
 _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
     {
         "id": "model.run",
@@ -1940,6 +1959,10 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "security",
         "shellCompletion",
         "legacyConfig",
+        "bundledPluginLoadPaths",
+        "stalePluginConfig",
+        "openPolicyAllowFrom",
+        "allowlistPolicyAllowFrom",
         "sandbox",
         "gatewayHealth",
         "memorySearch",
@@ -2134,6 +2157,683 @@ def _with_doctor_legacy_config_payload(
     next_payload = dict(payload)
     next_payload["legacyConfig"] = legacy_payload
     warnings = _object_list(legacy_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _config_service_path_label(config_service: object | None) -> str | None:
+    config_path = getattr(config_service, "_config_path", None)
+    return str(config_path) if isinstance(config_path, Path) else None
+
+
+def _bundled_lookup_path(path_text: str) -> Path:
+    expanded = os.path.expandvars(os.path.expanduser(path_text))
+    try:
+        return Path(expanded).resolve(strict=False)
+    except OSError:
+        return Path(expanded)
+
+
+def _normalize_bundled_lookup_path(path_text: str) -> str:
+    return str(_bundled_lookup_path(path_text)).rstrip("\\/")
+
+
+def _bundled_plugin_load_path_hit(
+    raw_path: str,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    resolved = _bundled_lookup_path(raw_path)
+    parts = resolved.parts
+    for index, part in enumerate(parts):
+        if part.lower() != "extensions" or index == 0 or index >= len(parts) - 1:
+            continue
+        previous = parts[index - 1].lower()
+        if previous in {"dist", "dist-runtime"}:
+            continue
+        package_root = Path(*parts[:index])
+        bundled_leaf = Path(*parts[index + 1 :])
+        for bundled_root in ("dist", "dist-runtime"):
+            candidate = package_root / bundled_root / "extensions" / bundled_leaf
+            manifest_path = _plugin_manifest_path_for_load_path(candidate)
+            if manifest_path is None:
+                continue
+            record = _plugin_record_from_openclaw_manifest(
+                manifest_path,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+            )
+            if record is None:
+                continue
+            plugin_id = _optional_cli_string(record.get("id")) or bundled_leaf.name
+            return {
+                "pluginId": plugin_id,
+                "fromPath": raw_path,
+                "toPath": str(candidate),
+                "pathLabel": "plugins.load.paths",
+            }
+    return None
+
+
+def _scan_bundled_plugin_load_path_migrations(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    load = plugins_config.get("load")
+    load_config = load if isinstance(load, dict) else {}
+    raw_paths = load_config.get("paths")
+    paths = raw_paths if isinstance(raw_paths, list) else []
+    hits: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        if not isinstance(raw_path, str):
+            continue
+        hit = _bundled_plugin_load_path_hit(
+            raw_path,
+            plugins_config=plugins_config,
+            config_snapshot=snapshot,
+        )
+        if hit is None:
+            continue
+        dedupe_key = _normalize_bundled_lookup_path(str(hit.get("fromPath") or ""))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        hits.append(hit)
+    return hits
+
+
+def _doctor_bundled_plugin_load_path_warnings(issues: Sequence[object]) -> list[str]:
+    if not issues:
+        return []
+    warnings: list[str] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        path_label = str(issue.get("pathLabel") or "").strip()
+        plugin_id = str(issue.get("pluginId") or "").strip()
+        from_path = str(issue.get("fromPath") or "").strip()
+        to_path = str(issue.get("toPath") or "").strip()
+        if not path_label or not plugin_id or not from_path or not to_path:
+            continue
+        warnings.append(
+            f'- {path_label}: legacy bundled plugin path "{from_path}" '
+            f'still points at {plugin_id}; current packaged path is "{to_path}".'
+        )
+    if warnings:
+        warnings.append(
+            '- Run "openzues doctor --fix" to rewrite these bundled plugin paths.'
+        )
+    return warnings
+
+
+def _build_doctor_bundled_plugin_load_paths_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:bundled-plugin-load-paths",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "issues": [],
+        "warnings": [],
+    }
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for bundled plugin load path checks.",
+        }
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Bundled plugin load path detection failed: {exc}",
+        }
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    issues = _scan_bundled_plugin_load_path_migrations(snapshot)
+    if should_repair:
+        repair = getattr(config_service, "repair_bundled_plugin_load_paths", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Bundled plugin load path repair runtime is unavailable.",
+                "issues": issues,
+                "warnings": _doctor_bundled_plugin_load_path_warnings(issues),
+                "path": _config_service_path_label(config_service),
+            }
+        try:
+            result = repair(issues)
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Bundled plugin load path repair failed: {exc}",
+                "issues": issues,
+                "warnings": _doctor_bundled_plugin_load_path_warnings(issues),
+                "path": _config_service_path_label(config_service),
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        remaining_issues = [] if changed else issues
+        return {
+            **base_payload,
+            "status": "warn" if remaining_issues else "ok",
+            "summary": (
+                "Rewrote legacy bundled plugin load paths."
+                if changed
+                else (
+                    "Legacy bundled plugin load paths found."
+                    if remaining_issues
+                    else "No legacy bundled plugin load paths found."
+                )
+            ),
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": _object_list(result_payload.get("changes")),
+            "issues": remaining_issues,
+            "warnings": _doctor_bundled_plugin_load_path_warnings(remaining_issues),
+            "path": result_payload.get("path") or _config_service_path_label(config_service),
+        }
+
+    warnings = _doctor_bundled_plugin_load_path_warnings(issues)
+    return {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Legacy bundled plugin load paths found."
+            if issues
+            else "No legacy bundled plugin load paths found."
+        ),
+        "repairAvailable": True,
+        "issues": issues,
+        "warnings": warnings,
+        "path": _config_service_path_label(config_service),
+    }
+
+
+def _with_doctor_bundled_plugin_load_paths_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    load_paths_payload = _build_doctor_bundled_plugin_load_paths_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["bundledPluginLoadPaths"] = load_paths_payload
+    warnings = _object_list(load_paths_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _stale_plugin_registry_state(
+    config_service: object | None,
+) -> tuple[set[str], list[dict[str, object]]]:
+    known_ids = set(_OPENZUES_NATIVE_PLUGIN_IDS)
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return known_ids, []
+    try:
+        raw_snapshot = build_snapshot()
+    except Exception as exc:
+        return known_ids, [
+            {
+                "level": "error",
+                "category": "pluginDiscovery",
+                "code": "plugin_manifest_registry_unavailable",
+                "message": f"Plugin manifest registry could not be read: {exc}",
+            }
+        ]
+    snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    diagnostics: list[dict[str, object]] = []
+    for load_path in _plugin_manifest_load_paths(plugins_config):
+        manifest_path = _plugin_manifest_path_for_load_path(load_path)
+        if manifest_path is None:
+            diagnostics.append(
+                {
+                    "level": "error",
+                    "category": "pluginDiscovery",
+                    "code": "plugin_manifest_missing",
+                    "message": f"Plugin manifest not found for load path: {load_path}",
+                    "source": str(load_path),
+                }
+            )
+            continue
+        record = _plugin_record_from_openclaw_manifest(
+            manifest_path,
+            plugins_config=plugins_config,
+            config_snapshot=snapshot,
+        )
+        if record is None:
+            diagnostics.append(
+                {
+                    "level": "error",
+                    "category": "pluginDiscovery",
+                    "code": "plugin_manifest_invalid",
+                    "message": f"Plugin manifest could not be loaded: {manifest_path}",
+                    "source": str(manifest_path),
+                }
+            )
+            continue
+        plugin_id = _optional_cli_string(record.get("id"))
+        if plugin_id is not None:
+            known_ids.add(plugin_id)
+    return known_ids, diagnostics
+
+
+def _doctor_stale_plugin_config_warnings(
+    issues: list[object],
+    *,
+    auto_repair_blocked: bool,
+) -> list[str]:
+    if not issues:
+        return []
+    warnings: list[str] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        path_label = str(issue.get("pathLabel") or "").strip()
+        plugin_id = str(issue.get("pluginId") or "").strip()
+        if not path_label or not plugin_id:
+            continue
+        warnings.append(f'- {path_label}: stale plugin reference "{plugin_id}" was found.')
+    if not warnings:
+        return []
+    if auto_repair_blocked:
+        warnings.append(
+            '- Auto-removal is paused because plugin discovery currently has errors. '
+            'Fix plugin discovery first, then rerun "openzues doctor --fix".'
+        )
+    else:
+        warnings.append(
+            '- Run "openzues doctor --fix" to remove stale plugins.allow and '
+            "plugins.entries ids."
+        )
+    return warnings
+
+
+def _build_doctor_stale_plugin_config_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:stale-plugin-config",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "autoRepairBlocked": False,
+        "issues": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for stale plugin config checks.",
+        }
+    known_plugin_ids, diagnostics = _stale_plugin_registry_state(config_service)
+    auto_repair_blocked = any(
+        isinstance(diagnostic, dict)
+        and str(diagnostic.get("level") or "").strip() == "error"
+        for diagnostic in diagnostics
+    )
+    if should_repair:
+        repair = getattr(config_service, "repair_stale_plugin_config", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Stale plugin config repair runtime is unavailable.",
+                "autoRepairBlocked": auto_repair_blocked,
+            }
+        try:
+            result = repair(
+                known_plugin_ids,
+                auto_repair_blocked=auto_repair_blocked,
+            )
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Stale plugin config repair failed: {exc}",
+                "autoRepairBlocked": auto_repair_blocked,
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        changes = _object_list(result_payload.get("changes"))
+        issues = [] if changed else _object_list(result_payload.get("issues"))
+        warnings = _doctor_stale_plugin_config_warnings(
+            issues,
+            auto_repair_blocked=auto_repair_blocked,
+        )
+        payload = {
+            **base_payload,
+            "status": "warn" if issues else "ok",
+            "summary": (
+                "Removed stale plugin config references."
+                if changed
+                else (
+                    "Stale plugin config references found."
+                    if issues
+                    else "No stale plugin config references found."
+                )
+            ),
+            "repairAvailable": True,
+            "autoRepairBlocked": auto_repair_blocked,
+            "changed": changed,
+            "changes": changes,
+            "issues": issues,
+            "warnings": warnings,
+            "path": result_payload.get("path"),
+        }
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        return payload
+
+    detect = getattr(config_service, "detect_stale_plugin_config", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Stale plugin config detection runtime is unavailable.",
+            "autoRepairBlocked": auto_repair_blocked,
+        }
+    try:
+        result = detect(
+            known_plugin_ids,
+            auto_repair_blocked=auto_repair_blocked,
+        )
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Stale plugin config detection failed: {exc}",
+            "autoRepairBlocked": auto_repair_blocked,
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    issues = _object_list(result_payload.get("issues"))
+    warnings = _doctor_stale_plugin_config_warnings(
+        issues,
+        auto_repair_blocked=auto_repair_blocked,
+    )
+    payload = {
+        **base_payload,
+        "status": "warn" if issues else "ok",
+        "summary": (
+            "Stale plugin config references found."
+            if issues
+            else "No stale plugin config references found."
+        ),
+        "repairAvailable": True,
+        "autoRepairBlocked": auto_repair_blocked,
+        "issues": issues,
+        "warnings": warnings,
+        "path": result_payload.get("path"),
+    }
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+    return payload
+
+
+def _with_doctor_stale_plugin_config_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    stale_payload = _build_doctor_stale_plugin_config_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["stalePluginConfig"] = stale_payload
+    warnings = _object_list(stale_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _doctor_open_policy_allow_from_warnings(changes: Sequence[object]) -> list[str]:
+    if not changes:
+        return []
+    warnings = [str(change) for change in changes if str(change).strip()]
+    if warnings:
+        warnings.append(
+            '- Run "openzues doctor --fix" to add missing allowFrom wildcards.'
+        )
+    return warnings
+
+
+def _build_doctor_open_policy_allow_from_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:open-policy-allowfrom",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "changes": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for open-policy allowFrom checks.",
+        }
+    if should_repair:
+        repair = getattr(config_service, "repair_open_policy_allow_from", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Open-policy allowFrom repair runtime is unavailable.",
+            }
+        try:
+            result = repair()
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Open-policy allowFrom repair failed: {exc}",
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        changes = _object_list(result_payload.get("changes"))
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": (
+                "Repaired open DM allowFrom wildcards."
+                if changed
+                else "No open DM allowFrom wildcard repairs needed."
+            ),
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": changes,
+            "warnings": [],
+            "path": result_payload.get("path") or _config_service_path_label(config_service),
+        }
+
+    detect = getattr(config_service, "detect_open_policy_allow_from", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Open-policy allowFrom detection runtime is unavailable.",
+        }
+    try:
+        result = detect()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Open-policy allowFrom detection failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    changes = _object_list(result_payload.get("changes"))
+    warnings = _doctor_open_policy_allow_from_warnings(changes)
+    return {
+        **base_payload,
+        "status": "warn" if changes else "ok",
+        "summary": (
+            "Open DM policies are missing allowFrom wildcards."
+            if changes
+            else "Open DM allowFrom wildcard policy is current."
+        ),
+        "repairAvailable": True,
+        "changes": changes,
+        "warnings": warnings,
+        "path": result_payload.get("path") or _config_service_path_label(config_service),
+    }
+
+
+def _with_doctor_open_policy_allow_from_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    allow_from_payload = _build_doctor_open_policy_allow_from_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["openPolicyAllowFrom"] = allow_from_payload
+    warnings = _object_list(allow_from_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
+    return next_payload
+
+
+def _doctor_allowlist_policy_allow_from_warnings(changes: Sequence[object]) -> list[str]:
+    if not changes:
+        return []
+    warnings = [str(change) for change in changes if str(change).strip()]
+    if warnings:
+        warnings.append(
+            '- Run "openzues doctor --fix" to restore missing allowFrom lists.'
+        )
+    return warnings
+
+
+def _build_doctor_allowlist_policy_allow_from_payload(
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    base_payload: dict[str, object] = {
+        "source": "openzues-native",
+        "openClawContribution": "doctor:allowlist-policy-allowfrom",
+        "repairRequested": should_repair,
+        "repairAvailable": False,
+        "changes": [],
+        "warnings": [],
+    }
+    if config_service is None:
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Gateway config is unavailable for allowlist-policy allowFrom checks.",
+        }
+    if should_repair:
+        repair = getattr(config_service, "repair_allowlist_policy_allow_from", None)
+        if not callable(repair):
+            return {
+                **base_payload,
+                "status": "unavailable",
+                "summary": "Allowlist-policy allowFrom repair runtime is unavailable.",
+            }
+        try:
+            result = repair()
+        except Exception as exc:
+            return {
+                **base_payload,
+                "status": "error",
+                "summary": f"Allowlist-policy allowFrom repair failed: {exc}",
+            }
+        result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+        changed = result_payload.get("changed") is True
+        changes = _object_list(result_payload.get("changes"))
+        return {
+            **base_payload,
+            "status": "ok",
+            "summary": (
+                "Restored allowlist DM allowFrom entries."
+                if changed
+                else "No allowlist DM allowFrom repairs needed."
+            ),
+            "repairAvailable": True,
+            "changed": changed,
+            "changes": changes,
+            "warnings": [],
+            "path": result_payload.get("path") or _config_service_path_label(config_service),
+        }
+
+    detect = getattr(config_service, "detect_allowlist_policy_allow_from", None)
+    if not callable(detect):
+        return {
+            **base_payload,
+            "status": "unavailable",
+            "summary": "Allowlist-policy allowFrom detection runtime is unavailable.",
+        }
+    try:
+        result = detect()
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "summary": f"Allowlist-policy allowFrom detection failed: {exc}",
+        }
+    result_payload = dict(result) if isinstance(result, dict) else {"result": result}
+    changes = _object_list(result_payload.get("changes"))
+    warnings = _doctor_allowlist_policy_allow_from_warnings(changes)
+    return {
+        **base_payload,
+        "status": "warn" if changes else "ok",
+        "summary": (
+            "Allowlist DM policies can restore allowFrom from pairing store."
+            if changes
+            else "Allowlist DM allowFrom policy is current."
+        ),
+        "repairAvailable": True,
+        "changes": changes,
+        "warnings": warnings,
+        "path": result_payload.get("path") or _config_service_path_label(config_service),
+    }
+
+
+def _with_doctor_allowlist_policy_allow_from_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    *,
+    should_repair: bool,
+) -> dict[str, object]:
+    allow_from_payload = _build_doctor_allowlist_policy_allow_from_payload(
+        config_service,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["allowlistPolicyAllowFrom"] = allow_from_payload
+    warnings = _object_list(allow_from_payload.get("warnings"))
     if warnings:
         next_payload = _with_doctor_added_warnings(next_payload, [str(item) for item in warnings])
     return next_payload
@@ -2490,6 +3190,39 @@ def _with_doctor_sandbox_payload(
 
 
 _SESSION_LOCK_STALE_SECONDS = 30 * 60
+
+
+def _doctor_state_directory_payload(data_dir: Path) -> dict[str, object]:
+    path_text = str(data_dir)
+    if data_dir.exists() and data_dir.is_dir():
+        return {
+            "ok": True,
+            "path": path_text,
+            "severity": "ok",
+            "warnings": [],
+        }
+    return {
+        "ok": False,
+        "path": path_text,
+        "severity": "critical",
+        "warnings": [f"CRITICAL: state directory missing: {path_text}"],
+    }
+
+
+def _with_doctor_state_directory_health(
+    payload: dict[str, object],
+    data_dir: Path,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    state_payload = _doctor_state_directory_payload(data_dir)
+    next_payload["stateDirectory"] = state_payload
+    warnings = _object_list(state_payload.get("warnings"))
+    if warnings:
+        next_payload = _with_doctor_added_warnings(
+            next_payload,
+            [str(warning) for warning in warnings],
+        )
+    return next_payload
 
 
 def _doctor_session_lock_payload(data_dir: Path) -> dict[str, object] | None:
@@ -16971,6 +17704,26 @@ def doctor(
             services.gateway_config,
             should_repair=fix,
         )
+        payload = _with_doctor_bundled_plugin_load_paths_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_stale_plugin_config_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_open_policy_allow_from_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
+        payload = _with_doctor_allowlist_policy_allow_from_payload(
+            payload,
+            services.gateway_config,
+            should_repair=fix,
+        )
         payload = _with_doctor_sandbox_warnings(
             payload,
             services.gateway_config,
@@ -16978,6 +17731,7 @@ def doctor(
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
         data_dir = getattr(services.settings, "data_dir", None)
         if isinstance(data_dir, Path):
+            payload = _with_doctor_state_directory_health(payload, data_dir)
             payload = _with_doctor_session_lock_health(payload, data_dir)
         payload = await _with_doctor_gateway_health_payload(
             payload,
