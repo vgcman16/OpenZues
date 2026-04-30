@@ -105,6 +105,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_channels.py
   tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_channels.py`.
+- Native `routes send` / `routes poll` now accept OpenClaw-compatible outbound
+  CLI aliases: `routes send --media` maps to the same native media list as
+  `--media-url`, and both send/poll accept `--thread-id` alongside
+  `--thread`.
+- Verified the provider CLI alias slice with `python -m pytest
+  tests\test_cli.py -k "openclaw_media_and_thread_id_aliases or
+  openclaw_thread_id_alias" -q` (`2 passed`), adjacent route send/poll CLI
+  proof `python -m pytest tests\test_cli.py -k
+  "routes_send_json_calls_native_direct_send_runtime or
+  routes_send_accepts_openclaw_media_and_thread_id_aliases or
+  routes_poll_human_output_calls_native_direct_poll_runtime or
+  routes_poll_accepts_openclaw_thread_id_alias" -q` (`4 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Matrix route-backed thread-bound subagent bindings now persist
   OpenClaw's bundled child-placement default in `sessionBinding.metadata`, and
   the gateway `sessions.spawn` path preserves that metadata on the child

@@ -20611,6 +20611,7 @@ def routes_send_command(
         list[str] | None,
         typer.Option(
             "--media-url",
+            "--media",
             help="Media URL to attach. Repeat for multiple media items.",
         ),
     ] = None,
@@ -20636,7 +20637,12 @@ def routes_send_command(
     ),
     account_id: str | None = typer.Option(None, "--account", help="Provider account id."),
     agent_id: str | None = typer.Option(None, "--agent-id", help="Originating agent id."),
-    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    thread_id: str | None = typer.Option(
+        None,
+        "--thread",
+        "--thread-id",
+        help="Provider thread/topic id.",
+    ),
     session_key: str | None = typer.Option(
         None,
         "--session-key",
@@ -20717,7 +20723,12 @@ def routes_poll_command(
         "--reply-to",
         help="Provider message id to reply to.",
     ),
-    thread_id: str | None = typer.Option(None, "--thread", help="Provider thread/topic id."),
+    thread_id: str | None = typer.Option(
+        None,
+        "--thread",
+        "--thread-id",
+        help="Provider thread/topic id.",
+    ),
     idempotency_key: str | None = typer.Option(
         None,
         "--idempotency-key",

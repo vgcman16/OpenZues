@@ -11211,6 +11211,63 @@ def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     ]
 
 
+def test_routes_send_accepts_openclaw_media_and_thread_id_aliases(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 43,
+                "messageId": "matrix-43",
+                "channel": "matrix",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "send",
+            "--channel",
+            "matrix",
+            "--to",
+            "room:!ops:example.org",
+            "--message",
+            "Threaded media update.",
+            "--media",
+            "https://example.invalid/photo.png",
+            "--thread-id",
+            "$thread-root",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "matrix",
+            "to": "room:!ops:example.org",
+            "message": "Threaded media update.",
+            "media_urls": ["https://example.invalid/photo.png"],
+            "gif_playback": None,
+            "reply_to_id": None,
+            "silent": None,
+            "force_document": None,
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": "$thread-root",
+            "session_key": None,
+            "idempotency_key": None,
+        }
+    ]
+
+
 def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -11284,6 +11341,66 @@ def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) 
             "reply_to_id": "122",
             "thread_id": "123",
             "idempotency_key": "cli-poll-1",
+        }
+    ]
+
+
+def test_routes_poll_accepts_openclaw_thread_id_alias(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 44,
+                "messageId": "telegram-poll-44",
+                "pollId": "poll-44",
+                "channel": "telegram",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "telegram",
+            "--to",
+            "channel:deploy",
+            "--question",
+            "Ship the release?",
+            "--option",
+            "yes",
+            "--option",
+            "no",
+            "--thread-id",
+            "topic-123",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "telegram",
+            "to": "channel:deploy",
+            "question": "Ship the release?",
+            "options": ["yes", "no"],
+            "max_selections": None,
+            "duration_seconds": None,
+            "duration_hours": None,
+            "silent": None,
+            "is_anonymous": None,
+            "account_id": None,
+            "reply_to_id": None,
+            "thread_id": "topic-123",
+            "idempotency_key": None,
         }
     ]
 
