@@ -808,6 +808,7 @@ def _message_action_param_string(
     key: str,
     *,
     required: bool = False,
+    allow_empty: bool = False,
 ) -> str | None:
     value = params.get(key)
     if value is None:
@@ -817,9 +818,11 @@ def _message_action_param_string(
     if not isinstance(value, str):
         raise RuntimeError(f"{key} must be a string.")
     trimmed = value.strip()
-    if required and not trimmed:
+    if required and not trimmed and not allow_empty:
         raise RuntimeError(f"{key} is required.")
-    return trimmed or None
+    if not trimmed and not allow_empty:
+        return None
+    return trimmed
 
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
@@ -6874,10 +6877,24 @@ class OpsMeshService:
             "messageId",
             required=True,
         )
-        emoji = _slack_reaction_name(
-            _message_action_param_string(request.params, "emoji")
-        )
         remove = request.params.get("remove") is True
+        emoji_value = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+            allow_empty=True,
+        )
+        if remove and not emoji_value:
+            raise RuntimeError("Emoji is required to remove a Slack reaction.")
+        if not remove and not emoji_value:
+            removed = self._remove_own_slack_reactions(
+                route=route,
+                channel_id=channel_id,
+                message_id=message_id or "",
+                secret_token=secret_token,
+            )
+            return {"ok": True, "removed": removed}
+        emoji = _slack_reaction_name(emoji_value)
         result = self._post_json_webhook(
             _slack_api_endpoint(
                 str(route.get("target") or ""),
@@ -6936,6 +6953,80 @@ class OpsMeshService:
             if isinstance(raw_reactions, list):
                 reactions = raw_reactions
         return {"ok": True, "reactions": reactions}
+
+    def _remove_own_slack_reactions(
+        self,
+        *,
+        route: dict[str, Any],
+        channel_id: str,
+        message_id: str,
+        secret_token: str | None,
+    ) -> list[str]:
+        bearer_token = _slack_bearer_token(secret_token)
+        auth_result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "auth.test"),
+            {},
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        if not isinstance(auth_result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if auth_result.get("ok") is False:
+            error = str(auth_result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        bot_user_id = str(auth_result.get("user_id") or "").strip()
+        if not bot_user_id:
+            raise RuntimeError("Failed to resolve Slack bot user id.")
+        result = self._post_json_webhook(
+            _slack_api_endpoint(str(route.get("target") or ""), "reactions.get"),
+            {
+                "channel": channel_id,
+                "timestamp": message_id,
+                "full": True,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Slack API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("error") or "unknown_error")
+            raise RuntimeError(f"Slack API returned {error}.")
+        message = result.get("message")
+        raw_reactions = message.get("reactions") if isinstance(message, dict) else []
+        removed: list[str] = []
+        if isinstance(raw_reactions, list):
+            seen: set[str] = set()
+            for reaction in raw_reactions:
+                if not isinstance(reaction, dict):
+                    continue
+                name = str(reaction.get("name") or "").strip()
+                users = reaction.get("users")
+                if (
+                    name
+                    and name not in seen
+                    and isinstance(users, list)
+                    and bot_user_id in {str(user) for user in users}
+                ):
+                    seen.add(name)
+                    removed.append(name)
+        for name in removed:
+            remove_result = self._post_json_webhook(
+                _slack_api_endpoint(str(route.get("target") or ""), "reactions.remove"),
+                {
+                    "channel": channel_id,
+                    "timestamp": message_id,
+                    "name": name,
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if not isinstance(remove_result, dict):
+                raise RuntimeError("Slack API returned a non-JSON response.")
+            if remove_result.get("ok") is False:
+                error = str(remove_result.get("error") or "unknown_error")
+                raise RuntimeError(f"Slack API returned {error}.")
+        return removed
 
     async def _post_provider_route_event(
         self,

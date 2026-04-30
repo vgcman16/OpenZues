@@ -2555,6 +2555,127 @@ async def test_ops_mesh_service_message_action_dispatches_slack_reactions_list_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-react-remove-own"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        if target.endswith("/auth.test"):
+            return {"ok": True, "user_id": "UBOT"}
+        if target.endswith("/reactions.get"):
+            return {
+                "ok": True,
+                "message": {
+                    "reactions": [
+                        {"name": "eyes", "users": ["UBOT", "U123"]},
+                        {"name": "thumbsup", "users": ["U123"]},
+                        {"name": "rocket", "users": ["UBOT"]},
+                    ]
+                },
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="react",
+            params={
+                "channelId": "channel:C123",
+                "messageId": "1710000000.0001",
+                "emoji": "",
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-react-remove-own-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": ["eyes", "rocket"]}
+    assert slack_posts == [
+        (
+            "https://slack.test/api/auth.test",
+            {},
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/reactions.get",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "full": True,
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/reactions.remove",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "name": "eyes",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+        (
+            "https://slack.test/api/reactions.remove",
+            {
+                "channel": "C123",
+                "timestamp": "1710000000.0001",
+                "name": "rocket",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-provider-options"

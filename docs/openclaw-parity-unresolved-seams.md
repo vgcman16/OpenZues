@@ -146,10 +146,11 @@ trusted-owner posture, tool context, and idempotency key, returning the
 dispatcher payload instead of always reporting unsupported action. Remaining
 route-backed Slack action parity now includes `react` add/remove dispatch via
 Slack `reactions.add` / `reactions.remove` plus `reactions` listing via
-`reactions.get full=true` using the saved native route token. Remaining action
-parity is Slack remove-own fanout, other production provider action adapters,
-`supportsAction` breadth, and deeper trusted-sender requirements for
-provider-specific tool contexts.
+`reactions.get full=true` using the saved native route token. Empty-emoji
+`react` now also resolves the bot user through `auth.test`, removes only the
+bot-owned reactions, and returns the removed names. Remaining action parity is
+other production provider action adapters, `supportsAction` breadth, and deeper
+trusted-sender requirements for provider-specific tool contexts.
 Gateway `poll` now also mirrors OpenClaw's provider capability guard for
 anonymous polls: `isAnonymous` is accepted only for Telegram, whose upstream
 outbound adapter advertises anonymous-poll support, and non-Telegram channels
