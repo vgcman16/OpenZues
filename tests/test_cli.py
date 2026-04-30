@@ -18936,14 +18936,13 @@ def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
     assert payload["security"] == {
-        "status": "unavailable",
-        "summary": (
-            "Security doctor contribution is not available from the native OpenZues "
-            "CLI runtime yet."
-        ),
+        "status": "ok",
+        "summary": "No channel security warnings detected.",
         "source": "openzues-native",
         "openClawContribution": "doctor:security",
         "repairAvailable": False,
+        "warnings": [],
+        "auditHint": "openclaw security audit --deep",
     }
     assert payload["shellCompletion"] == {
         "status": "partial",
@@ -18955,6 +18954,25 @@ def test_doctor_json_includes_security_and_shell_completion_surfaces(monkeypatch
         "openClawContribution": "doctor:shell-completion",
         "repairAvailable": False,
     }
+
+
+def test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {"approvals": {"exec": {"enabled": False}}},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["security"]["warnings"][0]
+    assert payload["security"]["status"] == "warning"
+    assert payload["security"]["openClawContribution"] == "doctor:security"
+    assert "approvals.exec.enabled=false disables approval forwarding only" in warning
+    assert "exec-approvals.json" in warning
+    assert "openclaw approvals get --gateway" in warning
+    assert warning in payload["warnings"]
 
 
 def test_doctor_json_includes_bundled_plugin_runtime_dependency_contribution(

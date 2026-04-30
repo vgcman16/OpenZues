@@ -2795,9 +2795,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`.
 - `doctor --json` and human doctor output now include stable OpenClaw doctor
   contribution surfaces for `doctor:security` and `doctor:shell-completion`.
-  The native CLI marks security as unavailable and shell completion as partial
-  until production repair adapters are wired, while preserving any future real
-  adapter payloads.
+  The native CLI returns a structured security read model and keeps shell
+  completion as partial until production repair adapters are wired, while
+  preserving any future real adapter payloads.
 - Verified the doctor contribution-surface seam with `python -m pytest
   tests\test_cli.py::test_doctor_json_includes_security_and_shell_completion_surfaces -q`
   (`1 passed`), adjacent doctor coverage `python -m pytest tests\test_cli.py
@@ -2808,6 +2808,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_human_output_reports_session_lock_files or
   doctor_json_includes_cli_runtime_surfaces"` (`4 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- The `doctor:security` contribution now implements OpenClaw's
+  `approvals.exec.enabled=false` warning: doctor JSON reports that approval
+  forwarding is disabled only for forwarding, points at the host
+  `~/.openclaw/exec-approvals.json` policy, and suggests
+  `openclaw approvals get --gateway`, while failing soft if legacy config must
+  be reported by the earlier migrator first.
+- Verified the security forwarding warning with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled
+  -q` (`1 passed`), adjacent security/shell/legacy proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_thread_binding_ttl_hours
+  tests\test_cli.py::test_doctor_json_warns_when_approvals_exec_forwarding_is_disabled
+  tests\test_cli.py::test_doctor_json_includes_security_and_shell_completion_surfaces
+  -q` (`3 passed`), broader doctor proof `python -m pytest tests\test_cli.py
+  -q -k "approvals_exec_forwarding or security_and_shell_completion_surfaces
+  or doctor_json_warns or gateway_auth or gateway_mode_is_unset"` (`37
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Provider-backed `gateway.send` now mirrors OpenClaw's explicit `sessionKey`
   behavior: OpenZues canonicalizes `sourceSessionKey`, passes it into the
   outbound runtime/mirror session, and keeps the delivery history row on the

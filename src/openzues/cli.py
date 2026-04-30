@@ -3995,17 +3995,80 @@ def _with_doctor_legacy_cron_payload(
     return next_payload
 
 
-def _build_doctor_security_payload() -> dict[str, object]:
+def _doctor_security_snapshot(config_service: object | None) -> dict[str, object] | None:
+    build_snapshot = getattr(config_service, "build_snapshot", None)
+    if not callable(build_snapshot):
+        return None
+    try:
+        snapshot = build_snapshot()
+    except Exception:
+        return None
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def _doctor_security_approvals_warnings(snapshot: dict[str, object]) -> list[str]:
+    approvals = snapshot.get("approvals")
+    if not isinstance(approvals, dict):
+        return []
+    exec_config = approvals.get("exec")
+    if not isinstance(exec_config, dict):
+        return []
+    if exec_config.get("enabled") is not False:
+        return []
+    return [
+        "\n".join(
+            [
+                "- Note: approvals.exec.enabled=false disables approval forwarding only.",
+                "  Host exec gating still comes from ~/.openclaw/exec-approvals.json.",
+                "  Check local policy with: openclaw approvals get --gateway",
+            ]
+        )
+    ]
+
+
+def _build_doctor_security_payload(
+    config_service: object | None = None,
+) -> dict[str, object]:
+    snapshot = _doctor_security_snapshot(config_service)
+    if snapshot is None:
+        return {
+            "status": "unavailable",
+            "summary": (
+                "Security doctor contribution is unavailable because gateway config "
+                "could not be read."
+            ),
+            "source": "openzues-native",
+            "openClawContribution": "doctor:security",
+            "repairAvailable": False,
+            "warnings": [],
+        }
+    warnings = _doctor_security_approvals_warnings(snapshot)
     return {
-        "status": "unavailable",
+        "status": "warning" if warnings else "ok",
         "summary": (
-            "Security doctor contribution is not available from the native OpenZues "
-            "CLI runtime yet."
+            "Security doctor found configuration warnings."
+            if warnings
+            else "No channel security warnings detected."
         ),
         "source": "openzues-native",
         "openClawContribution": "doctor:security",
         "repairAvailable": False,
+        "warnings": warnings,
+        "auditHint": "openclaw security audit --deep",
     }
+
+
+def _with_doctor_security_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    security = _build_doctor_security_payload(config_service)
+    next_payload = dict(payload)
+    next_payload["security"] = security
+    warnings = [str(item) for item in _object_list(security.get("warnings"))]
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, warnings)
+    return next_payload
 
 
 def _build_doctor_shell_completion_payload() -> dict[str, object]:
@@ -20062,6 +20125,10 @@ def doctor(
             payload,
             services.gateway_config,
             should_repair=fix,
+        )
+        payload = _with_doctor_security_payload(
+            payload,
+            services.gateway_config,
         )
         payload = await _with_doctor_gateway_health_payload(
             payload,
