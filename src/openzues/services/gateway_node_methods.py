@@ -977,6 +977,20 @@ def _tools_invoke_plugin_executor_allowed(
     return bool(plugin_token and plugin_token in allow_tokens) or "group:plugins" in allow_tokens
 
 
+def _tools_invoke_merge_action_into_args_if_supported(
+    args: dict[str, Any],
+    *,
+    action: str | None,
+    parameters: Mapping[str, object] | None,
+) -> dict[str, Any]:
+    if action is None or "action" in args:
+        return args
+    properties = parameters.get("properties") if parameters is not None else None
+    if not isinstance(properties, Mapping) or "action" not in properties:
+        return args
+    return {**args, "action": action}
+
+
 def _tools_invoke_allow_policy_from_mapping(value: object) -> set[str]:
     if not isinstance(value, dict):
         return set()
@@ -2241,6 +2255,11 @@ class GatewayNodeMethodService:
             )
             if not _tools_invoke_plugin_executor_allowed(plugin_resolution, scoped_allow_tools):
                 _raise_tools_invoke_not_found(tool_key)
+            tool_args = _tools_invoke_merge_action_into_args_if_supported(
+                tool_args,
+                action=_string_or_none(payload.get("action")),
+                parameters=plugin_resolution.parameters,
+            )
             plugin_executor = plugin_resolution.executor
 
         if (

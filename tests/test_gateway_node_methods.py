@@ -5550,6 +5550,192 @@ async def test_tools_invoke_runs_configured_plugin_executor(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-action.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["plugin_action_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[dict[str, object]] = []
+
+    async def execute_tool(_tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append(dict(args))
+        return {"ok": True, "action": args.get("action")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=[
+                {
+                    "tool": "plugin_action_tool",
+                    "executor": execute_tool,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string"},
+                            "mode": {"type": "string"},
+                        },
+                    },
+                }
+            ],
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "plugin_action_tool",
+            "action": "json",
+            "args": {"mode": "ok"},
+        },
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "action": "json"}}
+    assert observed_calls == [{"mode": "ok", "action": "json"}]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_keeps_explicit_plugin_args_action(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-action-explicit.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["plugin_action_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[dict[str, object]] = []
+
+    async def execute_tool(_tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append(dict(args))
+        return {"ok": True, "action": args.get("action")}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=[
+                {
+                    "tool": "plugin_action_tool",
+                    "executor": execute_tool,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"action": {"type": "string"}},
+                    },
+                }
+            ],
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "plugin_action_tool",
+            "action": "json",
+            "args": {"action": "explicit"},
+        },
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "action": "explicit"}}
+    assert observed_calls == [{"action": "explicit"}]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_does_not_merge_top_level_action_without_plugin_schema(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-action-no-schema.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["plugin_action_tool"]}},
+            }
+        )
+    )
+    observed_calls: list[dict[str, object]] = []
+
+    async def execute_tool(_tool_call_id: str, args: dict[str, object]) -> dict[str, object]:
+        observed_calls.append(dict(args))
+        return {"ok": True, "hasAction": "action" in args}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=[
+                {
+                    "tool": "plugin_action_tool",
+                    "executor": execute_tool,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"mode": {"type": "string"}},
+                    },
+                }
+            ],
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "plugin_action_tool",
+            "action": "json",
+            "args": {"mode": "ok"},
+        },
+    )
+
+    assert payload == {"ok": True, "result": {"ok": True, "hasAction": False}}
+    assert observed_calls == [{"mode": "ok"}]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_runs_plugin_executor_from_agent_tool_allowlist(
     tmp_path,
 ) -> None:

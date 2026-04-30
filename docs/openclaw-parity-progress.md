@@ -2857,6 +2857,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   and `mypy src\openzues\services\gateway_node_methods.py
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py src\openzues\cli.py`.
+- `/tools/invoke` plugin executor specs now preserve runtime `parameters`
+  schema metadata, and top-level `action` is merged into plugin args only when
+  that schema declares `properties.action`; explicit `args.action` wins, and
+  schemas without `action` continue to receive the original args.
+- Verified the plugin action-merge seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_tools_invoke_merges_top_level_action_for_plugin_schema
+  -q` (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_tools_invoke_keeps_explicit_plugin_args_action
+  -q` (`1 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py::test_tools_invoke_does_not_merge_top_level_action_without_plugin_schema
+  -q` (`1 passed`), adjacent plugin coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "tools_invoke and plugin"` (`13
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_plugin_runtime.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_plugin_runtime.py`.
 
 ## References
 

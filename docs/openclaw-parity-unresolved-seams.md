@@ -581,7 +581,12 @@ collisions, and honors `includePlugins=false` for core-only catalog reads.
 empty groups from plugin-only sessions. Optional plugin runtime executors now
 preserve OpenClaw's `optional` tool metadata and can be enabled by exact tool
 name, plugin id, or `group:plugins` allowlist entries before dispatching
-through `tools.invoke`. Remaining tool parity is future
+through `tools.invoke`. Registry/config executor specs now also preserve
+OpenClaw-style `parameters` / schema metadata so `/tools/invoke` merges a
+top-level `action` into plugin args only when the declared schema exposes an
+`action` property; explicit `args.action` remains authoritative and non-action
+schemas stay untouched before before-call hooks and executor dispatch. Remaining
+tool parity is future
 production runtime activation/import metadata beyond the native manifest
 snapshot adapter and deeper marketplace install/update/uninstall flows.
 
