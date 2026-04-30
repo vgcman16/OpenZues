@@ -3941,6 +3941,112 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_zalo_native_rou
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-zalo-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Zalo Native Media Provider",
+        kind="zalo",
+        target="https://bot-api.zaloplatforms.test",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="zalo-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "zalo",
+            "account_id": "zalo-bot",
+            "peer_kind": "direct",
+            "peer_id": "direct:dm-chat-1",
+        },
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": f"zalo-photo-{len(zalo_posts)}",
+                "chat": {"id": "dm-chat-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="zalo",
+        to="direct:dm-chat-1",
+        message="Caption",
+        media_urls=[
+            "https://example.com/one.jpg",
+            "https://example.com/two.jpg",
+        ],
+        account_id="zalo-bot",
+        idempotency_key="idem-native-zalo-media",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "zalo-photo-2"
+    assert result["chatId"] == "dm-chat-1"
+    assert result["channelId"] == "dm-chat-1"
+    assert result["mediaIds"] == ["zalo-photo-1", "zalo-photo-2"]
+    assert result["mediaUrls"] == [
+        "https://example.com/one.jpg",
+        "https://example.com/two.jpg",
+    ]
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendPhoto",
+            {
+                "chat_id": "dm-chat-1",
+                "photo": "https://example.com/one.jpg",
+                "caption": "Caption",
+            },
+            None,
+            None,
+        ),
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/sendPhoto",
+            {
+                "chat_id": "dm-chat-1",
+                "photo": "https://example.com/two.jpg",
+            },
+            None,
+            None,
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "zalo-photo-2"
+    assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
+        "zalo-photo-1",
+        "zalo-photo-2",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -156,6 +156,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   telegram_force_document"` (`20 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Native Zalo media sends now use OpenClaw's `sendPhoto` Bot API path, preserve
+  the original outbound text as the first media caption, iterate multiple media
+  URLs, and return the last provider message id with `mediaIds` / `mediaUrls`
+  metadata.
+- Verified the Zalo media slice with `pytest tests/test_ops_mesh.py::
+  test_ops_mesh_service_send_direct_channel_message_splits_zalo_media -q` (`1
+  passed`), adjacent provider-native proof `pytest tests/test_ops_mesh.py -q
+  -k "zalo or native_route or native_provider or provider_runtime or
+  provider_native_options or provider_result_persistence or
+  chunks_whatsapp_long_text or splits_whatsapp_media or whatsapp_document_reply
+  or whatsapp_gif_video or discord_reply_silent or telegram_media_group or
+  telegram_force_document"` (`21 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - Gateway `poll` now rejects `durationSeconds` for non-Telegram channels before
   dispatch, matching OpenClaw's `supportsPollDurationSeconds` adapter opt-in
   guard while preserving `durationHours` for Slack/Discord-style poll paths.

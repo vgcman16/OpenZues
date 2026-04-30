@@ -7170,7 +7170,10 @@ class OpsMeshService:
                     )
                 )
                 runtime_message = message
-                if resolved_target.channel.lower() == "whatsapp" and normalized_media_urls:
+                if (
+                    resolved_target.channel.lower() in {"whatsapp", "zalo"}
+                    and normalized_media_urls
+                ):
                     runtime_message = str(payload.get("message") or "").strip()
                 runtime_result = await runtime.deliver_message(
                     session_key=announce_session_key,
@@ -9118,8 +9121,49 @@ class OpsMeshService:
         if chat_id is None:
             raise RuntimeError("Zalo route is missing a chat target.")
         token = _zalo_bot_token(secret_token)
-        endpoint = _zalo_api_endpoint(str(route.get("target") or ""), token, "sendMessage")
         text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            endpoint = _zalo_api_endpoint(str(route.get("target") or ""), token, "sendPhoto")
+            message_ids: list[str] = []
+            delivered_chat = chat_id
+            for index, media_url in enumerate(media_urls):
+                payload: dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "photo": media_url,
+                }
+                if index == 0 and text:
+                    payload["caption"] = text[:2000]
+                result = self._post_json_webhook(endpoint, payload)
+                if not isinstance(result, dict):
+                    raise RuntimeError("Zalo API returned a non-JSON response.")
+                if result.get("ok") is False:
+                    error = str(
+                        result.get("description") or result.get("error_code") or "unknown"
+                    )
+                    raise RuntimeError(f"Zalo API returned {error}.")
+                message_id = _zalo_message_id(result)
+                if message_id is None:
+                    raise RuntimeError("Zalo API response did not include a message id.")
+                message_ids.append(message_id)
+                delivered_chat = _zalo_chat_from_result(result, delivered_chat)
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": message_ids[-1],
+                "chatId": delivered_chat,
+                "channelId": delivered_chat,
+                "mediaIds": message_ids,
+                "mediaUrls": media_urls,
+            }
+        endpoint = _zalo_api_endpoint(str(route.get("target") or ""), token, "sendMessage")
         message_id = ""
         delivered_chat = chat_id
         for chunk in _zalo_text_chunks(text):
