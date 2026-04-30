@@ -7299,6 +7299,58 @@ async def test_chat_send_strips_trailing_untrusted_context_metadata_from_final_p
 
 
 @pytest.mark.asyncio
+async def test_chat_send_projects_media_only_final_payload_text_like_openclaw() -> None:
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {
+            "sessionKey": "openzues:thread:demo",
+            "text": "NO_REPLY",
+            "mediaUrl": "https://example.com/final.png",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "NO_REPLY"}],
+            },
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "chat.send",
+        {
+            "sessionKey": "openzues:thread:demo",
+            "message": "status",
+            "idempotencyKey": "run-chat-send-media-only-final-1",
+        },
+    )
+
+    assert payload == {
+        "sessionKey": "openzues:thread:demo",
+        "text": "MEDIA:https://example.com/final.png",
+        "mediaUrl": "https://example.com/final.png",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "MEDIA:https://example.com/final.png",
+                }
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_send_inherits_delivery_context_for_channel_scoped_session(tmp_path) -> None:
     database = Database(tmp_path / "gateway-chat-send-delivery-context.db")
     await database.initialize()

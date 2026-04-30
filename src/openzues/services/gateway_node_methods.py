@@ -15695,8 +15695,147 @@ def _sanitize_gateway_chat_send_message_input(message: str) -> str:
 def _sanitize_gateway_chat_result_payload(payload: dict[str, object]) -> dict[str, object]:
     sanitized = _sanitize_gateway_chat_result_value(payload)
     if isinstance(sanitized, dict):
-        return cast(dict[str, object], sanitized)
+        return _project_gateway_chat_result_media_only_final_payload(
+            cast(dict[str, object], sanitized)
+        )
     return payload
+
+
+def _project_gateway_chat_result_media_only_final_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    media_urls = _gateway_chat_result_media_urls(payload)
+    if not media_urls:
+        return payload
+    top_text = _string_or_none(payload.get("text"))
+    message_texts = _gateway_chat_result_message_texts(payload.get("message"))
+    has_real_text = (
+        top_text is not None
+        and not _is_gateway_chat_suppressed_reply_text(top_text)
+    ) or any(not _is_gateway_chat_suppressed_reply_text(text) for text in message_texts)
+    if has_real_text:
+        return payload
+    if top_text is None and not _is_gateway_chat_assistant_message(payload.get("message")):
+        return payload
+    transcript_text = _build_gateway_chat_result_media_transcript_text(
+        payload,
+        media_urls=media_urls,
+    )
+    if not transcript_text:
+        return payload
+    projected = dict(payload)
+    projected["text"] = transcript_text
+    message = _project_gateway_chat_result_message_text(
+        projected.get("message"),
+        transcript_text,
+    )
+    if message is not None:
+        projected["message"] = message
+    return projected
+
+
+def _build_gateway_chat_result_media_transcript_text(
+    payload: dict[str, object],
+    *,
+    media_urls: list[str],
+) -> str:
+    lines: list[str] = []
+    reply_to_id = _string_or_none(payload.get("replyToId")) or _string_or_none(
+        payload.get("reply_to_id")
+    )
+    if reply_to_id is not None:
+        lines.append(f"[[reply_to:{reply_to_id}]]")
+    elif payload.get("replyToCurrent") is True or payload.get("reply_to_current") is True:
+        lines.append("[[reply_to_current]]")
+    for media_url in media_urls:
+        if media_url:
+            lines.append(f"MEDIA:{media_url}")
+    return "\n".join(lines).strip()
+
+
+def _gateway_chat_result_media_urls(payload: Mapping[str, object]) -> list[str]:
+    media_url = _string_or_none(payload.get("mediaUrl")) or _string_or_none(
+        payload.get("media_url")
+    )
+    media_urls: list[str] = []
+    for key in ("mediaUrls", "media_urls"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        media_urls.extend(entry for entry in value if isinstance(entry, str))
+    return _normalize_gateway_send_media_urls(
+        media_url=media_url,
+        media_urls=media_urls,
+    )
+
+
+def _is_gateway_chat_suppressed_reply_text(text: str) -> bool:
+    return text.strip().upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS
+
+
+def _gateway_chat_result_message_texts(message: object) -> list[str]:
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content.strip()
+        return [text] if text else []
+    if not isinstance(content, list):
+        return []
+    texts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_text = _string_or_none(item.get("text"))
+        if item_text is not None:
+            texts.append(item_text)
+    return texts
+
+
+def _is_gateway_chat_assistant_message(message: object) -> bool:
+    if not isinstance(message, dict):
+        return False
+    role = _string_or_none(message.get("role"))
+    return role is None or role == "assistant"
+
+
+def _project_gateway_chat_result_message_text(
+    message: object,
+    transcript_text: str,
+) -> dict[str, object] | None:
+    if not isinstance(message, dict) or not _is_gateway_chat_assistant_message(message):
+        return None
+    projected = dict(cast(dict[str, object], message))
+    content = projected.get("content")
+    if isinstance(content, str):
+        if not content.strip() or _is_gateway_chat_suppressed_reply_text(content):
+            projected["content"] = transcript_text
+        return projected
+    if not isinstance(content, list):
+        projected["content"] = [{"type": "text", "text": transcript_text}]
+        return projected
+    projected_content: list[object] = []
+    replaced_text = False
+    for item in content:
+        if not isinstance(item, dict):
+            projected_content.append(item)
+            continue
+        text = item.get("text")
+        if (
+            isinstance(text, str)
+            and not replaced_text
+            and (not text.strip() or _is_gateway_chat_suppressed_reply_text(text))
+        ):
+            projected_item = dict(cast(dict[str, object], item))
+            projected_item["text"] = transcript_text
+            projected_content.append(projected_item)
+            replaced_text = True
+            continue
+        projected_content.append(item)
+    if not replaced_text:
+        projected_content.insert(0, {"type": "text", "text": transcript_text})
+    projected["content"] = projected_content
+    return projected
 
 
 def _sanitize_gateway_chat_result_value(

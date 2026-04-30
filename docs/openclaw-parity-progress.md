@@ -1577,6 +1577,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Injected plugin executors can now declare custom owner-only metadata for `tools.invoke`, keeping allowed custom tools hidden from scoped non-admin callers while preserving admin/internal owner execution.
 - `chat.inject`, `chat.history`, and live session message projection now strip trailing OpenClaw external-untrusted metadata suffix blocks from visible transcript text.
 - `chat.send` now strips trailing OpenClaw external-untrusted metadata suffix blocks from returned final payload text blocks while preserving normal run-ack payloads.
+- `chat.send` now projects media-only final reply payloads with stale
+  `NO_REPLY` text into OpenClaw-style `MEDIA:<url>` assistant transcript text.
+- Verified the media-only final reply seam with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_send_projects_media_only_final_payload_text_like_openclaw
+  -q` (`1 passed`), adjacent chat-send proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "chat_send and (final_payload or
+  returns_run_ack or attachment_runtime or inherited_delivery_context)"` (`4
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `chat.send deliver=true` now inherits persisted channel-scoped `deliveryContext` routes when the session key is scoped to the same external channel.
 - Gateway requester metadata now carries `clientMode`, allowing configured-main CLI `chat.send` delivery inheritance while keeping UI/webchat callers route-local.
 - Session snapshots now derive missing delivery context from `origin.provider/accountId/threadId` metadata, allowing older configured-main routes to resume external delivery.
