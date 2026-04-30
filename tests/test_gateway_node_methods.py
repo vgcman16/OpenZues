@@ -36364,6 +36364,104 @@ async def test_node_event_agent_request_uses_attachment_runtime_when_wired(
 
 
 @pytest.mark.asyncio
+async def test_node_event_agent_request_sandboxed_attachment_stages_media_in_session_workspace(
+    tmp_path,
+) -> None:
+    child_workspace = tmp_path / "child-workspace"
+    child_workspace.mkdir()
+    database = Database(tmp_path / "node-event-agent-request-sandbox-attachments.db")
+    await database.initialize()
+    session_key = "agent:main:subagent:agent-request-sandbox"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "sandboxed": True,
+            "spawnedWorkspaceDir": str(child_workspace),
+        },
+    )
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+    attachments = [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "share.png",
+            "content": "Zm9v",
+        }
+    ]
+
+    async def fake_attachment_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        attachments: list[dict[str, object]],
+        channel: str | None = None,
+        to: str | None = None,
+        node_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "attachments": attachments,
+                "channel": channel,
+                "to": to,
+                "node_id": node_id,
+            }
+        )
+        return {"runId": "run-sandbox-agent-request-attachment-1", "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_attachment_send_service=fake_attachment_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-sandbox-attachment-runtime",
+                "sessionKey": session_key,
+                "message": "Inspect this shared image.",
+                "attachments": attachments,
+            },
+        },
+        requester=requester,
+    )
+
+    staged_path = child_workspace / "media" / "inbound" / "share.png"
+    assert response == {"ok": True}
+    assert staged_path.read_bytes() == b"foo"
+    assert len(observed) == 1
+    assert "media/inbound/share.png" in str(observed[0]["message"])
+    assert observed[0]["attachments"] == [
+        {
+            "type": "image",
+            "mimeType": "image/png",
+            "fileName": "share.png",
+            "openzuesMediaRef": "media://inbound/share.png",
+            "openzuesSavedPath": str(staged_path),
+            "openzuesSandboxPath": "media/inbound/share.png",
+            "openzuesSha256": hashlib.sha256(b"foo").hexdigest(),
+            "openzuesByteLength": 3,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_push_test_recognizes_recorded_apns_registration(tmp_path) -> None:
     database = Database(tmp_path / "node-event-apns-register.db")
     await database.initialize()

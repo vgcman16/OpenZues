@@ -11655,14 +11655,30 @@ class GatewayNodeMethodService:
         if has_effective_attachments:
             assert self._chat_attachment_send_service is not None
             assert isinstance(attachments, list)
+            sandbox_media_root = await self._gateway_session_sandbox_media_root(
+                session_key
+            )
+            runtime_attachments = attachments
+            runtime_message = message
+            if sandbox_media_root is not None:
+                runtime_attachments, sandbox_media_paths = (
+                    _stage_gateway_chat_sandbox_attachments(
+                        sandbox_root=sandbox_media_root,
+                        attachments=attachments,
+                    )
+                )
+                runtime_message = _format_gateway_chat_sandbox_media_paths(
+                    message,
+                    sandbox_media_paths,
+                )
             send_result = await self._chat_attachment_send_service(
                 session_key=session_key,
-                message=message,
+                message=runtime_message,
                 idempotency_key=idempotency_key,
                 thinking=thinking,
                 deliver=deliver,
                 timeout_ms=timeout_ms,
-                attachments=attachments,
+                attachments=runtime_attachments,
                 channel=delivery_channel,
                 to=delivery_to,
                 node_id=node_id,

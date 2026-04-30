@@ -1912,6 +1912,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Sandboxed node `agent.request` attachment delivery now stages decoded media
+  into the target session workspace before runtime handoff, so iOS/node-origin
+  share requests into sandboxed sessions carry `media/inbound/...` paths and no
+  inline payload bytes.
+- Verified the sandboxed node-agent-request media staging seam with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_node_event_agent_request_sandboxed_attachment_stages_media_in_session_workspace
+  -q`, adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "node_event_agent_request_sandboxed_attachment_stages_media_in_session_workspace
+  or node_event_agent_request_uses_attachment_runtime_when_wired or
+  node_event_agent_request_effective_attachments_fail_as_unavailable_runtime or
+  sessions_steer_sandboxed_attachment_stages_media_in_session_workspace or
+  sessions_send_sandboxed_attachment_stages_media_in_session_workspace or
+  chat_send_sandboxed_attachment_stages_media_in_session_workspace"`,
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - Telegram native `sendPoll` topic-qualified targets are now covered by the
   same OpenClaw-shaped proof as topic-qualified sends: parent supergroup routes
   accept `telegram:group:<chatId>:topic:<threadId>` and the provider payload

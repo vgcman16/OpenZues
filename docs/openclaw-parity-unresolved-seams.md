@@ -89,8 +89,9 @@ session workspace under `media/inbound/...`, strips inline payload bytes before
 runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
 The sibling `sessions.send` attachment path now uses the same sandbox workspace
 staging behavior, and `sessions.steer` now does the same for steered follow-up
-messages. Remaining sandbox media staging work is the node `agent.request`
-attachment path plus deeper inbound provider media staging.
+messages. Node `agent.request` attachment delivery now also stages sandboxed
+media into the target session workspace before runtime handoff. Remaining
+sandbox media staging work is deeper inbound provider media staging.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,
