@@ -2182,6 +2182,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy Slack streaming config uses scalar aliases."
     if _legacy_config_issues_all_googlechat_stream_mode(issues):
         return "Legacy Google Chat streamMode config is unused."
+    if _legacy_config_issues_all_sandbox_per_session(issues):
+        return "Legacy sandbox perSession config uses scope."
     if _legacy_config_issues_all_match(issues, "gateway.bind"):
         return "Legacy gateway bind host aliases use bind modes."
     return "Legacy config contains migratable keys."
@@ -2202,6 +2204,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy Slack streaming config uses scalar aliases; run openzues doctor --fix."
     if _legacy_config_issues_all_googlechat_stream_mode(issues):
         return "Legacy Google Chat streamMode config is unused; run openzues doctor --fix."
+    if _legacy_config_issues_all_sandbox_per_session(issues):
+        return "Legacy sandbox perSession config uses scope; run openzues doctor --fix."
     if _legacy_config_issues_all_match(issues, "gateway.bind"):
         return "Legacy gateway bind host aliases use bind modes; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
@@ -2247,6 +2251,21 @@ def _legacy_config_issues_all_googlechat_stream_mode(issues: list[object]) -> bo
         and (
             issue["path"] == "channels.googlechat"
             or issue["path"].startswith("channels.googlechat.accounts.")
+        )
+        for issue in issues
+    )
+
+
+def _legacy_config_issues_all_sandbox_per_session(issues: list[object]) -> bool:
+    return all(
+        isinstance(issue, dict)
+        and isinstance(issue.get("path"), str)
+        and (
+            issue["path"] == "agents.defaults.sandbox.perSession"
+            or (
+                issue["path"].startswith("agents.list.")
+                and issue["path"].endswith(".sandbox.perSession")
+            )
         )
         for issue in issues
     )

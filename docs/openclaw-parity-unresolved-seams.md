@@ -114,10 +114,12 @@ Legacy `audio.transcription` now migrates into
 `tools.media.audio.models` through `doctor --fix`, including safe executable
 mapping, existing-model preservation, invalid-command removal, and `tools.media`
 config retention.
+Agent sandbox `perSession` aliases now migrate to `sandbox.scope` for
+`agents.defaults.sandbox` and `agents.list[].sandbox`, including explicit-scope
+preservation.
 Remaining legacy-config parity is broader doctor migration breadth from
 OpenClaw's compatibility migrator; the next small source-backed head is
-`agents.defaults.sandbox.perSession` / `agents.list[].sandbox.perSession`
-migration into `sandbox.scope`.
+top-level `memorySearch` migration into `agents.defaults.memorySearch`.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

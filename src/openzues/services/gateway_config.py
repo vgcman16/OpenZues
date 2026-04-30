@@ -257,6 +257,7 @@ class GatewayConfigService:
             *_migrate_legacy_slack_streaming_keys(payload),
             *_migrate_legacy_googlechat_stream_mode(payload),
             *_migrate_legacy_audio_transcription(payload),
+            *_migrate_legacy_sandbox_per_session(payload),
             *_migrate_gateway_control_ui_allowed_origins(payload),
             *_migrate_legacy_gateway_bind_alias(payload),
         ]
@@ -1713,6 +1714,15 @@ def _legacy_gateway_bind_alias_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_sandbox_per_session_issue(path: str) -> dict[str, str]:
+    replacement = path.removesuffix(".perSession") + ".scope"
+    return {
+        "path": path,
+        "replacement": replacement,
+        "message": f"{path} is legacy; use {replacement}.",
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1738,6 +1748,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_googlechat_stream_mode_issue(path)
             for path in _iter_legacy_googlechat_stream_mode_paths(payload)
+        ],
+        *[
+            _legacy_sandbox_per_session_issue(path)
+            for path in _iter_legacy_sandbox_per_session_paths(payload)
         ],
         *[
             _legacy_gateway_bind_alias_issue(path)
@@ -2154,6 +2168,27 @@ def _iter_legacy_gateway_bind_alias_paths(payload: dict[str, Any]) -> list[str]:
     return ["gateway.bind"] if _gateway_bind_alias_target(gateway.get("bind")) else []
 
 
+def _iter_legacy_sandbox_per_session_paths(payload: dict[str, Any]) -> list[str]:
+    agents = payload.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    paths: list[str] = []
+    defaults = agents.get("defaults")
+    if isinstance(defaults, dict):
+        sandbox = defaults.get("sandbox")
+        if isinstance(sandbox, dict) and "perSession" in sandbox:
+            paths.append("agents.defaults.sandbox.perSession")
+    agent_list = agents.get("list")
+    if isinstance(agent_list, list):
+        for index, agent in enumerate(agent_list):
+            if not isinstance(agent, dict):
+                continue
+            sandbox = agent.get("sandbox")
+            if isinstance(sandbox, dict) and "perSession" in sandbox:
+                paths.append(f"agents.list.{index}.sandbox.perSession")
+    return paths
+
+
 def _legacy_channel_config(payload: dict[str, Any], channel: str) -> dict[str, Any] | None:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
@@ -2424,6 +2459,57 @@ def _is_likely_executable_path(value: str) -> bool:
         or "\\" in value
         or bool(_EXEC_WINDOWS_DRIVE_PATTERN.match(value))
     )
+
+
+def _migrate_legacy_sandbox_per_session(payload: dict[str, Any]) -> list[str]:
+    agents = payload.get("agents")
+    if not isinstance(agents, dict):
+        return []
+    changes: list[str] = []
+    defaults = agents.get("defaults")
+    if isinstance(defaults, dict):
+        sandbox = defaults.get("sandbox")
+        if isinstance(sandbox, dict):
+            _migrate_sandbox_per_session_at(
+                sandbox,
+                path_label="agents.defaults.sandbox",
+                changes=changes,
+            )
+
+    agent_list = agents.get("list")
+    if isinstance(agent_list, list):
+        for index, agent in enumerate(agent_list):
+            if not isinstance(agent, dict):
+                continue
+            sandbox = agent.get("sandbox")
+            if not isinstance(sandbox, dict):
+                continue
+            _migrate_sandbox_per_session_at(
+                sandbox,
+                path_label=f"agents.list.{index}.sandbox",
+                changes=changes,
+            )
+    return changes
+
+
+def _migrate_sandbox_per_session_at(
+    sandbox: dict[str, Any],
+    *,
+    path_label: str,
+    changes: list[str],
+) -> None:
+    if "perSession" not in sandbox:
+        return
+    raw_per_session = sandbox.get("perSession")
+    if not isinstance(raw_per_session, bool):
+        return
+    if "scope" not in sandbox:
+        scope = "session" if raw_per_session else "shared"
+        sandbox["scope"] = scope
+        changes.append(f"Moved {path_label}.perSession to {path_label}.scope ({scope}).")
+    else:
+        changes.append(f"Removed {path_label}.perSession ({path_label}.scope already set).")
+    del sandbox["perSession"]
 
 
 def _migrate_gateway_control_ui_allowed_origins(payload: dict[str, Any]) -> list[str]:
