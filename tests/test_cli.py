@@ -14240,6 +14240,109 @@ def test_doctor_json_skips_codex_override_warning_for_custom_or_non_oauth_cases(
         assert "openaiCodex" not in payload.get("providerOverrides", {})
 
 
+def test_doctor_json_warns_when_gateway_auth_missing_local_token(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = (
+        "Gateway auth is off or missing a token. Token auth is now the recommended "
+        "default (including loopback)."
+    )
+    assert payload["gatewayAuth"]["reason"] == "missing_token"
+    assert payload["gatewayAuth"]["warnings"] == [warning]
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_skips_gateway_auth_warning_when_env_token_is_set(monkeypatch) -> None:
+    monkeypatch.setenv("OPENCLAW_GATEWAY_TOKEN", "env-token-1234567890")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert not any("Gateway auth is off or missing a token" in item for item in payload["warnings"])
+    assert "gatewayAuth" not in payload
+
+
+def test_doctor_json_warns_when_gateway_auth_mode_is_ambiguous(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+                "auth": {
+                    "token": "token-value",
+                    "password": "password-value",
+                },
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["gatewayAuth"]["warnings"][0]
+    assert payload["gatewayAuth"]["reason"] == "ambiguous_mode"
+    assert "gateway.auth.mode is unset" in warning
+    assert "openclaw config set gateway.auth.mode token" in warning
+    assert "openclaw config set gateway.auth.mode password" in warning
+    assert warning in payload["warnings"]
+
+
+def test_doctor_json_keeps_secretref_gateway_token_read_only_when_unresolved(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+                "auth": {
+                    "mode": "token",
+                    "token": {
+                        "source": "env",
+                        "provider": "default",
+                        "id": "OPENCLAW_GATEWAY_TOKEN",
+                    },
+                },
+            },
+            "secrets": {
+                "providers": {
+                    "default": {"source": "env"},
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = payload["gatewayAuth"]["warnings"][0]
+    assert payload["gatewayAuth"]["reason"] == "secret_ref_unresolved"
+    assert "Gateway token is managed via SecretRef and is currently unavailable." in warning
+    assert "Doctor will not overwrite gateway.auth.token with a plaintext value." in warning
+    assert warning in payload["warnings"]
+
+
 def test_doctor_json_includes_sandbox_contribution(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

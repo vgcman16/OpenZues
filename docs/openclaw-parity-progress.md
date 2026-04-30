@@ -125,6 +125,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections"` (`11 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Top-level `doctor --json` now includes OpenClaw's local gateway-auth warning
+  contribution: explicit local gateway config warns for missing token auth,
+  ambiguous token/password config without `gateway.auth.mode`, and unresolved
+  SecretRef-managed tokens, while `OPENCLAW_GATEWAY_TOKEN` suppresses the
+  missing-token warning.
+- Verified the gateway-auth doctor slice with `python -m pytest tests\test_cli.py
+  -q -k "gateway_auth_missing_local_token or gateway_auth_warning_when_env_token
+  or gateway_auth_mode_is_ambiguous or secretref_gateway_token"` (`4 passed`),
+  adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
+  "gateway_auth_missing_local_token or gateway_auth_warning_when_env_token or
+  gateway_auth_mode_is_ambiguous or secretref_gateway_token or
+  codex_provider_override or codex_inline_model or codex_override_warning or
+  opencode_provider_overrides or state_directory_is_missing or
+  sandbox_enabled_without_docker or doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections"` (`15 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - Gateway `poll` now rejects `isAnonymous` for non-Telegram channels before
   runtime dispatch, matching OpenClaw's provider capability guard while leaving
   Telegram's anonymous-poll path available.

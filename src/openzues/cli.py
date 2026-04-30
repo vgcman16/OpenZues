@@ -3859,6 +3859,136 @@ def _build_codex_provider_override_warning(provider_override: object) -> str:
     return "\n".join(lines)
 
 
+def _dict_config(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _is_secret_ref(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and _optional_cli_string(value.get("source")) is not None
+        and _optional_cli_string(value.get("id")) is not None
+    )
+
+
+def _has_configured_secret_input(value: object) -> bool:
+    if _is_secret_ref(value):
+        return True
+    return _optional_cli_string(value) is not None
+
+
+def _gateway_auth_plaintext_secret(value: object) -> str | None:
+    return None if _is_secret_ref(value) else _optional_cli_string(value)
+
+
+def _build_doctor_gateway_auth_payload(
+    config_service: object | None,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    gateway = _dict_config(snapshot.get("gateway"))
+    if _optional_cli_string(gateway.get("mode")) != "local":
+        return None
+    auth = _dict_config(gateway.get("auth"))
+    token_value = auth.get("token")
+    password_value = auth.get("password")
+    explicit_mode = _optional_cli_string(auth.get("mode"))
+    token_configured = _has_configured_secret_input(token_value)
+    password_configured = _has_configured_secret_input(password_value)
+    if explicit_mode is None and token_configured and password_configured:
+        warning = "\n".join(
+            [
+                (
+                    "gateway.auth.token and gateway.auth.password are both configured while "
+                    "gateway.auth.mode is unset."
+                ),
+                (
+                    "Set an explicit mode to avoid ambiguous auth selection and "
+                    "startup/runtime failures."
+                ),
+                "Set token mode: openclaw config set gateway.auth.mode token",
+                "Set password mode: openclaw config set gateway.auth.mode password",
+            ]
+        )
+        return {
+            "status": "warning",
+            "summary": "gateway.auth.mode is unset for token/password auth.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:gateway-auth",
+            "reason": "ambiguous_mode",
+            "warnings": [warning],
+        }
+
+    env_payload = env if env is not None else os.environ
+    env_token = _optional_cli_string(env_payload.get("OPENCLAW_GATEWAY_TOKEN"))
+    token = _gateway_auth_plaintext_secret(token_value) or env_token
+    password = _gateway_auth_plaintext_secret(password_value)
+    if explicit_mode is not None:
+        mode = explicit_mode
+        mode_source = "config"
+    elif password is not None:
+        mode = "password"
+        mode_source = "password"
+    elif token is not None:
+        mode = "token"
+        mode_source = "token"
+    else:
+        mode = "token"
+        mode_source = "default"
+    needs_token = mode != "password" and (mode != "token" or token is None)
+    if not needs_token:
+        return None
+    if _is_secret_ref(token_value):
+        warning = "\n".join(
+            [
+                "Gateway token is managed via SecretRef and is currently unavailable.",
+                "Doctor will not overwrite gateway.auth.token with a plaintext value.",
+                "Resolve/rotate the external secret source, then rerun doctor.",
+            ]
+        )
+        return {
+            "status": "warning",
+            "summary": "Gateway token SecretRef is currently unavailable.",
+            "source": "openzues-native",
+            "openClawContribution": "doctor:gateway-auth",
+            "reason": "secret_ref_unresolved",
+            "mode": mode,
+            "modeSource": mode_source,
+            "warnings": [warning],
+        }
+    warning = (
+        "Gateway auth is off or missing a token. Token auth is now the recommended "
+        "default (including loopback)."
+    )
+    return {
+        "status": "warning",
+        "summary": warning,
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-auth",
+        "reason": "missing_token",
+        "mode": mode,
+        "modeSource": mode_source,
+        "warnings": [warning],
+    }
+
+
+def _with_doctor_gateway_auth_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    gateway_auth = _build_doctor_gateway_auth_payload(config_service)
+    if gateway_auth is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["gatewayAuth"] = gateway_auth
+    warnings = [
+        str(warning)
+        for warning in _object_list(gateway_auth.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 def _build_doctor_provider_overrides_payload(
     config_service: object | None,
     data_dir: Path | None = None,
@@ -17921,6 +18051,10 @@ def doctor(
             should_repair=fix,
         )
         payload = _with_doctor_sandbox_warnings(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_gateway_auth_payload(
             payload,
             services.gateway_config,
         )
