@@ -2958,6 +2958,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or config_patch_noop"` (`9 passed`), `ruff check src\openzues\cli.py
   src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py src\openzues\services\gateway_config.py`.
+- The native `legacyConfig` doctor contribution now migrates the OpenClaw
+  `tools.web.x_search.apiKey` legacy provider auth key into
+  `plugins.entries.xai.config.webSearch.apiKey`, preserving non-auth
+  `tools.web.x_search` knobs and keeping explicit plugin-owned auth when it is
+  already configured.
+- Verified the x-search legacy config seam with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_about_legacy_x_search_api_key
+  tests\test_cli.py::test_doctor_fix_migrates_legacy_x_search_api_key -q` (`2
+  passed`), adjacent legacy-config doctor coverage `python -m pytest
+  tests\test_cli.py -q -k "legacy_thread_binding_ttl_hours or
+  legacy_channel_allow_aliases or legacy_x_search_api_key or
+  doctor_fix_runs_startup_channel_maintenance_adapter or
+  doctor_skips_startup_channel_maintenance_without_fix or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`9
+  passed`), adjacent config coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "config_set_rejects_legacy_thread_binding_ttl_hours or
+  config_set_preserves_session_thread_binding_idle_hours or config_write_methods
+  or config_patch_noop"` (`9 passed`), adjacent doctor contribution coverage
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_memory_probe_contribution or
+  doctor_json_includes_gateway_health_contribution"` (`3 passed`), `ruff check
+  src\openzues\cli.py src\openzues\services\gateway_config.py
+  src\openzues\schemas.py tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
 
 ## References
 

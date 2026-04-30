@@ -2174,6 +2174,8 @@ def _doctor_legacy_config_summary(issues: list[object]) -> str:
         return "Legacy thread binding config uses ttlHours."
     if _legacy_config_issues_all_match(issues, ".allow"):
         return "Legacy channel config uses allow aliases."
+    if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
+        return "Legacy x_search config uses apiKey."
     return "Legacy config contains migratable keys."
 
 
@@ -2184,6 +2186,8 @@ def _doctor_legacy_config_warning(issues: list[object]) -> str | None:
         return "Legacy thread binding config uses ttlHours; run openzues doctor --fix."
     if _legacy_config_issues_all_match(issues, ".allow"):
         return "Legacy channel config uses allow aliases; run openzues doctor --fix."
+    if _legacy_config_issues_all_match(issues, "tools.web.x_search.apiKey"):
+        return "Legacy x_search config uses apiKey; run openzues doctor --fix."
     return "Legacy config contains migratable keys; run openzues doctor --fix."
 
 

@@ -246,6 +246,7 @@ class GatewayConfigService:
         changes = [
             *_migrate_legacy_thread_binding_ttl_hours(payload),
             *_migrate_legacy_channel_allow_aliases(payload),
+            *_migrate_legacy_x_search_api_key(payload),
         ]
         if not changes:
             snapshot = self.build_snapshot()
@@ -1648,6 +1649,17 @@ def _legacy_channel_allow_alias_issue(path: str) -> dict[str, str]:
     }
 
 
+def _legacy_x_search_api_key_issue(path: str) -> dict[str, str]:
+    return {
+        "path": path,
+        "replacement": "plugins.entries.xai.config.webSearch.apiKey",
+        "message": (
+            "tools.web.x_search.apiKey is legacy; use "
+            "plugins.entries.xai.config.webSearch.apiKey."
+        ),
+    }
+
+
 def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [
         *[
@@ -1657,6 +1669,10 @@ def _collect_legacy_config_issues(payload: dict[str, Any]) -> list[dict[str, str
         *[
             _legacy_channel_allow_alias_issue(path)
             for path in _iter_legacy_channel_allow_alias_paths(payload)
+        ],
+        *[
+            _legacy_x_search_api_key_issue(path)
+            for path in _iter_legacy_x_search_api_key_paths(payload)
         ],
     ]
 
@@ -1943,3 +1959,75 @@ def _migrate_allow_alias_at(
     else:
         changes.append(f"Removed {path_label}.allow ({path_label}.enabled already set).")
     del entry["allow"]
+
+
+def _iter_legacy_x_search_api_key_paths(payload: dict[str, Any]) -> list[str]:
+    legacy = _legacy_x_search_config(payload)
+    if not isinstance(legacy, dict) or "apiKey" not in legacy:
+        return []
+    return ["tools.web.x_search.apiKey"]
+
+
+def _legacy_x_search_config(payload: dict[str, Any]) -> dict[str, Any] | None:
+    tools = payload.get("tools")
+    if not isinstance(tools, dict):
+        return None
+    web = tools.get("web")
+    if not isinstance(web, dict):
+        return None
+    x_search = web.get("x_search")
+    return x_search if isinstance(x_search, dict) else None
+
+
+def _migrate_legacy_x_search_api_key(payload: dict[str, Any]) -> list[str]:
+    legacy = _legacy_x_search_config(payload)
+    if legacy is None or "apiKey" not in legacy:
+        return []
+    auth = legacy.get("apiKey")
+    del legacy["apiKey"]
+
+    tools = _ensure_config_record(payload, "tools")
+    web = _ensure_config_record(tools, "web")
+    if legacy:
+        web["x_search"] = legacy
+    else:
+        web.pop("x_search", None)
+
+    plugins = _ensure_config_record(payload, "plugins")
+    entries = _ensure_config_record(plugins, "entries")
+    xai = _ensure_config_record(entries, "xai")
+    had_enabled = "enabled" in xai
+    if not had_enabled:
+        xai["enabled"] = True
+    config = _ensure_config_record(xai, "config")
+    existing_web_search = config.get("webSearch")
+    web_search = dict(existing_web_search) if isinstance(existing_web_search, dict) else None
+
+    changes: list[str] = []
+    target_path = "plugins.entries.xai.config.webSearch.apiKey"
+    if web_search is None:
+        config["webSearch"] = {"apiKey": auth}
+        changes.append(f"Moved tools.web.x_search.apiKey to {target_path}.")
+    elif "apiKey" not in web_search:
+        web_search["apiKey"] = auth
+        config["webSearch"] = web_search
+        changes.append(
+            "Merged tools.web.x_search.apiKey to "
+            f"{target_path} (filled missing plugin auth)."
+        )
+    else:
+        config["webSearch"] = web_search
+        changes.append(f"Removed tools.web.x_search.apiKey ({target_path} already set).")
+
+    if not legacy and not had_enabled:
+        changes.append("Removed empty tools.web.x_search.")
+    return changes
+
+
+def _ensure_config_record(container: dict[str, Any], key: str) -> dict[str, Any]:
+    value = container.get(key)
+    if isinstance(value, dict):
+        return value
+    created: dict[str, Any] = {}
+    container[key] = created
+    return created

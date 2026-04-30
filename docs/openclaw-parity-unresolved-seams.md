@@ -91,9 +91,13 @@ paths before snapshot validation. The doctor surface now also reports a native
 validated snapshot. The same native `legacyConfig` contribution now also covers
 OpenClaw's nested Slack, Google Chat, and Discord `allow` -> `enabled` channel
 alias migration, including account-scoped channel/group/guild-channel entries.
+It also migrates `tools.web.x_search.apiKey` into
+`plugins.entries.xai.config.webSearch.apiKey`, preserving non-auth legacy
+`x_search` knobs and existing plugin-owned auth.
 Remaining legacy-config parity is broader doctor migration breadth from
-OpenClaw's compatibility migrator; the next small source-backed head is the
-`tools.web.x_search.apiKey` migration into `plugins.entries.xai.config.webSearch`.
+OpenClaw's compatibility migrator; the next small source-backed head is
+Telegram/Slack channel streaming-key normalization into nested
+`channels.<provider>.streaming` config.
 
 Current queue-head adjustment: `sessions.spawn sandbox="require"` now has a
 production app-wired `RuntimeManagerSandboxChatSendService` that starts Codex

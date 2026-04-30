@@ -1834,6 +1834,7 @@ class ControlUiToolsConfigView(BaseModel):
         alias="agentToAgent",
     )
     sessions: ControlUiToolsSessionsConfigView | None = None
+    web: dict[str, Any] | None = None
 
 
 class ControlUiBootstrapConfigView(BaseModel):
