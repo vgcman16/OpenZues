@@ -485,6 +485,14 @@ Zalo media sends now use the upstream `sendPhoto` path, preserve caption text
 only on the first media item, iterate multiple media URLs, and persist
 `mediaIds` / `mediaUrls`. Remaining Zalo provider parity is limited to deeper
 provider-specific edge cases surfaced by future upstream contract checks.
+LINE native route-backed direct sends now use OpenClaw's Bot API
+`/v2/bot/message/push` shape for text and HTTPS image media, normalize
+`line:user:` / `line:group:` / `line:room:` targets to provider chat ids,
+batch push messages at LINE's five-message boundary, and persist provider
+`messageId="push"`, `chatId`, `channelId`, and `mediaUrls` metadata through
+the direct-send delivery path. Remaining LINE provider parity is rich
+Flex/template/location/quick-reply sends, reply-token sends, explicit
+video/audio media options, and account probe/action breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

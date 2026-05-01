@@ -117,6 +117,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_channels.py
   tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_channels.py`.
+- Native LINE route-backed direct sends now dispatch through LINE's Bot API
+  push endpoint with OpenClaw's target normalization, HTTPS image media payload
+  shape, text payload shape, five-message batching, bearer-token auth, and
+  provider metadata persistence.
+- Verified the LINE native-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_native_route"` (`1 passed`), adjacent
+  provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "direct_channel_message or route_provider_send or route_provider_poll or
+  gateway_send or gateway_poll or replay_outbound_deliveries"` (`44 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 - Native `routes send` / `routes poll` now accept OpenClaw-compatible outbound
   CLI aliases: `routes send --media` maps to the same native media list as
   `--media-url`, and both send/poll accept `--thread-id` alongside

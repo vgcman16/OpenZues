@@ -142,7 +142,8 @@ OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
-NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp", "zalo"}
+LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
+NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp", "zalo", "line"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
@@ -2216,6 +2217,50 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+def _line_push_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip() or LINE_API_BASE_URL
+    stripped = normalized.rstrip("/")
+    if stripped.endswith("/push"):
+        endpoint = stripped
+    else:
+        endpoint = f"{stripped}/push"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("LINE route target must be an http(s) Bot API message URL.")
+    return endpoint
+
+
+def _line_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("LINE route is missing a channel access token secret.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _line_chat_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    for prefix in ("line:group:", "line:room:", "line:user:", "line:"):
+        if normalized.lower().startswith(prefix):
+            normalized = normalized[len(prefix) :].strip()
+            break
+    return normalized or None
+
+
+def _line_validate_media_url(media_url: str) -> None:
+    parsed = urlparse(media_url)
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise RuntimeError("LINE outbound media currently requires a public HTTPS URL.")
+    if len(media_url) > 2000:
+        raise RuntimeError(
+            f"LINE outbound media URL must be 2000 chars or less (got {len(media_url)})."
+        )
+
+
+def _line_text_chunks(text: str, *, limit: int = 5000) -> list[str]:
+    return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
 
 
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
@@ -7539,6 +7584,8 @@ class OpsMeshService:
             return self._post_whatsapp_provider_event
         if route_kind == "zalo":
             return self._post_zalo_provider_event
+        if route_kind == "line":
+            return self._post_line_provider_event
         return self._post_webhook
 
     async def dispatch_message_action(
@@ -11695,7 +11742,7 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower() in {"whatsapp", "zalo"}
+                    resolved_target.channel.lower() in {"whatsapp", "zalo", "line"}
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()
@@ -14084,6 +14131,71 @@ class OpsMeshService:
             "chatId": delivered_chat,
             "channelId": delivered_chat,
         }
+
+    def _post_line_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("LINE native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        chat_id = _line_chat_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if chat_id is None:
+            raise RuntimeError("LINE route is missing a recipient target.")
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        messages: list[dict[str, object]] = []
+        for media_url in media_urls:
+            _line_validate_media_url(media_url)
+            messages.append(
+                {
+                    "type": "image",
+                    "originalContentUrl": media_url,
+                    "previewImageUrl": media_url,
+                }
+            )
+        messages.extend(
+            {"type": "text", "text": chunk}
+            for chunk in _line_text_chunks(text)
+        )
+        if not messages:
+            raise RuntimeError("Message must be non-empty for LINE sends.")
+        endpoint = _line_push_endpoint(str(route.get("target") or ""))
+        bearer_token = _line_bearer_token(secret_token)
+        for index in range(0, len(messages), 5):
+            result = self._post_json_webhook(
+                endpoint,
+                {
+                    "to": chat_id,
+                    "messages": messages[index : index + 5],
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("LINE API returned a non-JSON response.")
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": "push",
+            "chatId": chat_id,
+            "channelId": chat_id,
+        }
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
 
     def _post_webhook(
         self,
