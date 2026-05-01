@@ -362,6 +362,12 @@ record in durable child-session metadata: the record carries `runtime="acp"`,
 task text, `status="running"`, `deliveryStatus`, and timestamps. The native
 `tasks` CLI projection now reads those metadata-backed ACP records alongside
 mission and blueprint tasks.
+ACP terminal waits now also update those metadata-backed task records when a
+tracked child run reaches a terminal mission snapshot: successful runs become
+`status="succeeded"` with `terminalSummary`, `terminalOutcome="succeeded"`,
+`endedAt`, `lastEventAt`, and session-queued delivery status; provider
+completion delivery can subsequently mark the task delivery as `delivered` or
+`failed`.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

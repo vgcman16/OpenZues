@@ -4878,6 +4878,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py src\openzues\cli.py
   tests\test_gateway_node_methods.py tests\test_cli.py`, and `mypy
   src\openzues\services\gateway_node_methods.py src\openzues\cli.py`.
+- ACP terminal waits now update the metadata-backed OpenClaw task record for
+  tracked child ACP runs: completed runs become `succeeded`, receive
+  `terminalSummary`, `terminalOutcome="succeeded"`, `endedAt`, `lastEventAt`,
+  and `deliveryStatus="session_queued"` when the completion is queued back to
+  the parent session. Provider completion delivery can further promote the same
+  record to `delivered` or `failed`.
+- Verified the ACP terminal task-record lifecycle slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_agent_wait_marks_acp_task_record_succeeded_on_completed_run
+  -q` (`1 passed`), adjacent wait/completion coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_marks_acp_task_record or
+  agent_wait_announces_spawn_completion_to_parent_session or
+  agent_wait_thread_bound_completion_uses_completion_delivery_route or
+  agent_wait_returns_failed_terminal_snapshot_for_tracked_run"` (`4 passed`),
+  adjacent ACP/wait coverage `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "sessions_spawn_acp or agent_wait"` (`38 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

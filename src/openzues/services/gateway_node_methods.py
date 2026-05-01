@@ -12678,6 +12678,13 @@ class GatewayNodeMethodService:
         if status == "failed" and error is not None and error.strip():
             payload["error"] = error.strip()
         if tracked_run is not None and consume_lifecycle:
+            await self._mark_gateway_chat_task_record_terminal(
+                session_key=tracked_run.session_key,
+                run_id=run_id,
+                mission=mission,
+                status=status,
+                now_ms=terminal_ended_at_ms,
+            )
             await self._announce_gateway_chat_run_terminal_completion(
                 session_key=tracked_run.session_key,
                 run_id=run_id,
@@ -12691,6 +12698,94 @@ class GatewayNodeMethodService:
             )
             self._forget_gateway_chat_run(tracked_run.session_key)
         return payload
+
+    async def _mark_gateway_chat_task_record_terminal(
+        self,
+        *,
+        session_key: str,
+        run_id: str,
+        mission: dict[str, Any],
+        status: str,
+        now_ms: int,
+    ) -> None:
+        if self._database is None:
+            return
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return
+        raw_task_record = metadata.get("taskRecord")
+        if not isinstance(raw_task_record, Mapping):
+            return
+        task_record = {
+            str(key): value
+            for key, value in raw_task_record.items()
+            if isinstance(key, str)
+        }
+        record_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+            task_record.get("sourceId")
+        )
+        if record_run_id != run_id:
+            return
+        terminal_status = "succeeded" if status == "completed" else "failed"
+        task_record["status"] = terminal_status
+        task_record["endedAt"] = now_ms
+        task_record["lastEventAt"] = now_ms
+        task_record["deliveryStatus"] = _gateway_chat_task_record_terminal_delivery_status(
+            metadata
+        )
+        if terminal_status == "succeeded":
+            summary = _string_or_none(mission.get("last_checkpoint"))
+            if summary is not None:
+                task_record["terminalSummary"] = summary
+            task_record["terminalOutcome"] = "succeeded"
+            task_record.pop("error", None)
+        else:
+            error = _string_or_none(mission.get("last_error"))
+            if error is not None:
+                task_record["error"] = error
+                task_record["terminalSummary"] = error
+            task_record.pop("terminalOutcome", None)
+        next_metadata = dict(metadata)
+        next_metadata["taskRecord"] = task_record
+        await self._database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata=next_metadata,
+        )
+
+    async def _set_gateway_chat_task_record_delivery_status(
+        self,
+        *,
+        session_key: str,
+        run_id: str,
+        delivery_status: str,
+    ) -> None:
+        if self._database is None:
+            return
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return
+        raw_task_record = metadata.get("taskRecord")
+        if not isinstance(raw_task_record, Mapping):
+            return
+        task_record = {
+            str(key): value
+            for key, value in raw_task_record.items()
+            if isinstance(key, str)
+        }
+        record_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+            task_record.get("sourceId")
+        )
+        if record_run_id != run_id:
+            return
+        task_record["deliveryStatus"] = delivery_status
+        next_metadata = dict(metadata)
+        next_metadata["taskRecord"] = task_record
+        await self._database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata=next_metadata,
+        )
 
     async def _announce_gateway_chat_run_terminal_completion(
         self,
@@ -12732,6 +12827,7 @@ class GatewayNodeMethodService:
             session_key=parent_session_key,
         )
         next_metadata = dict(metadata)
+        task_record_delivery_status: str | None = None
         completion_delivery = metadata.get("completionDelivery")
         if (
             isinstance(completion_delivery, dict)
@@ -12761,6 +12857,7 @@ class GatewayNodeMethodService:
                     next_metadata["completionDeliveryError"] = (
                         str(exc).strip() or type(exc).__name__
                     )
+                    task_record_delivery_status = "failed"
                 else:
                     if isinstance(completion_delivery_result, dict):
                         next_metadata["completionDeliveryResult"] = (
@@ -12768,12 +12865,19 @@ class GatewayNodeMethodService:
                                 dict(completion_delivery_result)
                             )
                         )
+                    task_record_delivery_status = "delivered"
         next_metadata["completionAnnouncedRunId"] = run_id
         next_metadata["completionAnnouncedAtMs"] = now_ms
         await self._database.upsert_gateway_session_metadata(
             session_key=session_key,
             metadata=next_metadata,
         )
+        if task_record_delivery_status is not None:
+            await self._set_gateway_chat_task_record_delivery_status(
+                session_key=session_key,
+                run_id=run_id,
+                delivery_status=task_record_delivery_status,
+            )
         message_row = await self._database.get_control_chat_message(message_id)
         if message_row is not None:
             await self._publish_session_message_events(
@@ -17168,6 +17272,17 @@ def _sanitize_gateway_chat_send_message_input(message: str) -> str:
         if code in {9, 10, 13} or (code >= 32 and code != 127):
             sanitized.append(char)
     return _strip_trailing_untrusted_context_metadata("".join(sanitized))
+
+
+def _gateway_chat_task_record_terminal_delivery_status(
+    metadata: Mapping[str, object],
+) -> str:
+    parent_session_key = _string_or_none(metadata.get("parentSessionKey")) or _string_or_none(
+        metadata.get("spawnedBy")
+    )
+    if parent_session_key is None:
+        return "parent_missing"
+    return "session_queued"
 
 
 def _sanitize_gateway_chat_result_payload(payload: dict[str, object]) -> dict[str, object]:

@@ -22724,6 +22724,92 @@ async def test_agent_wait_announces_spawn_completion_to_parent_session(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_marks_acp_task_record_succeeded_on_completed_run(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-acp-task-record-succeeded.db")
+    await database.initialize()
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-task-record-succeeded",
+                "runId": "run-acp-task-record-succeeded-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-task-record-succeeded",
+                "runtimeSessionId": "session-acp-task-record-succeeded",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Complete this ACP run.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "cleanup": "keep",
+        },
+        now_ms=20_000,
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    run_id = str(spawn_payload["runId"])
+    mission_id = await database.create_mission(
+        name="ACP task record success",
+        objective="Complete the ACP task record.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-acp-task-record-succeeded",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+        swarm={"run_id": run_id},
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="ACP child finished.",
+    )
+
+    wait_payload = await service.call("agent.wait", {"runId": run_id, "timeoutMs": 0})
+
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert wait_payload["status"] == "ok"
+    assert metadata_row is not None
+    task_record = metadata_row["metadata"]["taskRecord"]
+    assert task_record["status"] == "succeeded"
+    assert task_record["deliveryStatus"] == "session_queued"
+    assert task_record["terminalSummary"] == "ACP child finished."
+    assert task_record["terminalOutcome"] == "succeeded"
+    assert task_record["endedAt"] >= 20_000
+    assert task_record["lastEventAt"] == task_record["endedAt"]
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_thread_bound_completion_uses_completion_delivery_route(
     tmp_path,
 ) -> None:
