@@ -5941,6 +5941,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's `quickReplies` through the
+  shared outbound runtime and attach LINE `quickReply` action items to the final
+  outgoing message, preserving the upstream 13-item cap and 20-character label
+  truncation while storing the source labels on the delivery payload.
+- Verified the LINE quick-replies slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_quick_replies"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or line_quick_replies or
+  preserves_provider_native_options or shared_outbound_runtime_owner or
+  prefers_provider_runtime"` (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 
 ## References
 

@@ -2322,6 +2322,33 @@ def _normalize_line_location_payload(value: object) -> dict[str, object] | None:
     }
 
 
+def _normalize_line_quick_replies(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise RuntimeError("LINE quickReplies must be a list.")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _line_quick_reply_payload(labels: list[str]) -> dict[str, object] | None:
+    normalized = _normalize_line_quick_replies(labels)
+    if not normalized:
+        return None
+    return {
+        "items": [
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": label[:20],
+                    "text": label,
+                },
+            }
+            for label in normalized[:13]
+        ]
+    }
+
+
 def _matrix_bearer_token(secret_token: str | None) -> str:
     token = str(secret_token or "").strip()
     if not token:
@@ -6193,6 +6220,9 @@ class OpsMeshService:
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
                     location=_normalize_line_location_payload(payload.get("location")),
+                    quick_replies=tuple(
+                        _normalize_line_quick_replies(payload.get("quickReplies"))
+                    ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13484,6 +13514,8 @@ class OpsMeshService:
             payload["durationMs"] = request.duration_ms
         if request.location is not None:
             payload["location"] = dict(request.location)
+        if request.quick_replies:
+            payload["quickReplies"] = list(request.quick_replies)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
@@ -13844,6 +13876,9 @@ class OpsMeshService:
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
                     location=_normalize_line_location_payload(payload.get("location")),
+                    quick_replies=tuple(
+                        _normalize_line_quick_replies(payload.get("quickReplies"))
+                    ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13928,6 +13963,7 @@ class OpsMeshService:
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
         location: dict[str, object] | None = None,
+        quick_replies: list[str] | tuple[str, ...] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -13988,6 +14024,9 @@ class OpsMeshService:
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
         if normalized_location is not None:
             payload["location"] = normalized_location
+        normalized_quick_replies = _normalize_line_quick_replies(quick_replies)
+        if normalized_quick_replies:
+            payload["quickReplies"] = normalized_quick_replies
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
@@ -16502,6 +16541,9 @@ class OpsMeshService:
         preview_image_url = str(event.get("previewImageUrl") or "").strip()
         duration_ms = _optional_int_payload_value(event, "durationMs")
         location = _normalize_line_location_payload(event.get("location"))
+        quick_reply = _line_quick_reply_payload(
+            _normalize_line_quick_replies(event.get("quickReplies"))
+        )
         messages: list[dict[str, object]] = []
         for media_url in media_urls:
             _line_validate_media_url(media_url)
@@ -16548,6 +16590,8 @@ class OpsMeshService:
             {"type": "text", "text": chunk}
             for chunk in _line_text_chunks(text)
         )
+        if quick_reply is not None and messages:
+            messages[-1] = {**messages[-1], "quickReply": quick_reply}
         if not messages:
             raise RuntimeError("Message must be non-empty for LINE sends.")
         bearer_token = _line_bearer_token(secret_token)

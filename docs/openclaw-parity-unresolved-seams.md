@@ -518,8 +518,11 @@ options through the shared outbound runtime and emit LINE audio message payloads
 with the requested duration. LINE native route-backed direct sends now also
 carry OpenClaw's structured `location` payload through the shared outbound
 runtime and emit LINE location messages with title/address truncation and
-latitude/longitude preservation. Remaining LINE provider parity is rich
-Flex/template/quick-reply sends and account probe/action breadth.
+latitude/longitude preservation. LINE native route-backed direct sends now also
+carry OpenClaw's `quickReplies` list through the shared outbound runtime and
+attach LINE `quickReply` action items to the final outgoing message, enforcing
+the upstream 13-item and 20-character label boundaries. Remaining LINE provider
+parity is rich Flex/template sends and account probe/action breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
 targets to room ids, preserve reply/thread relation metadata, split text at
