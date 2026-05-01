@@ -512,15 +512,18 @@ send the prepared message batch to Bot API `/v2/bot/message/reply`, returning
 LINE native route-backed direct sends now also carry OpenClaw's
 `mediaKind="video"` and `previewImageUrl` options through the shared outbound
 runtime and emit LINE video message payloads with `originalContentUrl` /
-`previewImageUrl` instead of default image payloads. LINE native route-backed
-direct sends now also carry OpenClaw's `mediaKind="audio"` and `durationMs`
-options through the shared outbound runtime and emit LINE audio message payloads
-with the requested duration. LINE native route-backed direct sends now also
-carry OpenClaw's structured `location` payload through the shared outbound
-runtime and emit LINE location messages with title/address truncation and
-latitude/longitude preservation. LINE native route-backed direct sends now also
-carry OpenClaw's `quickReplies` list through the shared outbound runtime and
-attach LINE `quickReply` action items to the final outgoing message, enforcing
+`previewImageUrl` instead of default image payloads. LINE route-backed video
+sends now also carry OpenClaw's `trackingId` option through the shared outbound
+runtime and persist it for replay, while emitting LINE video `trackingId` only
+for user chat ids and omitting it for group/room destinations. LINE native
+route-backed direct sends now also carry OpenClaw's `mediaKind="audio"` and
+`durationMs` options through the shared outbound runtime and emit LINE audio
+message payloads with the requested duration. LINE native route-backed direct
+sends now also carry OpenClaw's structured `location` payload through the
+shared outbound runtime and emit LINE location messages with title/address
+truncation and latitude/longitude preservation. LINE native route-backed direct
+sends now also carry OpenClaw's `quickReplies` list through the shared outbound
+runtime and attach LINE `quickReply` action items to the final outgoing message, enforcing
 the upstream 13-item and 20-character label boundaries. LINE native
 route-backed direct sends now also carry OpenClaw's `flexMessage` payload
 through the shared outbound runtime, emit Bot API Flex messages with `altText`

@@ -6012,6 +6012,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed video sends now also carry OpenClaw's `trackingId` option
+  through `GatewayOutboundRuntimeMessageRequest`, persist it on saved outbound
+  delivery payloads, and emit LINE video `trackingId` only for user chat IDs
+  while omitting it for group/room destinations.
+- Verified the LINE video tracking slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_line_video_tracking_id_for_user_target
+  tests\test_ops_mesh.py::test_ops_mesh_service_line_video_tracking_id_omitted_for_group_target
+  -q` (`2 passed`), adjacent LINE direct proofs `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_video or line_audio_duration or
+  line_native"` (`5 passed`) and `python -m pytest tests\test_ops_mesh.py -q
+  -k "direct_channel_message and line"` (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 - LINE route-backed direct sends now carry OpenClaw's explicit audio media
   options through the shared outbound runtime: `mediaKind="audio"` and
   `durationMs` persist on saved delivery payloads and the native LINE adapter

@@ -2299,6 +2299,10 @@ def _line_chat_id(target: str | None) -> str | None:
     return normalized or None
 
 
+def _line_chat_id_is_user(chat_id: str | None) -> bool:
+    return str(chat_id or "").strip().upper().startswith("U")
+
+
 def _line_validate_media_url(media_url: str) -> None:
     parsed = urlparse(media_url)
     if parsed.scheme.lower() != "https" or not parsed.netloc:
@@ -6503,6 +6507,7 @@ class OpsMeshService:
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    tracking_id=str(payload.get("trackingId") or "").strip() or None,
                     location=_normalize_line_location_payload(payload.get("location")),
                     quick_replies=tuple(
                         _normalize_line_quick_replies(payload.get("quickReplies"))
@@ -13861,6 +13866,8 @@ class OpsMeshService:
             payload["previewImageUrl"] = request.preview_image_url
         if request.duration_ms is not None:
             payload["durationMs"] = request.duration_ms
+        if request.tracking_id is not None:
+            payload["trackingId"] = request.tracking_id
         if request.location is not None:
             payload["location"] = dict(request.location)
         if request.quick_replies:
@@ -14228,6 +14235,7 @@ class OpsMeshService:
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    tracking_id=str(payload.get("trackingId") or "").strip() or None,
                     location=_normalize_line_location_payload(payload.get("location")),
                     quick_replies=tuple(
                         _normalize_line_quick_replies(payload.get("quickReplies"))
@@ -14321,6 +14329,7 @@ class OpsMeshService:
         media_kind: str | None = None,
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
+        tracking_id: str | None = None,
         location: dict[str, object] | None = None,
         quick_replies: list[str] | tuple[str, ...] | None = None,
         flex_message: dict[str, object] | None = None,
@@ -14389,6 +14398,9 @@ class OpsMeshService:
                 payload["previewImageUrl"] = normalized_preview_image_url
             if duration_ms is not None:
                 payload["durationMs"] = duration_ms
+            normalized_tracking_id = str(tracking_id or "").strip() or None
+            if normalized_tracking_id is not None:
+                payload["trackingId"] = normalized_tracking_id
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
             if audio_as_voice is not None:
@@ -16917,6 +16929,7 @@ class OpsMeshService:
         media_kind = str(event.get("mediaKind") or "").strip().lower()
         preview_image_url = str(event.get("previewImageUrl") or "").strip()
         duration_ms = _optional_int_payload_value(event, "durationMs")
+        tracking_id = str(event.get("trackingId") or "").strip()
         location = _normalize_line_location_payload(event.get("location"))
         quick_reply = _line_quick_reply_payload(
             _normalize_line_quick_replies(event.get("quickReplies"))
@@ -16944,13 +16957,14 @@ class OpsMeshService:
                         "LINE video messages require previewImageUrl to reference an image URL."
                     )
                 _line_validate_media_url(preview_image_url)
-                messages.append(
-                    {
-                        "type": "video",
-                        "originalContentUrl": media_url,
-                        "previewImageUrl": preview_image_url,
-                    }
-                )
+                video_message: dict[str, object] = {
+                    "type": "video",
+                    "originalContentUrl": media_url,
+                    "previewImageUrl": preview_image_url,
+                }
+                if tracking_id and _line_chat_id_is_user(chat_id):
+                    video_message["trackingId"] = tracking_id
+                messages.append(video_message)
             elif media_kind == "audio":
                 messages.append(
                     {

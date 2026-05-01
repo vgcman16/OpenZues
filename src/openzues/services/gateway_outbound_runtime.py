@@ -126,6 +126,7 @@ class GatewayOutboundRuntimeMessageRequest:
     media_kind: str | None = None
     preview_image_url: str | None = None
     duration_ms: int | None = None
+    tracking_id: str | None = None
     location: dict[str, object] | None = None
     quick_replies: tuple[str, ...] = ()
     flex_message: dict[str, object] | None = None
@@ -320,6 +321,7 @@ class GatewayOutboundRuntimeService:
         media_kind: str | None = None,
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
+        tracking_id: str | None = None,
         location: dict[str, object] | None = None,
         quick_replies: list[str] | tuple[str, ...] | None = None,
         flex_message: dict[str, object] | None = None,
@@ -360,6 +362,7 @@ class GatewayOutboundRuntimeService:
                         media_kind=_normalize_optional_string(media_kind),
                         preview_image_url=_normalize_optional_string(preview_image_url),
                         duration_ms=duration_ms,
+                        tracking_id=_normalize_optional_string(tracking_id),
                         location=location,
                         quick_replies=normalized_quick_replies,
                         flex_message=flex_message,
@@ -432,6 +435,7 @@ class GatewayOutboundRuntimeService:
                         media_kind=_normalize_optional_string(media_kind),
                         preview_image_url=_normalize_optional_string(preview_image_url),
                         duration_ms=duration_ms,
+                        tracking_id=_normalize_optional_string(tracking_id),
                         location=location,
                         quick_replies=normalized_quick_replies,
                         flex_message=flex_message,
