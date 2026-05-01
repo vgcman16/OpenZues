@@ -5051,6 +5051,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Provider-backed `gateway.send` now mirrors OpenClaw's sandbox media bridge
+  inbound fallback for staged media references: `@/.../media/inbound/<name>`
+  resolves to the saved sandbox workspace's `media/inbound/<name>` file when
+  that file exists, while existing `/workspace/...`, `file:///workspace/...`,
+  dedupe, and remote URL behavior are preserved.
+- Verified the sandbox inbound-media alias slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_normalizes_sandbox_workspace_media_paths_from_session_metadata
+  -q` (`1 passed`), adjacent send/media coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "send_normalizes_sandbox_workspace_media_paths_from_session_metadata or
+  send_uses_channel_message_runtime_for_media_payloads or
+  send_preserves_provider_native_reply_thread_and_document_options or
+  chat_send_sandboxed_saved_path_attachment_stages_media_in_session_workspace
+  or chat_send_sandboxed_attachment_stages_media_in_session_workspace"` (`5
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

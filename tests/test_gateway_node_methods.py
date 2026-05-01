@@ -41007,6 +41007,9 @@ async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metada
 ) -> None:
     sandbox_root = tmp_path / "sandbox-workspace"
     sandbox_root.mkdir()
+    inbound_dir = sandbox_root / "media" / "inbound"
+    inbound_dir.mkdir(parents=True)
+    (inbound_dir / "incoming.png").write_bytes(b"image")
     database = Database(tmp_path / "gateway-send-sandbox-media.db")
     await database.initialize()
     session_key = "agent:main:subagent:sandbox-media"
@@ -41065,6 +41068,7 @@ async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metada
             "mediaUrl": " file:///workspace/assets/photo.png ",
             "mediaUrls": [
                 "/workspace/assets/photo.png",
+                "@/Users/steipete/.openclaw/media/inbound/incoming.png",
                 "https://example.com/remote.png",
             ],
             "channel": "slack",
@@ -41085,6 +41089,7 @@ async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metada
             "idempotency_key": "idem-send-sandbox-media",
             "media_urls": [
                 str(sandbox_root / "assets" / "photo.png"),
+                str(inbound_dir / "incoming.png"),
                 "https://example.com/remote.png",
             ],
         }

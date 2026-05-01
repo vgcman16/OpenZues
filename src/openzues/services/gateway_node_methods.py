@@ -18787,6 +18787,12 @@ def _normalize_gateway_sandbox_media_source(
         return media_source
     if re.match(r"^data:", media_source, flags=re.IGNORECASE):
         raise ValueError("data: URLs are not supported for sandbox media")
+    inbound_fallback = _normalize_gateway_sandbox_inbound_media_fallback(
+        media_source,
+        sandbox_root=root,
+    )
+    if inbound_fallback is not None:
+        return inbound_fallback
     candidate = media_source
     if re.match(r"^file://", candidate, flags=re.IGNORECASE):
         parsed = urlsplit(candidate)
@@ -18814,6 +18820,33 @@ def _normalize_gateway_sandbox_media_source(
     if any(part == ".." for part in relative_parts):
         raise ValueError("sandbox media path escapes sandbox root")
     return str(Path(root).expanduser().joinpath(*relative_parts))
+
+
+def _normalize_gateway_sandbox_inbound_media_fallback(
+    media_source: str,
+    *,
+    sandbox_root: str,
+) -> str | None:
+    if not media_source.startswith("@"):
+        return None
+    raw_path = media_source[1:].strip()
+    if not raw_path:
+        return None
+    if re.match(r"^file://", raw_path, flags=re.IGNORECASE):
+        parsed = urlsplit(raw_path)
+        host = parsed.netloc.strip().lower()
+        if host and host != "localhost":
+            return None
+        raw_path = unquote(parsed.path)
+    normalized_path = raw_path.replace("\\", "/").rstrip("/")
+    basename = normalized_path.rsplit("/", 1)[-1].strip()
+    if basename in {"", ".", ".."}:
+        return None
+    fallback = Path(sandbox_root).expanduser() / "media" / "inbound" / basename
+    try:
+        return str(fallback) if fallback.is_file() else None
+    except OSError:
+        return None
 
 
 def _normalize_gateway_chat_channel_id(raw: str) -> str | None:
