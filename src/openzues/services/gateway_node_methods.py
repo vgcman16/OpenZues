@@ -7441,7 +7441,7 @@ class GatewayNodeMethodService:
                         limit=bounded_limit,
                         session_key=lookup_key,
                     )
-                    rows = _freshest_preview_alias_rows(rows)
+                    rows = _freshest_session_alias_rows(rows)
                     if rows:
                         previews.append(
                             {
@@ -15140,6 +15140,9 @@ async def _build_sessions_get_payload(
         limit=max(1, message_count),
         session_key=session_key,
     )
+    rows = _freshest_session_alias_rows(rows)
+    if not rows:
+        return {"messages": []}
     entries: list[tuple[int, dict[str, Any]]] = []
     for sequence, row in enumerate(rows, start=1):
         projected = _project_control_chat_messages([row], max_chars=None)
@@ -16355,7 +16358,7 @@ def _project_session_preview_items(
     return items
 
 
-def _freshest_preview_alias_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _freshest_session_alias_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return rows
     latest_session_key = _string_or_none(rows[-1].get("session_key"))

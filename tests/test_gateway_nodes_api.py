@@ -19742,6 +19742,54 @@ def test_gateway_session_history_rest_endpoint_supports_cursor_pagination() -> N
     assert "nextCursor" not in second_body
 
 
+def test_gateway_session_history_rest_endpoint_prefers_freshest_alias_transcript() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-session-history-rest-freshest-alias-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="stale history",
+                session_key="agent:main:MAIN",
+                created_at="2024-01-02T03:04:05Z",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="fresh history",
+                session_key="agent:main:Main",
+                created_at="2024-01-02T03:04:06Z",
+            )
+        )
+
+        encoded_key = quote("agent:main:main", safe="")
+        response = client.get(f"/sessions/{encoded_key}/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sessionKey"] == "agent:main:main"
+    assert [message["content"][0]["text"] for message in body["messages"]] == [
+        "fresh history"
+    ]
+    assert [message["__openclaw"]["seq"] for message in body["messages"]] == [1]
+    assert body["hasMore"] is False
+    assert "nextCursor" not in body
+
+
 def test_gateway_session_history_rest_endpoint_reports_unknown_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-missing-api"
     shutil.rmtree(tmp_path, ignore_errors=True)

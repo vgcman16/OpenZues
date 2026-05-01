@@ -2441,6 +2441,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   16 passed after rechecking direct history REST/SSE behavior. `ruff check
   src\openzues\app.py tests\test_gateway_nodes_api.py` and `mypy
   src\openzues\app.py` were clean.
+- Direct `/sessions/{sessionKey}/history` now mirrors OpenClaw's duplicate
+  row resolution for mixed-case session aliases by keeping the freshest exact
+  stored alias transcript before sequence/cursor projection, while
+  `sessions.preview` continues to use the same alias-selection behavior.
+- Verified the direct history freshest-alias slice with `python -m pytest
+  tests\test_gateway_nodes_api.py::test_gateway_session_history_rest_endpoint_prefers_freshest_alias_transcript
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"` (`17
+  passed`), adjacent preview alias proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_preview_resolves_mixed_case_main_alias_duplicates or
+  sessions_preview_preserves_duplicate_keys_like_openclaw or
+  sessions_preview_uses_resolved_subagent_store_key"` (`3 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_nodes_api.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_honors_explicit_limits_above_direct_rest_cap or sessions_get_uses_openclaw_default_limit_of_200 or sessions_get_supports_cursor_pagination"`: 3 passed after separating RPC `sessions.get` explicit limits from the direct REST 1000-row cap.
 - `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 26 passed after rechecking the session read/event/subscription pack.
 - `ruff check src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the RPC `sessions.get` large-limit seam.

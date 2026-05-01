@@ -1596,6 +1596,15 @@ return `hasMore: false`, and omit `nextCursor` unless the caller explicitly
 asks for pagination. Remaining direct-history seams should stay with
 source-backed duplicate/freshest resolution or auth/scope edge cases.
 
+Current queue-head adjustment: direct session-history REST now also mirrors
+OpenClaw's duplicate/freshest row selection for mixed-case session aliases. The
+SQLite-backed `sessions.get` path filters merged alias rows down to the
+freshest exact stored alias before assigning `__openclaw.seq` values, so direct
+history returns the fresh transcript instead of merging stale duplicate alias
+history. Remaining transcript seams should move to another source-backed
+`sessions-history-http` / `chat.history` edge rather than this closed duplicate
+alias case.
+
 Current queue-head adjustment: RPC `sessions.get` now accepts explicit limits
 above 1000 like OpenClaw's WebSocket method, while direct HTTP
 `/sessions/{sessionKey}/history` keeps its upstream 1000-row REST cap. The next
