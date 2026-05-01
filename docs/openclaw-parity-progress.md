@@ -6254,6 +6254,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_telegram"` (`10 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- `sessions.send` follow-ups to completed child subagent sessions now mirror
+  OpenClaw's `reactivateCompletedSubagentSession` path: a new started run
+  replaces the completed task record's `runId` / `sourceId`, clears terminal
+  fields, restores running lifecycle metadata, preserves the resolved timeout,
+  and publishes `sessions.changed` after subscribers can observe the running
+  child state.
+- Verified the completed-child follow-up reactivation slice with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_send_reactivates_completed_child_before_changed_event
+  -q` (`1 failed` before implementation, child metadata still `done` on
+  `run-old`), then the same command (`1 passed`), adjacent `sessions.send`
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_send_reactivates_completed_child or
+  sessions_send_started_ack_attaches_pending_message_seq or
+  sessions_send_publishes_openclaw_sessions_changed_gateway_event"` (`3
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

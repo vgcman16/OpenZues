@@ -6722,6 +6722,11 @@ class GatewayNodeMethodService:
                 started_at_ms=timestamp_ms,
                 owner_requester=resolved_requester,
             )
+            await self._reactivate_completed_subagent_session_after_send(
+                session_key=session_key,
+                send_result=send_result,
+                now_ms=timestamp_ms,
+            )
             await self._publish_sessions_changed_event(
                 session_key=session_key,
                 reason="send",
@@ -12407,6 +12412,101 @@ class GatewayNodeMethodService:
         )
         for alias in _session_key_aliases(canonical_session_key):
             self._gateway_chat_run_ids_by_session_key[alias] = trimmed_run_id
+
+    async def _reactivate_completed_subagent_session_after_send(
+        self,
+        *,
+        session_key: str,
+        send_result: dict[str, object],
+        now_ms: int,
+    ) -> bool:
+        if self._database is None or not _should_attach_pending_session_message_seq(send_result):
+            return False
+        next_run_id = _string_or_none(send_result.get("runId"))
+        if next_run_id is None:
+            return False
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return False
+        raw_task_record = metadata.get("taskRecord")
+        if not isinstance(raw_task_record, Mapping):
+            return False
+        task_record = {
+            str(key): value
+            for key, value in raw_task_record.items()
+            if isinstance(key, str)
+        }
+        previous_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+            task_record.get("sourceId")
+        )
+        if previous_run_id is None:
+            return False
+        if _int_or_none(task_record.get("endedAt")) is None and _int_or_none(
+            metadata.get("endedAt")
+        ) is None:
+            return False
+        child_session_key = _string_or_none(task_record.get("childSessionKey"))
+        if child_session_key is not None and _canonical_session_key(
+            child_session_key
+        ) != _canonical_session_key(session_key):
+            return False
+
+        timestamp_ms = _timestamp_ms(now_ms)
+        runtime = (
+            _string_or_none(task_record.get("runtime"))
+            or _string_or_none(metadata.get("runtime"))
+            or "subagent"
+        )
+        task_id = _string_or_none(task_record.get("taskId"))
+        if task_id is not None and previous_run_id in task_id:
+            task_record["taskId"] = task_id.replace(previous_run_id, next_run_id, 1)
+        else:
+            task_record["taskId"] = f"{runtime}:{next_run_id}"
+        task_record["runtime"] = runtime
+        task_record["sourceId"] = next_run_id
+        task_record["runId"] = next_run_id
+        task_record["status"] = "running"
+        task_record["createdAt"] = timestamp_ms
+        task_record["startedAt"] = timestamp_ms
+        task_record["lastEventAt"] = timestamp_ms
+        run_timeout_seconds = _int_or_none(task_record.get("runTimeoutSeconds"))
+        if run_timeout_seconds is None:
+            run_timeout_seconds = _int_or_none(metadata.get("runTimeoutSeconds"))
+        if run_timeout_seconds is not None:
+            task_record["runTimeoutSeconds"] = run_timeout_seconds
+        if _string_or_none(task_record.get("deliveryStatus")) not in {
+            "not_applicable",
+            "parent_missing",
+        }:
+            task_record["deliveryStatus"] = "pending"
+        for field in (
+            "endedAt",
+            "endedReason",
+            "terminalSummary",
+            "terminalOutcome",
+            "error",
+            "cleanupCompletedAt",
+            "completionAnnouncedAt",
+        ):
+            task_record.pop(field, None)
+
+        next_metadata = dict(metadata)
+        next_metadata["taskRecord"] = task_record
+        next_metadata["status"] = "running"
+        next_metadata["startedAt"] = timestamp_ms
+        for field in (
+            "endedAt",
+            "runtimeMs",
+            "abortedLastRun",
+            "completionAnnouncedRunId",
+        ):
+            next_metadata.pop(field, None)
+        await self._database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata=next_metadata,
+        )
+        return True
 
     async def _abort_gateway_chat_run(
         self,

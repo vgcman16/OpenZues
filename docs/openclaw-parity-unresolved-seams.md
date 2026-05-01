@@ -1429,6 +1429,14 @@ Current queue-head adjustment: historical exact `agent.wait` calls no longer
 evict a different current run tracked for the same session; exact-run recovery
 only takes session tracker ownership when no other run is active there.
 
+Current queue-head adjustment: `sessions.send` follow-ups to completed child
+subagent sessions now mirror OpenClaw's completed-subagent reactivation path.
+When the follow-up runtime returns a real `status="started"` run id, OpenZues
+updates the child session task record from the previous completed run to the
+new run, clears terminal fields, restores running lifecycle metadata, preserves
+the resolved run timeout, and publishes `sessions.changed` only after the
+running state is durable.
+
 Current queue-head adjustment: `sessions.spawn` active-child-cap pruning now
 observes terminal tracked child runs without consuming the `agent.wait`
 lifecycle path. Finished children no longer emit parent completion messages or
