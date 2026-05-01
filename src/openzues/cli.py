@@ -13408,6 +13408,8 @@ def _plugin_record_from_deck_item(
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
+    for metadata_key, metadata_value in _plugin_manifest_root_metadata(item).items():
+        record[metadata_key] = metadata_value
     for key in (
         "commands",
         "cliCommands",
@@ -13757,6 +13759,46 @@ def _plugin_manifest_model_support(value: object) -> dict[str, object]:
     if model_patterns:
         model_support["modelPatterns"] = model_patterns
     return model_support
+
+
+def _plugin_manifest_kind(value: object) -> str | list[str] | None:
+    if isinstance(value, str):
+        return _optional_cli_string(value)
+    if not isinstance(value, list):
+        return None
+    values = _plugin_manifest_string_list(value)
+    if len(values) == 1:
+        return values[0]
+    return values if values else None
+
+
+def _plugin_manifest_root_metadata(source: dict[str, object]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if source.get("enabledByDefault") is True:
+        metadata["enabledByDefault"] = True
+    for key in (
+        "legacyPluginIds",
+        "autoEnableWhenConfiguredProviders",
+        "channels",
+        "providers",
+        "cliBackends",
+        "skills",
+    ):
+        values = _plugin_manifest_string_list(source.get(key))
+        if values:
+            metadata[key] = values
+    kind = _plugin_manifest_kind(source.get("kind"))
+    if kind is not None:
+        metadata["kind"] = kind
+    provider_discovery_entry = _optional_cli_string(
+        source.get("providerDiscoveryEntry")
+    )
+    if provider_discovery_entry is not None:
+        metadata["providerDiscoveryEntry"] = provider_discovery_entry
+    ui_hints = source.get("uiHints")
+    if isinstance(ui_hints, dict):
+        metadata["uiHints"] = dict(ui_hints)
+    return metadata
 
 
 def _plugin_manifest_config_literal(value: object) -> bool:
@@ -14169,6 +14211,8 @@ def _plugin_record_from_openclaw_manifest(
     version = _optional_cli_string(manifest.get("version"))
     if version is not None:
         record["version"] = version
+    for metadata_key, metadata_value in _plugin_manifest_root_metadata(manifest).items():
+        record[metadata_key] = metadata_value
     if contracts:
         record["contracts"] = contracts
     tool_names = contracts.get("tools")

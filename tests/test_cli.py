@@ -6262,6 +6262,7 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             ],
             "parityStatus": "metadata",
             "version": "0.3.0",
+            "enabledByDefault": True,
             "rootDir": str(plugin_dir),
             "manifestPath": str(manifest_path),
             "configSchema": True,
@@ -6825,6 +6826,74 @@ def test_plugins_list_json_preserves_manifest_config_contracts(
             ],
         },
     }
+
+
+def test_plugins_list_json_preserves_manifest_identity_and_classification(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "configSchema": {"type": "object"},
+                "enabledByDefault": True,
+                "legacyPluginIds": ["openai-legacy", ""],
+                "autoEnableWhenConfiguredProviders": ["openai", ""],
+                "kind": ["memory", "context-engine", ""],
+                "channels": ["slack", ""],
+                "providers": ["openai", "openai-codex", ""],
+                "providerDiscoveryEntry": "extensions/openai/providers",
+                "cliBackends": ["openai-cli", ""],
+                "skills": ["skills/openai", ""],
+                "uiHints": {"apiKey": {"label": "API key"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["enabledByDefault"] is True
+    assert plugin["legacyPluginIds"] == ["openai-legacy"]
+    assert plugin["autoEnableWhenConfiguredProviders"] == ["openai"]
+    assert plugin["kind"] == ["memory", "context-engine"]
+    assert plugin["channels"] == ["slack"]
+    assert plugin["providers"] == ["openai", "openai-codex"]
+    assert plugin["providerDiscoveryEntry"] == "extensions/openai/providers"
+    assert plugin["cliBackends"] == ["openai-cli"]
+    assert plugin["skills"] == ["skills/openai"]
+    assert plugin["uiHints"] == {"apiKey": {"label": "API key"}}
+    assert "text-inference:openai" in plugin["capabilities"]
 
 
 def test_plugins_list_json_projects_runtime_executor_inventory(
