@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +34,7 @@ from openzues.database import Database
 from openzues.schemas import (
     ControlChatMessageView,
     ControlChatResponse,
+    ConversationTargetView,
     GatewayCapabilityView,
     MissionDraftView,
 )
@@ -392,6 +394,170 @@ def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monke
     payload = json.loads(result.stdout)
     assert payload["headline"] == "Live gateway headline"
     assert payload["summary"] == "Live gateway summary"
+
+
+def test_doctor_json_includes_runtime_bridge_posture(monkeypatch) -> None:
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Runtime bridge profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "backend": "docker",
+                            "workspaceAccess": "rw",
+                        }
+                    }
+                },
+                "acp": {"enabled": True},
+            }
+
+    class FakeOpsMesh:
+        async def list_notification_route_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=1,
+                    name="Slack Native",
+                    kind="slack",
+                    events=["gateway/send", "gateway/poll"],
+                    enabled=True,
+                    has_secret=True,
+                    conversation_target=ConversationTargetView(
+                        channel="slack",
+                        account_id="workspace-bot",
+                        peer_kind="channel",
+                        peer_id="channel:c123",
+                    ),
+                ),
+                SimpleNamespace(
+                    id=2,
+                    name="Discord Native",
+                    kind="discord",
+                    events=["gateway/send"],
+                    enabled=True,
+                    has_secret=True,
+                    conversation_target=ConversationTargetView(
+                        channel="discord",
+                        account_id=None,
+                        peer_kind="channel",
+                        peer_id="123",
+                    ),
+                ),
+            ]
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.owner",
+                executor=fake_executor,
+                owner_only=True,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+        ]
+    )
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                manager=SimpleNamespace(
+                    default_stdio_command="codex",
+                    default_stdio_args="app-server",
+                ),
+                ops_mesh=FakeOpsMesh(),
+                plugin_runtime_service=plugin_runtime,
+                gateway_node_methods=SimpleNamespace(_acp_spawn_service=object()),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: True)
+    monkeypatch.setattr(cli_module, "_runtime_bridge_command_available", lambda _command: True)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    runtime_bridge = payload["runtimeBridge"]
+    assert runtime_bridge["status"] == "ok"
+    assert runtime_bridge["codexAppServer"] == {
+        "status": "ok",
+        "command": "codex",
+        "args": "app-server",
+        "configured": True,
+        "available": True,
+        "platform": sys.platform,
+        "windowsFirst": True,
+    }
+    assert runtime_bridge["sandbox"]["status"] == "ok"
+    assert runtime_bridge["providerRoutes"]["status"] == "ok"
+    assert runtime_bridge["providerRoutes"]["nativeCount"] == 2
+    assert [route["kind"] for route in runtime_bridge["providerRoutes"]["routes"]] == [
+        "slack",
+        "discord",
+    ]
+    assert runtime_bridge["pluginExecutors"] == {
+        "status": "ok",
+        "count": 2,
+        "ownerOnlyCount": 1,
+        "tools": [
+            {
+                "tool": "native_runtime.search",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": False,
+                "optional": False,
+                "source": "registry",
+            },
+            {
+                "tool": "native_runtime.owner",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": True,
+                "optional": False,
+                "source": "registry",
+            },
+        ],
+    }
+    assert runtime_bridge["acp"] == {
+        "status": "ok",
+        "enabled": True,
+        "spawnService": "registered",
+    }
 
 
 def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:

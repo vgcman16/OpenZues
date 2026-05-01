@@ -1983,6 +1983,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "memorySearch",
         "bundledPluginRuntimeDependencies",
         "startupChannelMaintenance",
+        "runtimeBridge",
         "acp",
         "extras",
     ):
@@ -6262,6 +6263,311 @@ def _with_doctor_gateway_runtime_payload(
         for warning in _object_list(gateway_runtime.get("warnings"))
     ]
     return _with_doctor_added_warnings(next_payload, warnings)
+
+
+_RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
+    "bluebubbles",
+    "discord",
+    "line",
+    "matrix",
+    "slack",
+    "telegram",
+    "whatsapp",
+    "zalo",
+}
+_RUNTIME_BRIDGE_PROVIDER_EVENTS = {"gateway/send", "gateway/poll"}
+
+
+def _runtime_bridge_command_available(command: str | None) -> bool:
+    normalized = _optional_cli_string(command)
+    if normalized is None:
+        return False
+    candidate = Path(normalized).expanduser()
+    if candidate.is_absolute() and candidate.exists():
+        return True
+    return shutil.which(normalized) is not None
+
+
+def _runtime_bridge_field(value: object, *names: str) -> object:
+    if isinstance(value, Mapping):
+        for name in names:
+            if name in value:
+                return value[name]
+        return None
+    for name in names:
+        if hasattr(value, name):
+            return getattr(value, name)
+    return None
+
+
+def _runtime_bridge_bool_field(
+    value: object,
+    *names: str,
+    default: bool | None = None,
+) -> bool | None:
+    raw = _runtime_bridge_field(value, *names)
+    if isinstance(raw, bool):
+        return raw
+    return default
+
+
+def _runtime_bridge_route_events(route: object) -> list[str]:
+    raw_events = _runtime_bridge_field(route, "events", "eventTypes", "event_types")
+    if isinstance(raw_events, str):
+        return [raw_events]
+    if isinstance(raw_events, Sequence) and not isinstance(raw_events, (str, bytes)):
+        return [
+            event
+            for item in raw_events
+            if (event := _optional_cli_string(item)) is not None
+        ]
+    return []
+
+
+def _runtime_bridge_route_has_secret(route: object) -> bool | None:
+    explicit = _runtime_bridge_bool_field(route, "has_secret", "hasSecret")
+    if explicit is not None:
+        return explicit
+    for key in (
+        "secret_preview",
+        "secretPreview",
+        "secret_token",
+        "secretToken",
+        "vault_secret_id",
+        "vaultSecretId",
+    ):
+        if _runtime_bridge_field(route, key) not in (None, "", [], {}):
+            return True
+    return None
+
+
+def _runtime_bridge_conversation_target(route: object) -> dict[str, object] | None:
+    target = _runtime_bridge_field(
+        route,
+        "conversation_target",
+        "conversationTarget",
+    )
+    if target is None:
+        return None
+    if hasattr(target, "model_dump"):
+        dumped = target.model_dump(mode="json")
+        return dumped if isinstance(dumped, dict) else None
+    if isinstance(target, Mapping):
+        return dict(target)
+    return None
+
+
+def _runtime_bridge_native_provider_route_entry(
+    route: object,
+) -> dict[str, object] | None:
+    kind = _optional_cli_string(_runtime_bridge_field(route, "kind"))
+    normalized_kind = kind.lower() if kind is not None else None
+    if normalized_kind not in _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS:
+        return None
+    events = _runtime_bridge_route_events(route)
+    if events and not _RUNTIME_BRIDGE_PROVIDER_EVENTS.intersection(events):
+        return None
+    enabled = _runtime_bridge_bool_field(route, "enabled", default=True)
+    has_secret = _runtime_bridge_route_has_secret(route)
+    conversation_target = _runtime_bridge_conversation_target(route)
+    issues: list[str] = []
+    if enabled is not True:
+        issues.append("disabled")
+    if has_secret is False:
+        issues.append("missing_secret")
+    if conversation_target is None:
+        issues.append("missing_conversation_target")
+    status = "ready" if not issues else "warning"
+    entry: dict[str, object] = {
+        "id": _runtime_bridge_field(route, "id"),
+        "name": _runtime_bridge_field(route, "name"),
+        "kind": normalized_kind,
+        "events": events,
+        "enabled": enabled is True,
+        "status": status,
+        "issues": issues,
+    }
+    if has_secret is not None:
+        entry["hasSecret"] = has_secret
+    if conversation_target is not None:
+        entry["conversationTarget"] = conversation_target
+    return entry
+
+
+async def _build_doctor_runtime_bridge_provider_routes_payload(
+    ops_mesh: object | None,
+) -> dict[str, object]:
+    list_routes = getattr(ops_mesh, "list_notification_route_views", None)
+    if not callable(list_routes):
+        return {
+            "status": "unavailable",
+            "summary": "Provider route inventory is unavailable.",
+            "nativeCount": 0,
+            "routes": [],
+        }
+    try:
+        raw_routes = await list_routes()
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "status": "unavailable",
+            "summary": f"Provider route inventory could not be read: {exc}",
+            "nativeCount": 0,
+            "routes": [],
+        }
+    routes = [
+        entry
+        for route in raw_routes
+        if (entry := _runtime_bridge_native_provider_route_entry(route)) is not None
+    ]
+    ready_count = sum(1 for route in routes if route.get("status") == "ready")
+    status = "ok" if ready_count == len(routes) else "warning"
+    if not routes:
+        summary = "No native provider routes are configured for gateway send or poll."
+    else:
+        summary = (
+            f"{ready_count}/{len(routes)} native provider route"
+            f"{'s are' if len(routes) != 1 else ' is'} ready."
+        )
+    return {
+        "status": status,
+        "summary": summary,
+        "nativeCount": len(routes),
+        "readyCount": ready_count,
+        "routes": routes,
+    }
+
+
+def _build_doctor_runtime_bridge_plugin_executors_payload(
+    services: object,
+) -> dict[str, object]:
+    specs = _plugin_runtime_specs_from_services(services)
+    tools = [
+        {
+            "tool": spec.tool,
+            "pluginId": spec.plugin_id,
+            "pluginName": spec.plugin_name,
+            "ownerOnly": spec.owner_only,
+            "optional": spec.optional,
+            "source": spec.source,
+        }
+        for spec in specs
+    ]
+    owner_only_count = sum(1 for spec in specs if spec.owner_only)
+    return {
+        "status": "ok",
+        "count": len(tools),
+        "ownerOnlyCount": owner_only_count,
+        "tools": tools,
+    }
+
+
+def _build_doctor_runtime_bridge_acp_payload(
+    config_service: object | None,
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    acp_config = _dict_config(snapshot.get("acp"))
+    enabled = acp_config.get("enabled") is True
+    spawn_service = None
+    if gateway_node_methods is not None:
+        spawn_service = (
+            getattr(gateway_node_methods, "_acp_spawn_service", None)
+            or getattr(gateway_node_methods, "acp_spawn_service", None)
+        )
+    if enabled:
+        status = "ok" if spawn_service is not None else "warning"
+    else:
+        status = "disabled" if acp_config else "not_configured"
+    return {
+        "status": status,
+        "enabled": enabled,
+        "spawnService": "registered" if spawn_service is not None else "unregistered",
+    }
+
+
+def _build_doctor_runtime_bridge_codex_app_server_payload(
+    manager: object | None,
+) -> dict[str, object]:
+    command = (
+        _optional_cli_string(getattr(manager, "default_stdio_command", None))
+        or "codex"
+    )
+    args = (
+        _optional_cli_string(getattr(manager, "default_stdio_args", None))
+        or "app-server"
+    )
+    configured = "app-server" in args.split() or "app-server" in args
+    available = _runtime_bridge_command_available(command)
+    status = "ok" if configured and available else "warning"
+    return {
+        "status": status,
+        "command": command,
+        "args": args,
+        "configured": configured,
+        "available": available,
+        "platform": sys.platform,
+        "windowsFirst": True,
+    }
+
+
+def _doctor_runtime_bridge_status(sections: Sequence[dict[str, object]]) -> str:
+    warning_statuses = {"error", "unavailable", "warning", "warn"}
+    return (
+        "warning"
+        if any(section.get("status") in warning_statuses for section in sections)
+        else "ok"
+    )
+
+
+async def _build_doctor_runtime_bridge_payload(
+    services: object,
+) -> dict[str, object]:
+    codex_app_server = _build_doctor_runtime_bridge_codex_app_server_payload(
+        getattr(services, "manager", None)
+    )
+    sandbox = _build_doctor_sandbox_payload(getattr(services, "gateway_config", None))
+    provider_routes = await _build_doctor_runtime_bridge_provider_routes_payload(
+        getattr(services, "ops_mesh", None)
+    )
+    plugin_executors = _build_doctor_runtime_bridge_plugin_executors_payload(services)
+    acp = _build_doctor_runtime_bridge_acp_payload(
+        getattr(services, "gateway_config", None),
+        getattr(services, "gateway_node_methods", None),
+    )
+    sections = [
+        codex_app_server,
+        sandbox,
+        provider_routes,
+        plugin_executors,
+        acp,
+    ]
+    status = _doctor_runtime_bridge_status(sections)
+    return {
+        "status": status,
+        "summary": (
+            "Native runtime bridge posture is ready."
+            if status == "ok"
+            else "Native runtime bridge posture has unavailable or degraded checks."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:runtime-bridge",
+        "windowsFirst": True,
+        "codexAppServer": codex_app_server,
+        "sandbox": sandbox,
+        "providerRoutes": provider_routes,
+        "pluginExecutors": plugin_executors,
+        "acp": acp,
+        "warnings": [],
+    }
+
+
+async def _with_doctor_runtime_bridge_payload(
+    payload: dict[str, object],
+    services: object,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["runtimeBridge"] = await _build_doctor_runtime_bridge_payload(services)
+    return next_payload
 
 
 _CLAUDE_CLI_PROVIDER_ID = "claude-cli"
@@ -22072,6 +22378,7 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        payload = await _with_doctor_runtime_bridge_payload(payload, services)
         payload = _with_doctor_contribution_surfaces(payload)
         return payload
 

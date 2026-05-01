@@ -3,10 +3,11 @@
 ## Snapshot
 
 - Updated: 2026-05-01.
-- Estimated repo-wide parity: ~46% overall, with a reasonable band of ~41-51%.
-- Estimated active gateway/session/tool-contract family parity: ~97% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~47% overall, with a reasonable band of ~42-52%.
+- Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
+- Estimated runtime/CLI/doctor native-bridge parity: ~96% after the runtime bridge doctor posture slice; remaining gaps are broader runtime command ergonomics, packaging/distribution breadth, and standalone ACP bridge lifecycle depth.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -6508,6 +6509,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime
   or replay_outbound_deliveries_replays_native_media_with_original_caption"` (`8
   passed`).
+- Top-level `doctor --json` and human doctor output now include a native
+  `runtimeBridge` posture rollup for the OpenClaw runtime/CLI packaging and
+  doctor seam. The rollup reports Codex app-server command readiness, resolved
+  sandbox posture, native provider route readiness, ordered plugin executor
+  inventory, and ACP spawn-service availability without claiming non-Windows
+  parity.
+- Progress estimates were adjusted after this slice: repo-wide parity moves
+  from roughly 46% to 47%, active gateway/session/tool-contract parity from
+  roughly 97% to 98%, and runtime/CLI/doctor native-bridge parity is now
+  tracked at roughly 96%. These remain hand-scored planning estimates, not
+  generated coverage metrics.
+- Verified the runtime bridge doctor posture slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_runtime_bridge_posture -q` (`1
+  failed` before implementation because `runtimeBridge` was absent), then the
+  same command (`1 passed`), adjacent doctor/runtime proof `python -m pytest
+  tests\test_cli.py -q -k
+  "runtime_bridge_posture or gateway_runtime_node or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`8
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 

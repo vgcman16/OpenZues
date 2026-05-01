@@ -4,14 +4,16 @@ Updated: 2026-05-01
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~45% overall, with a reasonable
-  band of ~40-50%.
-- The active gateway/session/tool-contract family is estimated at ~97% of the
+- Repo-wide OpenClaw parity is estimated at ~47% overall, with a reasonable
+  band of ~42-52%.
+- The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
+- The runtime/CLI/doctor native-bridge family is estimated at ~96% after the
+  runtime bridge doctor posture slice.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -3758,17 +3760,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repo-wide, cron wake/delivery from ~98% to ~99%, and channels/direct
   announce from ~96% to ~97%. Verified with focused and adjacent OpsMesh
   proofs.
-- Next repo-wide queue head: remaining runtime bridge doctor/packaging
-  posture remains open. Source anchors are OpenClaw runtime/CLI packaging and
-  doctor surfaces plus OpenZues' CLI/doctor/runtime bridge owners; OpenZues
-  must report Codex app-server readiness, sandbox setup posture, provider route
-  readiness, plugin executor inventory, and ACP/native runtime availability
-  consistently in JSON and human output without claiming unsupported
-  Linux/macOS parity.
+- Closed the runtime bridge doctor/packaging posture seam from OpenClaw
+  runtime/CLI packaging and doctor surfaces: top-level `doctor --json` and
+  human doctor output now include a native `runtimeBridge` rollup for Codex
+  app-server readiness, sandbox setup posture, provider route readiness,
+  plugin executor inventory, and ACP spawn-service availability. The progress
+  snapshot was updated from ~46% to ~47% repo-wide, active
+  gateway/session/tool-contract parity from ~97% to ~98%, and
+  runtime/CLI/doctor native-bridge parity is now tracked at ~96%. Verified
+  with focused and adjacent CLI doctor proofs, `ruff check`, and `mypy`.
+- Next repo-wide queue head: broader runtime command/packaging breadth remains
+  open. Source anchors are OpenClaw CLI runtime/session/provider command
+  surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human
+  parity for runtime inspection, provider route sends/polls, plugin/runtime
+  inventory commands, and standalone ACP bridge lifecycle presentation.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially broader runtime/client integration, remaining runtime bridge
-  doctor/packaging checks, and session runtime methods (`chat.*`,
-  `sessions.*`), rather than the older
+  especially broader runtime/client integration and session runtime methods
+  (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
   placeholders.
