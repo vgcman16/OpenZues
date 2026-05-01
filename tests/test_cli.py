@@ -6274,6 +6274,71 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
     ]
 
 
+def test_plugins_list_json_preserves_manifest_command_aliases(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "memory-core"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "memory-core",
+                "name": "Memory Core",
+                "description": "Memory command alias plugin.",
+                "version": "0.4.0",
+                "configSchema": {"type": "object"},
+                "commandAliases": [
+                    "memory",
+                    {
+                        "name": "reindex",
+                        "kind": "runtime-slash",
+                        "cliCommand": "memory",
+                    },
+                    {"name": ""},
+                    {"name": "bad-kind", "kind": "unknown"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["source"] == str(manifest_path)
+    assert payload["plugins"][0]["commandAliases"] == [
+        {"name": "memory"},
+        {"name": "reindex", "kind": "runtime-slash", "cliCommand": "memory"},
+        {"name": "bad-kind"},
+    ]
+
+
 def test_plugins_list_json_projects_runtime_executor_inventory(
     tmp_path,
     monkeypatch,

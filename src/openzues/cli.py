@@ -13418,6 +13418,9 @@ def _plugin_record_from_deck_item(
         values = _plugin_record_string_list(item, key)
         if values:
             record[key] = values
+    command_aliases = _plugin_manifest_command_aliases(item.get("commandAliases"))
+    if command_aliases:
+        record["commandAliases"] = command_aliases
     route_count = _plugin_record_http_route_count(item)
     if route_count:
         record["httpRoutes"] = route_count
@@ -13450,6 +13453,31 @@ def _plugin_manifest_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _plugin_manifest_command_aliases(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    aliases: list[dict[str, object]] = []
+    for entry in value:
+        if isinstance(entry, str):
+            string_alias_name = entry.strip()
+            if string_alias_name:
+                aliases.append({"name": string_alias_name})
+            continue
+        if not isinstance(entry, dict):
+            continue
+        alias_name = _optional_cli_string(entry.get("name"))
+        if alias_name is None:
+            continue
+        alias: dict[str, object] = {"name": alias_name}
+        if entry.get("kind") == "runtime-slash":
+            alias["kind"] = "runtime-slash"
+        cli_command = _optional_cli_string(entry.get("cliCommand"))
+        if cli_command is not None:
+            alias["cliCommand"] = cli_command
+        aliases.append(alias)
+    return aliases
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -13798,6 +13826,9 @@ def _plugin_record_from_openclaw_manifest(
     tool_names = contracts.get("tools")
     if isinstance(tool_names, list):
         record["toolNames"] = list(tool_names)
+    command_aliases = _plugin_manifest_command_aliases(manifest.get("commandAliases"))
+    if command_aliases:
+        record["commandAliases"] = command_aliases
     for key in (
         "commands",
         "cliCommands",

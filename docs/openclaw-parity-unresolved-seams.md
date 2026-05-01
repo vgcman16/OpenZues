@@ -14,7 +14,8 @@ Current percentage rollup:
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
-  and plugin runtime executor inventory slices.
+  plugin runtime executor inventory, and manifest command-alias metadata
+  slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1361,7 +1362,10 @@ now preserves those saved install records in the report-level `install` field.
 for configured `plugins.load.paths` entries that contain `openclaw.plugin.json`,
 preserving manifest `id`, `name`, `description`, `version`, contracts, tool
 names, manifest/root paths, and enabled/default status without importing plugin
-code. `plugins inspect --json` now also consults the native
+code. Metadata-only records now also normalize manifest-owned
+`commandAliases` string/object entries, preserving `runtime-slash` kind and
+`cliCommand` hints for pre-runtime CLI diagnostics. `plugins inspect --json`
+now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
 runtime executor specs mark discovered plugins as imported, switch the inspect
 report from inventory-only to `capabilityMode="runtime"`, and project
@@ -3378,6 +3382,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   plugins_inspect_json_projects_runtime_executor_tools or
   plugins_inspect_json_preserves_runtime_executor_optional_metadata"`, `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest command-alias metadata seam from OpenClaw
+  `manifest-command-aliases.ts` / `manifest.ts`: metadata-only plugin
+  discovery now preserves normalized `commandAliases` entries from
+  `openclaw.plugin.json`, including string aliases, `kind="runtime-slash"`,
+  and `cliCommand` hints, without importing the TypeScript runtime. Verified
+  with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_command_aliases
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Closed the structured `doctor:sandbox` contribution seam from OpenClaw
   `doctor-sandbox.ts` / `doctor-health-contributions.ts`: `doctor --json` now
   reports resolved sandbox mode/backend, Docker availability, missing-Docker
