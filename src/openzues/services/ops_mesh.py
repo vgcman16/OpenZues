@@ -143,7 +143,15 @@ SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
-NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp", "zalo", "line"}
+NATIVE_PROVIDER_ROUTE_KINDS = {
+    "slack",
+    "telegram",
+    "discord",
+    "whatsapp",
+    "zalo",
+    "line",
+    "matrix",
+}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
@@ -2263,6 +2271,96 @@ def _line_text_chunks(text: str, *, limit: int = 5000) -> list[str]:
     return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
 
 
+def _matrix_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Matrix route is missing an access token secret.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _matrix_base_url(target: str | None) -> str:
+    normalized = str(target or "").strip().rstrip("/")
+    if _normalized_http_webhook_url(normalized) is None:
+        raise RuntimeError("Matrix route target must be an http(s) homeserver URL.")
+    for suffix in ("/_matrix/client/v3", "/_matrix/client/r0"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)].rstrip("/")
+    return normalized
+
+
+def _matrix_room_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while normalized:
+        lowered = normalized.lower()
+        matched = False
+        for prefix in ("matrix:", "room:", "channel:"):
+            if lowered.startswith(prefix):
+                normalized = normalized[len(prefix) :].strip()
+                matched = True
+                break
+        if not matched:
+            break
+    return normalized or None
+
+
+def _matrix_send_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_type: str,
+    transaction_id: str,
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/send/{quote(event_type, safe='')}/{quote(transaction_id, safe='')}"
+    )
+
+
+def _matrix_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
+    return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
+
+
+def _matrix_relation(
+    *,
+    thread_id: str | None,
+    reply_to_id: str | None,
+) -> dict[str, object] | None:
+    normalized_thread_id = str(thread_id or "").strip()
+    normalized_reply_to_id = str(reply_to_id or "").strip()
+    if normalized_thread_id:
+        return {
+            "rel_type": "m.thread",
+            "event_id": normalized_thread_id,
+            "is_falling_back": True,
+            "m.in_reply_to": {
+                "event_id": normalized_reply_to_id or normalized_thread_id,
+            },
+        }
+    if normalized_reply_to_id:
+        return {"m.in_reply_to": {"event_id": normalized_reply_to_id}}
+    return None
+
+
+def _matrix_transaction_id(event: dict[str, Any]) -> str:
+    for key in ("idempotencyKey", "runId", "deliveryId"):
+        candidate = str(event.get(key) or "").strip()
+        if candidate:
+            return candidate
+    return uuid.uuid4().hex
+
+
+def _matrix_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("event_id") or result.get("eventId") or result.get("messageId")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -2696,6 +2794,8 @@ def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, obje
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "primaryMessageId",
+        "messageIds",
         "meta",
     ):
         value = result.get(key)
@@ -3004,17 +3104,21 @@ def _conversation_target_peer_id_matches(
 ) -> bool:
     if route_peer_id == event_peer_id:
         return True
-    if channel != "telegram":
-        return False
-    route_target = _parse_telegram_delivery_target(route_peer_id)
-    event_target = _parse_telegram_delivery_target(event_peer_id)
-    route_chat_id = str(route_target.get("chatId") or "").strip().lower()
-    event_chat_id = str(event_target.get("chatId") or "").strip().lower()
-    if not route_chat_id or route_chat_id != event_chat_id:
-        return False
-    route_thread_id = str(route_target.get("threadId") or "").strip()
-    event_thread_id = str(event_target.get("threadId") or "").strip()
-    return not route_thread_id or route_thread_id == event_thread_id
+    if channel == "telegram":
+        route_target = _parse_telegram_delivery_target(route_peer_id)
+        event_target = _parse_telegram_delivery_target(event_peer_id)
+        route_chat_id = str(route_target.get("chatId") or "").strip().lower()
+        event_chat_id = str(event_target.get("chatId") or "").strip().lower()
+        if not route_chat_id or route_chat_id != event_chat_id:
+            return False
+        route_thread_id = str(route_target.get("threadId") or "").strip()
+        event_thread_id = str(event_target.get("threadId") or "").strip()
+        return not route_thread_id or route_thread_id == event_thread_id
+    if channel == "matrix":
+        route_room_id = str(_matrix_room_id(route_peer_id) or "").strip().lower()
+        event_room_id = str(_matrix_room_id(event_peer_id) or "").strip().lower()
+        return bool(route_room_id and route_room_id == event_room_id)
+    return False
 
 
 def _conversation_target_route_match(
@@ -7586,6 +7690,8 @@ class OpsMeshService:
             return self._post_zalo_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
+        if route_kind == "matrix":
+            return self._post_matrix_provider_event
         return self._post_webhook
 
     async def dispatch_message_action(
@@ -13191,6 +13297,40 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Webhook failed: {exc.reason}") from exc
 
+    def _put_json_provider(
+        self,
+        target: str,
+        payload: dict[str, Any],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object | None:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if secret_header_name and secret_token:
+            headers[str(secret_header_name)] = str(secret_token)
+        request = Request(
+            target,
+            data=body,
+            headers=headers,
+            method="PUT",
+        )
+        try:
+            with urlopen(request, timeout=10) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _post_slack_form(
         self,
         target: str,
@@ -14196,6 +14336,77 @@ class OpsMeshService:
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _post_matrix_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Matrix native provider route poll sends are not implemented yet.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        room_id = _matrix_room_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if room_id is None:
+            raise RuntimeError("Matrix route is missing a room target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            raise RuntimeError("Matrix native provider route media sends are not implemented yet.")
+        chunks = _matrix_text_chunks(str(event.get("message") or ""))
+        if not chunks:
+            raise RuntimeError("Matrix send requires text or media.")
+        relation = _matrix_relation(
+            thread_id=str(event.get("threadId") or "").strip() or None,
+            reply_to_id=str(event.get("replyToId") or "").strip() or None,
+        )
+        bearer_token = _matrix_bearer_token(secret_token)
+        transaction_id = _matrix_transaction_id(event)
+        message_ids: list[str] = []
+        for index, chunk in enumerate(chunks, start=1):
+            content: dict[str, object] = {
+                "msgtype": "m.text",
+                "body": chunk,
+            }
+            if relation is not None:
+                content["m.relates_to"] = relation
+            chunk_transaction_id = (
+                transaction_id if len(chunks) == 1 else f"{transaction_id}-{index}"
+            )
+            result = self._put_json_provider(
+                _matrix_send_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.message",
+                    transaction_id=chunk_transaction_id,
+                ),
+                content,
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            message_id = _matrix_message_id(result)
+            if message_id is None:
+                raise RuntimeError("Matrix API response did not include an event id.")
+            message_ids.append(message_id)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_ids[-1],
+            "roomId": room_id,
+            "channelId": room_id,
+            "conversationId": room_id,
+            "primaryMessageId": message_ids[0],
+            "messageIds": message_ids,
+        }
 
     def _post_webhook(
         self,

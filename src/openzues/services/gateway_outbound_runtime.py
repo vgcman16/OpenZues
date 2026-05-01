@@ -61,6 +61,8 @@ def _native_result_payload(result: object) -> dict[str, object]:
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "primaryMessageId",
+        "messageIds",
         "meta",
     ):
         value = _native_result_field(result, key)

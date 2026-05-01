@@ -493,6 +493,14 @@ batch push messages at LINE's five-message boundary, and persist provider
 the direct-send delivery path. Remaining LINE provider parity is rich
 Flex/template/location/quick-reply sends, reply-token sends, explicit
 video/audio media options, and account probe/action breadth.
+Matrix native route-backed direct text sends now use OpenClaw's Client-Server
+`m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
+targets to room ids, preserve reply/thread relation metadata, split text at
+Matrix's 4000-character event boundary, and persist `messageId`, `roomId`,
+`channelId`, `conversationId`, `primaryMessageId`, and ordered `messageIds`.
+Remaining Matrix provider parity is media upload/encryption metadata, alias and
+direct-room resolution, native polls, profile/actions, account probes, and
+read/reaction/edit/delete/pin action breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the
