@@ -4944,6 +4944,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_message_uses_telegram_native_options"` (`5 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action poll` now reaches the native route-backed Bot API
+  runtime instead of falling through unsupported. The action forwards
+  OpenClaw-style `to`, `pollQuestion`, `pollOption`, `pollMulti`, `replyTo`,
+  `threadId`, and `silent` into `gateway/poll`, returning provider
+  `messageId`, `channelId`, `conversationId`, and `pollId` metadata.
+- Verified the Telegram action-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_poll_route"` (`1 passed`),
+  adjacent route/provider coverage `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_telegram_poll_route or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_telegram_react_route or
+  send_direct_channel_poll_uses_telegram_native_route or
+  message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - Sandbox `explain` now includes OpenClaw's read-only agent workspace mount
   hint: when the effective sandbox workspace access is `ro`, JSON and human
   output expose `agentWorkspaceMount="/agent"` so callers can distinguish the

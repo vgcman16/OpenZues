@@ -4048,6 +4048,109 @@ async def test_ops_mesh_service_message_action_dispatches_telegram_send_document
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_poll_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-poll"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 45,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-action-telegram-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="poll",
+            params={
+                "to": "channel:-100123",
+                "pollQuestion": "Ship Telegram action poll parity?",
+                "pollOption": [" Yes ", "No"],
+                "pollMulti": True,
+                "replyTo": "41",
+                "threadId": "forum-42",
+                "silent": True,
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-poll-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "45",
+            "channelId": "-100123",
+            "conversationId": "-100123",
+            "pollId": "poll-action-telegram-1",
+        },
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Ship Telegram action poll parity?",
+                "options": ["Yes", "No"],
+                "allows_multiple_answers": True,
+                "disable_notification": True,
+                "reply_to_message_id": "41",
+                "message_thread_id": "forum-42",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

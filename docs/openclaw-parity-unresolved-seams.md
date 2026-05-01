@@ -483,7 +483,11 @@ reaction-array remove shape and soft missing-message-id result. Telegram
 `message.action send` now also dispatches through the native Bot API route,
 including OpenClaw's `asDocument` alias for forced document sends plus
 reply/thread/silent/media forwarding and provider `messageId` / `mediaIds`
-projection.
+projection. Telegram `message.action poll` now also dispatches through the
+native Bot API poll route, preserving OpenClaw's `pollQuestion`,
+`pollOption`, `pollMulti`, `replyTo`, `threadId`, and `silent` fields while
+returning provider `messageId`, `channelId`, `conversationId`, and `pollId`
+metadata.
 Discord route-backed action parity now includes `react` add dispatch via REST
 own-reaction `PUT` using the saved bot token and OpenClaw-style encoded emoji
 identifier, plus explicit `remove=true` through the matching own-reaction
