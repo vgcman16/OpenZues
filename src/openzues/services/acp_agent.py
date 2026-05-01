@@ -70,6 +70,16 @@ def _read_positive_int(record: Mapping[str, object] | None, key: str, fallback: 
     return max(1, int(value))
 
 
+def _is_admin_scope_provenance_rejection(error: Exception) -> bool:
+    gateway_code = getattr(error, "gatewayCode", None) or getattr(error, "gateway_code", None)
+    error_name = getattr(error, "name", None) or type(error).__name__
+    return (
+        error_name == "GatewayClientRequestError"
+        and gateway_code == "INVALID_REQUEST"
+        and "system provenance fields require admin scope" in str(error)
+    )
+
+
 def _format_thinking_level_name(level: str) -> str:
     if level == "xhigh":
         return "Extra High"
@@ -438,7 +448,24 @@ class AcpGatewayAgent:
         self._session_store.set_active_run(session_id, run_id, lambda: None)
         try:
             await self._gateway.request("chat.send", request_params)
-        except Exception:
+        except Exception as exc:
+            has_provenance = (
+                "systemInputProvenance" in request_params
+                or "systemProvenanceReceipt" in request_params
+            )
+            if has_provenance and _is_admin_scope_provenance_rejection(exc):
+                retry_params = {
+                    key: value
+                    for key, value in request_params.items()
+                    if key not in {"systemInputProvenance", "systemProvenanceReceipt"}
+                }
+                try:
+                    await self._gateway.request("chat.send", retry_params)
+                except Exception:
+                    self._pending_prompts.pop(session_id, None)
+                    self._session_store.clear_active_run(session_id)
+                    raise
+                return await future
             self._pending_prompts.pop(session_id, None)
             self._session_store.clear_active_run(session_id)
             raise

@@ -62,6 +62,13 @@ class FakeGateway:
         return {"ok": True}
 
 
+class GatewayClientRequestError(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.name = "GatewayClientRequestError"
+        self.gatewayCode = "INVALID_REQUEST"
+
+
 @pytest.mark.asyncio
 async def test_acp_gateway_agent_initializes_openclaw_capabilities() -> None:
     from openzues.services.acp_agent import AcpGatewayAgent
@@ -616,3 +623,61 @@ async def test_acp_gateway_agent_existing_load_session_refresh_does_not_count_ra
         await agent.load_session(
             {"sessionId": "new", "cwd": "C:/two", "mcpServers": [], "_meta": {}}
         )
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_retries_prompt_without_admin_provenance_fields() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    class ProvenanceGateway(FakeGateway):
+        async def request(self, method: str, params: dict[str, object]) -> dict[str, Any]:
+            self.calls.append((method, params))
+            if method == "chat.send":
+                send_count = len([call for call in self.calls if call[0] == method])
+                if send_count == 1:
+                    raise GatewayClientRequestError("system provenance fields require admin scope")
+                return {"ok": True}
+            return await super().request(method, params)
+
+    gateway = ProvenanceGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:main",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(
+        FakeAcpConnection(),
+        gateway,
+        session_store=store,
+        provenanceMode="meta+receipt",
+    )
+    prompt_task = asyncio.create_task(
+        agent.prompt(
+            {
+                "sessionId": "session-1",
+                "prompt": [{"type": "text", "text": "hello"}],
+                "_meta": {"prefixCwd": False},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    send_calls = [params for method, params in gateway.calls if method == "chat.send"]
+    assert len(send_calls) == 2
+    assert "systemInputProvenance" in send_calls[0]
+    assert "systemProvenanceReceipt" in send_calls[0]
+    assert "systemInputProvenance" not in send_calls[1]
+    assert "systemProvenanceReceipt" not in send_calls[1]
+
+    await agent.handle_gateway_event(
+        {
+            "event": "chat",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": send_calls[1]["idempotencyKey"],
+                "state": "final",
+            },
+        }
+    )
+    assert await prompt_task == {"stopReason": "end_turn"}

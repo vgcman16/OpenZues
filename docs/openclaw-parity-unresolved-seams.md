@@ -104,12 +104,12 @@ snapshots, usage updates, transcript replay, available command updates,
 active-run prompt tracking, chat delta projection, terminal stop-reason
 mapping, scoped `chat.abort`, and gateway `agent` tool-call event streaming.
 Remaining ACP protocol parity is the bridge server/client lifecycle around
-reconnect/replay reconciliation, prompt provenance fallback, session rate
-limits, and parent-stream relay fallback; `setSessionMode` and
+reconnect/replay reconciliation and parent-stream relay fallback; `setSessionMode` and
 `setSessionConfigOption` are now covered by native `sessions.patch` mappings
 with ACP control refresh updates, and ACP session creation rate limiting now
 matches OpenClaw's new-session/new-load budget with existing-load refresh
-exemption.
+exemption. Prompt provenance fallback now retries without admin-only
+provenance fields on OpenClaw-shaped gateway `INVALID_REQUEST` rejection.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same
