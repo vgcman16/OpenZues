@@ -6579,6 +6579,83 @@ def test_plugins_list_json_accepts_json5_bundle_manifests(
     assert payload["plugins"][0]["version"] == "1.1.0"
 
 
+def test_plugins_inspect_json_projects_claude_bundle_commands(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "claude-commands"
+    commands_dir = plugin_dir / "commands"
+    nested_dir = commands_dir / "ops"
+    (plugin_dir / ".claude-plugin").mkdir(parents=True)
+    nested_dir.mkdir(parents=True)
+    (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Claude Commands",
+                "description": "Claude command bundle.",
+                "commands": "commands",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (commands_dir / "deploy.md").write_text(
+        """---
+name: ship-it
+description: Ship the app
+---
+Run the deploy playbook.
+""",
+        encoding="utf-8",
+    )
+    (nested_dir / "status.md").write_text(
+        "Show operational status.",
+        encoding="utf-8",
+    )
+    (commands_dir / "disabled.md").write_text(
+        """---
+name: disabled
+disable-model-invocation: true
+---
+Do not expose this command.
+""",
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"claude-commands": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "inspect", "claude-commands", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["commands"] == ["ship-it", "ops:status"]
+    assert payload["commands"] == ["ship-it", "ops:status"]
+    assert payload["bundleCapabilities"] == ["skills", "commands"]
+
+
 def test_plugins_list_json_preserves_manifest_command_aliases(
     tmp_path,
     monkeypatch,

@@ -14512,6 +14512,87 @@ def _plugin_bundle_claude_skill_paths(
     )
 
 
+def _plugin_bundle_markdown_files(root_dir: Path) -> list[Path]:
+    files: list[Path] = []
+    if not root_dir.is_dir():
+        return files
+    for current, dirs, filenames in os.walk(root_dir):
+        dirs[:] = [dirname for dirname in dirs if not dirname.startswith(".")]
+        current_path = Path(current)
+        for filename in filenames:
+            if filename.startswith(".") or not filename.lower().endswith(".md"):
+                continue
+            files.append(current_path / filename)
+    return sorted(files, key=lambda path: str(path).lower())
+
+
+def _plugin_bundle_frontmatter(raw: str) -> tuple[dict[str, str], str]:
+    normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.startswith("---"):
+        return {}, normalized.strip()
+    end_index = normalized.find("\n---", 3)
+    if end_index == -1:
+        return {}, normalized.strip()
+    frontmatter: dict[str, str] = {}
+    for line in normalized[3:end_index].splitlines():
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        normalized_key = key.strip()
+        normalized_value = value.strip().strip("\"'")
+        if normalized_key:
+            frontmatter[normalized_key] = normalized_value
+    return frontmatter, normalized[end_index + 4 :].strip()
+
+
+def _plugin_bundle_frontmatter_bool(value: str | None, fallback: bool = False) -> bool:
+    normalized = (value or "").strip().lower()
+    if normalized in {"true", "yes", "1"}:
+        return True
+    if normalized in {"false", "no", "0"}:
+        return False
+    return fallback
+
+
+def _plugin_bundle_default_command_name(command_root: Path, file_path: Path) -> str:
+    relative = file_path.relative_to(command_root)
+    without_suffix = relative.with_suffix("")
+    return ":".join(without_suffix.parts)
+
+
+def _plugin_bundle_claude_commands(
+    manifest: dict[str, object],
+    root_dir: Path,
+) -> list[str]:
+    commands: list[str] = []
+    for relative_root in _plugin_bundle_claude_component_paths(
+        manifest,
+        root_dir,
+        "commands",
+        ["commands"],
+    ):
+        command_root = root_dir / relative_root
+        if not command_root.is_dir():
+            continue
+        for file_path in _plugin_bundle_markdown_files(command_root):
+            try:
+                raw = file_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            frontmatter, prompt = _plugin_bundle_frontmatter(raw)
+            if _plugin_bundle_frontmatter_bool(frontmatter.get("disable-model-invocation")):
+                continue
+            if not prompt:
+                continue
+            command_name = (
+                _optional_cli_string(frontmatter.get("name"))
+                or _plugin_bundle_default_command_name(command_root, file_path)
+            )
+            if command_name:
+                commands.append(command_name)
+    return _dedupe_cli_strings(commands)
+
+
 def _plugin_bundle_cursor_skill_paths(
     manifest: dict[str, object],
     root_dir: Path,
@@ -14685,6 +14766,10 @@ def _plugin_bundle_manifest_record(
         record["version"] = version
     if settings_files:
         record["settingsFiles"] = settings_files
+    if bundle_format == "claude":
+        commands = _plugin_bundle_claude_commands(manifest, root_dir)
+        if commands:
+            record["commands"] = commands
     return record
 
 
