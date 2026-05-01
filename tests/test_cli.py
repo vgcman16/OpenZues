@@ -6992,6 +6992,74 @@ def test_plugins_list_json_preserves_package_manifest_runtime_metadata(
     }
 
 
+def test_plugins_list_json_skips_incompatible_package_manifest_min_host_version(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "synology-chat"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps({"id": "synology-chat", "configSchema": {"type": "object"}}),
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/synology-chat",
+                "openclaw": {
+                    "extensions": ["index.ts"],
+                    "install": {
+                        "npmSpec": "@openclaw/synology-chat",
+                        "minHostVersion": ">=2026.3.22",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.3.21",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == []
+    assert payload["diagnostics"] == [
+        {
+            "level": "error",
+            "message": (
+                "plugin requires OpenClaw >=2026.3.22, but this host is "
+                "2026.3.21"
+            ),
+            "pluginId": "synology-chat",
+            "source": str(manifest_path),
+        }
+    ]
+
+
 def test_plugins_list_json_projects_runtime_executor_inventory(
     tmp_path,
     monkeypatch,

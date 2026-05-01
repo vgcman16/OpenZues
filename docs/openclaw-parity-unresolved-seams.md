@@ -15,7 +15,7 @@ Current percentage rollup:
 - The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
-  channel-config/model-support/config-contract/root/package metadata slices.
+  channel-config/model-support/config-contract/root/package/min-host metadata slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1381,7 +1381,8 @@ including `enabledByDefault`, `legacyPluginIds`,
 `uiHints`. Adjacent package manifest metadata now also supplies package
 name/version/description fallbacks, setup source, startup deferral, channel
 catalog metadata, and package-owned channel label/description/prefer-over
-hydration.
+hydration. Package `openclaw.install.minHostVersion` now also gates
+metadata-only plugin discovery with OpenClaw-shaped skip diagnostics.
 `plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
@@ -3554,6 +3555,29 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata
   -q`, adjacent `python -m pytest tests\test_cli.py -q -k
   "plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the package min-host metadata seam from OpenClaw
+  `min-host-version.ts` / `manifest-registry.test.ts`: metadata-only plugin
+  discovery now skips packages whose `openclaw.install.minHostVersion` is
+  incompatible, invalid, or indeterminate, and returns OpenClaw-shaped
+  diagnostics from `plugins list --json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_skips_incompatible_package_manifest_min_host_version
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_skips_incompatible_package_manifest_min_host_version or
+  plugins_list_json_preserves_package_manifest_runtime_metadata or
   plugins_list_json_preserves_manifest_identity_and_classification or
   plugins_list_json_preserves_manifest_config_contracts or
   plugins_list_json_preserves_manifest_model_support or

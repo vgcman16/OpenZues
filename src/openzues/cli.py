@@ -11850,11 +11850,17 @@ async def _build_plugins_inventory_payload(
     gateway_config = getattr(services, "gateway_config", None)
     if isinstance(gateway_config, GatewayConfigService):
         existing_ids = {str(plugin.get("id") or "") for plugin in plugins}
-        for plugin in _plugin_records_from_config_snapshot(gateway_config.build_snapshot()):
+        config_diagnostics: list[dict[str, object]] = []
+        for plugin in _plugin_records_from_config_snapshot(
+            gateway_config.build_snapshot(),
+            diagnostics=config_diagnostics,
+        ):
             plugin_id = str(plugin.get("id") or "")
             if plugin_id not in existing_ids:
                 plugins.append(plugin)
                 existing_ids.add(plugin_id)
+    else:
+        config_diagnostics = []
     if enabled_only:
         plugins = [
             plugin
@@ -11862,11 +11868,12 @@ async def _build_plugins_inventory_payload(
             if str(plugin.get("status") or "").strip() == "loaded"
         ]
     warnings = view_payload.get("warnings")
-    diagnostics = [
+    diagnostics: list[dict[str, object]] = [
         {"level": "warn", "message": str(warning)}
         for warning in (warnings if isinstance(warnings, list) else [])
         if str(warning).strip()
     ]
+    diagnostics.extend(config_diagnostics)
     return {
         "workspaceDir": workspace_dir,
         "plugins": plugins,
@@ -13454,6 +13461,10 @@ def _plugin_record_from_deck_item(
 
 
 _OPENCLAW_PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
+_OPENCLAW_MIN_HOST_VERSION_FORMAT = (
+    'openclaw.install.minHostVersion must use a semver floor in the form ">=x.y.z"'
+)
+_OPENCLAW_MIN_HOST_VERSION_RE = re.compile(r"^>=(\d+)\.(\d+)\.(\d+)$")
 _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "tools": "tool",
     "speechProviders": "speech",
@@ -13951,6 +13962,68 @@ def _plugin_package_openclaw_record_metadata(
     return metadata
 
 
+def _plugin_semver_tuple(value: object) -> tuple[int, int, int] | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", text)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _plugin_min_host_version_diagnostic(
+    package_openclaw: object,
+    *,
+    current_version: str,
+    plugin_id: str,
+    source: str,
+) -> dict[str, object] | None:
+    if not isinstance(package_openclaw, dict):
+        return None
+    install = package_openclaw.get("install")
+    if not isinstance(install, dict) or "minHostVersion" not in install:
+        return None
+    raw_min_host_version = install.get("minHostVersion")
+    min_host_text = _optional_cli_string(raw_min_host_version)
+    match = (
+        _OPENCLAW_MIN_HOST_VERSION_RE.match(min_host_text)
+        if min_host_text is not None
+        else None
+    )
+    if match is None:
+        return {
+            "level": "error",
+            "message": f"plugin manifest invalid | {_OPENCLAW_MIN_HOST_VERSION_FORMAT}",
+            "pluginId": plugin_id,
+            "source": source,
+        }
+    minimum_label = f"{match.group(1)}.{match.group(2)}.{match.group(3)}"
+    current_semver = _plugin_semver_tuple(current_version)
+    if current_semver is None:
+        return {
+            "level": "warn",
+            "message": (
+                f"plugin requires OpenClaw >={minimum_label}, but host version "
+                "could not be determined"
+            ),
+            "pluginId": plugin_id,
+            "source": source,
+        }
+    minimum_semver = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    if current_semver < minimum_semver:
+        return {
+            "level": "error",
+            "message": (
+                f"plugin requires OpenClaw >={minimum_label}, but this host is "
+                f"{current_version}"
+            ),
+            "pluginId": plugin_id,
+            "source": source,
+        }
+    return None
+
+
 def _merge_package_channel_meta(
     channel_configs: dict[str, object],
     package_openclaw: object,
@@ -14281,6 +14354,7 @@ def _plugin_record_from_openclaw_manifest(
     *,
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
+    diagnostics: list[dict[str, object]] | None = None,
 ) -> dict[str, object] | None:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -14296,6 +14370,21 @@ def _plugin_record_from_openclaw_manifest(
     capabilities = _plugin_manifest_capabilities(manifest, contracts)
     package_metadata = _plugin_package_json_metadata(manifest_path.parent)
     package_openclaw = package_metadata.get("openclaw")
+    current_version = (
+        _optional_cli_string(config_snapshot.get("serverVersion"))
+        if config_snapshot is not None
+        else None
+    ) or __version__
+    min_host_diagnostic = _plugin_min_host_version_diagnostic(
+        package_openclaw,
+        current_version=current_version,
+        plugin_id=plugin_id,
+        source=str(manifest_path),
+    )
+    if min_host_diagnostic is not None:
+        if diagnostics is not None:
+            diagnostics.append(min_host_diagnostic)
+        return None
     description = (
         _optional_cli_string(manifest.get("description"))
         or _optional_cli_string(package_metadata.get("description"))
@@ -14393,6 +14482,7 @@ def _plugin_manifest_records_from_config_snapshot(
     plugins_config: dict[str, object],
     *,
     config_snapshot: dict[str, object],
+    diagnostics: list[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     seen_ids: set[str] = set()
@@ -14404,6 +14494,7 @@ def _plugin_manifest_records_from_config_snapshot(
             manifest_path,
             plugins_config=plugins_config,
             config_snapshot=config_snapshot,
+            diagnostics=diagnostics,
         )
         if record is None:
             continue
@@ -14415,12 +14506,17 @@ def _plugin_manifest_records_from_config_snapshot(
     return records
 
 
-def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
+def _plugin_records_from_config_snapshot(
+    snapshot: dict[str, object],
+    *,
+    diagnostics: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
     plugins = snapshot.get("plugins")
     plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
     manifest_records = _plugin_manifest_records_from_config_snapshot(
         plugins_config,
         config_snapshot=snapshot,
+        diagnostics=diagnostics,
     )
     records_by_id = {
         str(record.get("id") or ""): dict(record)
