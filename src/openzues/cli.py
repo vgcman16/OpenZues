@@ -11964,6 +11964,8 @@ _CLI_MARKETPLACE_MANIFEST_CANDIDATES = (
     Path("marketplace.json"),
 )
 _CLI_MARKETPLACE_GIT_TIMEOUT_SECONDS = 120
+_CLI_MARKETPLACE_DOWNLOAD_TIMEOUT_SECONDS = 120
+_CLI_MARKETPLACE_MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -12160,6 +12162,48 @@ def _clone_cli_plugins_marketplace_source(source: str) -> _CliMarketplaceClone:
     return _CliMarketplaceClone(
         root_dir=repo_dir,
         label=label,
+        cleanup=lambda: shutil.rmtree(tmp_dir, ignore_errors=True),
+    )
+
+
+def _safe_cli_marketplace_download_filename(url: str) -> str:
+    parsed = urlparse(url)
+    file_name = Path(parsed.path).name.strip() or "plugin.tgz"
+    if (
+        file_name in {".", ".."}
+        or Path(file_name).is_absolute()
+        or "/" in file_name
+        or "\\" in file_name
+    ):
+        raise ValueError("invalid download filename")
+    return file_name
+
+
+def _download_cli_marketplace_plugin_source(url: str) -> _CliResolvedMarketplacePluginSource:
+    file_name = _safe_cli_marketplace_download_filename(url)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="openzues-marketplace-download-"))
+    target_path = tmp_dir / file_name
+    try:
+        request = Request(url, headers={"User-Agent": "OpenZues"})
+        with urlopen(request, timeout=_CLI_MARKETPLACE_DOWNLOAD_TIMEOUT_SECONDS) as response:
+            total = 0
+            with target_path.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _CLI_MARKETPLACE_MAX_DOWNLOAD_BYTES:
+                        raise ValueError(
+                            "download too large: "
+                            f"{total} bytes (limit: {_CLI_MARKETPLACE_MAX_DOWNLOAD_BYTES} bytes)"
+                        )
+                    output.write(chunk)
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    return _CliResolvedMarketplacePluginSource(
+        path=target_path,
         cleanup=lambda: shutil.rmtree(tmp_dir, ignore_errors=True),
     )
 
@@ -12785,6 +12829,13 @@ def _resolve_cli_marketplace_plugin_source(
         or _optional_cli_string(source.get("source"))
     )
     if source_kind in (None, "path"):
+        source_path_value = _optional_cli_string(source.get("path"))
+        if source_path_value is not None and _cli_marketplace_is_http_url(source_path_value):
+            downloaded = _download_cli_marketplace_plugin_source(source_path_value)
+            return _CliResolvedMarketplacePluginSource(
+                path=Path(downloaded.path),
+                cleanup=downloaded.cleanup,
+            )
         return _CliResolvedMarketplacePluginSource(
             path=_resolve_marketplace_plugin_install_path(
                 manifest_path=manifest_path,
@@ -12822,6 +12873,15 @@ def _resolve_cli_marketplace_plugin_source(
             cloned.cleanup()
             raise
         return _CliResolvedMarketplacePluginSource(path=path, cleanup=cloned.cleanup)
+    if source_kind == "url":
+        url = _optional_cli_string(source.get("url"))
+        if url is None:
+            raise ValueError(f'plugin "{plugin_name}" is missing a URL source')
+        downloaded = _download_cli_marketplace_plugin_source(url)
+        return _CliResolvedMarketplacePluginSource(
+            path=Path(downloaded.path),
+            cleanup=downloaded.cleanup,
+        )
     raise ValueError(f'unsupported marketplace source for plugin "{plugin_name}": {source_kind}')
 
 
