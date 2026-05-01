@@ -20099,6 +20099,141 @@ async def test_sessions_spawn_thread_mode_uses_route_backed_thread_binder(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_creates_discord_child_thread_with_route_binder(
+    tmp_path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from openzues.schemas import ConversationTargetView, NotificationRouteView
+    from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-discord-create.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "discord": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_calls: list[dict[str, object]] = []
+    action_calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-discord-thread-bound-child-1", "status": "ok"}
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        action_calls.append(request)
+        return {"ok": True, "thread": {"id": "thread-created-42"}}
+
+    async def list_routes() -> list[NotificationRouteView]:
+        now = datetime.now(UTC)
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Discord route",
+                kind="discord",
+                target="native://route",
+                events=["gateway/send"],
+                conversation_target=ConversationTargetView(
+                    channel="discord",
+                    account_id="default",
+                    peer_kind="channel",
+                    peer_id="channel:parent-channel",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=list_routes,
+            message_action_dispatcher=fake_message_action_dispatcher,
+        ),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in a provider-created Discord thread.",
+            "label": "Builder child",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="discord",
+            message_to="channel:parent-channel",
+            message_account_id="default",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert len(action_calls) == 1
+    action_request = action_calls[0]
+    assert action_request.channel == "discord"
+    assert action_request.action == "thread-create"
+    assert action_request.account_id == "default"
+    assert action_request.session_key == child_session_key
+    assert action_request.params == {
+        "channelId": "parent-channel",
+        "threadName": "Builder child",
+        "autoArchiveMinutes": 60,
+    }
+    assert send_calls[0]["channel"] == "discord"
+    assert send_calls[0]["to"] == "channel:parent-channel"
+    assert send_calls[0]["account_id"] == "default"
+    assert send_calls[0]["thread_id"] == "thread-created-42"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "discord",
+        "to": "channel:parent-channel",
+        "accountId": "default",
+        "threadId": "thread-created-42",
+    }
+    assert metadata["sessionBinding"]["conversation"] == {
+        "channel": "discord",
+        "accountId": "default",
+        "conversationId": "channel:thread-created-42",
+    }
+    assert metadata["sessionBinding"]["metadata"]["placement"] == "child"
+    assert metadata["sessionBinding"]["metadata"]["threadId"] == "thread-created-42"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder(
     tmp_path,
 ) -> None:
@@ -20219,6 +20354,155 @@ async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder
     session_binding = metadata["sessionBinding"]
     assert isinstance(session_binding, dict)
     assert session_binding["metadata"]["placement"] == "child"
+
+
+@pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_creates_matrix_child_thread_with_route_binder(
+    tmp_path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from openzues.schemas import ConversationTargetView, NotificationRouteView
+    from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-matrix-create.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "matrix": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_calls: list[dict[str, object]] = []
+    action_calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-matrix-created-thread-bound-child-1", "status": "ok"}
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        action_calls.append(request)
+        return {"ok": True, "result": {"messageId": "$matrix-child-root"}}
+
+    async def list_routes() -> list[NotificationRouteView]:
+        now = datetime.now(UTC)
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Matrix room route",
+                kind="matrix",
+                target="native://route",
+                events=["gateway/send"],
+                conversation_target=ConversationTargetView(
+                    channel="matrix",
+                    account_id="bot-alpha",
+                    peer_kind="channel",
+                    peer_id="room:!room:example.org",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=list_routes,
+            message_action_dispatcher=fake_message_action_dispatcher,
+        ),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Create a Matrix child thread.",
+            "label": "Matrix child",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="matrix",
+            message_to="room:!room:example.org",
+            message_account_id="bot-alpha",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert len(action_calls) == 1
+    action_request = action_calls[0]
+    assert action_request.channel == "matrix"
+    assert action_request.action == "send"
+    assert action_request.account_id == "bot-alpha"
+    assert action_request.session_key == child_session_key
+    assert action_request.params == {
+        "to": "room:!room:example.org",
+        "message": (
+            "\u2699\ufe0f Matrix child session active. "
+            "Messages here go directly to this session."
+        ),
+    }
+    assert send_calls[0]["channel"] == "matrix"
+    assert send_calls[0]["to"] == "room:!room:example.org"
+    assert send_calls[0]["account_id"] == "bot-alpha"
+    assert send_calls[0]["thread_id"] == "$matrix-child-root"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$matrix-child-root",
+    }
+    assert metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$matrix-child-root",
+    }
+    assert metadata["sessionBinding"]["bindingId"] == (
+        "bot-alpha:!room:example.org:$matrix-child-root"
+    )
+    assert metadata["sessionBinding"]["conversation"] == {
+        "channel": "matrix",
+        "accountId": "bot-alpha",
+        "conversationId": "$matrix-child-root",
+        "parentConversationId": "!room:example.org",
+    }
+    assert metadata["sessionBinding"]["metadata"]["placement"] == "child"
+    assert metadata["sessionBinding"]["metadata"]["label"] == "Matrix child"
+    assert metadata["sessionBinding"]["metadata"]["boundBy"] == "system"
 
 
 @pytest.mark.asyncio
@@ -21980,6 +22264,45 @@ async def test_agent_wait_zero_timeout_returns_without_sleeping(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_returns_cached_lifecycle_terminal_event(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-lifecycle-event.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+
+    await service.handle_runtime_event(
+        1,
+        {
+            "runId": "run-agent-wait-lifecycle-1",
+            "stream": "lifecycle",
+            "data": {"phase": "start", "startedAt": 123},
+        },
+    )
+    await service.handle_runtime_event(
+        1,
+        {
+            "runId": "run-agent-wait-lifecycle-1",
+            "stream": "lifecycle",
+            "data": {"phase": "end", "endedAt": 456},
+        },
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-lifecycle-1", "timeoutMs": 0},
+    )
+
+    assert payload == {
+        "runId": "run-agent-wait-lifecycle-1",
+        "status": "ok",
+        "startedAt": 123,
+        "endedAt": 456,
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_ignores_stale_terminal_session_mission_for_tracked_run(
     tmp_path,
 ) -> None:
@@ -22996,6 +23319,127 @@ async def test_agent_wait_thread_bound_completion_uses_completion_delivery_route
         "ok": True,
         "deliveryId": 42,
         "messageId": "msg-thread-bound-completion-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_thread_bound_completion_falls_back_to_session_binding(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-session-binding-completion.db")
+    await database.initialize()
+    direct_sends: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-session-binding-completion-1", "status": "ok"}
+
+    async def fake_send_channel_message_service(**kwargs: object) -> dict[str, object]:
+        direct_sends.append(dict(kwargs))
+        return {
+            "ok": True,
+            "deliveryId": 84,
+            "messageId": "msg-session-binding-completion-1",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {"task": "Complete and announce from a saved Matrix binding."},
+        now_ms=448,
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    metadata = dict(metadata_row["metadata"])
+    metadata.pop("completionDelivery", None)
+    metadata["sessionBinding"] = {
+        "bindingId": "bot-alpha:!room:example.org:$child-thread-root",
+        "targetSessionKey": child_session_key,
+        "targetKind": "subagent",
+        "conversation": {
+            "channel": "matrix",
+            "accountId": "bot-alpha",
+            "conversationId": "$child-thread-root",
+            "parentConversationId": "!room:example.org",
+        },
+        "status": "active",
+        "boundAt": 448,
+        "metadata": {"lastActivityAt": 448},
+    }
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata=metadata,
+    )
+    mission_id = await database.create_mission(
+        name="Session Binding Completion Child",
+        objective="Finish and announce using the saved session binding.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-session-binding-completion",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Matrix-bound child finished.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-session-binding-completion-1", "timeoutMs": 0},
+    )
+
+    assert wait_payload["status"] == "ok"
+    assert direct_sends == [
+        {
+            "channel": "matrix",
+            "to": "room:!room:example.org",
+            "message": f"Subagent {child_session_key} completed: Matrix-bound child finished.",
+            "account_id": "bot-alpha",
+            "thread_id": "$child-thread-root",
+            "session_key": child_session_key,
+            "idempotency_key": "subagent-completion:run-session-binding-completion-1",
+        }
+    ]
+    next_metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert next_metadata_row is not None
+    next_metadata = next_metadata_row["metadata"]
+    assert next_metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$child-thread-root",
+    }
+    assert next_metadata["completionDeliveryResult"] == {
+        "ok": True,
+        "deliveryId": 84,
+        "messageId": "msg-session-binding-completion-1",
     }
 
 
@@ -40968,6 +41412,9 @@ async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metada
 ) -> None:
     sandbox_root = tmp_path / "sandbox-workspace"
     sandbox_root.mkdir()
+    inbound_dir = sandbox_root / "media" / "inbound"
+    inbound_dir.mkdir(parents=True)
+    (inbound_dir / "incoming.png").write_bytes(b"image")
     database = Database(tmp_path / "gateway-send-sandbox-media.db")
     await database.initialize()
     session_key = "agent:main:subagent:sandbox-media"
@@ -41026,6 +41473,7 @@ async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metada
             "mediaUrl": " file:///workspace/assets/photo.png ",
             "mediaUrls": [
                 "/workspace/assets/photo.png",
+                "@/Users/steipete/.openclaw/media/inbound/incoming.png",
                 "https://example.com/remote.png",
             ],
             "channel": "slack",
@@ -41046,6 +41494,7 @@ async def test_send_normalizes_sandbox_workspace_media_paths_from_session_metada
             "idempotency_key": "idem-send-sandbox-media",
             "media_urls": [
                 str(sandbox_root / "assets" / "photo.png"),
+                str(inbound_dir / "incoming.png"),
                 "https://example.com/remote.png",
             ],
         }

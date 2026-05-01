@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import io
 import json
 import logging
 import math
 import mimetypes
 import re
+import secrets
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +19,8 @@ from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -71,6 +76,7 @@ from openzues.schemas import (
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
@@ -142,8 +148,24 @@ OUTBOUND_DELIVERY_BACKOFF_SECONDS = (5, 25, 120, 600)
 SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
-NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "whatsapp", "zalo"}
-PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
+LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
+NATIVE_PROVIDER_ROUTE_KINDS = {
+    "slack",
+    "telegram",
+    "discord",
+    "whatsapp",
+    "zalo",
+    "line",
+    "matrix",
+}
+PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
+    "slack",
+    "telegram",
+    "discord",
+    "line",
+    "matrix",
+    "zalo",
+}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
 DEFAULT_CRON_RETRY_MAX_ATTEMPTS = 3
@@ -155,6 +177,7 @@ DEFAULT_CRON_RETRY_ON = (
     "timeout",
     "server_error",
 )
+MATRIX_PROFILE_AVATAR_MAX_BYTES = 10 * 1024 * 1024
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -976,7 +999,7 @@ def _message_action_param_integer(
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
-    if normalized.startswith(("direct:", "dm:")):
+    if normalized.startswith(("direct:", "dm:", "user:", "matrix:user:", "matrix:@", "@")):
         return "direct"
     if normalized.startswith("group:"):
         return "group"
@@ -2218,6 +2241,1097 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
     return fallback
 
 
+def _line_push_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip() or LINE_API_BASE_URL
+    stripped = normalized.rstrip("/")
+    if stripped.endswith("/push"):
+        endpoint = stripped
+    else:
+        endpoint = f"{stripped}/push"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("LINE route target must be an http(s) Bot API message URL.")
+    return endpoint
+
+
+def _line_reply_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip() or LINE_API_BASE_URL
+    stripped = normalized.rstrip("/")
+    if stripped.endswith("/reply"):
+        endpoint = stripped
+    elif stripped.endswith("/push"):
+        endpoint = f"{stripped[: -len('/push')]}/reply"
+    else:
+        endpoint = f"{stripped}/reply"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("LINE route target must be an http(s) Bot API message URL.")
+    return endpoint
+
+
+def _line_bot_info_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip() or LINE_API_BASE_URL
+    stripped = normalized.rstrip("/")
+    for suffix in ("/message/push", "/message/reply", "/message"):
+        if stripped.endswith(suffix):
+            endpoint = f"{stripped[: -len(suffix)]}/info"
+            break
+    else:
+        endpoint = f"{stripped}/info"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("LINE route target must be an http(s) Bot API URL.")
+    return endpoint
+
+
+def _line_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("LINE route is missing a channel access token secret.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _line_chat_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    for prefix in ("line:group:", "line:room:", "line:user:", "line:"):
+        if normalized.lower().startswith(prefix):
+            normalized = normalized[len(prefix) :].strip()
+            break
+    return normalized or None
+
+
+def _line_validate_media_url(media_url: str) -> None:
+    parsed = urlparse(media_url)
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise RuntimeError("LINE outbound media currently requires a public HTTPS URL.")
+    if len(media_url) > 2000:
+        raise RuntimeError(
+            f"LINE outbound media URL must be 2000 chars or less (got {len(media_url)})."
+        )
+
+
+def _line_text_chunks(text: str, *, limit: int = 5000) -> list[str]:
+    return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
+
+
+def _normalize_line_location_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RuntimeError("LINE location must be an object.")
+    title = str(value.get("title") or "").strip()
+    address = str(value.get("address") or "").strip()
+    try:
+        latitude = float(value.get("latitude"))  # type: ignore[arg-type]
+        longitude = float(value.get("longitude"))  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "LINE location requires numeric latitude and longitude."
+        ) from exc
+    if not title or not address:
+        raise RuntimeError("LINE location requires title and address.")
+    return {
+        "title": title,
+        "address": address,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+
+
+def _normalize_line_quick_replies(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise RuntimeError("LINE quickReplies must be a list.")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _line_quick_reply_payload(labels: list[str]) -> dict[str, object] | None:
+    normalized = _normalize_line_quick_replies(labels)
+    if not normalized:
+        return None
+    return {
+        "items": [
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": label[:20],
+                    "text": label,
+                },
+            }
+            for label in normalized[:13]
+        ]
+    }
+
+
+def _normalize_line_flex_message_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RuntimeError("LINE flexMessage must be an object.")
+    raw_alt_text = value.get("altText")
+    alt_text = str(raw_alt_text or "")
+    contents = value.get("contents")
+    if not alt_text.strip():
+        raise RuntimeError("LINE flexMessage requires altText.")
+    if not isinstance(contents, Mapping):
+        raise RuntimeError("LINE flexMessage requires object contents.")
+    return {
+        "altText": alt_text,
+        "contents": dict(contents),
+    }
+
+
+def _normalize_line_template_message_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RuntimeError("LINE templateMessage must be an object.")
+    template_type = str(value.get("type") or "").strip().lower()
+    if template_type == "confirm":
+        required_keys = ("text", "confirmLabel", "confirmData", "cancelLabel", "cancelData")
+        missing = [
+            key
+            for key in required_keys
+            if not str(value.get(key) or "").strip()
+        ]
+        if missing:
+            raise RuntimeError(
+                "LINE confirm template requires " + ", ".join(missing) + "."
+            )
+        normalized: dict[str, object] = {
+            "type": "confirm",
+            "text": str(value["text"]),
+            "confirmLabel": str(value["confirmLabel"]),
+            "confirmData": str(value["confirmData"]),
+            "cancelLabel": str(value["cancelLabel"]),
+            "cancelData": str(value["cancelData"]),
+        }
+        alt_text = str(value.get("altText") or "")
+        if alt_text:
+            normalized["altText"] = alt_text
+        return normalized
+    if template_type == "buttons":
+        actions_value = value.get("actions")
+        if not isinstance(actions_value, (list, tuple)):
+            raise RuntimeError("LINE buttons template requires an actions list.")
+        actions: list[dict[str, object]] = []
+        for action in actions_value:
+            if not isinstance(action, Mapping):
+                raise RuntimeError("LINE buttons template actions must be objects.")
+            label = str(action.get("label") or "")
+            if not label.strip():
+                raise RuntimeError("LINE buttons template actions require label.")
+            normalized_action: dict[str, object] = {"label": label}
+            action_type = str(action.get("type") or "").strip().lower()
+            if action_type in {"message", "uri", "postback"}:
+                normalized_action["type"] = action_type
+            data = str(action.get("data") or "")
+            uri = str(action.get("uri") or "")
+            if data:
+                normalized_action["data"] = data
+            if uri:
+                normalized_action["uri"] = uri
+            actions.append(normalized_action)
+        title = str(value.get("title") or "")
+        text = str(value.get("text") or "")
+        if not title.strip() or not text.strip():
+            raise RuntimeError("LINE buttons template requires title and text.")
+        normalized = {
+            "type": "buttons",
+            "title": title,
+            "text": text,
+            "actions": actions,
+        }
+        thumbnail_image_url = str(value.get("thumbnailImageUrl") or "")
+        if thumbnail_image_url:
+            normalized["thumbnailImageUrl"] = thumbnail_image_url
+        alt_text = str(value.get("altText") or "")
+        if alt_text:
+            normalized["altText"] = alt_text
+        return normalized
+    if template_type == "carousel":
+        columns_value = value.get("columns")
+        if not isinstance(columns_value, (list, tuple)):
+            raise RuntimeError("LINE carousel template requires a columns list.")
+        columns: list[dict[str, object]] = []
+        for column in columns_value:
+            if not isinstance(column, Mapping):
+                raise RuntimeError("LINE carousel template columns must be objects.")
+            text = str(column.get("text") or "")
+            if not text.strip():
+                raise RuntimeError("LINE carousel template columns require text.")
+            column_actions_value = column.get("actions")
+            if not isinstance(column_actions_value, (list, tuple)):
+                raise RuntimeError("LINE carousel template columns require an actions list.")
+            column_actions: list[dict[str, object]] = []
+            for action in column_actions_value:
+                if not isinstance(action, Mapping):
+                    raise RuntimeError("LINE carousel template actions must be objects.")
+                label = str(action.get("label") or "")
+                if not label.strip():
+                    raise RuntimeError("LINE carousel template actions require label.")
+                normalized_column_action: dict[str, object] = {"label": label}
+                action_type = str(action.get("type") or "").strip().lower()
+                if action_type in {"message", "uri", "postback"}:
+                    normalized_column_action["type"] = action_type
+                data = str(action.get("data") or "")
+                uri = str(action.get("uri") or "")
+                if data:
+                    normalized_column_action["data"] = data
+                if uri:
+                    normalized_column_action["uri"] = uri
+                column_actions.append(normalized_column_action)
+            normalized_column: dict[str, object] = {
+                "text": text,
+                "actions": column_actions,
+            }
+            title = str(column.get("title") or "")
+            if title:
+                normalized_column["title"] = title
+            thumbnail_image_url = str(column.get("thumbnailImageUrl") or "")
+            if thumbnail_image_url:
+                normalized_column["thumbnailImageUrl"] = thumbnail_image_url
+            columns.append(normalized_column)
+        normalized = {
+            "type": "carousel",
+            "columns": columns,
+        }
+        alt_text = str(value.get("altText") or "")
+        if alt_text:
+            normalized["altText"] = alt_text
+        return normalized
+    raise RuntimeError(
+        "LINE templateMessage currently supports confirm, buttons, and carousel templates."
+    )
+
+
+def _line_template_action(label: str, data: str) -> dict[str, object]:
+    if data.startswith("http"):
+        return {
+            "type": "uri",
+            "label": label[:20],
+            "uri": data,
+        }
+    if "=" in data:
+        return {
+            "type": "postback",
+            "label": label[:20],
+            "data": data[:300],
+            "displayText": label[:300],
+        }
+    return {
+        "type": "message",
+        "label": label[:20],
+        "text": data,
+    }
+
+
+def _line_template_payload_action(action: Mapping[str, object]) -> dict[str, object]:
+    label = str(action["label"])
+    action_type = str(action.get("type") or "").strip().lower()
+    uri = str(action.get("uri") or "")
+    data = str(action.get("data") or "")
+    if action_type == "uri" and uri:
+        return {
+            "type": "uri",
+            "label": label[:20],
+            "uri": uri,
+        }
+    if action_type == "postback" and data:
+        return {
+            "type": "postback",
+            "label": label[:20],
+            "data": data[:300],
+            "displayText": label[:300],
+        }
+    return {
+        "type": "message",
+        "label": label[:20],
+        "text": data or label,
+    }
+
+
+def _line_template_message_payload(template_message: dict[str, object]) -> dict[str, object]:
+    template_type = str(template_message.get("type") or "").strip().lower()
+    if template_type == "confirm":
+        text = str(template_message["text"])
+        alt_text = str(template_message.get("altText") or text)
+        confirm_label = str(template_message["confirmLabel"])
+        confirm_data = str(template_message["confirmData"])
+        cancel_label = str(template_message["cancelLabel"])
+        cancel_data = str(template_message["cancelData"])
+        return {
+            "type": "template",
+            "altText": alt_text[:400],
+            "template": {
+                "type": "confirm",
+                "text": text[:240],
+                "actions": [
+                    _line_template_action(confirm_label, confirm_data),
+                    _line_template_action(cancel_label, cancel_data),
+                ],
+            },
+        }
+    if template_type == "buttons":
+        title = str(template_message["title"])
+        text = str(template_message["text"])
+        thumbnail_image_url = str(template_message.get("thumbnailImageUrl") or "")
+        text_limit = 160 if thumbnail_image_url.strip() else 60
+        actions = [
+            _line_template_payload_action(cast(Mapping[str, object], action))
+            for action in cast(list[object], template_message["actions"])[:4]
+        ]
+        template: dict[str, object] = {
+            "type": "buttons",
+            "title": title[:40],
+            "text": text[:text_limit],
+            "actions": actions,
+            "imageAspectRatio": "rectangle",
+            "imageSize": "cover",
+        }
+        if thumbnail_image_url:
+            template["thumbnailImageUrl"] = thumbnail_image_url
+        alt_text = str(template_message.get("altText") or f"{title}: {text}")
+        return {
+            "type": "template",
+            "altText": alt_text[:400],
+            "template": template,
+        }
+    if template_type == "carousel":
+        columns: list[dict[str, object]] = []
+        for column in cast(list[object], template_message["columns"])[:10]:
+            column_mapping = cast(Mapping[str, object], column)
+            actions = [
+                _line_template_payload_action(cast(Mapping[str, object], action))
+                for action in cast(list[object], column_mapping["actions"])[:3]
+            ]
+            column_payload: dict[str, object] = {
+                "text": str(column_mapping["text"])[:120],
+                "actions": actions,
+            }
+            title = str(column_mapping.get("title") or "")
+            if title:
+                column_payload["title"] = title[:40]
+            thumbnail_image_url = str(column_mapping.get("thumbnailImageUrl") or "")
+            if thumbnail_image_url:
+                column_payload["thumbnailImageUrl"] = thumbnail_image_url
+            columns.append(column_payload)
+        alt_text = str(template_message.get("altText") or "View carousel")
+        return {
+            "type": "template",
+            "altText": alt_text[:400],
+            "template": {
+                "type": "carousel",
+                "columns": columns,
+                "imageAspectRatio": "rectangle",
+                "imageSize": "cover",
+            },
+        }
+    raise RuntimeError(
+        "LINE templateMessage currently supports confirm, buttons, and carousel templates."
+    )
+
+
+def _matrix_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Matrix route is missing an access token secret.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _matrix_base_url(target: str | None) -> str:
+    normalized = str(target or "").strip().rstrip("/")
+    if _normalized_http_webhook_url(normalized) is None:
+        raise RuntimeError("Matrix route target must be an http(s) homeserver URL.")
+    for suffix in ("/_matrix/client/v3", "/_matrix/client/r0"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)].rstrip("/")
+    return normalized
+
+
+def _matrix_room_id(target: str | None) -> str | None:
+    normalized = str(target or "").strip()
+    while normalized:
+        lowered = normalized.lower()
+        matched = False
+        for prefix in ("matrix:", "room:", "channel:"):
+            if lowered.startswith(prefix):
+                normalized = normalized[len(prefix) :].strip()
+                matched = True
+                break
+        if not matched:
+            break
+    return normalized or None
+
+
+def _matrix_route_match_target(target: str | None) -> str | None:
+    normalized = _matrix_room_id(target)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered.startswith("user:"):
+        return normalized[len("user:") :].strip() or None
+    return normalized
+
+
+def _matrix_send_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_type: str,
+    transaction_id: str,
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/send/{quote(event_type, safe='')}/{quote(transaction_id, safe='')}"
+    )
+
+
+def _matrix_redact_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_id: str,
+    transaction_id: str,
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/redact/{quote(event_id, safe='')}/{quote(transaction_id, safe='')}"
+    )
+
+
+def _matrix_whoami_endpoint(target: str | None) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/account/whoami"
+
+
+def _matrix_profile_endpoint(target: str | None, *, user_id: str) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/profile/{quote(user_id, safe='')}"
+
+
+def _matrix_profile_displayname_endpoint(target: str | None, *, user_id: str) -> str:
+    return f"{_matrix_profile_endpoint(target, user_id=user_id)}/displayname"
+
+
+def _matrix_profile_avatar_url_endpoint(target: str | None, *, user_id: str) -> str:
+    return f"{_matrix_profile_endpoint(target, user_id=user_id)}/avatar_url"
+
+
+def _matrix_directory_room_endpoint(target: str | None, *, alias: str) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/directory/room/{quote(alias, safe='')}"
+
+
+def _matrix_direct_account_data_endpoint(target: str | None, *, user_id: str) -> str:
+    return (
+        f"{_matrix_base_url(target)}/_matrix/client/v3/user/{quote(user_id, safe='')}"
+        "/account_data/m.direct"
+    )
+
+
+def _matrix_state_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_type: str,
+    state_key: str = "",
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/state/{quote(event_type, safe='')}/{quote(state_key, safe='')}"
+    )
+
+
+def _matrix_event_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_id: str,
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/event/{quote(event_id, safe='')}"
+    )
+
+
+def _matrix_messages_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    direction: str,
+    limit: int,
+    token: str | None,
+) -> str:
+    base_url = _matrix_base_url(target)
+    query: dict[str, object] = {"dir": direction, "limit": max(1, limit)}
+    normalized_token = str(token or "").strip()
+    if normalized_token:
+        query["from"] = normalized_token
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/messages?{urlencode(query)}"
+    )
+
+
+def _matrix_media_upload_endpoint(
+    target: str | None,
+    *,
+    filename: str | None,
+) -> str:
+    base_url = _matrix_base_url(target)
+    normalized_filename = str(filename or "").strip()
+    query = f"?{urlencode({'filename': normalized_filename})}" if normalized_filename else ""
+    return f"{base_url}/_matrix/media/v3/upload{query}"
+
+
+def _matrix_unpadded_base64(data: bytes, *, urlsafe: bool = False) -> str:
+    encoder = base64.urlsafe_b64encode if urlsafe else base64.b64encode
+    return encoder(data).decode("ascii").rstrip("=")
+
+
+def _matrix_media_msgtype(content_type: str | None, filename: str | None) -> str:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    if normalized_content_type.startswith("image/"):
+        return "m.image"
+    if normalized_content_type.startswith("video/"):
+        return "m.video"
+    if normalized_content_type.startswith("audio/"):
+        return "m.audio"
+    if normalized_filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+        return "m.image"
+    if normalized_filename.endswith((".mp4", ".mov", ".webm", ".mkv")):
+        return "m.video"
+    if normalized_filename.endswith((".mp3", ".wav", ".ogg", ".m4a", ".flac")):
+        return "m.audio"
+    return "m.file"
+
+
+def _matrix_media_filename(media_url: str, fallback: str = "file") -> str:
+    parsed = urlparse(media_url)
+    name = unquote(Path(parsed.path).name).replace("\\", "_").replace("/", "_").strip()
+    return name[:120] if name else fallback
+
+
+def _matrix_image_dimensions(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> tuple[int, int] | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_png = normalized_content_type == "image/png" or normalized_filename.endswith(".png")
+    if is_png and media.startswith(b"\x89PNG\r\n\x1a\n") and len(media) >= 24:
+        width = int.from_bytes(media[16:20], "big")
+        height = int.from_bytes(media[20:24], "big")
+        if width > 0 and height > 0:
+            return width, height
+    is_gif = normalized_content_type == "image/gif" or normalized_filename.endswith(".gif")
+    if is_gif and media[:6] in {b"GIF87a", b"GIF89a"} and len(media) >= 10:
+        width = int.from_bytes(media[6:8], "little")
+        height = int.from_bytes(media[8:10], "little")
+        if width > 0 and height > 0:
+            return width, height
+    is_jpeg = normalized_content_type in {
+        "image/jpeg",
+        "image/jpg",
+    } or normalized_filename.endswith((".jpg", ".jpeg"))
+    if not is_jpeg or not media.startswith(b"\xff\xd8"):
+        return None
+    index = 2
+    while index + 9 < len(media):
+        if media[index] != 0xFF:
+            index += 1
+            continue
+        marker = media[index + 1]
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            height = int.from_bytes(media[index + 5 : index + 7], "big")
+            width = int.from_bytes(media[index + 7 : index + 9], "big")
+            if width > 0 and height > 0:
+                return width, height
+            return None
+        if marker in {0xD8, 0xD9}:
+            index += 2
+            continue
+        if index + 4 > len(media):
+            return None
+        segment_length = int.from_bytes(media[index + 2 : index + 4], "big")
+        if segment_length < 2:
+            return None
+        index += 2 + segment_length
+    return None
+
+
+def _matrix_wav_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_wav = normalized_content_type in {
+        "audio/wav",
+        "audio/wave",
+        "audio/x-wav",
+    } or normalized_filename.endswith(".wav")
+    if not is_wav or len(media) < 12 or not media.startswith(b"RIFF") or media[8:12] != b"WAVE":
+        return None
+    index = 12
+    byte_rate: int | None = None
+    data_size: int | None = None
+    while index + 8 <= len(media):
+        chunk_id = media[index : index + 4]
+        chunk_size = int.from_bytes(media[index + 4 : index + 8], "little")
+        chunk_start = index + 8
+        if chunk_id == b"fmt " and chunk_size >= 16 and chunk_start + 12 <= len(media):
+            byte_rate = int.from_bytes(media[chunk_start + 8 : chunk_start + 12], "little")
+        elif chunk_id == b"data":
+            data_size = chunk_size
+        if byte_rate and data_size is not None:
+            return max(0, round((data_size / byte_rate) * 1000))
+        index = chunk_start + chunk_size + (chunk_size % 2)
+    return None
+
+
+def _matrix_mp4_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_mp4_family = normalized_content_type in {
+        "audio/mp4",
+        "audio/x-m4a",
+        "video/mp4",
+        "video/quicktime",
+        "video/x-m4v",
+    } or normalized_filename.endswith((".m4a", ".m4v", ".mov", ".mp4"))
+    if not is_mp4_family:
+        return None
+
+    def parse_mvhd(payload_start: int, payload_end: int) -> int | None:
+        if payload_end - payload_start < 20:
+            return None
+        version = media[payload_start]
+        field_start = payload_start + 4
+        if version == 1:
+            if payload_end - field_start < 28:
+                return None
+            timescale = int.from_bytes(media[field_start + 16 : field_start + 20], "big")
+            duration = int.from_bytes(media[field_start + 20 : field_start + 28], "big")
+        else:
+            timescale = int.from_bytes(media[field_start + 8 : field_start + 12], "big")
+            duration = int.from_bytes(media[field_start + 12 : field_start + 16], "big")
+        if timescale <= 0:
+            return None
+        return max(0, round((duration / timescale) * 1000))
+
+    def scan_boxes(start: int, end: int, depth: int = 0) -> int | None:
+        if depth > 8:
+            return None
+        index = start
+        while index + 8 <= end:
+            box_size = int.from_bytes(media[index : index + 4], "big")
+            box_type = media[index + 4 : index + 8]
+            header_size = 8
+            if box_size == 1:
+                if index + 16 > end:
+                    return None
+                box_size = int.from_bytes(media[index + 8 : index + 16], "big")
+                header_size = 16
+            elif box_size == 0:
+                box_size = end - index
+            if box_size < header_size or index + box_size > end:
+                return None
+            payload_start = index + header_size
+            payload_end = index + box_size
+            if box_type == b"mvhd":
+                return parse_mvhd(payload_start, payload_end)
+            if box_type in {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"udta"}:
+                duration_ms = scan_boxes(payload_start, payload_end, depth + 1)
+                if duration_ms is not None:
+                    return duration_ms
+            index += box_size
+        return None
+
+    return scan_boxes(0, len(media))
+
+
+def _matrix_mp3_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_mp3 = normalized_content_type in {
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/x-mpeg",
+    } or normalized_filename.endswith(".mp3")
+    if not is_mp3 or len(media) < 4:
+        return None
+    sample_rates = {
+        0: (11025, 12000, 8000),
+        2: (22050, 24000, 16000),
+        3: (44100, 48000, 32000),
+    }
+    bitrate_tables = {
+        (3, 3): (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0),
+        (3, 2): (0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0),
+        (3, 1): (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0),
+        (2, 3): (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0),
+        (2, 2): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+        (2, 1): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+        (0, 3): (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0),
+        (0, 2): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+        (0, 1): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+    }
+
+    index = 0
+    if media.startswith(b"ID3") and len(media) >= 10:
+        tag_size = (
+            ((media[6] & 0x7F) << 21)
+            | ((media[7] & 0x7F) << 14)
+            | ((media[8] & 0x7F) << 7)
+            | (media[9] & 0x7F)
+        )
+        index = 10 + tag_size + (10 if media[5] & 0x10 else 0)
+
+    frames = 0
+    samples = 0
+    first_sample_rate: int | None = None
+    while index + 4 <= len(media):
+        if media[index] != 0xFF or (media[index + 1] & 0xE0) != 0xE0:
+            index += 1
+            continue
+        version = (media[index + 1] >> 3) & 0x03
+        layer = (media[index + 1] >> 1) & 0x03
+        bitrate_index = (media[index + 2] >> 4) & 0x0F
+        sample_rate_index = (media[index + 2] >> 2) & 0x03
+        padding = (media[index + 2] >> 1) & 0x01
+        if (
+            version == 1
+            or layer == 0
+            or sample_rate_index == 3
+            or bitrate_index in {0, 15}
+        ):
+            index += 1
+            continue
+        sample_rate = sample_rates[version][sample_rate_index]
+        bitrate_kbps = bitrate_tables[(version, layer)][bitrate_index]
+        if bitrate_kbps <= 0 or sample_rate <= 0:
+            index += 1
+            continue
+        if layer == 3:
+            frame_length = (((12 * bitrate_kbps * 1000) // sample_rate) + padding) * 4
+            frame_samples = 384
+        elif layer == 2:
+            frame_length = ((144 * bitrate_kbps * 1000) // sample_rate) + padding
+            frame_samples = 1152
+        else:
+            coefficient = 144 if version == 3 else 72
+            frame_length = ((coefficient * bitrate_kbps * 1000) // sample_rate) + padding
+            frame_samples = 1152 if version == 3 else 576
+        if frame_length <= 4:
+            index += 1
+            continue
+        if index + frame_length > len(media):
+            break
+        frames += 1
+        samples += frame_samples
+        first_sample_rate = first_sample_rate or sample_rate
+        index += frame_length
+    if frames <= 0 or first_sample_rate is None:
+        return None
+    return max(0, round((samples / first_sample_rate) * 1000))
+
+
+def _matrix_media_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    return _matrix_wav_duration_ms(media, content_type, filename) or _matrix_mp4_duration_ms(
+        media,
+        content_type,
+        filename,
+    ) or _matrix_mp3_duration_ms(
+        media,
+        content_type,
+        filename,
+    )
+
+
+def _is_matrix_mxc_uri(value: str | None) -> bool:
+    return str(value or "").strip().lower().startswith("mxc://")
+
+
+def _is_matrix_http_avatar_uri(value: str | None) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized.startswith("https://") or normalized.startswith("http://")
+
+
+def _matrix_joined_members_endpoint(target: str | None, *, room_id: str) -> str:
+    return (
+        f"{_matrix_base_url(target)}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        "/joined_members"
+    )
+
+
+def _matrix_joined_rooms_endpoint(target: str | None) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/joined_rooms"
+
+
+def _matrix_reaction_relations_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    message_id: str,
+    limit: int,
+) -> str:
+    base_url = _matrix_base_url(target)
+    query = urlencode({"dir": "b", "limit": max(1, limit)})
+    return (
+        f"{base_url}/_matrix/client/v1/rooms/{quote(room_id, safe='')}"
+        f"/relations/{quote(message_id, safe='')}/m.annotation/m.reaction?{query}"
+    )
+
+
+def _matrix_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
+    return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
+
+
+def _matrix_relation(
+    *,
+    thread_id: str | None,
+    reply_to_id: str | None,
+) -> dict[str, object] | None:
+    normalized_thread_id = str(thread_id or "").strip()
+    normalized_reply_to_id = str(reply_to_id or "").strip()
+    if normalized_thread_id:
+        return {
+            "rel_type": "m.thread",
+            "event_id": normalized_thread_id,
+            "is_falling_back": True,
+            "m.in_reply_to": {
+                "event_id": normalized_reply_to_id or normalized_thread_id,
+            },
+        }
+    if normalized_reply_to_id:
+        return {"m.in_reply_to": {"event_id": normalized_reply_to_id}}
+    return None
+
+
+def _matrix_transaction_id(event: dict[str, Any]) -> str:
+    for key in ("idempotencyKey", "runId", "deliveryId"):
+        candidate = str(event.get(key) or "").strip()
+        if candidate:
+            return candidate
+    return uuid.uuid4().hex
+
+
+def _matrix_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("event_id") or result.get("eventId") or result.get("messageId")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _matrix_reaction_chunk(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        return []
+    chunk = result.get("chunk")
+    if not isinstance(chunk, list):
+        return []
+    return [event for event in chunk if isinstance(event, dict)]
+
+
+def _matrix_reaction_key(event: dict[str, object]) -> str | None:
+    content = event.get("content")
+    if not isinstance(content, dict):
+        return None
+    relates_to = content.get("m.relates_to")
+    if not isinstance(relates_to, dict):
+        return None
+    rel_type = relates_to.get("rel_type")
+    if isinstance(rel_type, str) and rel_type.strip() and rel_type != "m.annotation":
+        return None
+    key = relates_to.get("key")
+    if not isinstance(key, str):
+        return None
+    return key.strip() or None
+
+
+def _matrix_reaction_event_id(event: dict[str, object]) -> str | None:
+    event_id = event.get("event_id") or event.get("eventId")
+    if not isinstance(event_id, str):
+        return None
+    return event_id.strip() or None
+
+
+def _matrix_reaction_sender(event: dict[str, object]) -> str | None:
+    sender = event.get("sender")
+    if not isinstance(sender, str):
+        return None
+    return sender.strip() or None
+
+
+def _matrix_reaction_summaries(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: dict[str, dict[str, object]] = {}
+    for event in events:
+        key = _matrix_reaction_key(event)
+        if key is None:
+            continue
+        entry = summaries.setdefault(key, {"key": key, "count": 0, "users": []})
+        current_count = entry.get("count")
+        entry["count"] = (current_count if isinstance(current_count, int) else 0) + 1
+        sender = _matrix_reaction_sender(event)
+        users = entry["users"]
+        if sender and isinstance(users, list) and sender not in users:
+            users.append(sender)
+    return list(summaries.values())
+
+
+def _matrix_pinned_event_ids(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    pinned = result.get("pinned")
+    if not isinstance(pinned, list):
+        return []
+    return [str(event_id).strip() for event_id in pinned if str(event_id).strip()]
+
+
+def _matrix_event_chunk(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        return []
+    chunk = result.get("chunk")
+    if not isinstance(chunk, list):
+        return []
+    return [event for event in chunk if isinstance(event, dict)]
+
+
+def _matrix_joined_member_ids(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    joined = result.get("joined")
+    if isinstance(joined, dict):
+        return [str(user_id).strip() for user_id in joined if str(user_id).strip()]
+    if isinstance(joined, list):
+        return [str(user_id).strip() for user_id in joined if str(user_id).strip()]
+    return []
+
+
+def _matrix_joined_room_ids(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    joined_rooms = result.get("joined_rooms") or result.get("joinedRooms")
+    if not isinstance(joined_rooms, list):
+        return []
+    seen: set[str] = set()
+    rooms: list[str] = []
+    for raw_room_id in joined_rooms:
+        room_id = str(raw_room_id).strip()
+        if room_id and room_id not in seen:
+            seen.add(room_id)
+            rooms.append(room_id)
+    return rooms
+
+
+def _matrix_optional_string_field(result: object, key: str) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    value = result.get(key)
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+def _matrix_message_summary(result: object) -> dict[str, object] | None:
+    if not isinstance(result, dict):
+        return None
+    unsigned = result.get("unsigned")
+    if isinstance(unsigned, dict) and unsigned.get("redacted_because") is not None:
+        return None
+    event_id = result.get("event_id") or result.get("eventId")
+    if not isinstance(event_id, str) or not event_id.strip():
+        return None
+    content = result.get("content")
+    if not isinstance(content, dict):
+        content = {}
+    summary: dict[str, object] = {"eventId": event_id.strip()}
+    sender = result.get("sender")
+    if isinstance(sender, str) and sender.strip():
+        summary["sender"] = sender.strip()
+    body = content.get("body")
+    if isinstance(body, str):
+        summary["body"] = body
+    msgtype = content.get("msgtype")
+    if isinstance(msgtype, str) and msgtype.strip():
+        summary["msgtype"] = msgtype.strip()
+    timestamp = result.get("origin_server_ts") or result.get("timestamp")
+    if isinstance(timestamp, int) and not isinstance(timestamp, bool):
+        summary["timestamp"] = timestamp
+    relates = content.get("m.relates_to")
+    if isinstance(relates, dict):
+        rel_type = relates.get("rel_type")
+        related_event_id = relates.get("event_id")
+        in_reply_to = relates.get("m.in_reply_to")
+        if not isinstance(related_event_id, str) and isinstance(in_reply_to, dict):
+            maybe_reply_id = in_reply_to.get("event_id")
+            if isinstance(maybe_reply_id, str):
+                related_event_id = maybe_reply_id
+        relates_to: dict[str, object] = {}
+        if isinstance(rel_type, str) and rel_type.strip():
+            relates_to["relType"] = rel_type.strip()
+        if isinstance(related_event_id, str) and related_event_id.strip():
+            relates_to["eventId"] = related_event_id.strip()
+        if relates_to:
+            summary["relatesTo"] = relates_to
+    return summary
+
+
+def _matrix_poll_fallback_text(question: str, options: list[str]) -> str:
+    return "\n".join(
+        [question, *[f"{index}. {option}" for index, option in enumerate(options, start=1)]]
+    )
+
+
+def _matrix_poll_start_content(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+) -> dict[str, object]:
+    normalized_max_selections = max(1, min(max_selections or 1, len(options)))
+    fallback_text = _matrix_poll_fallback_text(question, options)
+    return {
+        "m.poll.start": {
+            "question": {"m.text": question},
+            "kind": (
+                "m.poll.undisclosed"
+                if normalized_max_selections > 1
+                else "m.poll.disclosed"
+            ),
+            "max_selections": normalized_max_selections,
+            "answers": [
+                {"id": f"answer{index}", "m.text": option}
+                for index, option in enumerate(options, start=1)
+            ],
+        },
+        "m.text": fallback_text,
+        "org.matrix.msc1767.text": fallback_text,
+    }
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -2651,6 +3765,8 @@ def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, obje
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "primaryMessageId",
+        "messageIds",
         "meta",
     ):
         value = result.get(key)
@@ -2959,17 +4075,21 @@ def _conversation_target_peer_id_matches(
 ) -> bool:
     if route_peer_id == event_peer_id:
         return True
-    if channel != "telegram":
-        return False
-    route_target = _parse_telegram_delivery_target(route_peer_id)
-    event_target = _parse_telegram_delivery_target(event_peer_id)
-    route_chat_id = str(route_target.get("chatId") or "").strip().lower()
-    event_chat_id = str(event_target.get("chatId") or "").strip().lower()
-    if not route_chat_id or route_chat_id != event_chat_id:
-        return False
-    route_thread_id = str(route_target.get("threadId") or "").strip()
-    event_thread_id = str(event_target.get("threadId") or "").strip()
-    return not route_thread_id or route_thread_id == event_thread_id
+    if channel == "telegram":
+        route_target = _parse_telegram_delivery_target(route_peer_id)
+        event_target = _parse_telegram_delivery_target(event_peer_id)
+        route_chat_id = str(route_target.get("chatId") or "").strip().lower()
+        event_chat_id = str(event_target.get("chatId") or "").strip().lower()
+        if not route_chat_id or route_chat_id != event_chat_id:
+            return False
+        route_thread_id = str(route_target.get("threadId") or "").strip()
+        event_thread_id = str(event_target.get("threadId") or "").strip()
+        return not route_thread_id or route_thread_id == event_thread_id
+    if channel == "matrix":
+        route_room_id = str(_matrix_route_match_target(route_peer_id) or "").strip().lower()
+        event_room_id = str(_matrix_route_match_target(event_peer_id) or "").strip().lower()
+        return bool(route_room_id and route_room_id == event_room_id)
+    return False
 
 
 def _conversation_target_route_match(
@@ -4968,6 +6088,7 @@ class OpsMeshService:
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
+    gateway_config_service: GatewayConfigService | None = None
     canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
@@ -5214,10 +6335,49 @@ class OpsMeshService:
         event_payload = delivery_row.get("event_payload")
         payload = event_payload if isinstance(event_payload, dict) else {}
         route_scope = dict(delivery_row.get("route_scope") or {})
+        runtime_session_key = (
+            canonicalize_session_key(payload.get("sourceSessionKey"))
+            or canonicalize_session_key(route_scope.get("runtime_session_key"))
+            or session_key
+        )
         conversation_target = _normalize_conversation_target(
             delivery_row.get("conversation_target")
         ) or _normalize_conversation_target(payload.get("conversationTarget"))
         replay_message = _saved_outbound_delivery_replay_message(delivery_row)
+        gateway_client_scopes = _normalize_gateway_client_scopes(
+            payload.get("gatewayClientScopes")
+        )
+        requester_session_key = canonicalize_session_key(payload.get("requesterSessionKey"))
+        requester_account_id = _normalize_optional_payload_string(
+            payload.get("requesterAccountId")
+        )
+        requester_sender_id = _normalize_optional_payload_string(
+            payload.get("requesterSenderId")
+        )
+        requester_sender_name = _normalize_optional_payload_string(
+            payload.get("requesterSenderName")
+        )
+        requester_sender_username = _normalize_optional_payload_string(
+            payload.get("requesterSenderUsername")
+        )
+        requester_sender_e164 = _normalize_optional_payload_string(
+            payload.get("requesterSenderE164")
+        )
+        if requester_account_id is None and any(
+            value is not None
+            for value in (
+                requester_session_key,
+                requester_sender_id,
+                requester_sender_name,
+                requester_sender_username,
+                requester_sender_e164,
+            )
+        ):
+            requester_account_id = _normalize_optional_payload_string(
+                payload.get("accountId")
+                or (conversation_target or {}).get("account_id")
+                or route_scope.get("resolved_account_id")
+            )
         runtime = self._resolve_outbound_runtime_service()
         attempt_started_at = utcnow()
         existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
@@ -5247,7 +6407,7 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
-        if not replay_message:
+        if not replay_message and not isinstance(payload.get("location"), dict):
             error = f"Saved {route_kind} delivery is missing its replay message."
             await self.database.update_outbound_delivery(
                 delivery_id,
@@ -5258,6 +6418,7 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
+        replay_message_text = replay_message or ""
         try:
             if event_type == "gateway/poll":
                 raw_options = payload.get("options")
@@ -5267,8 +6428,8 @@ class OpsMeshService:
                     else ()
                 )
                 runtime_result = await runtime.deliver_poll(
-                    session_key=session_key,
-                    message=replay_message,
+                    session_key=runtime_session_key,
+                    message=replay_message_text,
                     channel=str(
                         payload.get("channel")
                         or (conversation_target or {}).get("channel")
@@ -5306,6 +6467,7 @@ class OpsMeshService:
                         payload.get("threadId") or route_scope.get("thread_id") or ""
                     ).strip()
                     or None,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
             elif event_type == "gateway/send":
                 raw_media_url = payload.get("mediaUrl")
@@ -5317,8 +6479,8 @@ class OpsMeshService:
                     else None
                 )
                 runtime_result = await runtime.deliver_message(
-                    session_key=session_key,
-                    message=replay_message,
+                    session_key=runtime_session_key,
+                    message=replay_message_text,
                     channel=str(
                         payload.get("channel")
                         or (conversation_target or {}).get("channel")
@@ -5337,9 +6499,24 @@ class OpsMeshService:
                             media_urls=media_urls,
                         )
                     ),
+                    media_kind=str(payload.get("mediaKind") or "").strip() or None,
+                    preview_image_url=str(payload.get("previewImageUrl") or "").strip()
+                    or None,
+                    duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    location=_normalize_line_location_payload(payload.get("location")),
+                    quick_replies=tuple(
+                        _normalize_line_quick_replies(payload.get("quickReplies"))
+                    ),
+                    flex_message=_normalize_line_flex_message_payload(
+                        payload.get("flexMessage")
+                    ),
+                    template_message=_normalize_line_template_message_payload(
+                        payload.get("templateMessage")
+                    ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
                     account_id=str(
@@ -5354,11 +6531,18 @@ class OpsMeshService:
                     ).strip()
                     or None,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
+                    requester_session_key=requester_session_key,
+                    requester_account_id=requester_account_id,
+                    requester_sender_id=requester_sender_id,
+                    requester_sender_name=requester_sender_name,
+                    requester_sender_username=requester_sender_username,
+                    requester_sender_e164=requester_sender_e164,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
             else:
                 runtime_result = await runtime.deliver_message(
-                    session_key=session_key,
-                    message=replay_message,
+                    session_key=runtime_session_key,
+                    message=replay_message_text,
                 )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
@@ -5373,6 +6557,9 @@ class OpsMeshService:
             return False, error
         delivered_route_scope = dict(route_scope)
         delivered_route_scope["transport_runtime"] = runtime_result.transport.runtime
+        if runtime_session_key and runtime_session_key != session_key:
+            delivered_route_scope.setdefault("source_session_key", runtime_session_key)
+            delivered_route_scope["runtime_session_key"] = runtime_session_key
         provider_result = _serialize_gateway_provider_result(runtime_result.native_result)
         if provider_result:
             delivered_route_scope["provider_result"] = provider_result
@@ -6654,6 +7841,60 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "line":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_line_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "matrix":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_matrix_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
+        if route_kind == "zalo":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_zalo_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         try:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,
@@ -7416,6 +8657,137 @@ class OpsMeshService:
             payload["application"] = application
         return payload
 
+    def _probe_matrix_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _matrix_whoami_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Matrix API returned a non-JSON whoami response.")
+        user_id = str(result.get("user_id") or "").strip()
+        if not user_id:
+            error = str(
+                result.get("error")
+                or result.get("errcode")
+                or "Matrix whoami did not return user_id."
+            )
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "matrix",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "provider": "matrix",
+            "runtime": "native-provider-backed",
+            "userId": user_id,
+            "timeoutMs": timeout_ms,
+        }
+        device_id = str(result.get("device_id") or "").strip()
+        if device_id:
+            payload["deviceId"] = device_id
+        return payload
+
+    def _probe_line_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _line_bot_info_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_line_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("LINE API returned a non-JSON bot info response.")
+        display_name = str(result.get("displayName") or "").strip()
+        user_id = str(result.get("userId") or "").strip()
+        if not display_name and not user_id:
+            error = str(result.get("message") or result.get("error") or "Invalid LINE bot info.")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "line",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        bot: dict[str, str] = {}
+        for key in ("displayName", "userId", "basicId", "pictureUrl"):
+            value = str(result.get(key) or "").strip()
+            if value:
+                bot[key] = value
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "line",
+            "runtime": "native-provider-backed",
+            "bot": bot,
+            "timeoutMs": timeout_ms,
+        }
+
+    def _probe_zalo_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        token = _zalo_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _zalo_api_endpoint(str(route.get("target") or ""), token, "getMe"),
+            {},
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Zalo API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "zalo",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        bot = result.get("result")
+        if not isinstance(bot, dict):
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "zalo",
+                "runtime": "native-provider-backed",
+                "error": "Invalid response from Zalo API",
+                "timeoutMs": timeout_ms,
+            }
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "zalo",
+            "runtime": "native-provider-backed",
+            "bot": {
+                str(key): value
+                for key, value in bot.items()
+                if isinstance(value, (str, int, float, bool, list, dict))
+                and value not in ("", [], {})
+            },
+            "timeoutMs": timeout_ms,
+        }
+
     async def _resolve_explicit_delivery_conversation_target(
         self,
         conversation_target: ConversationTargetView,
@@ -7489,6 +8861,10 @@ class OpsMeshService:
             return self._post_whatsapp_provider_event
         if route_kind == "zalo":
             return self._post_zalo_provider_event
+        if route_kind == "line":
+            return self._post_line_provider_event
+        if route_kind == "matrix":
+            return self._post_matrix_provider_event
         return self._post_webhook
 
     async def dispatch_message_action(
@@ -7499,6 +8875,168 @@ class OpsMeshService:
         action = request.action.strip()
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
+        if channel == "matrix" and action in {"send", "sendMessage"}:
+            return await self._dispatch_matrix_send_message_action(request)
+        if channel == "matrix" and action in {"edit", "editMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action in {"delete", "deleteMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action react."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action == "reactions":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action reactions."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_reactions_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action in {"pinMessage", "unpinMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_pin_mutation_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action == "listPins":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action listPins."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_list_pins_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action == "readMessages":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action readMessages."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_read_messages_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action in {"memberInfo", "member-info"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_member_info_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action in {"channelInfo", "channel-info"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_channel_info_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action in {"setProfile", "set-profile"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_set_profile_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -8106,6 +9644,1021 @@ class OpsMeshService:
         if not message_id:
             raise RuntimeError("Zalo API response did not include a message id.")
         return {"ok": True, "to": target, "messageId": message_id}
+
+    async def _dispatch_matrix_send_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        if target is None:
+            raise RuntimeError("Matrix send requires to.")
+        media_url = (
+            _message_action_param_raw_string(request.params, "mediaUrl")
+            or _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "filePath")
+            or _message_action_param_raw_string(request.params, "path")
+        )
+        message = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        )
+        if message is None:
+            message = _message_action_param_string(
+                request.params,
+                "content",
+                required=media_url is None,
+                allow_empty=True,
+            )
+        message = message or ""
+        conversation_target = _normalize_conversation_target(
+            ConversationTargetView(
+                channel="matrix",
+                account_id=request.account_id,
+                peer_kind=_provider_peer_kind_from_target(target),
+                peer_id=target,
+            )
+        )
+        if conversation_target is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "gateway outbound provider route is missing a conversation target"
+            )
+        payload: dict[str, Any] = {
+            "channel": "matrix",
+            "to": target,
+            "message": message,
+        }
+        if media_url is not None:
+            payload["mediaUrl"] = media_url
+        reply_to_id = (
+            _message_action_param_string(request.params, "replyToId")
+            or _message_action_param_string(request.params, "replyTo")
+        )
+        if reply_to_id is not None:
+            payload["replyToId"] = reply_to_id
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            payload["threadId"] = thread_id
+        audio_as_voice = _message_action_param_bool(
+            request.params,
+            "audioAsVoice",
+        )
+        if audio_as_voice is None:
+            audio_as_voice = _message_action_param_bool(request.params, "asVoice")
+        if audio_as_voice is not None:
+            payload["audioAsVoice"] = audio_as_voice
+        if request.account_id is not None:
+            payload["accountId"] = request.account_id
+        if request.session_key is not None:
+            payload["sessionKey"] = request.session_key
+        if request.agent_id is not None:
+            payload["agentId"] = request.agent_id
+        if request.idempotency_key is not None:
+            payload["idempotencyKey"] = request.idempotency_key
+        result = await self._post_provider_route_event(
+            event_type="gateway/send",
+            conversation_target=conversation_target,
+            payload=payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Matrix API returned a non-JSON response.")
+        provider_result = _serialize_gateway_response_provider_result(result)
+        if not provider_result.get("messageId"):
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {"ok": True, "result": provider_result}
+
+    def _dispatch_matrix_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix edit requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix edit requires roomId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix edit requires messageId.")
+        content_value = _message_action_param_string(
+            request.params,
+            "content",
+            allow_empty=True,
+        )
+        if content_value is None:
+            content_value = _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+        content = (content_value or "").strip()
+        if not content:
+            raise RuntimeError("Matrix edit requires content.")
+        relation: dict[str, object] = {
+            "rel_type": "m.replace",
+            "event_id": message_id,
+        }
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            relation["m.in_reply_to"] = {"event_id": thread_id}
+        payload: dict[str, object] = {
+            "msgtype": "m.text",
+            "body": f"* {content}",
+            "m.new_content": {
+                "msgtype": "m.text",
+                "body": content,
+            },
+            "m.relates_to": relation,
+        }
+        result = self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.room.message",
+                transaction_id=request.idempotency_key or uuid.uuid4().hex,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        event_id = _matrix_message_id(result)
+        if event_id is None:
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {
+            "ok": True,
+            "result": {
+                "eventId": event_id,
+            },
+        }
+
+    def _dispatch_matrix_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix delete requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix delete requires roomId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix delete requires messageId.")
+        reason = _message_action_param_string(request.params, "reason")
+        payload: dict[str, object] = {}
+        if reason is not None:
+            payload["reason"] = reason
+        self._put_json_provider(
+            _matrix_redact_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_id=message_id,
+                transaction_id=request.idempotency_key or uuid.uuid4().hex,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        return {
+            "ok": True,
+            "deleted": True,
+        }
+
+    def _dispatch_matrix_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix reaction requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix reaction requires roomId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix reaction requires a messageId.")
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            allow_empty=True,
+        )
+        normalized_emoji = str(emoji or "").strip()
+        remove = _message_action_param_bool(request.params, "remove") is True
+        if remove and not normalized_emoji:
+            raise RuntimeError("Emoji is required to remove a Matrix reaction.")
+        if remove or not normalized_emoji:
+            removed = self._remove_own_matrix_reactions(
+                route,
+                room_id=room_id,
+                message_id=message_id,
+                secret_token=secret_token,
+                emoji=normalized_emoji if remove else None,
+                transaction_prefix=request.idempotency_key or uuid.uuid4().hex,
+            )
+            return {
+                "ok": True,
+                "removed": removed,
+            }
+        payload: dict[str, object] = {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": message_id,
+                "key": normalized_emoji,
+            },
+        }
+        self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.reaction",
+                transaction_id=request.idempotency_key or uuid.uuid4().hex,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        return {
+            "ok": True,
+            "added": normalized_emoji,
+        }
+
+    def _dispatch_matrix_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix reactions requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix reactions requires roomId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix reaction requires a messageId.")
+        limit = max(1, _message_action_param_integer(request.params, "limit") or 100)
+        events = self._matrix_reaction_events(
+            route,
+            room_id=room_id,
+            message_id=message_id,
+            limit=limit,
+            secret_token=secret_token,
+        )
+        return {
+            "ok": True,
+            "reactions": _matrix_reaction_summaries(events),
+        }
+
+    def _matrix_reaction_events(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        message_id: str,
+        limit: int,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        result = self._get_json_provider_url(
+            _matrix_reaction_relations_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                message_id=message_id,
+                limit=limit,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        return _matrix_reaction_chunk(result)
+
+    def _matrix_self_user_id(
+        self,
+        route: dict[str, Any],
+        *,
+        secret_token: str | None,
+    ) -> str | None:
+        result = self._get_json_provider_url(
+            _matrix_whoami_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            return None
+        user_id = result.get("user_id") or result.get("userId")
+        if not isinstance(user_id, str):
+            return None
+        return user_id.strip() or None
+
+    def _remove_own_matrix_reactions(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        message_id: str,
+        secret_token: str | None,
+        emoji: str | None,
+        transaction_prefix: str,
+    ) -> int:
+        self_user_id = self._matrix_self_user_id(route, secret_token=secret_token)
+        if self_user_id is None:
+            return 0
+        target_emoji = str(emoji or "").strip() or None
+        events = self._matrix_reaction_events(
+            route,
+            room_id=room_id,
+            message_id=message_id,
+            limit=200,
+            secret_token=secret_token,
+        )
+        redaction_ids: list[str] = []
+        for event in events:
+            if _matrix_reaction_sender(event) != self_user_id:
+                continue
+            if target_emoji is not None and _matrix_reaction_key(event) != target_emoji:
+                continue
+            event_id = _matrix_reaction_event_id(event)
+            if event_id is not None:
+                redaction_ids.append(event_id)
+        for index, event_id in enumerate(redaction_ids, start=1):
+            self._put_json_provider(
+                _matrix_redact_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_id=event_id,
+                    transaction_id=f"{transaction_prefix}-{index}",
+                ),
+                {},
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        return len(redaction_ids)
+
+    def _dispatch_matrix_pin_mutation_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix pin")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix pin requires messageId.")
+        pinned = self._matrix_pinned_events(
+            route,
+            room_id=room_id,
+            secret_token=secret_token,
+        )
+        if request.action == "pinMessage":
+            next_pinned = pinned if message_id in pinned else [*pinned, message_id]
+        else:
+            next_pinned = [event_id for event_id in pinned if event_id != message_id]
+        self._put_json_provider(
+            _matrix_state_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.room.pinned_events",
+            ),
+            {"pinned": next_pinned},
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        return {
+            "ok": True,
+            "pinned": next_pinned,
+        }
+
+    def _dispatch_matrix_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix pins")
+        pinned = self._matrix_pinned_events(
+            route,
+            room_id=room_id,
+            secret_token=secret_token,
+        )
+        events: list[dict[str, object]] = []
+        for event_id in pinned:
+            summary = self._matrix_fetch_event_summary(
+                route,
+                room_id=room_id,
+                event_id=event_id,
+                secret_token=secret_token,
+            )
+            if summary is not None:
+                events.append(summary)
+        return {
+            "ok": True,
+            "pinned": pinned,
+            "events": events,
+        }
+
+    def _dispatch_matrix_read_messages_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix readMessages")
+        limit = max(1, _message_action_param_integer(request.params, "limit") or 20)
+        before = _message_action_param_string(request.params, "before")
+        after = _message_action_param_string(request.params, "after")
+        token = before or after
+        direction = "f" if after is not None else "b"
+        result = self._get_json_provider_url(
+            _matrix_messages_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                direction=direction,
+                limit=limit,
+                token=token,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        messages: list[dict[str, object]] = []
+        for event in _matrix_event_chunk(result):
+            event_type = event.get("type")
+            if isinstance(event_type, str) and event_type != "m.room.message":
+                continue
+            summary = _matrix_message_summary(event)
+            if summary is not None:
+                messages.append(summary)
+        next_batch: object | None = None
+        prev_batch: object | None = None
+        if isinstance(result, dict):
+            maybe_end = result.get("end")
+            maybe_start = result.get("start")
+            if isinstance(maybe_end, str):
+                next_batch = maybe_end
+            if isinstance(maybe_start, str):
+                prev_batch = maybe_start
+        return {
+            "ok": True,
+            "messages": messages,
+            "nextBatch": next_batch,
+            "prevBatch": prev_batch,
+        }
+
+    def _dispatch_matrix_member_info_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        user_id = _message_action_param_string(request.params, "userId", required=True)
+        if user_id is None:
+            raise RuntimeError("Matrix memberInfo requires userId.")
+        room_id: str | None = None
+        room_target = _message_action_param_string(request.params, "roomId") or (
+            _message_action_param_string(request.params, "channelId")
+        )
+        if room_target is not None:
+            room_id = _matrix_room_id(room_target)
+        profile = self._get_json_provider_url(
+            _matrix_profile_endpoint(str(route.get("target") or ""), user_id=user_id),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        display_name = _matrix_optional_string_field(profile, "displayname")
+        avatar_url = _matrix_optional_string_field(profile, "avatar_url")
+        return {
+            "ok": True,
+            "member": {
+                "userId": user_id,
+                "profile": {
+                    "displayName": display_name,
+                    "avatarUrl": avatar_url,
+                },
+                "membership": None,
+                "powerLevel": None,
+                "displayName": display_name,
+                "roomId": room_id,
+            },
+        }
+
+    def _dispatch_matrix_channel_info_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix channelInfo")
+        name_state = self._matrix_room_state_event(
+            route,
+            room_id=room_id,
+            event_type="m.room.name",
+            secret_token=secret_token,
+        )
+        topic_state = self._matrix_room_state_event(
+            route,
+            room_id=room_id,
+            event_type="m.room.topic",
+            secret_token=secret_token,
+        )
+        alias_state = self._matrix_room_state_event(
+            route,
+            room_id=room_id,
+            event_type="m.room.canonical_alias",
+            secret_token=secret_token,
+        )
+        member_count = self._matrix_joined_member_count(
+            route,
+            room_id=room_id,
+            secret_token=secret_token,
+        )
+        return {
+            "ok": True,
+            "room": {
+                "roomId": room_id,
+                "name": _matrix_optional_string_field(name_state, "name"),
+                "topic": _matrix_optional_string_field(topic_state, "topic"),
+                "canonicalAlias": _matrix_optional_string_field(alias_state, "alias"),
+                "altAliases": [],
+                "memberCount": member_count,
+            },
+        }
+
+    def _dispatch_matrix_set_profile_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        display_name = _message_action_param_string(request.params, "displayName") or (
+            _message_action_param_string(request.params, "name")
+        )
+        avatar_url = _message_action_param_string(request.params, "avatarUrl")
+        avatar_path = (
+            _message_action_param_string(request.params, "avatarPath")
+            or _message_action_param_string(request.params, "path")
+            or _message_action_param_string(request.params, "filePath")
+        )
+        if display_name is None and avatar_url is None and avatar_path is None:
+            raise RuntimeError("Provide name/displayName and/or avatarUrl/avatarPath.")
+
+        uploaded_avatar_source: str | None = None
+        converted_avatar_from_http = False
+        resolved_avatar_url: str | None = None
+        if avatar_path is not None:
+            media, content_type, filename = self._download_matrix_media_url(avatar_path)
+            if len(media) > MATRIX_PROFILE_AVATAR_MAX_BYTES:
+                raise RuntimeError("Matrix avatar media exceeds 10 MiB.")
+            resolved_avatar_url = self._upload_matrix_media(
+                route,
+                media,
+                content_type=content_type,
+                filename=filename,
+                secret_token=secret_token,
+            )
+            uploaded_avatar_source = "path"
+        elif avatar_url is not None:
+            if _is_matrix_mxc_uri(avatar_url):
+                resolved_avatar_url = avatar_url
+            elif _is_matrix_http_avatar_uri(avatar_url):
+                media, content_type, filename = self._download_matrix_media_url(avatar_url)
+                if len(media) > MATRIX_PROFILE_AVATAR_MAX_BYTES:
+                    raise RuntimeError("Matrix avatar media exceeds 10 MiB.")
+                resolved_avatar_url = self._upload_matrix_media(
+                    route,
+                    media,
+                    content_type=content_type,
+                    filename=filename,
+                    secret_token=secret_token,
+                )
+                uploaded_avatar_source = "http"
+                converted_avatar_from_http = True
+            else:
+                raise RuntimeError(
+                    "Matrix avatar URL must be an mxc:// URI or an http(s) URL."
+                )
+
+        user_id = self._matrix_self_user_id(route, secret_token=secret_token)
+        if user_id is None:
+            raise RuntimeError("Matrix whoami did not return user_id")
+
+        current_display_name: str | None = None
+        current_avatar_url: str | None = None
+        try:
+            current_profile = self._get_json_provider_url(
+                _matrix_profile_endpoint(str(route.get("target") or ""), user_id=user_id),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+            current_display_name = _matrix_optional_string_field(
+                current_profile,
+                "displayname",
+            )
+            current_avatar_url = _matrix_optional_string_field(current_profile, "avatar_url")
+        except RuntimeError:
+            pass
+
+        display_name_updated = False
+        avatar_updated = False
+        if display_name is not None and current_display_name != display_name:
+            self._put_json_provider(
+                _matrix_profile_displayname_endpoint(
+                    str(route.get("target") or ""),
+                    user_id=user_id,
+                ),
+                {"displayname": display_name},
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+            display_name_updated = True
+        if resolved_avatar_url is not None and current_avatar_url != resolved_avatar_url:
+            self._put_json_provider(
+                _matrix_profile_avatar_url_endpoint(
+                    str(route.get("target") or ""),
+                    user_id=user_id,
+                ),
+                {"avatar_url": resolved_avatar_url},
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+            avatar_updated = True
+
+        persisted_avatar_url = (
+            resolved_avatar_url
+            if uploaded_avatar_source is not None and resolved_avatar_url is not None
+            else avatar_url
+        )
+        config_path = self._persist_matrix_profile_config(
+            account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            display_name=display_name,
+            avatar_url=persisted_avatar_url,
+        )
+        return {
+            "ok": True,
+            "accountId": request.account_id or DEFAULT_ACCOUNT_ID,
+            "displayName": display_name,
+            "avatarUrl": persisted_avatar_url,
+            "profile": {
+                "displayNameUpdated": display_name_updated,
+                "avatarUpdated": avatar_updated,
+                "resolvedAvatarUrl": resolved_avatar_url,
+                "uploadedAvatarSource": uploaded_avatar_source,
+                "convertedAvatarFromHttp": converted_avatar_from_http,
+            },
+            "configPath": config_path,
+        }
+
+    def _persist_matrix_profile_config(
+        self,
+        *,
+        account_id: str,
+        display_name: str | None,
+        avatar_url: str | None,
+    ) -> str | None:
+        if self.gateway_config_service is None:
+            return None
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        matrix = channels.get("matrix") if isinstance(channels, dict) else None
+        accounts = matrix.get("accounts") if isinstance(matrix, dict) else None
+        top_level = normalized_account_id == DEFAULT_ACCOUNT_ID and not (
+            isinstance(accounts, dict) and accounts
+        )
+        patch_fields: dict[str, object] = {}
+        if display_name is not None:
+            patch_fields["name"] = display_name
+        if avatar_url is not None:
+            patch_fields["avatarUrl"] = avatar_url
+        if not patch_fields:
+            if top_level:
+                return "channels.matrix"
+            return f"channels.matrix.accounts.{normalized_account_id}"
+        if top_level:
+            patch = {"channels": {"matrix": patch_fields}}
+            config_path = "channels.matrix"
+        else:
+            patch = {
+                "channels": {
+                    "matrix": {
+                        "accounts": {
+                            normalized_account_id: patch_fields,
+                        }
+                    }
+                }
+            }
+            config_path = f"channels.matrix.accounts.{normalized_account_id}"
+        self.gateway_config_service.patch_object(patch)
+        return config_path
+
+    def _matrix_room_state_event(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        event_type: str,
+        secret_token: str | None,
+    ) -> object | None:
+        try:
+            return self._get_json_provider_url(
+                _matrix_state_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type=event_type,
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+
+    def _matrix_joined_member_count(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> int | None:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_joined_members_endpoint(str(route.get("target") or ""), room_id=room_id),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+        if not isinstance(result, dict):
+            return None
+        joined = result.get("joined")
+        if isinstance(joined, dict):
+            return len(joined)
+        if isinstance(joined, list):
+            return len(joined)
+        return None
+
+    def _matrix_joined_member_ids(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> list[str]:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_joined_members_endpoint(str(route.get("target") or ""), room_id=room_id),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return []
+        return _matrix_joined_member_ids(result)
+
+    def _resolve_matrix_direct_room_id(
+        self,
+        route: dict[str, Any],
+        *,
+        remote_user_id: str,
+        secret_token: str | None,
+    ) -> str:
+        if not remote_user_id.startswith("@") or ":" not in remote_user_id:
+            raise RuntimeError(f'Matrix user IDs must be fully qualified (got "{remote_user_id}")')
+        self_user_id = self._matrix_self_user_id(route, secret_token=secret_token)
+        if self_user_id is None:
+            raise RuntimeError("Matrix whoami did not return user_id")
+        direct_data = self._get_json_provider_url(
+            _matrix_direct_account_data_endpoint(
+                str(route.get("target") or ""),
+                user_id=self_user_id,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(direct_data, dict):
+            raise RuntimeError(f"No direct room found for {remote_user_id} (m.direct missing)")
+        room_ids_raw = direct_data.get(remote_user_id)
+        room_ids = (
+            [str(room_id).strip() for room_id in room_ids_raw if str(room_id).strip()]
+            if isinstance(room_ids_raw, list)
+            else []
+        )
+        for room_id in room_ids:
+            joined = self._matrix_joined_member_ids(
+                route,
+                room_id=room_id,
+                secret_token=secret_token,
+            )
+            if sorted(joined) == sorted([self_user_id, remote_user_id]):
+                return room_id
+        fallback_room_id = self._resolve_matrix_joined_direct_room_id(
+            route,
+            self_user_id=self_user_id,
+            remote_user_id=remote_user_id,
+            secret_token=secret_token,
+        )
+        if fallback_room_id is not None:
+            self._persist_matrix_direct_mapping(
+                route,
+                self_user_id=self_user_id,
+                remote_user_id=remote_user_id,
+                room_id=fallback_room_id,
+                direct_content=direct_data,
+                secret_token=secret_token,
+            )
+            return fallback_room_id
+        raise RuntimeError(f"No direct room found for {remote_user_id} (m.direct missing)")
+
+    def _resolve_matrix_joined_direct_room_id(
+        self,
+        route: dict[str, Any],
+        *,
+        self_user_id: str,
+        remote_user_id: str,
+        secret_token: str | None,
+    ) -> str | None:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_joined_rooms_endpoint(str(route.get("target") or "")),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+        for room_id in _matrix_joined_room_ids(result):
+            joined = self._matrix_joined_member_ids(
+                route,
+                room_id=room_id,
+                secret_token=secret_token,
+            )
+            if sorted(joined) == sorted([self_user_id, remote_user_id]):
+                return room_id
+        return None
+
+    def _persist_matrix_direct_mapping(
+        self,
+        route: dict[str, Any],
+        *,
+        self_user_id: str,
+        remote_user_id: str,
+        room_id: str,
+        direct_content: dict[str, Any],
+        secret_token: str | None,
+    ) -> None:
+        existing_raw = direct_content.get(remote_user_id)
+        existing = (
+            [str(candidate).strip() for candidate in existing_raw if str(candidate).strip()]
+            if isinstance(existing_raw, list)
+            else []
+        )
+        next_rooms = [room_id, *[candidate for candidate in existing if candidate != room_id]]
+        next_content = dict(direct_content)
+        next_content[remote_user_id] = next_rooms
+        self._put_json_provider(
+            _matrix_direct_account_data_endpoint(
+                str(route.get("target") or ""),
+                user_id=self_user_id,
+            ),
+            next_content,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+
+    def _resolve_matrix_route_room_id(
+        self,
+        route: dict[str, Any],
+        raw_target: str,
+        *,
+        secret_token: str | None,
+    ) -> str | None:
+        room_id = _matrix_room_id(raw_target)
+        if room_id is None:
+            return None
+        lowered_room_id = room_id.lower()
+        if lowered_room_id.startswith("user:"):
+            return self._resolve_matrix_direct_room_id(
+                route,
+                remote_user_id=room_id[len("user:") :].strip(),
+                secret_token=secret_token,
+            )
+        if room_id.startswith("@") and ":" in room_id:
+            return self._resolve_matrix_direct_room_id(
+                route,
+                remote_user_id=room_id,
+                secret_token=secret_token,
+            )
+        if not room_id.startswith("#"):
+            return room_id
+        result = self._get_json_provider_url(
+            _matrix_directory_room_endpoint(str(route.get("target") or ""), alias=room_id),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            return None
+        resolved_room_id = result.get("room_id") or result.get("roomId")
+        if not isinstance(resolved_room_id, str):
+            return None
+        return resolved_room_id.strip() or None
+
+    def _matrix_action_room_id(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+        label: str,
+    ) -> str:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError(f"{label} requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError(f"{label} requires roomId.")
+        return room_id
+
+    def _matrix_pinned_events(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> list[str]:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_state_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.pinned_events",
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError as exc:
+            if "404" in str(exc):
+                return []
+            raise
+        return _matrix_pinned_event_ids(result)
+
+    def _matrix_fetch_event_summary(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        event_id: str,
+        secret_token: str | None,
+    ) -> dict[str, object] | None:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_event_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_id=event_id,
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+        return _matrix_message_summary(result)
 
     def _dispatch_whatsapp_react_message_action(
         self,
@@ -11302,12 +13855,28 @@ class OpsMeshService:
             if len(request.media_urls) == 1:
                 payload["mediaUrl"] = request.media_urls[0]
             payload["mediaUrls"] = list(request.media_urls)
+        if request.media_kind is not None:
+            payload["mediaKind"] = request.media_kind
+        if request.preview_image_url is not None:
+            payload["previewImageUrl"] = request.preview_image_url
+        if request.duration_ms is not None:
+            payload["durationMs"] = request.duration_ms
+        if request.location is not None:
+            payload["location"] = dict(request.location)
+        if request.quick_replies:
+            payload["quickReplies"] = list(request.quick_replies)
+        if request.flex_message is not None:
+            payload["flexMessage"] = dict(request.flex_message)
+        if request.template_message is not None:
+            payload["templateMessage"] = dict(request.template_message)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
             payload["audioAsVoice"] = request.audio_as_voice
         if request.reply_to_id is not None:
             payload["replyToId"] = request.reply_to_id
+        if request.reply_token is not None:
+            payload["replyToken"] = request.reply_token
         if request.silent is not None:
             payload["silent"] = request.silent
         if request.force_document is not None:
@@ -11645,7 +14214,7 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower() in {"whatsapp", "zalo"}
+                    resolved_target.channel.lower() in {"whatsapp", "zalo", "line", "matrix"}
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()
@@ -11655,9 +14224,24 @@ class OpsMeshService:
                     channel=resolved_target.channel,
                     target=runtime_target,
                     media_urls=normalized_media_urls,
+                    media_kind=str(payload.get("mediaKind") or "").strip() or None,
+                    preview_image_url=str(payload.get("previewImageUrl") or "").strip()
+                    or None,
+                    duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    location=_normalize_line_location_payload(payload.get("location")),
+                    quick_replies=tuple(
+                        _normalize_line_quick_replies(payload.get("quickReplies"))
+                    ),
+                    flex_message=_normalize_line_flex_message_payload(
+                        payload.get("flexMessage")
+                    ),
+                    template_message=_normalize_line_template_message_payload(
+                        payload.get("templateMessage")
+                    ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
                     account_id=resolved_target.account_id,
@@ -11734,9 +14318,17 @@ class OpsMeshService:
         to: str,
         message: str,
         media_urls: list[str] | None = None,
+        media_kind: str | None = None,
+        preview_image_url: str | None = None,
+        duration_ms: int | None = None,
+        location: dict[str, object] | None = None,
+        quick_replies: list[str] | tuple[str, ...] | None = None,
+        flex_message: dict[str, object] | None = None,
+        template_message: dict[str, object] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
         account_id: str | None = None,
@@ -11764,8 +14356,21 @@ class OpsMeshService:
         if conversation_target is None:
             raise ValueError("send requires an explicit channel target")
         normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
-        if not message.strip() and not normalized_media_urls:
-            raise ValueError("send requires text or media")
+        normalized_location = _normalize_line_location_payload(location)
+        normalized_flex_message = _normalize_line_flex_message_payload(flex_message)
+        normalized_template_message = _normalize_line_template_message_payload(
+            template_message
+        )
+        if (
+            not message.strip()
+            and not normalized_media_urls
+            and normalized_location is None
+            and normalized_flex_message is None
+            and normalized_template_message is None
+        ):
+            raise ValueError(
+                "send requires text, media, location, flex message, or template message"
+            )
         payload: dict[str, Any] = {
             "message": message,
             "channel": conversation_target.channel,
@@ -11776,15 +14381,35 @@ class OpsMeshService:
             if len(normalized_media_urls) == 1:
                 payload["mediaUrl"] = normalized_media_urls[0]
             payload["mediaUrls"] = normalized_media_urls
+            normalized_media_kind = str(media_kind or "").strip() or None
+            if normalized_media_kind is not None:
+                payload["mediaKind"] = normalized_media_kind
+            normalized_preview_image_url = str(preview_image_url or "").strip() or None
+            if normalized_preview_image_url is not None:
+                payload["previewImageUrl"] = normalized_preview_image_url
+            if duration_ms is not None:
+                payload["durationMs"] = duration_ms
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
             if audio_as_voice is not None:
                 payload["audioAsVoice"] = audio_as_voice
             if not message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
+        if normalized_location is not None:
+            payload["location"] = normalized_location
+        normalized_quick_replies = _normalize_line_quick_replies(quick_replies)
+        if normalized_quick_replies:
+            payload["quickReplies"] = normalized_quick_replies
+        if normalized_flex_message is not None:
+            payload["flexMessage"] = normalized_flex_message
+        if normalized_template_message is not None:
+            payload["templateMessage"] = normalized_template_message
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
+        normalized_reply_token = str(reply_token or "").strip() or None
+        if normalized_reply_token is not None:
+            payload["replyToken"] = normalized_reply_token
         if silent is not None:
             payload["silent"] = silent
         if force_document is not None:
@@ -13094,6 +15719,40 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Webhook failed: {exc.reason}") from exc
 
+    def _put_json_provider(
+        self,
+        target: str,
+        payload: dict[str, Any],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> object | None:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if secret_header_name and secret_token:
+            headers[str(secret_header_name)] = str(secret_token)
+        request = Request(
+            target,
+            data=body,
+            headers=headers,
+            method="PUT",
+        )
+        try:
+            with urlopen(request, timeout=10) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _post_slack_form(
         self,
         target: str,
@@ -13162,6 +15821,201 @@ class OpsMeshService:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:
             raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _download_matrix_media_url(self, media_url: str) -> tuple[bytes, str | None, str | None]:
+        filename = _matrix_media_filename(media_url)
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+        parsed = urlparse(media_url)
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+            raise RuntimeError(f"Media path does not exist: {media_url}")
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                content_type = response.headers.get("Content-Type")
+                return response.read(), content_type, filename
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _matrix_room_is_encrypted(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> bool:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_state_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.encryption",
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "404" in message or "Provider request failed" in message:
+                return False
+            raise
+        return isinstance(result, dict) and bool(result.get("algorithm") or result)
+
+    def _encrypt_matrix_media(self, media: bytes) -> tuple[bytes, dict[str, object]]:
+        key = secrets.token_bytes(32)
+        iv = secrets.token_bytes(16)
+        cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
+        encryptor = cipher.encryptor()
+        encrypted = encryptor.update(media) + encryptor.finalize()
+        file_payload: dict[str, object] = {
+            "key": {
+                "kty": "oct",
+                "key_ops": ["encrypt", "decrypt"],
+                "alg": "A256CTR",
+                "k": _matrix_unpadded_base64(key, urlsafe=True),
+                "ext": True,
+            },
+            "iv": _matrix_unpadded_base64(iv),
+            "hashes": {
+                "sha256": _matrix_unpadded_base64(hashlib.sha256(encrypted).digest()),
+            },
+            "v": "v2",
+        }
+        return encrypted, file_payload
+
+    def _prepare_matrix_image_thumbnail(
+        self,
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        dimensions: tuple[int, int],
+    ) -> tuple[bytes, str, str, dict[str, object]] | None:
+        del content_type, filename
+        if max(dimensions) <= 800:
+            return None
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+        try:
+            with Image.open(io.BytesIO(media)) as image:
+                image.thumbnail((800, 800))
+                thumbnail_image: Any = image
+                if image.mode not in {"RGB", "L"}:
+                    thumbnail_image = image.convert("RGB")
+                output = io.BytesIO()
+                thumbnail_image.save(output, format="JPEG", quality=80)
+        except Exception:
+            return None
+        thumbnail = output.getvalue()
+        if not thumbnail:
+            return None
+        thumbnail_filename = "thumbnail.jpg"
+        thumbnail_info: dict[str, object] = {
+            "mimetype": "image/jpeg",
+            "size": len(thumbnail),
+        }
+        thumbnail_dimensions = _matrix_image_dimensions(
+            thumbnail,
+            "image/jpeg",
+            thumbnail_filename,
+        )
+        if thumbnail_dimensions is not None:
+            thumbnail_info["w"] = thumbnail_dimensions[0]
+            thumbnail_info["h"] = thumbnail_dimensions[1]
+        return thumbnail, "image/jpeg", thumbnail_filename, thumbnail_info
+
+    def _upload_matrix_media_maybe_encrypted(
+        self,
+        route: dict[str, Any],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+        encrypted: bool,
+    ) -> tuple[str, dict[str, object] | None]:
+        if not encrypted:
+            return (
+                self._upload_matrix_media(
+                    route,
+                    media,
+                    content_type=content_type,
+                    filename=filename,
+                    secret_token=secret_token,
+                ),
+                None,
+            )
+        encrypted_media, file_payload = self._encrypt_matrix_media(media)
+        url = self._upload_matrix_media(
+            route,
+            encrypted_media,
+            content_type="application/octet-stream",
+            filename=filename,
+            secret_token=secret_token,
+        )
+        return url, {"url": url, **file_payload}
+
+    def _upload_matrix_media(
+        self,
+        route: dict[str, Any],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        headers = {"Content-Type": content_type or "application/octet-stream"}
+        headers["Authorization"] = _matrix_bearer_token(secret_token)
+        request = Request(
+            _matrix_media_upload_endpoint(str(route.get("target") or ""), filename=filename),
+            data=media,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Matrix media upload returned HTTP {response.status}")
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            message = _http_error_message("Matrix media upload returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Matrix media upload failed: {exc.reason}") from exc
+        try:
+            result = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Matrix media upload returned a non-JSON response.") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("Matrix media upload returned a non-object response.")
+        content_uri = result.get("content_uri") or result.get("contentUri")
+        if not isinstance(content_uri, str) or not content_uri.strip():
+            raise RuntimeError("Matrix media upload response did not include content_uri.")
+        return content_uri.strip()
 
     def _load_discord_media(self, media_url: str, *, max_bytes: int) -> tuple[bytes, str]:
         data_match = re.match(
@@ -14033,6 +16887,381 @@ class OpsMeshService:
             "messageId": message_id,
             "chatId": delivered_chat,
             "channelId": delivered_chat,
+        }
+
+    def _post_line_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("LINE native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        chat_id = _line_chat_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if chat_id is None:
+            raise RuntimeError("LINE route is missing a recipient target.")
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        media_kind = str(event.get("mediaKind") or "").strip().lower()
+        preview_image_url = str(event.get("previewImageUrl") or "").strip()
+        duration_ms = _optional_int_payload_value(event, "durationMs")
+        location = _normalize_line_location_payload(event.get("location"))
+        quick_reply = _line_quick_reply_payload(
+            _normalize_line_quick_replies(event.get("quickReplies"))
+        )
+        flex_message = _normalize_line_flex_message_payload(event.get("flexMessage"))
+        template_message = _normalize_line_template_message_payload(
+            event.get("templateMessage")
+        )
+        messages: list[dict[str, object]] = []
+        if flex_message is not None:
+            messages.append(
+                {
+                    "type": "flex",
+                    "altText": str(flex_message["altText"])[:400],
+                    "contents": flex_message["contents"],
+                }
+            )
+        if template_message is not None:
+            messages.append(_line_template_message_payload(template_message))
+        for media_url in media_urls:
+            _line_validate_media_url(media_url)
+            if media_kind == "video":
+                if not preview_image_url:
+                    raise RuntimeError(
+                        "LINE video messages require previewImageUrl to reference an image URL."
+                    )
+                _line_validate_media_url(preview_image_url)
+                messages.append(
+                    {
+                        "type": "video",
+                        "originalContentUrl": media_url,
+                        "previewImageUrl": preview_image_url,
+                    }
+                )
+            elif media_kind == "audio":
+                messages.append(
+                    {
+                        "type": "audio",
+                        "originalContentUrl": media_url,
+                        "duration": duration_ms if duration_ms is not None else 60000,
+                    }
+                )
+            else:
+                messages.append(
+                    {
+                        "type": "image",
+                        "originalContentUrl": media_url,
+                        "previewImageUrl": preview_image_url or media_url,
+                    }
+                )
+        if location is not None:
+            messages.append(
+                {
+                    "type": "location",
+                    "title": str(location["title"])[:100],
+                    "address": str(location["address"])[:100],
+                    "latitude": location["latitude"],
+                    "longitude": location["longitude"],
+                }
+            )
+        messages.extend(
+            {"type": "text", "text": chunk}
+            for chunk in _line_text_chunks(text)
+        )
+        if quick_reply is not None and messages:
+            messages[-1] = {**messages[-1], "quickReply": quick_reply}
+        if not messages:
+            raise RuntimeError("Message must be non-empty for LINE sends.")
+        bearer_token = _line_bearer_token(secret_token)
+        reply_token = str(event.get("replyToken") or "").strip()
+        if reply_token:
+            if len(messages) > 5:
+                raise RuntimeError("LINE reply-token sends support at most 5 messages.")
+            result = self._post_json_webhook(
+                _line_reply_endpoint(str(route.get("target") or "")),
+                {
+                    "replyToken": reply_token,
+                    "messages": messages,
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("LINE API returned a non-JSON response.")
+            reply_result: dict[str, object] = {
+                "runtime": "native-provider-backed",
+                "messageId": "reply",
+                "chatId": chat_id,
+                "channelId": chat_id,
+            }
+            if media_urls:
+                reply_result["mediaUrls"] = media_urls
+            return reply_result
+        endpoint = _line_push_endpoint(str(route.get("target") or ""))
+        for index in range(0, len(messages), 5):
+            result = self._post_json_webhook(
+                endpoint,
+                {
+                    "to": chat_id,
+                    "messages": messages[index : index + 5],
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("LINE API returned a non-JSON response.")
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": "push",
+            "chatId": chat_id,
+            "channelId": chat_id,
+        }
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_matrix_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type == "gateway/poll":
+            return self._post_matrix_poll_provider_event(route, event, secret_token)
+        if event_type != "gateway/send":
+            raise RuntimeError("Matrix native provider route only supports sends and polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        room_id = self._resolve_matrix_route_room_id(
+            route,
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or ""),
+            secret_token=secret_token,
+        )
+        if room_id is None:
+            raise RuntimeError("Matrix route is missing a room target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        chunks = _matrix_text_chunks(str(event.get("message") or ""))
+        if not chunks and not media_urls:
+            raise RuntimeError("Matrix send requires text or media.")
+        relation = _matrix_relation(
+            thread_id=str(event.get("threadId") or "").strip() or None,
+            reply_to_id=str(event.get("replyToId") or "").strip() or None,
+        )
+        bearer_token = _matrix_bearer_token(secret_token)
+        transaction_id = _matrix_transaction_id(event)
+        message_ids: list[str] = []
+        uploaded_media_urls: list[str] = []
+        text_chunks = chunks
+        room_encrypted = (
+            self._matrix_room_is_encrypted(
+                route,
+                room_id=room_id,
+                secret_token=secret_token,
+            )
+            if media_urls
+            else False
+        )
+        for media_index, media_url in enumerate(media_urls, start=1):
+            media, content_type, filename = self._download_matrix_media_url(media_url)
+            filename = filename or _matrix_media_filename(media_url)
+            mxc_url, encrypted_file = self._upload_matrix_media_maybe_encrypted(
+                route,
+                media,
+                content_type=content_type,
+                filename=filename,
+                secret_token=secret_token,
+                encrypted=room_encrypted,
+            )
+            uploaded_media_urls.append(mxc_url)
+            caption = text_chunks[0] if media_index == 1 and text_chunks else ""
+            if media_index == 1 and text_chunks:
+                text_chunks = text_chunks[1:]
+            body = caption or filename or "(file)"
+            media_info: dict[str, object] = {
+                "size": len(media),
+            }
+            if content_type:
+                media_info["mimetype"] = content_type
+            dimensions = _matrix_image_dimensions(media, content_type, filename)
+            if dimensions is not None:
+                media_info["w"] = dimensions[0]
+                media_info["h"] = dimensions[1]
+                thumbnail = self._prepare_matrix_image_thumbnail(
+                    media,
+                    content_type=content_type,
+                    filename=filename,
+                    dimensions=dimensions,
+                )
+                if thumbnail is not None:
+                    (
+                        thumbnail_media,
+                        thumbnail_content_type,
+                        thumbnail_filename,
+                        thumbnail_info,
+                    ) = thumbnail
+                    thumbnail_url, thumbnail_file = self._upload_matrix_media_maybe_encrypted(
+                        route,
+                        thumbnail_media,
+                        content_type=thumbnail_content_type,
+                        filename=thumbnail_filename,
+                        secret_token=secret_token,
+                        encrypted=room_encrypted,
+                    )
+                    if thumbnail_file is not None:
+                        media_info["thumbnail_file"] = thumbnail_file
+                    else:
+                        media_info["thumbnail_url"] = thumbnail_url
+                    media_info["thumbnail_info"] = thumbnail_info
+            duration_ms = _matrix_media_duration_ms(media, content_type, filename)
+            if duration_ms is not None:
+                media_info["duration"] = duration_ms
+            media_content: dict[str, object] = {
+                "msgtype": _matrix_media_msgtype(content_type, filename),
+                "body": body,
+                "filename": filename,
+                "info": media_info,
+            }
+            if encrypted_file is not None:
+                media_content["file"] = encrypted_file
+            else:
+                media_content["url"] = mxc_url
+            if relation is not None:
+                media_content["m.relates_to"] = relation
+            result = self._put_json_provider(
+                _matrix_send_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.message",
+                    transaction_id=(
+                        transaction_id
+                        if len(media_urls) == 1 and not text_chunks
+                        else f"{transaction_id}-media-{media_index}"
+                    ),
+                ),
+                media_content,
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            message_id = _matrix_message_id(result)
+            if message_id is None:
+                raise RuntimeError("Matrix API response did not include an event id.")
+            message_ids.append(message_id)
+        for index, chunk in enumerate(text_chunks, start=1):
+            content: dict[str, object] = {
+                "msgtype": "m.text",
+                "body": chunk,
+            }
+            if relation is not None:
+                content["m.relates_to"] = relation
+            chunk_transaction_id = (
+                transaction_id
+                if not media_urls and len(text_chunks) == 1
+                else f"{transaction_id}-{index}"
+            )
+            result = self._put_json_provider(
+                _matrix_send_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.message",
+                    transaction_id=chunk_transaction_id,
+                ),
+                content,
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            message_id = _matrix_message_id(result)
+            if message_id is None:
+                raise RuntimeError("Matrix API response did not include an event id.")
+            message_ids.append(message_id)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_ids[-1],
+            "roomId": room_id,
+            "channelId": room_id,
+            "conversationId": room_id,
+            "primaryMessageId": message_ids[0],
+            "messageIds": message_ids,
+        }
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_matrix_poll_provider_event(
+        self,
+        route: dict[str, Any],
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        room_id = self._resolve_matrix_route_room_id(
+            route,
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or ""),
+            secret_token=secret_token,
+        )
+        if room_id is None:
+            raise RuntimeError("Matrix route is missing a room target.")
+        question = str(event.get("question") or event.get("summary") or "").strip()
+        raw_options = event.get("options")
+        options = (
+            [str(option).strip() for option in raw_options if str(option).strip()]
+            if isinstance(raw_options, list)
+            else []
+        )
+        _validate_direct_channel_poll_shape(question, options)
+        max_selections = _optional_int_payload_value(event, "maxSelections")
+        _validate_direct_channel_poll_max_selections(options, max_selections)
+        content = _matrix_poll_start_content(
+            question=question,
+            options=options,
+            max_selections=max_selections,
+        )
+        thread_id = str(event.get("threadId") or "").strip() or None
+        relation = _matrix_relation(thread_id=thread_id, reply_to_id=None)
+        if relation is not None:
+            content["m.relates_to"] = relation
+        content["m.mentions"] = {}
+        result = self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.poll.start",
+                transaction_id=_matrix_transaction_id(event),
+            ),
+            content,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        message_id = _matrix_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "roomId": room_id,
+            "channelId": room_id,
+            "conversationId": room_id,
+            "pollId": message_id,
         }
 
     def _post_webhook(

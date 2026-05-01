@@ -26,6 +26,7 @@ from openzues.schemas import (
 )
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.gateway_canvas_documents import create_canvas_document
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
@@ -6209,6 +6210,1643 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_reply_to_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-action-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="send",
+            params={
+                "to": matrix_target,
+                "message": "Matrix action parity.",
+                "replyTo": "$reply",
+                "threadId": "$thread-root",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "$matrix-action-1",
+            "roomId": "!ops:matrix.example",
+            "channelId": "!ops:matrix.example",
+            "conversationId": "!ops:matrix.example",
+            "primaryMessageId": "$matrix-action-1",
+            "messageIds": ["$matrix-action-1"],
+        },
+    }
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/send/m.room.message/idem-matrix-send-action"
+            ),
+            {
+                "msgtype": "m.text",
+                "body": "Matrix action parity.",
+                "m.relates_to": {
+                    "rel_type": "m.thread",
+                    "event_id": "$thread-root",
+                    "is_falling_back": True,
+                    "m.in_reply_to": {"event_id": "$reply"},
+                },
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-edit-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="edit",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "content": "Edited Matrix action.",
+                "threadId": "$thread-root",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-edit-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "eventId": "$matrix-edit-1",
+        },
+    }
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/send/m.room.message/idem-matrix-edit-action"
+            ),
+            {
+                "msgtype": "m.text",
+                "body": "* Edited Matrix action.",
+                "m.new_content": {
+                    "msgtype": "m.text",
+                    "body": "Edited Matrix action.",
+                },
+                "m.relates_to": {
+                    "rel_type": "m.replace",
+                    "event_id": "$original",
+                    "m.in_reply_to": {"event_id": "$thread-root"},
+                },
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_delete_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-delete"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$redaction"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="deleteMessage",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "reason": "cleanup",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-delete-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "deleted": True,
+    }
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/redact/%24original/idem-matrix-delete-action"
+            ),
+            {
+                "reason": "cleanup",
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$reaction"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="react",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "emoji": "ship-it",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-react-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "added": "ship-it",
+    }
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/send/m.reaction/idem-matrix-react-action"
+            ),
+            {
+                "m.relates_to": {
+                    "rel_type": "m.annotation",
+                    "event_id": "$original",
+                    "key": "ship-it",
+                },
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "chunk": [
+                {
+                    "event_id": "$r1",
+                    "sender": "@alice:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r2",
+                    "sender": "@bob:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r3",
+                    "sender": "@alice:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "eyes",
+                        }
+                    },
+                },
+            ]
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="reactions",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "limit": 2,
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-reactions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "reactions": [
+            {
+                "key": "ship-it",
+                "count": 2,
+                "users": ["@alice:matrix.example", "@bob:matrix.example"],
+            },
+            {
+                "key": "eyes",
+                "count": 1,
+                "users": ["@alice:matrix.example"],
+            },
+        ],
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v1/rooms/"
+                "%21ops%3Amatrix.example/relations/%24original/m.annotation/"
+                "m.reaction?dir=b&limit=2"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-react-remove"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/_matrix/client/v3/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        return {
+            "chunk": [
+                {
+                    "event_id": "$r1",
+                    "sender": "@bot:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r2",
+                    "sender": "@bot:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "eyes",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r3",
+                    "sender": "@other:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+            ]
+        }
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$redaction"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="react",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "emoji": "ship-it",
+                "remove": True,
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-react-remove-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "removed": 1,
+    }
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v1/rooms/"
+                "%21ops%3Amatrix.example/relations/%24original/m.annotation/"
+                "m.reaction?dir=b&limit=200"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/redact/%24r1/"
+                "idem-matrix-react-remove-action-1"
+            ),
+            {},
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "seed", "expected"),
+    [
+        ("pinMessage", ["$a"], ["$a", "$b"]),
+        ("unpinMessage", ["$a", "$b", "$c"], ["$a", "$c"]),
+    ],
+)
+async def test_ops_mesh_service_message_action_dispatches_matrix_pin_mutation_route(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    seed: list[str],
+    expected: list[str],
+) -> None:
+    tmp_path = Path.cwd() / f".tmp-pytest-local/ops-mesh-message-action-matrix-{action}"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {"pinned": seed}
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$pin-state"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action=action,
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$b",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key=f"idem-matrix-{action}-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "pinned": expected,
+    }
+    state_endpoint = (
+        "https://matrix.example.org/_matrix/client/v3/rooms/"
+        "%21ops%3Amatrix.example/state/m.room.pinned_events/"
+    )
+    assert matrix_gets == [
+        (
+            state_endpoint,
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+    assert matrix_puts == [
+        (
+            state_endpoint,
+            {
+                "pinned": expected,
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-list-pins"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/state/m.room.pinned_events/"):
+            return {"pinned": ["$a", "$missing"]}
+        if target.endswith("/event/%24a"):
+            return {
+                "event_id": "$a",
+                "sender": "@alice:matrix.example",
+                "type": "m.room.message",
+                "origin_server_ts": 123,
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "hello pinned",
+                },
+            }
+        raise RuntimeError("missing event")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="listPins",
+            params={
+                "roomId": "room:!ops:matrix.example",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-list-pins-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "pinned": ["$a", "$missing"],
+        "events": [
+            {
+                "eventId": "$a",
+                "sender": "@alice:matrix.example",
+                "body": "hello pinned",
+                "msgtype": "m.text",
+                "timestamp": 123,
+            }
+        ],
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/state/m.room.pinned_events/"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/event/%24a"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/event/%24missing"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_read_messages_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-read"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "start": "batch-start",
+            "end": "batch-end",
+            "chunk": [
+                {
+                    "event_id": "$msg",
+                    "sender": "@alice:matrix.example",
+                    "type": "m.room.message",
+                    "origin_server_ts": 456,
+                    "content": {
+                        "msgtype": "m.text",
+                        "body": "hello history",
+                    },
+                },
+                {
+                    "event_id": "$redacted",
+                    "sender": "@bob:matrix.example",
+                    "type": "m.room.message",
+                    "origin_server_ts": 457,
+                    "unsigned": {"redacted_because": {"event_id": "$redaction"}},
+                    "content": {
+                        "msgtype": "m.text",
+                        "body": "hidden",
+                    },
+                },
+            ],
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="readMessages",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "limit": 2,
+                "before": "batch-before",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-read-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "messages": [
+            {
+                "eventId": "$msg",
+                "sender": "@alice:matrix.example",
+                "body": "hello history",
+                "msgtype": "m.text",
+                "timestamp": 456,
+            }
+        ],
+        "nextBatch": "batch-end",
+        "prevBatch": "batch-start",
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/messages?dir=b&limit=2&from=batch-before"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_member_info_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-member-info"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "displayname": "Alice",
+            "avatar_url": "mxc://matrix.example/alice",
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="memberInfo",
+            params={
+                "userId": "@alice:matrix.example",
+                "roomId": "room:!ops:matrix.example",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-member-info-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "member": {
+            "userId": "@alice:matrix.example",
+            "profile": {
+                "displayName": "Alice",
+                "avatarUrl": "mxc://matrix.example/alice",
+            },
+            "membership": None,
+            "powerLevel": None,
+            "displayName": "Alice",
+            "roomId": "!ops:matrix.example",
+        },
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40alice%3Amatrix.example"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_channel_info_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-channel-info"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/state/m.room.name/"):
+            return {"name": "Ops Room"}
+        if target.endswith("/state/m.room.topic/"):
+            return {"topic": "Incidents"}
+        if target.endswith("/state/m.room.canonical_alias/"):
+            return {"alias": "#ops:matrix.example"}
+        if target.endswith("/joined_members"):
+            return {
+                "joined": {
+                    "@alice:matrix.example": {},
+                    "@bot:matrix.example": {},
+                }
+            }
+        raise RuntimeError("unexpected Matrix channel info request")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="channelInfo",
+            params={
+                "roomId": "room:!ops:matrix.example",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-channel-info-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "room": {
+            "roomId": "!ops:matrix.example",
+            "name": "Ops Room",
+            "topic": "Incidents",
+            "canonicalAlias": "#ops:matrix.example",
+            "altAliases": [],
+            "memberCount": 2,
+        },
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/state/m.room.name/"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/state/m.room.topic/"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/state/m.room.canonical_alias/"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/joined_members"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_set_profile_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-set-profile"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="test",
+        data_dir=tmp_path,
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if "/profile/%40bot%3Amatrix.example" in target:
+            return {
+                "displayname": "Old Bot",
+                "avatar_url": "mxc://matrix.example/old-avatar",
+            }
+        raise RuntimeError(f"unexpected Matrix GET {target}")
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=config_service,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="setProfile",
+            params={
+                "displayName": "  Ops Bot  ",
+                "avatarUrl": "  mxc://matrix.example/new-avatar  ",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-set-profile-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "accountId": "matrix-bot",
+        "displayName": "Ops Bot",
+        "avatarUrl": "mxc://matrix.example/new-avatar",
+        "profile": {
+            "displayNameUpdated": True,
+            "avatarUpdated": True,
+            "resolvedAvatarUrl": "mxc://matrix.example/new-avatar",
+            "uploadedAvatarSource": None,
+            "convertedAvatarFromHttp": False,
+        },
+        "configPath": "channels.matrix.accounts.matrix-bot",
+    }
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example/displayname"
+            ),
+            {"displayname": "Ops Bot"},
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example/avatar_url"
+            ),
+            {"avatar_url": "mxc://matrix.example/new-avatar"},
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    config = config_service.build_snapshot()
+    assert config["channels"]["matrix"]["accounts"]["matrix-bot"]["name"] == "Ops Bot"
+    assert (
+        config["channels"]["matrix"]["accounts"]["matrix-bot"]["avatarUrl"]
+        == "mxc://matrix.example/new-avatar"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_matrix_set_profile_converts_http_avatar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-matrix-set-profile-http-avatar"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="test",
+        data_dir=tmp_path,
+    )
+    media_downloads: list[str] = []
+    media_uploads: list[tuple[bytes, str | None, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token, timeout_seconds
+        if target.endswith("/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if "/profile/%40bot%3Amatrix.example" in target:
+            return {
+                "displayname": "Ops Bot",
+                "avatar_url": "mxc://matrix.example/old-avatar",
+            }
+        raise RuntimeError(f"unexpected Matrix GET {target}")
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        media_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        media_downloads.append(media_url)
+        return b"avatar-bytes", "image/png", "avatar.png"
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route
+        media_uploads.append((media, content_type, filename, secret_token))
+        return "mxc://matrix.example/uploaded-avatar"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        matrix_puts.append((target, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=config_service,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="setProfile",
+            params={"avatarUrl": "https://cdn.example.org/avatar.png"},
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-set-profile-http-avatar-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "accountId": "matrix-bot",
+        "displayName": None,
+        "avatarUrl": "mxc://matrix.example/uploaded-avatar",
+        "profile": {
+            "displayNameUpdated": False,
+            "avatarUpdated": True,
+            "resolvedAvatarUrl": "mxc://matrix.example/uploaded-avatar",
+            "uploadedAvatarSource": "http",
+            "convertedAvatarFromHttp": True,
+        },
+        "configPath": "channels.matrix.accounts.matrix-bot",
+    }
+    assert media_downloads == ["https://cdn.example.org/avatar.png"]
+    assert media_uploads == [
+        (b"avatar-bytes", "image/png", "avatar.png", "matrix-access-token")
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example/avatar_url"
+            ),
+            {"avatar_url": "mxc://matrix.example/uploaded-avatar"},
+        )
+    ]
+    config = config_service.build_snapshot()
+    assert (
+        config["channels"]["matrix"]["accounts"]["matrix-bot"]["avatarUrl"]
+        == "mxc://matrix.example/uploaded-avatar"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -11610,6 +13248,2685 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Send Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message/push",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="LINE parity push.",
+        media_urls=["https://example.com/line.png"],
+        account_id="line-bot",
+        idempotency_key="idem-native-line-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="line",
+            account_id="line-bot",
+            peer_kind="channel",
+            peer_id=line_target,
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-line-send",
+        "channel": "line",
+        "messageId": "push",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "line",
+            "target": line_target,
+            "accountId": "line-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "U1234567890abcdef1234567890abcdef",
+        "channelId": "U1234567890abcdef1234567890abcdef",
+        "mediaUrls": ["https://example.com/line.png"],
+    }
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "image",
+                        "originalContentUrl": "https://example.com/line.png",
+                        "previewImageUrl": "https://example.com/line.png",
+                    },
+                    {"type": "text", "text": "LINE parity push."},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "push",
+        "chatId": "U1234567890abcdef1234567890abcdef",
+        "channelId": "U1234567890abcdef1234567890abcdef",
+        "mediaUrls": ["https://example.com/line.png"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_reply_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Reply Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message/push",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="LINE reply parity.",
+        account_id="line-bot",
+        reply_token="line-reply-token",
+        idempotency_key="idem-native-line-reply",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "reply"
+    assert result["chatId"] == "U1234567890abcdef1234567890abcdef"
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/reply",
+            {
+                "replyToken": "line-reply-token",
+                "messages": [{"type": "text", "text": "LINE reply parity."}],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "reply"
+    assert delivery["event_payload"]["replyToken"] == "line-reply-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_video_media_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-video"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Video Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Video brief.",
+        media_urls=["https://example.com/video.mp4"],
+        media_kind="video",
+        preview_image_url="https://example.com/preview.jpg",
+        account_id="line-bot",
+        idempotency_key="idem-native-line-video",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "video",
+                        "originalContentUrl": "https://example.com/video.mp4",
+                        "previewImageUrl": "https://example.com/preview.jpg",
+                    },
+                    {"type": "text", "text": "Video brief."},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["mediaKind"] == "video"
+    assert delivery["event_payload"]["previewImageUrl"] == "https://example.com/preview.jpg"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_audio_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-audio"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Audio Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="",
+        media_urls=["https://example.com/clip.m4a"],
+        media_kind="audio",
+        duration_ms=42000,
+        account_id="line-bot",
+        idempotency_key="idem-native-line-audio",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "audio",
+                        "originalContentUrl": "https://example.com/clip.m4a",
+                        "duration": 42000,
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["mediaKind"] == "audio"
+    assert delivery["event_payload"]["durationMs"] == 42000
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-location"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Location Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="",
+        location={
+            "title": "OpenZues HQ",
+            "address": "123 Parity Ave",
+            "latitude": 37.422,
+            "longitude": -122.084,
+        },
+        account_id="line-bot",
+        idempotency_key="idem-native-line-location",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "location",
+                        "title": "OpenZues HQ",
+                        "address": "123 Parity Ave",
+                        "latitude": 37.422,
+                        "longitude": -122.084,
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["location"]["title"] == "OpenZues HQ"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_quick_replies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-quick"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Quick Reply Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Choose one.",
+        quick_replies=["Approve", "Reject with a very long reason label"],
+        account_id="line-bot",
+        idempotency_key="idem-native-line-quick",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "text",
+                        "text": "Choose one.",
+                        "quickReply": {
+                            "items": [
+                                {
+                                    "type": "action",
+                                    "action": {
+                                        "type": "message",
+                                        "label": "Approve",
+                                        "text": "Approve",
+                                    },
+                                },
+                                {
+                                    "type": "action",
+                                    "action": {
+                                        "type": "message",
+                                        "label": "Reject with a very l",
+                                        "text": "Reject with a very long reason label",
+                                    },
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["quickReplies"] == [
+        "Approve",
+        "Reject with a very long reason label",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_flex_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-flex"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Flex Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    long_alt_text = "Flex alt " + ("x" * 450)
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Now playing:",
+        flex_message={
+            "altText": long_alt_text,
+            "contents": {"type": "bubble", "body": {"type": "box", "layout": "vertical"}},
+        },
+        account_id="line-bot",
+        idempotency_key="idem-native-line-flex",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "flex",
+                        "altText": long_alt_text[:400],
+                        "contents": {
+                            "type": "bubble",
+                            "body": {"type": "box", "layout": "vertical"},
+                        },
+                    },
+                    {"type": "text", "text": "Now playing:"},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["flexMessage"] == {
+        "altText": long_alt_text,
+        "contents": {"type": "bubble", "body": {"type": "box", "layout": "vertical"}},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_confirm_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-template"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Template Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    template_text = "Proceed? " + ("x" * 300)
+    alt_text = "Confirm alt " + ("y" * 500)
+    template_message = {
+        "type": "confirm",
+        "text": template_text,
+        "confirmLabel": "Approve this request now",
+        "confirmData": "https://example.com/approve",
+        "cancelLabel": "No thanks",
+        "cancelData": "action=reject",
+        "altText": alt_text,
+    }
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Choose one:",
+        template_message=template_message,
+        account_id="line-bot",
+        idempotency_key="idem-native-line-template-confirm",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "template",
+                        "altText": alt_text[:400],
+                        "template": {
+                            "type": "confirm",
+                            "text": template_text[:240],
+                            "actions": [
+                                {
+                                    "type": "uri",
+                                    "label": "Approve this request",
+                                    "uri": "https://example.com/approve",
+                                },
+                                {
+                                    "type": "postback",
+                                    "label": "No thanks",
+                                    "data": "action=reject",
+                                    "displayText": "No thanks",
+                                },
+                            ],
+                        },
+                    },
+                    {"type": "text", "text": "Choose one:"},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["templateMessage"] == template_message
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_buttons_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-buttons"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Buttons Template Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    title = "Menu title " + ("t" * 80)
+    text = "Choose from the following menu options " + ("x" * 200)
+    template_message = {
+        "type": "buttons",
+        "title": title,
+        "text": text,
+        "thumbnailImageUrl": "https://example.com/thumb.jpg",
+        "altText": "Menu alt " + ("a" * 500),
+        "actions": [
+            {
+                "type": "uri",
+                "label": "Open dashboard details",
+                "uri": "https://example.com/dashboard",
+            },
+            {
+                "type": "postback",
+                "label": "Approve item",
+                "data": "action=approve&item=1",
+            },
+            {"type": "message", "label": "Ask status", "data": "/status"},
+            {"label": "Default message", "data": "/default"},
+            {"type": "message", "label": "Ignored fifth", "data": "/ignored"},
+        ],
+    }
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Pick an option:",
+        template_message=template_message,
+        account_id="line-bot",
+        idempotency_key="idem-native-line-template-buttons",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "template",
+                        "altText": ("Menu alt " + ("a" * 500))[:400],
+                        "template": {
+                            "type": "buttons",
+                            "title": title[:40],
+                            "text": text[:160],
+                            "actions": [
+                                {
+                                    "type": "uri",
+                                    "label": "Open dashboard detai",
+                                    "uri": "https://example.com/dashboard",
+                                },
+                                {
+                                    "type": "postback",
+                                    "label": "Approve item",
+                                    "data": "action=approve&item=1",
+                                    "displayText": "Approve item",
+                                },
+                                {
+                                    "type": "message",
+                                    "label": "Ask status",
+                                    "text": "/status",
+                                },
+                                {
+                                    "type": "message",
+                                    "label": "Default message",
+                                    "text": "/default",
+                                },
+                            ],
+                            "thumbnailImageUrl": "https://example.com/thumb.jpg",
+                            "imageAspectRatio": "rectangle",
+                            "imageSize": "cover",
+                        },
+                    },
+                    {"type": "text", "text": "Pick an option:"},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["templateMessage"]["actions"] == template_message["actions"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_carousel_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-carousel"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Carousel Template Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    title = "Column title " + ("t" * 80)
+    text = "Column body " + ("x" * 180)
+    template_message = {
+        "type": "carousel",
+        "altText": "Carousel alt " + ("a" * 500),
+        "columns": [
+            {
+                "title": title,
+                "text": text,
+                "thumbnailImageUrl": "https://example.com/one.jpg",
+                "actions": [
+                    {
+                        "type": "uri",
+                        "label": "Open first item",
+                        "uri": "https://example.com/one",
+                    },
+                    {
+                        "type": "postback",
+                        "label": "Save first item",
+                        "data": "action=save&item=1",
+                    },
+                    {"type": "message", "label": "Details", "data": "/details 1"},
+                    {"type": "message", "label": "Ignored fourth", "data": "/ignored"},
+                ],
+            },
+            {
+                "text": "Second body",
+                "actions": [
+                    {"label": "Default second", "data": "/second"},
+                ],
+            },
+        ],
+    }
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Browse:",
+        template_message=template_message,
+        account_id="line-bot",
+        idempotency_key="idem-native-line-template-carousel",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "template",
+                        "altText": ("Carousel alt " + ("a" * 500))[:400],
+                        "template": {
+                            "type": "carousel",
+                            "columns": [
+                                {
+                                    "title": title[:40],
+                                    "text": text[:120],
+                                    "actions": [
+                                        {
+                                            "type": "uri",
+                                            "label": "Open first item",
+                                            "uri": "https://example.com/one",
+                                        },
+                                        {
+                                            "type": "postback",
+                                            "label": "Save first item",
+                                            "data": "action=save&item=1",
+                                            "displayText": "Save first item",
+                                        },
+                                        {
+                                            "type": "message",
+                                            "label": "Details",
+                                            "text": "/details 1",
+                                        },
+                                    ],
+                                    "thumbnailImageUrl": "https://example.com/one.jpg",
+                                },
+                                {
+                                    "text": "Second body",
+                                    "actions": [
+                                        {
+                                            "type": "message",
+                                            "label": "Default second",
+                                            "text": "/second",
+                                        },
+                                    ],
+                                },
+                            ],
+                            "imageAspectRatio": "rectangle",
+                            "imageSize": "cover",
+                        },
+                    },
+                    {"type": "text", "text": "Browse:"},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["templateMessage"]["columns"] == template_message["columns"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_matrix_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": f"$matrix-event-{len(matrix_puts)}"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Matrix parity update.",
+        reply_to_id="$reply",
+        thread_id="$thread-root",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-send",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="matrix",
+                account_id="matrix-bot",
+                peer_kind="channel",
+                peer_id=matrix_target,
+            ),
+        ),
+        thread_id="$thread-root",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-matrix-send",
+        "channel": "matrix",
+        "messageId": "$matrix-event-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "matrix",
+            "target": matrix_target,
+            "accountId": "matrix-bot",
+            "threadId": "$thread-root",
+            "sessionKey": expected_session_key,
+        },
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "primaryMessageId": "$matrix-event-1",
+        "messageIds": ["$matrix-event-1"],
+    }
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21ops%3Amatrix\.example/send/m\.room\.message/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "msgtype": "m.text",
+        "body": "Matrix parity update.",
+        "m.relates_to": {
+            "rel_type": "m.thread",
+            "event_id": "$thread-root",
+            "is_falling_back": True,
+            "m.in_reply_to": {"event_id": "$reply"},
+        },
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "$matrix-event-1",
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "primaryMessageId": "$matrix-event-1",
+        "messageIds": ["$matrix-event-1"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/photo.png"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    matrix_uploads: list[tuple[str, bytes, str | None, str | None]] = []
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\r"
+        b"IHDR"
+        b"\x00\x00\x00\x02"
+        b"\x00\x00\x00\x03"
+    )
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (png_bytes, "image/png", "photo.png")
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self
+        matrix_uploads.append(
+            (str(route.get("target") or ""), media, content_type, secret_token)
+        )
+        assert filename == "photo.png"
+        return "mxc://matrix.example.org/uploaded-photo"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-media-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Photo caption.",
+        media_urls=[media_url],
+        reply_to_id="$reply",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-media",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["ok"] is True
+    assert result["channel"] == "matrix"
+    assert result["messageId"] == "$matrix-media-1"
+    assert result["roomId"] == "!ops:matrix.example"
+    assert result["primaryMessageId"] == "$matrix-media-1"
+    assert result["messageIds"] == ["$matrix-media-1"]
+    assert result["mediaUrls"] == [media_url]
+    assert matrix_uploads == [
+        (
+            "https://matrix.example.org",
+            png_bytes,
+            "image/png",
+            "matrix-access-token",
+        )
+    ]
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21ops%3Amatrix\.example/send/m\.room\.message/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "msgtype": "m.image",
+        "body": "Photo caption.",
+        "filename": "photo.png",
+        "url": "mxc://matrix.example.org/uploaded-photo",
+        "info": {
+            "mimetype": "image/png",
+            "size": len(png_bytes),
+            "w": 2,
+            "h": 3,
+        },
+        "m.relates_to": {
+            "m.in_reply_to": {"event_id": "$reply"},
+        },
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "$matrix-media-1",
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "primaryMessageId": "$matrix-media-1",
+        "messageIds": ["$matrix-media-1"],
+        "mediaUrls": [media_url],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_audio_includes_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-audio-duration"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/clip.wav"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    wav_data = b"\x00" * 16000
+    wav_bytes = (
+        b"RIFF"
+        + (4 + 24 + 8 + len(wav_data)).to_bytes(4, "little")
+        + b"WAVE"
+        + b"fmt "
+        + (16).to_bytes(4, "little")
+        + (1).to_bytes(2, "little")
+        + (1).to_bytes(2, "little")
+        + (8000).to_bytes(4, "little")
+        + (8000).to_bytes(4, "little")
+        + (1).to_bytes(2, "little")
+        + (8).to_bytes(2, "little")
+        + b"data"
+        + len(wav_data).to_bytes(4, "little")
+        + wav_data
+    )
+    matrix_puts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (wav_bytes, "audio/wav", "clip.wav")
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, media, content_type, filename, secret_token
+        return "mxc://matrix.example.org/uploaded-audio"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        matrix_puts.append((target, payload))
+        return {"event_id": "$matrix-audio-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-audio-duration",
+    )
+
+    assert result["messageId"] == "$matrix-audio-1"
+    assert len(matrix_puts) == 1
+    assert matrix_puts[0][1] == {
+        "msgtype": "m.audio",
+        "body": "clip.wav",
+        "filename": "clip.wav",
+        "url": "mxc://matrix.example.org/uploaded-audio",
+        "info": {
+            "mimetype": "audio/wav",
+            "size": len(wav_bytes),
+            "duration": 2000,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_mp3_includes_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-mp3-duration"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/clip.mp3"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    # MPEG-1 Layer III, 128kbps, 44100Hz, no padding: 417-byte frames.
+    frame = b"\xff\xfb\x90\xc4" + (b"\x00" * 413)
+    mp3_bytes = frame * 4
+    matrix_puts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (mp3_bytes, "audio/mpeg", "clip.mp3")
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, media, content_type, filename, secret_token
+        return "mxc://matrix.example.org/uploaded-mp3"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        matrix_puts.append((target, payload))
+        return {"event_id": "$matrix-mp3-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-mp3-duration",
+    )
+
+    assert result["messageId"] == "$matrix-mp3-1"
+    assert len(matrix_puts) == 1
+    assert matrix_puts[0][1] == {
+        "msgtype": "m.audio",
+        "body": "clip.mp3",
+        "filename": "clip.mp3",
+        "url": "mxc://matrix.example.org/uploaded-mp3",
+        "info": {
+            "mimetype": "audio/mpeg",
+            "size": len(mp3_bytes),
+            "duration": 104,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_video_includes_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-video-duration"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/clip.mp4"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+
+    def mp4_box(name: bytes, payload: bytes) -> bytes:
+        return (len(payload) + 8).to_bytes(4, "big") + name + payload
+
+    mvhd_payload = (
+        b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + (1000).to_bytes(4, "big")
+        + (2500).to_bytes(4, "big")
+    )
+    mp4_bytes = mp4_box(b"ftyp", b"isom\x00\x00\x02\x00isom") + mp4_box(
+        b"moov",
+        mp4_box(b"mvhd", mvhd_payload),
+    )
+    matrix_puts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (mp4_bytes, "video/mp4", "clip.mp4")
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, media, content_type, filename, secret_token
+        return "mxc://matrix.example.org/uploaded-video"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        matrix_puts.append((target, payload))
+        return {"event_id": "$matrix-video-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="video",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-video-duration",
+    )
+
+    assert result["messageId"] == "$matrix-video-1"
+    assert len(matrix_puts) == 1
+    _matrix_endpoint, matrix_payload = matrix_puts[0]
+    assert matrix_payload["msgtype"] == "m.video"
+    assert matrix_payload["url"] == "mxc://matrix.example.org/uploaded-video"
+    assert matrix_payload["info"] == {
+        "mimetype": "video/mp4",
+        "size": len(mp4_bytes),
+        "duration": 2500,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_large_image_uploads_thumbnail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-thumbnail"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/large.png"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\r"
+        b"IHDR"
+        b"\x00\x00\x06\x40"
+        b"\x00\x00\x04\xb0"
+    )
+    matrix_puts: list[dict[str, object]] = []
+    matrix_uploads: list[tuple[bytes, str | None, str | None]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (png_bytes, "image/png", "large.png")
+
+    def fake_prepare_matrix_image_thumbnail(
+        self: OpsMeshService,
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        dimensions: tuple[int, int],
+    ) -> tuple[bytes, str, str, dict[str, object]] | None:
+        del self
+        assert media == png_bytes
+        assert content_type == "image/png"
+        assert filename == "large.png"
+        assert dimensions == (1600, 1200)
+        return (
+            b"thumb",
+            "image/jpeg",
+            "thumbnail.jpg",
+            {"w": 800, "h": 600, "mimetype": "image/jpeg", "size": 5},
+        )
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, secret_token
+        matrix_uploads.append((media, content_type, filename))
+        if filename == "thumbnail.jpg":
+            return "mxc://matrix.example.org/thumb"
+        return "mxc://matrix.example.org/main"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, target, secret_header_name, secret_token
+        matrix_puts.append(payload)
+        return {"event_id": "$matrix-thumbnail-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_prepare_matrix_image_thumbnail",
+        fake_prepare_matrix_image_thumbnail,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="large image",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-thumbnail",
+    )
+
+    assert result["messageId"] == "$matrix-thumbnail-1"
+    assert matrix_uploads == [
+        (png_bytes, "image/png", "large.png"),
+        (b"thumb", "image/jpeg", "thumbnail.jpg"),
+    ]
+    assert matrix_puts == [
+        {
+            "msgtype": "m.image",
+            "body": "large image",
+            "filename": "large.png",
+            "url": "mxc://matrix.example.org/main",
+            "info": {
+                "mimetype": "image/png",
+                "size": len(png_bytes),
+                "w": 1600,
+                "h": 1200,
+                "thumbnail_url": "mxc://matrix.example.org/thumb",
+                "thumbnail_info": {
+                    "w": 800,
+                    "h": 600,
+                    "mimetype": "image/jpeg",
+                    "size": 5,
+                },
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_encrypted_image_uses_file_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-encrypted"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/encrypted.png"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\r"
+        b"IHDR"
+        b"\x00\x00\x06\x40"
+        b"\x00\x00\x04\xb0"
+    )
+    matrix_puts: list[dict[str, object]] = []
+    matrix_uploads: list[tuple[bytes, str | None, str | None]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (png_bytes, "image/png", "encrypted.png")
+
+    def fake_matrix_room_is_encrypted(
+        self: OpsMeshService,
+        route: dict[str, object],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> bool:
+        del self, route
+        assert room_id == "!ops:matrix.example"
+        assert secret_token == "matrix-access-token"
+        return True
+
+    def fake_prepare_matrix_image_thumbnail(
+        self: OpsMeshService,
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        dimensions: tuple[int, int],
+    ) -> tuple[bytes, str, str, dict[str, object]] | None:
+        del self
+        assert media == png_bytes
+        assert content_type == "image/png"
+        assert filename == "encrypted.png"
+        assert dimensions == (1600, 1200)
+        return (
+            b"thumb",
+            "image/jpeg",
+            "thumbnail.jpg",
+            {"w": 800, "h": 600, "mimetype": "image/jpeg", "size": 5},
+        )
+
+    def fake_encrypt_matrix_media(
+        self: OpsMeshService,
+        media: bytes,
+    ) -> tuple[bytes, dict[str, object]]:
+        del self
+        if media == png_bytes:
+            return (
+                b"encrypted-main",
+                {
+                    "key": {"kty": "oct", "alg": "A256CTR", "k": "main-key", "ext": True},
+                    "iv": "main-iv",
+                    "hashes": {"sha256": "main-hash"},
+                    "v": "v2",
+                },
+            )
+        assert media == b"thumb"
+        return (
+            b"encrypted-thumb",
+            {
+                "key": {"kty": "oct", "alg": "A256CTR", "k": "thumb-key", "ext": True},
+                "iv": "thumb-iv",
+                "hashes": {"sha256": "thumb-hash"},
+                "v": "v2",
+            },
+        )
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, secret_token
+        matrix_uploads.append((media, content_type, filename))
+        if media == b"encrypted-thumb":
+            return "mxc://matrix.example.org/encrypted-thumb"
+        assert media == b"encrypted-main"
+        return "mxc://matrix.example.org/encrypted-main"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, target, secret_header_name, secret_token
+        matrix_puts.append(payload)
+        return {"event_id": "$matrix-encrypted-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_matrix_room_is_encrypted",
+        fake_matrix_room_is_encrypted,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_prepare_matrix_image_thumbnail",
+        fake_prepare_matrix_image_thumbnail,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_encrypt_matrix_media",
+        fake_encrypt_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="encrypted image",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-encrypted",
+    )
+
+    assert result["messageId"] == "$matrix-encrypted-1"
+    assert matrix_uploads == [
+        (b"encrypted-main", "application/octet-stream", "encrypted.png"),
+        (b"encrypted-thumb", "application/octet-stream", "thumbnail.jpg"),
+    ]
+    assert matrix_puts == [
+        {
+            "msgtype": "m.image",
+            "body": "encrypted image",
+            "filename": "encrypted.png",
+            "file": {
+                "url": "mxc://matrix.example.org/encrypted-main",
+                "key": {"kty": "oct", "alg": "A256CTR", "k": "main-key", "ext": True},
+                "iv": "main-iv",
+                "hashes": {"sha256": "main-hash"},
+                "v": "v2",
+            },
+            "info": {
+                "mimetype": "image/png",
+                "size": len(png_bytes),
+                "w": 1600,
+                "h": 1200,
+                "thumbnail_file": {
+                    "url": "mxc://matrix.example.org/encrypted-thumb",
+                    "key": {"kty": "oct", "alg": "A256CTR", "k": "thumb-key", "ext": True},
+                    "iv": "thumb-iv",
+                    "hashes": {"sha256": "thumb-hash"},
+                    "v": "v2",
+                },
+                "thumbnail_info": {
+                    "w": 800,
+                    "h": 600,
+                    "mimetype": "image/jpeg",
+                    "size": 5,
+                },
+            },
+        }
+    ]
+    assert "url" not in matrix_puts[0]
+    info = matrix_puts[0]["info"]
+    assert isinstance(info, dict)
+    assert "thumbnail_url" not in info
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_alias_resolves_matrix_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "#ops:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {"room_id": "!resolved:matrix.example"}
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-alias-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Alias routed.",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-alias",
+    )
+
+    assert result["ok"] is True
+    assert result["messageId"] == "$matrix-alias-1"
+    assert result["roomId"] == "!resolved:matrix.example"
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/directory/room/"
+                "%23ops%3Amatrix.example"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21resolved%3Amatrix\.example/send/m\.room\.message/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "msgtype": "m.text",
+        "body": "Alias routed.",
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_user_resolves_matrix_direct_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-user"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "user:@alice:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "direct",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/_matrix/client/v3/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if target.endswith(
+            "/_matrix/client/v3/user/%40bot%3Amatrix.example/account_data/m.direct"
+        ):
+            return {"@alice:matrix.example": ["!dm:matrix.example"]}
+        if target.endswith("/rooms/%21dm%3Amatrix.example/joined_members"):
+            return {
+                "joined": {
+                    "@bot:matrix.example": {},
+                    "@alice:matrix.example": {},
+                }
+            }
+        raise RuntimeError(f"unexpected Matrix direct-room request: {target}")
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-dm-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Direct routed.",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-user",
+    )
+
+    assert result["ok"] is True
+    assert result["messageId"] == "$matrix-dm-1"
+    assert result["roomId"] == "!dm:matrix.example"
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/user/"
+                "%40bot%3Amatrix.example/account_data/m.direct"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21dm%3Amatrix.example/joined_members"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21dm%3Amatrix\.example/send/m\.room\.message/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "msgtype": "m.text",
+        "body": "Direct routed.",
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_user_fallback_persists_matrix_direct_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-user-fallback"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "@fallback:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "direct",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/_matrix/client/v3/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if target.endswith(
+            "/_matrix/client/v3/user/%40bot%3Amatrix.example/account_data/m.direct"
+        ):
+            return {}
+        if target.endswith("/_matrix/client/v3/joined_rooms"):
+            return {"joined_rooms": ["!fallback:matrix.example"]}
+        if target.endswith("/rooms/%21fallback%3Amatrix.example/joined_members"):
+            return {
+                "joined": {
+                    "@bot:matrix.example": {},
+                    "@fallback:matrix.example": {},
+                }
+            }
+        raise RuntimeError(f"unexpected Matrix fallback request: {target}")
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-fallback-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Fallback routed.",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-user-fallback",
+    )
+
+    assert result["ok"] is True
+    assert result["messageId"] == "$matrix-fallback-1"
+    assert result["roomId"] == "!fallback:matrix.example"
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/user/"
+                "%40bot%3Amatrix.example/account_data/m.direct"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            "https://matrix.example.org/_matrix/client/v3/joined_rooms",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21fallback%3Amatrix.example/joined_members"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert matrix_puts[0] == (
+        (
+            "https://matrix.example.org/_matrix/client/v3/user/"
+            "%40bot%3Amatrix.example/account_data/m.direct"
+        ),
+        {"@fallback:matrix.example": ["!fallback:matrix.example"]},
+        "Authorization",
+        "Bearer matrix-access-token",
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_uses_matrix_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-matrix-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Poll Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-poll-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="matrix",
+        to=matrix_target,
+        question="Deploy?",
+        options=["Ship", "Wait"],
+        max_selections=2,
+        thread_id="$poll-thread",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-poll",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="matrix",
+                account_id="matrix-bot",
+                peer_kind="channel",
+                peer_id=matrix_target,
+            ),
+        ),
+        thread_id="$poll-thread",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-matrix-poll",
+        "channel": "matrix",
+        "messageId": "$matrix-poll-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "matrix",
+            "target": matrix_target,
+            "accountId": "matrix-bot",
+            "threadId": "$poll-thread",
+            "sessionKey": expected_session_key,
+        },
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "pollId": "$matrix-poll-1",
+    }
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21ops%3Amatrix\.example/send/m\.poll\.start/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "m.poll.start": {
+            "question": {"m.text": "Deploy?"},
+            "kind": "m.poll.undisclosed",
+            "max_selections": 2,
+            "answers": [
+                {"id": "answer1", "m.text": "Ship"},
+                {"id": "answer2", "m.text": "Wait"},
+            ],
+        },
+        "m.text": "Deploy?\n1. Ship\n2. Wait",
+        "org.matrix.msc1767.text": "Deploy?\n1. Ship\n2. Wait",
+        "m.relates_to": {
+            "rel_type": "m.thread",
+            "event_id": "$poll-thread",
+            "is_falling_back": True,
+            "m.in_reply_to": {"event_id": "$poll-thread"},
+        },
+        "m.mentions": {},
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "$matrix-poll-1",
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "pollId": "$matrix-poll-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -16698,12 +21015,21 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_
             "source": "gateway.send",
             "idempotency_key": "idem-replay-send-provider",
             "thread_id": "topic-42",
+            "source_session_key": "agent:release:source",
+            "runtime_session_key": "agent:release:source",
         },
         event_payload={
             "message": "Replay provider send.",
             "channel": "telegram",
             "to": "chat:ops",
             "accountId": "alerts",
+            "gatewayClientScopes": ["operator.write", "gateway.send"],
+            "requesterSessionKey": "agent:main:main",
+            "requesterAccountId": "alerts",
+            "requesterSenderId": "telegram-user-7",
+            "requesterSenderName": "Release Captain",
+            "requesterSenderUsername": "release.captain",
+            "requesterSenderE164": "+15551234567",
             "threadId": "topic-42",
             "replyToId": "message-99",
             "silent": True,
@@ -16713,6 +21039,7 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_
             "gifPlayback": False,
             "agentId": "release-bot",
             "sessionKey": session_key,
+            "sourceSessionKey": "agent:release:source",
             "conversationTarget": conversation_target,
         },
         message_summary="Replay provider send.",
@@ -16770,8 +21097,15 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_
             force_document=True,
             account_id="alerts",
             thread_id="topic-42",
-            session_key=session_key,
+            session_key="agent:release:source",
             agent_id="release-bot",
+            requester_session_key="agent:main:main",
+            requester_account_id="alerts",
+            requester_sender_id="telegram-user-7",
+            requester_sender_name="Release Captain",
+            requester_sender_username="release.captain",
+            requester_sender_e164="+15551234567",
+            gateway_client_scopes=("operator.write", "gateway.send"),
         )
     ]
     assert refreshed_delivery is not None
@@ -16829,6 +21163,7 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_
             "channel": "slack",
             "to": "channel:C123",
             "accountId": "workspace-bot",
+            "gatewayClientScopes": ["operator.write", "gateway.poll"],
             "maxSelections": 1,
             "durationSeconds": 3600,
             "silent": True,
@@ -16889,6 +21224,7 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_
             account_id="workspace-bot",
             thread_id="1710000000.9999",
             session_key=session_key,
+            gateway_client_scopes=("operator.write", "gateway.poll"),
         )
     ]
     assert refreshed_delivery is not None

@@ -456,6 +456,7 @@ class GatewayNodeMethodRequester:
 _SESSION_MUTATION_CONTROL_CLIENT_IDS = frozenset(
     {"openclaw-control-ui", "openzues-control-ui"}
 )
+_AGENT_WAIT_ERROR_RETRY_GRACE_SECONDS = 15.0
 
 
 def _reject_webchat_session_mutation(
@@ -1519,6 +1520,11 @@ class GatewayNodeMethodService:
         self._sessions_yield_service = sessions_yield_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
+        self._gateway_agent_lifecycle_starts_by_run_id: dict[str, int] = {}
+        self._gateway_agent_lifecycle_snapshots_by_run_id: dict[str, dict[str, object]] = {}
+        self._gateway_agent_lifecycle_pending_errors_by_run_id: dict[
+            str, tuple[dict[str, object], float]
+        ] = {}
         self._recent_node_voice_transcripts: dict[str, tuple[str, int]] = {}
         self._recent_node_exec_finished_runs: dict[str, int] = {}
         self._apns_wake_nudge_at_by_node_id: dict[str, int] = {}
@@ -7435,7 +7441,7 @@ class GatewayNodeMethodService:
                         limit=bounded_limit,
                         session_key=lookup_key,
                     )
-                    rows = _freshest_preview_alias_rows(rows)
+                    rows = _freshest_session_alias_rows(rows)
                     if rows:
                         previews.append(
                             {
@@ -8258,7 +8264,11 @@ class GatewayNodeMethodService:
                 assert self._subagent_thread_binder is not None
                 raw_thread_binding = await self._subagent_thread_binder(
                     {"sessionKey": spawn_parent_session_key, "agentId": requester_agent_id},
-                    {"sessionKey": canonical_key, "agentId": target_agent_id},
+                    {
+                        "sessionKey": canonical_key,
+                        "agentId": target_agent_id,
+                        "label": label,
+                    },
                     dict(requester_origin or {}),
                 )
                 thread_binding, thread_binding_error = resolve_thread_binding_result(
@@ -12552,16 +12562,24 @@ class GatewayNodeMethodService:
         run_id: str,
         timeout_ms: int,
     ) -> dict[str, object]:
+        resolved_run_id = run_id.strip()
+        lifecycle_snapshot = self._gateway_agent_lifecycle_terminal_snapshot(resolved_run_id)
+        if lifecycle_snapshot is not None:
+            return lifecycle_snapshot
         if self._database is None:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message="agent.wait is unavailable until control chat run waiting is wired",
                 status_code=503,
             )
-        resolved_run_id = run_id.strip()
         deadline = time.monotonic() + (max(timeout_ms, 0) / 1000)
         slept = False
         while True:
+            lifecycle_snapshot = self._gateway_agent_lifecycle_terminal_snapshot(
+                resolved_run_id
+            )
+            if lifecycle_snapshot is not None:
+                return lifecycle_snapshot
             snapshot = await self._gateway_chat_terminal_snapshot(run_id=resolved_run_id)
             if snapshot is not None:
                 return snapshot
@@ -12574,6 +12592,7 @@ class GatewayNodeMethodService:
 
     async def handle_runtime_event(self, instance_id: int, event: dict[str, Any]) -> None:
         del instance_id
+        self._record_gateway_agent_lifecycle_event(event)
         progress_delta = _gateway_runtime_event_acp_progress_delta(event)
         if progress_delta is None:
             return
@@ -12583,6 +12602,59 @@ class GatewayNodeMethodService:
             progress_delta=progress_delta,
             now_ms=_timestamp_ms(None),
         )
+
+    def _record_gateway_agent_lifecycle_event(self, event: Mapping[str, object]) -> None:
+        details = _gateway_runtime_event_lifecycle_details(event)
+        if details is None:
+            return
+        run_id, phase, data = details
+        if phase == "start":
+            started_at = _gateway_runtime_event_millis(data.get("startedAt"))
+            self._gateway_agent_lifecycle_starts_by_run_id[run_id] = (
+                started_at if started_at is not None else _timestamp_ms(None)
+            )
+            self._gateway_agent_lifecycle_snapshots_by_run_id.pop(run_id, None)
+            self._gateway_agent_lifecycle_pending_errors_by_run_id.pop(run_id, None)
+            return
+        started_at = _gateway_runtime_event_millis(
+            data.get("startedAt")
+        ) or self._gateway_agent_lifecycle_starts_by_run_id.get(run_id)
+        ended_at = _gateway_runtime_event_millis(data.get("endedAt"))
+        snapshot: dict[str, object] = {
+            "runId": run_id,
+            "status": "error" if phase == "error" else "ok",
+        }
+        if bool(data.get("aborted")) and phase == "end":
+            snapshot["status"] = "timeout"
+        if started_at is not None:
+            snapshot["startedAt"] = started_at
+        if ended_at is not None:
+            snapshot["endedAt"] = ended_at
+        error = _string_or_none(data.get("error"))
+        if error is not None:
+            snapshot["error"] = error
+        self._gateway_agent_lifecycle_starts_by_run_id.pop(run_id, None)
+        if phase == "error":
+            self._gateway_agent_lifecycle_pending_errors_by_run_id[run_id] = (
+                snapshot,
+                time.monotonic() + _AGENT_WAIT_ERROR_RETRY_GRACE_SECONDS,
+            )
+            return
+        self._gateway_agent_lifecycle_pending_errors_by_run_id.pop(run_id, None)
+        self._gateway_agent_lifecycle_snapshots_by_run_id[run_id] = snapshot
+
+    def _gateway_agent_lifecycle_terminal_snapshot(
+        self,
+        run_id: str,
+    ) -> dict[str, object] | None:
+        pending = self._gateway_agent_lifecycle_pending_errors_by_run_id.get(run_id)
+        if pending is not None:
+            snapshot, due_at = pending
+            if time.monotonic() >= due_at:
+                self._gateway_agent_lifecycle_pending_errors_by_run_id.pop(run_id, None)
+                self._gateway_agent_lifecycle_snapshots_by_run_id[run_id] = snapshot
+        current_snapshot = self._gateway_agent_lifecycle_snapshots_by_run_id.get(run_id)
+        return dict(current_snapshot) if current_snapshot is not None else None
 
     async def _mark_acp_task_record_runtime_progress(
         self,
@@ -12907,6 +12979,13 @@ class GatewayNodeMethodService:
         next_metadata = dict(metadata)
         task_record_delivery_status: str | None = None
         completion_delivery = metadata.get("completionDelivery")
+        if not isinstance(completion_delivery, dict):
+            derived_completion_delivery = _completion_delivery_from_session_binding(
+                metadata.get("sessionBinding")
+            )
+            if derived_completion_delivery is not None:
+                completion_delivery = derived_completion_delivery
+                next_metadata["completionDelivery"] = derived_completion_delivery
         if (
             isinstance(completion_delivery, dict)
             and self._send_channel_message_service is not None
@@ -13794,6 +13873,54 @@ def _gateway_runtime_event_run_id(event: Mapping[str, object]) -> str | None:
     return None
 
 
+def _gateway_runtime_event_container_run_id(
+    event: Mapping[str, object],
+    container: Mapping[str, object],
+) -> str | None:
+    for key in ("runId", "turnId", "activeTurnId"):
+        value = _string_or_none(container.get(key))
+        if value is not None:
+            return value
+    return _gateway_runtime_event_run_id(event)
+
+
+def _gateway_runtime_event_millis(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        return None
+    return max(0, math.floor(numeric_value))
+
+
+def _gateway_runtime_event_lifecycle_details(
+    event: Mapping[str, object],
+) -> tuple[str, Literal["start", "end", "error"], Mapping[str, object]] | None:
+    params = _gateway_runtime_event_params(event)
+    candidates: list[Mapping[str, object]] = [event, params]
+    nested_event = _mapping_or_none(params.get("event"))
+    if nested_event is not None:
+        candidates.append(nested_event)
+    item = _mapping_or_none(params.get("item"))
+    if item is not None:
+        candidates.append(item)
+    for container in candidates:
+        stream = _string_or_none(container.get("stream"))
+        if stream != "lifecycle":
+            continue
+        data = _mapping_or_none(container.get("data")) or container
+        phase = _string_or_none(data.get("phase")) or _string_or_none(
+            container.get("phase")
+        )
+        if phase not in {"start", "end", "error"}:
+            continue
+        run_id = _gateway_runtime_event_container_run_id(event, container)
+        if run_id is None:
+            continue
+        return run_id, cast("Literal['start', 'end', 'error']", phase), data
+    return None
+
+
 def _gateway_runtime_event_acp_progress_delta(
     event: Mapping[str, object],
 ) -> str | None:
@@ -13931,6 +14058,55 @@ def _sessions_spawn_payload_has_active_subagent_binding(
             return True
     thread_binding = payload.get("threadBinding")
     return isinstance(thread_binding, Mapping)
+
+
+def _prefixed_or_channel_target(value: str, *, channel: str) -> str:
+    if channel == "matrix":
+        return value if value.lower().startswith("room:") else f"room:{value}"
+    if ":" in value:
+        return value
+    return f"channel:{value}"
+
+
+def _completion_delivery_from_session_binding(
+    raw_session_binding: object,
+) -> dict[str, object] | None:
+    if not isinstance(raw_session_binding, Mapping):
+        return None
+    status = _string_or_none(raw_session_binding.get("status"))
+    if status is not None and status != "active":
+        return None
+    conversation = _mapping_or_none(raw_session_binding.get("conversation"))
+    if conversation is None:
+        return None
+    channel = _string_or_none(conversation.get("channel"))
+    conversation_id = _string_or_none(conversation.get("conversationId"))
+    if channel is None or conversation_id is None:
+        return None
+    channel = channel.lower()
+    account_id = _string_or_none(conversation.get("accountId"))
+    parent_conversation_id = _string_or_none(conversation.get("parentConversationId"))
+    metadata = _mapping_or_none(raw_session_binding.get("metadata"))
+    metadata_thread_id = (
+        _string_or_none(metadata.get("threadId")) if metadata is not None else None
+    )
+    thread_id: str | None
+    if parent_conversation_id is not None:
+        to = _prefixed_or_channel_target(parent_conversation_id, channel=channel)
+        thread_id = metadata_thread_id or conversation_id
+    else:
+        to = _prefixed_or_channel_target(conversation_id, channel=channel)
+        thread_id = metadata_thread_id
+    delivery: dict[str, object] = {
+        "mode": "thread",
+        "channel": channel,
+        "to": to,
+    }
+    if account_id is not None:
+        delivery["accountId"] = account_id
+    if thread_id is not None:
+        delivery["threadId"] = thread_id
+    return delivery
 
 
 def _sessions_spawn_acp_heartbeat_config_for_agent(
@@ -14964,6 +15140,9 @@ async def _build_sessions_get_payload(
         limit=max(1, message_count),
         session_key=session_key,
     )
+    rows = _freshest_session_alias_rows(rows)
+    if not rows:
+        return {"messages": []}
     entries: list[tuple[int, dict[str, Any]]] = []
     for sequence, row in enumerate(rows, start=1):
         projected = _project_control_chat_messages([row], max_chars=None)
@@ -15741,15 +15920,7 @@ def _project_control_chat_messages(
     *,
     max_chars: int | None,
 ) -> list[dict[str, Any]]:
-    normalized: list[
-        tuple[
-            str,
-            str,
-            dict[str, Any] | None,
-            dict[str, Any] | None,
-            dict[str, Any] | None,
-        ]
-    ] = []
+    messages: list[dict[str, Any]] = []
     for row in rows:
         role = str(row.get("role") or "").strip()
         if role not in {"user", "assistant"}:
@@ -15762,33 +15933,37 @@ def _project_control_chat_messages(
         metadata = (
             _chat_history_json_object(row.get("metadata_json")) if role == "assistant" else None
         )
-        normalized.append((role, text, usage, cost, metadata))
-
-    if max_chars is None:
-        return _cap_chat_history_messages_by_json_bytes(
-            [
-                _bounded_chat_history_message_payload(
+        structured_content = _chat_history_structured_content(
+            text,
+            role=role,
+            max_chars=max_chars,
+        )
+        if structured_content is not None:
+            if not structured_content:
+                continue
+            messages.append(
+                _bounded_chat_history_content_payload(
                     role,
-                    text,
+                    structured_content,
                     usage=usage,
                     cost=cost,
                     metadata=metadata,
                 )
-                for role, text, usage, cost, metadata in normalized
-            ]
-        )
-    return _cap_chat_history_messages_by_json_bytes(
-        [
+            )
+            continue
+        if max_chars is not None:
+            text = _chat_history_truncated_text(text, max_chars)
+        messages.append(
             _bounded_chat_history_message_payload(
                 role,
-                _chat_history_truncated_text(text, max_chars),
+                text,
                 usage=usage,
                 cost=cost,
                 metadata=metadata,
             )
-            for role, text, usage, cost, metadata in normalized
-        ]
-    )
+        )
+
+    return _cap_chat_history_messages_by_json_bytes(messages)
 
 
 def _project_sessions_history_messages(
@@ -15844,6 +16019,111 @@ def _sessions_history_display_role(role: str) -> str:
 
 def _sessions_history_is_tool_role(role: str) -> bool:
     return role in {"tool", "toolResult"}
+
+
+def _chat_history_structured_content(
+    text: str,
+    *,
+    role: str,
+    max_chars: int | None,
+) -> list[dict[str, Any]] | None:
+    if not text.lstrip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        return None
+
+    content = [
+        _sanitize_chat_history_content_block(item, max_chars=max_chars)
+        for item in parsed
+    ]
+    if role != "assistant":
+        return content
+    if _assistant_content_phase(content) == "commentary":
+        return []
+    content = _assistant_final_answer_content_blocks(content)
+    if _assistant_structured_content_is_suppressed(content):
+        return []
+    return content
+
+
+def _sanitize_chat_history_content_block(
+    block: Mapping[str, Any],
+    *,
+    max_chars: int | None,
+) -> dict[str, Any]:
+    sanitized = dict(block)
+    for key in ("text", "content", "thinking"):
+        value = sanitized.get(key)
+        if not isinstance(value, str):
+            continue
+        value = _chat_history_display_text(value)
+        if max_chars is not None:
+            value = _chat_history_truncated_text(value, max_chars)
+        sanitized[key] = value
+    if "thinkingSignature" in sanitized:
+        sanitized.pop("thinkingSignature", None)
+    return sanitized
+
+
+def _assistant_content_phase(content: list[dict[str, Any]]) -> str | None:
+    phases: set[str] = set()
+    for block in content:
+        if block.get("type") != "text":
+            continue
+        phase = _assistant_text_signature_phase(block.get("textSignature"))
+        if phase is not None:
+            phases.add(phase)
+    return next(iter(phases)) if len(phases) == 1 else None
+
+
+def _assistant_final_answer_content_blocks(
+    content: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    has_explicit_phased_text = any(
+        block.get("type") == "text"
+        and _assistant_text_signature_phase(block.get("textSignature")) is not None
+        for block in content
+    )
+    if not has_explicit_phased_text:
+        return content
+    return [
+        block
+        for block in content
+        if block.get("type") != "text"
+        or _assistant_text_signature_phase(block.get("textSignature")) == "final_answer"
+    ]
+
+
+def _assistant_text_signature_phase(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip().startswith("{"):
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or parsed.get("v") != 1:
+        return None
+    phase = parsed.get("phase")
+    return phase if phase in {"commentary", "final_answer"} else None
+
+
+def _assistant_structured_content_is_suppressed(content: list[dict[str, Any]]) -> bool:
+    if not content:
+        return False
+    texts: list[str] = []
+    for block in content:
+        if block.get("type") != "text":
+            return False
+        text = block.get("text")
+        if not isinstance(text, str):
+            return False
+        texts.append(text)
+    joined = "\n".join(texts).strip()
+    return bool(joined) and joined.upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS
 
 
 def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
@@ -16065,7 +16345,24 @@ def _chat_history_message_payload(
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {"role": role, "content": [{"type": "text", "text": text}]}
+    return _chat_history_content_payload(
+        role,
+        [{"type": "text", "text": text}],
+        usage=usage,
+        cost=cost,
+        metadata=metadata,
+    )
+
+
+def _chat_history_content_payload(
+    role: str,
+    content: list[dict[str, Any]],
+    *,
+    usage: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"role": role, "content": content}
     if usage is not None:
         payload["usage"] = usage
     if cost is not None:
@@ -16077,17 +16374,17 @@ def _chat_history_message_payload(
     return payload
 
 
-def _bounded_chat_history_message_payload(
+def _bounded_chat_history_content_payload(
     role: str,
-    text: str,
+    content: list[dict[str, Any]],
     *,
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = _chat_history_message_payload(
+    payload = _chat_history_content_payload(
         role,
-        text,
+        content,
         usage=usage,
         cost=cost,
         metadata=metadata,
@@ -16101,6 +16398,23 @@ def _bounded_chat_history_message_payload(
     )
     placeholder["__openclaw"] = {"truncated": True, "reason": "oversized"}
     return placeholder
+
+
+def _bounded_chat_history_message_payload(
+    role: str,
+    text: str,
+    *,
+    usage: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _bounded_chat_history_content_payload(
+        role,
+        [{"type": "text", "text": text}],
+        usage=usage,
+        cost=cost,
+        metadata=metadata,
+    )
 
 
 def _cap_chat_history_messages_by_json_bytes(
@@ -16179,7 +16493,7 @@ def _project_session_preview_items(
     return items
 
 
-def _freshest_preview_alias_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _freshest_session_alias_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return rows
     latest_session_key = _string_or_none(rows[-1].get("session_key"))
@@ -18671,6 +18985,12 @@ def _normalize_gateway_sandbox_media_source(
         return media_source
     if re.match(r"^data:", media_source, flags=re.IGNORECASE):
         raise ValueError("data: URLs are not supported for sandbox media")
+    inbound_fallback = _normalize_gateway_sandbox_inbound_media_fallback(
+        media_source,
+        sandbox_root=root,
+    )
+    if inbound_fallback is not None:
+        return inbound_fallback
     candidate = media_source
     if re.match(r"^file://", candidate, flags=re.IGNORECASE):
         parsed = urlsplit(candidate)
@@ -18698,6 +19018,33 @@ def _normalize_gateway_sandbox_media_source(
     if any(part == ".." for part in relative_parts):
         raise ValueError("sandbox media path escapes sandbox root")
     return str(Path(root).expanduser().joinpath(*relative_parts))
+
+
+def _normalize_gateway_sandbox_inbound_media_fallback(
+    media_source: str,
+    *,
+    sandbox_root: str,
+) -> str | None:
+    if not media_source.startswith("@"):
+        return None
+    raw_path = media_source[1:].strip()
+    if not raw_path:
+        return None
+    if re.match(r"^file://", raw_path, flags=re.IGNORECASE):
+        parsed = urlsplit(raw_path)
+        host = parsed.netloc.strip().lower()
+        if host and host != "localhost":
+            return None
+        raw_path = unquote(parsed.path)
+    normalized_path = raw_path.replace("\\", "/").rstrip("/")
+    basename = normalized_path.rsplit("/", 1)[-1].strip()
+    if basename in {"", ".", ".."}:
+        return None
+    fallback = Path(sandbox_root).expanduser() / "media" / "inbound" / basename
+    try:
+        return str(fallback) if fallback.is_file() else None
+    except OSError:
+        return None
 
 
 def _normalize_gateway_chat_channel_id(raw: str) -> str | None:

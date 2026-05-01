@@ -61,6 +61,8 @@ def _native_result_payload(result: object) -> dict[str, object]:
         "mediaIds",
         "mediaUrl",
         "mediaUrls",
+        "primaryMessageId",
+        "messageIds",
         "meta",
     ):
         value = _native_result_field(result, key)
@@ -121,9 +123,17 @@ class GatewayOutboundRuntimeMessageRequest:
     target: str
     message: str
     media_urls: tuple[str, ...] = ()
+    media_kind: str | None = None
+    preview_image_url: str | None = None
+    duration_ms: int | None = None
+    location: dict[str, object] | None = None
+    quick_replies: tuple[str, ...] = ()
+    flex_message: dict[str, object] | None = None
+    template_message: dict[str, object] | None = None
     gif_playback: bool | None = None
     audio_as_voice: bool | None = None
     reply_to_id: str | None = None
+    reply_token: str | None = None
     silent: bool | None = None
     force_document: bool | None = None
     account_id: str | None = None
@@ -307,9 +317,17 @@ class GatewayOutboundRuntimeService:
         channel: str | None = None,
         target: str | None = None,
         media_urls: tuple[str, ...] = (),
+        media_kind: str | None = None,
+        preview_image_url: str | None = None,
+        duration_ms: int | None = None,
+        location: dict[str, object] | None = None,
+        quick_replies: list[str] | tuple[str, ...] | None = None,
+        flex_message: dict[str, object] | None = None,
+        template_message: dict[str, object] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
         account_id: str | None = None,
@@ -326,6 +344,7 @@ class GatewayOutboundRuntimeService:
         normalized_channel = _normalize_optional_string(channel)
         normalized_target = _normalize_optional_string(target)
         normalized_gateway_client_scopes = _normalize_scope_tuple(gateway_client_scopes)
+        normalized_quick_replies = _normalize_scope_tuple(quick_replies)
         native_message_deliverer = self._native_message_deliverer(
             channel=normalized_channel,
             account_id=account_id,
@@ -338,9 +357,17 @@ class GatewayOutboundRuntimeService:
                         target=normalized_target,
                         message=message,
                         media_urls=media_urls,
+                        media_kind=_normalize_optional_string(media_kind),
+                        preview_image_url=_normalize_optional_string(preview_image_url),
+                        duration_ms=duration_ms,
+                        location=location,
+                        quick_replies=normalized_quick_replies,
+                        flex_message=flex_message,
+                        template_message=template_message,
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
+                        reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
                         account_id=_normalize_optional_string(account_id),
@@ -402,9 +429,17 @@ class GatewayOutboundRuntimeService:
                         target=normalized_target,
                         message=message,
                         media_urls=media_urls,
+                        media_kind=_normalize_optional_string(media_kind),
+                        preview_image_url=_normalize_optional_string(preview_image_url),
+                        duration_ms=duration_ms,
+                        location=location,
+                        quick_replies=normalized_quick_replies,
+                        flex_message=flex_message,
+                        template_message=template_message,
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
+                        reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
                         account_id=_normalize_optional_string(account_id),

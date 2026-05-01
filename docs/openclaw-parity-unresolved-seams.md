@@ -93,7 +93,27 @@ thread intro metadata, including `threadName`, optional `label`, and the
 runtime cwd line when `cwd` is present.
 Remaining ACP binding parity is real provider-native child-thread
 creation/store breadth, unbind lifecycle breadth, and the
-standalone ACP bridge server/client runtime.
+standalone ACP bridge server/client runtime. Native ACP prompt request assembly
+now also mirrors OpenClaw's translator contract for cwd prefixing, home
+redaction with Windows separator preservation, prompt attachments,
+`_meta` thinking/deliver/timeout send options, and system provenance
+metadata/receipt construction. Native `AcpGatewayAgent` now covers
+OpenClaw-shaped `initialize`, `newSession`, `loadSession`, `prompt`, and
+`cancel` behavior, including capability advertisement, gateway-backed session
+snapshots, usage updates, transcript replay, available command updates,
+active-run prompt tracking, chat delta projection, terminal stop-reason
+mapping, scoped `chat.abort`, and gateway `agent` tool-call event streaming.
+Remaining ACP protocol parity is the bridge server/client lifecycle around
+parent-stream relay fallback and production server transport wiring; the
+top-level `acp` CLI now passes resolved gateway/auth/session/provenance options
+to a registered native bridge runner instead of always returning the
+unavailable boundary. `setSessionMode` and `setSessionConfigOption` are covered
+by native `sessions.patch` mappings with ACP control refresh updates, ACP
+session creation rate limiting now matches OpenClaw's new-session/new-load
+budget with existing-load refresh exemption, prompt provenance fallback now
+retries without admin-only provenance fields on OpenClaw-shaped gateway
+`INVALID_REQUEST` rejection, and reconnect handling now reconciles accepted
+pending runs with `agent.wait timeoutMs=0`.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same
@@ -247,8 +267,11 @@ runtime handoff, and carries sandbox-relative media paths in the runtime prompt.
 The sibling `sessions.send` attachment path now uses the same sandbox workspace
 staging behavior, and `sessions.steer` now does the same for steered follow-up
 messages. Node `agent.request` attachment delivery now also stages sandboxed
-media into the target session workspace before runtime handoff. Remaining
-sandbox media staging work is deeper inbound provider media staging.
+media into the target session workspace before runtime handoff. Provider-backed
+`gateway.send` now also mirrors OpenClaw's sandbox media bridge inbound
+fallback by rewriting `@/.../media/inbound/<name>` references to the saved
+sandbox workspace's `media/inbound/<name>` file when that staged file exists.
+Remaining sandbox media staging work is deeper inbound provider media staging.
 The CLI now exposes `sandbox list --json` with OpenClaw-shaped top-level
 `containers` / `browsers` arrays sourced from saved sandbox session metadata,
 `sandbox explain` JSON/human output with OpenClaw's top-level `docsUrl`,
@@ -315,14 +338,29 @@ mutating or deleting metadata, and reset strips stale binding/completion fields
 from the preserved session entry.
 Matrix route-backed thread-bound subagent bindings now also persist
 OpenClaw's bundled `placement="child"` default in the `sessionBinding`
-metadata instead of treating Matrix as a current-conversation channel. Remaining
-thread-binding parity is deeper provider-native child-thread creation and
-provider-owned binding stores for ACP/session runtimes.
+metadata instead of treating Matrix as a current-conversation channel. Matrix
+route-backed thread-bound subagent spawns without an existing thread id now also
+create a provider child thread root by sending the OpenClaw-style intro message
+through the native `message.action send` adapter, use the returned Matrix event
+id as the bound thread id, and persist `parentConversationId`/child
+conversation metadata. Remaining
+Discord route-backed thread-bound subagent bindings now create a provider child
+thread through the native `message.action thread-create` adapter, keep delivery
+routed through the parent channel plus created thread id, and persist
+child-placement session binding metadata keyed to `channel:<createdThreadId>`.
+Remaining thread-binding parity is deeper provider-owned binding stores and
+provider child-thread creation breadth beyond the native Discord/Matrix route
+paths.
 Reset/delete lifecycle now also emits the OpenClaw-shaped `subagent_ended`
 event through a fakeable native lifecycle service after session mutation,
 including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;
 `sessions.delete emitLifecycleHooks=false` still skips only that hook while the
 delete/unbind path proceeds.
+Completion announcement delivery now also mirrors OpenClaw's bound-delivery
+router fallback for saved `sessionBinding` records: if a child session lacks
+`completionDelivery` but has an active binding record, `agent.wait` derives the
+provider route from the binding conversation, persists the derived completion
+route, and sends the completion message to the bound provider thread.
 Cross-agent thread-bound subagent spawns now also resolve the requester origin
 through OpenClaw-style route `bindings`: when the target agent has a configured
 route binding for the requester channel/peer, the binder context and initial
@@ -418,6 +456,14 @@ through the saved sandbox workspace root before dispatch, deduping equivalent
 container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+Saved failed provider-backed `gateway/send` and `gateway/poll` replay now also
+preserves OpenClaw's recovery-time caller context: stored
+`gatewayClientScopes`, requester session, requester account, and requester
+sender metadata are forwarded back into the native outbound runtime request
+instead of being dropped on replay. Replay of explicit source-session sends now
+also honors the saved `sourceSessionKey` / `runtime_session_key` for runtime
+dispatch while keeping the announce delivery row attached to the channel-derived
+history session.
 Direct audio-as-voice media sends now also preserve OpenClaw's
 `audioAsVoice` hint from gateway `send` through OpsMesh saved payloads,
 `GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
@@ -454,6 +500,122 @@ Zalo media sends now use the upstream `sendPhoto` path, preserve caption text
 only on the first media item, iterate multiple media URLs, and persist
 `mediaIds` / `mediaUrls`. Remaining Zalo provider parity is limited to deeper
 provider-specific edge cases surfaced by future upstream contract checks.
+LINE native route-backed direct sends now use OpenClaw's Bot API
+`/v2/bot/message/push` shape for text and HTTPS image media, normalize
+`line:user:` / `line:group:` / `line:room:` targets to provider chat ids,
+batch push messages at LINE's five-message boundary, and persist provider
+`messageId="push"`, `chatId`, `channelId`, and `mediaUrls` metadata through
+the direct-send delivery path. LINE native route-backed direct sends now also
+carry OpenClaw's `replyToken` option through the shared outbound runtime and
+send the prepared message batch to Bot API `/v2/bot/message/reply`, returning
+`messageId="reply"` while preserving saved delivery replay metadata. Remaining
+LINE native route-backed direct sends now also carry OpenClaw's
+`mediaKind="video"` and `previewImageUrl` options through the shared outbound
+runtime and emit LINE video message payloads with `originalContentUrl` /
+`previewImageUrl` instead of default image payloads. LINE native route-backed
+direct sends now also carry OpenClaw's `mediaKind="audio"` and `durationMs`
+options through the shared outbound runtime and emit LINE audio message payloads
+with the requested duration. LINE native route-backed direct sends now also
+carry OpenClaw's structured `location` payload through the shared outbound
+runtime and emit LINE location messages with title/address truncation and
+latitude/longitude preservation. LINE native route-backed direct sends now also
+carry OpenClaw's `quickReplies` list through the shared outbound runtime and
+attach LINE `quickReply` action items to the final outgoing message, enforcing
+the upstream 13-item and 20-character label boundaries. LINE native
+route-backed direct sends now also carry OpenClaw's `flexMessage` payload
+through the shared outbound runtime, emit Bot API Flex messages with `altText`
+truncated at 400 characters, preserve the Flex `contents`, and keep companion
+text sends intact. LINE native route-backed direct sends now also carry
+OpenClaw's confirm-style `templateMessage` payload through the shared outbound
+runtime, map confirm/cancel data to URI, postback, or message actions, enforce
+the upstream confirm text, alternate text, label, and postback data boundaries,
+and keep companion text sends intact. LINE native route-backed direct sends now
+also carry OpenClaw's buttons-style `templateMessage` payload through the shared
+outbound runtime, preserve the source action list for replay, emit Bot API
+buttons templates with title/text/action truncation, default image layout
+options, optional thumbnail support, and URI/postback/message action mapping.
+LINE native route-backed direct sends now also carry OpenClaw's carousel-style
+`templateMessage` payload through the shared outbound runtime, preserve source
+columns/actions for replay, emit Bot API carousel templates with the upstream
+10-column and 3-action-per-column boundaries, title/text truncation, optional
+thumbnail support, default image layout options, and URI/postback/message action
+mapping. LINE route-backed account probes now mirror OpenClaw's `probeLineBot`
+status hook by calling Bot API `/v2/bot/info` with the saved route token and
+returning LINE bot profile metadata in the per-account probe result. Remaining
+LINE provider parity is richer action/rich-menu management breadth.
+Matrix native route-backed direct text sends now use OpenClaw's Client-Server
+`m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
+targets to room ids, preserve reply/thread relation metadata, split text at
+Matrix's 4000-character event boundary, and persist `messageId`, `roomId`,
+`channelId`, `conversationId`, `primaryMessageId`, and ordered `messageIds`.
+Matrix native route-backed polls now also emit OpenClaw's `m.poll.start`
+payload with disclosed/undisclosed selection kind, answer ids, fallback text,
+thread relation metadata, and persisted `messageId` / `pollId` metadata.
+Matrix `message.action send` / `sendMessage` now maps through the same native
+route-backed send owner, including `content` / `message`, `replyTo`,
+`threadId`, media aliases as guarded inputs, and action idempotency as the
+Matrix transaction id when present.
+Matrix `message.action edit` / `editMessage` now also sends OpenClaw-shaped
+`m.replace` replacement events with `m.new_content`, replacement body prefix,
+thread reply metadata, route token auth, and the action idempotency key as the
+Matrix transaction id when present.
+Matrix `message.action delete` / `deleteMessage` now maps to OpenClaw's
+`redactEvent` behavior with Matrix Client-Server `redact` requests, optional
+reason payloads, route token auth, idempotency-key transaction ids, and
+`{ok:true, deleted:true}` action results.
+Matrix `message.action react` now maps OpenClaw's reaction-add path to
+`m.reaction` events with `m.annotation` relation content, route token auth,
+idempotency-key transaction ids, and `{ok:true, added:<emoji>}` action results.
+Matrix `message.action react remove` and `message.action reactions` now use
+OpenClaw's relation-history path: v1 relations reads summarize reaction keys and
+unique senders, Matrix `whoami` resolves the current bot user, and only matching
+current-user reaction events are redacted for remove/clear requests.
+Matrix `message.action pinMessage`, `unpinMessage`, and `listPins` now use
+OpenClaw's `m.room.pinned_events` state behavior: current pins are read from room
+state, pin/unpin writes the updated state, and listPins returns pinned ids plus
+summaries for resolvable pinned message events.
+Matrix `message.action readMessages` now uses OpenClaw's room history endpoint
+shape with `dir`, bounded `limit`, `before`/`after` tokens, redaction filtering,
+message summaries, and `nextBatch` / `prevBatch` cursor projection.
+Matrix `message.action memberInfo` and `channelInfo` now map to OpenClaw's
+profile, room-state, and joined-member probe shapes, including display/avatar
+profile projection, room name/topic/canonical alias reads, and member counts.
+Matrix route-backed media sends now upload outbound media to the Matrix media
+repository, send unencrypted `m.image` / `m.video` / `m.audio` / `m.file`
+content with MXC URLs, caption text, relation metadata, mimetype/size info, and
+persisted media delivery metadata.
+Matrix route-backed sends and polls now resolve `#room:server` aliases through
+the Matrix directory endpoint before sending, matching OpenClaw's alias
+resolution behavior for native room targets.
+Matrix direct-user targets now classify as direct peers and resolve through
+OpenClaw's first `m.direct` path: Matrix `whoami`, account-data lookup, and
+strict two-member joined-room validation before native send/poll delivery.
+Matrix direct-user fallback now also inspects joined rooms when `m.direct` is
+missing or stale, selects a strict two-member room, and persists the repaired
+primary `m.direct` account-data mapping before native delivery.
+Matrix `message.action setProfile` now updates the route-backed bot profile via
+Matrix `whoami`, profile comparison, `displayname` / `avatar_url` profile PUTs,
+HTTP/path avatar media conversion through the Matrix media repository, and
+OpenClaw-shaped `channels.matrix.accounts.<accountId>` config persistence.
+Matrix route-backed media sends now also include basic image dimension metadata
+for PNG/GIF/JPEG payloads in Matrix `info.w` / `info.h`, matching the
+OpenClaw media-info contract for image events.
+Matrix route-backed WAV audio sends now include OpenClaw-style `info.duration`
+metadata parsed from native RIFF/WAVE headers.
+Matrix route-backed large-image sends now also mirror OpenClaw's unencrypted
+thumbnail branch: images larger than 800px generate and upload a JPEG
+thumbnail, then attach `thumbnail_url` and `thumbnail_info` metadata to the
+primary media event.
+Matrix route-backed MP4/MOV-family video sends now parse native ISO-BMFF
+`mvhd` duration metadata into Matrix `info.duration`, matching OpenClaw's
+timed media-info contract for common video events.
+Matrix route-backed encrypted media sends now probe `m.room.encryption`,
+AES-CTR-encrypt outbound media and large-image thumbnails, upload encrypted
+bytes, omit unencrypted MXC `url` fields, and attach OpenClaw-shaped `file` /
+`info.thumbnail_file` payloads with encrypted-file metadata.
+Matrix route-backed MP3 audio sends now parse common MPEG frame timing into
+Matrix `info.duration`, closing the Matrix media-info duration head for WAV,
+MP3, and MP4/MOV-family timed media.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the
@@ -725,10 +887,10 @@ unmanaged status instead of omitting the managed-service read model. Text-mode
 `status --all` now renders the OpenClaw-shaped
 pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
-CLI/runtime parity includes ACP/sandbox status commands, deeper model
-auth/probe inspection, production provider usage/security-audit adapter wiring,
-plugin/runtime inspection, deeper runtime bridge doctor checks, non-metadata
-external sandbox container cleanup, and broader TUI ergonomics.
+CLI/runtime parity includes deeper model auth/probe inspection, production
+provider usage/security-audit adapter wiring, plugin/runtime inspection, deeper
+runtime bridge doctor checks, non-metadata external sandbox container cleanup,
+and broader TUI ergonomics.
 `status --json --usage
 --all` now consumes fakeable native provider-usage and security-audit runtime
 adapters when registered while keeping the honest unavailable placeholders
@@ -789,7 +951,13 @@ mutating workspace files.
 Top-level doctor output now includes the first OpenClaw
 `doctor:workspace-status` native read model: manifest-backed plugin registry
 records are summarized into loaded/imported/disabled/error/bundle counts, with
-skill and TaskFlow recovery hints left as follow-on workspace-status seams.
+the upstream TaskFlow recovery hint path now backed by OpenZues' native
+task-blueprint flow projection. Broken blocked flows with missing linked tasks
+and running managed flows without tasks/wait state are surfaced in
+`workspaceStatus.taskFlowRecovery` and promoted into top-level doctor warnings
+with the OpenClaw inspect/cancel command guidance. Remaining
+workspace-status parity is the deeper skill eligibility/runtime requirement
+surface.
 Top-level doctor output now includes the first OpenClaw
 `doctor:device-pairing` gateway-backed warning: pending requests returned by
 `device.pair.list` are surfaced with sanitized device labels, request counts,
@@ -808,17 +976,45 @@ The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
 ACP CLI parity is the real bridge server/client runtime. The unavailable
-boundary now validates provenance modes, rejects mixed inline/file secret
-sources, validates secret-file readability, and warns when inline token or
-password flags are used.
+boundary now accepts OpenClaw's `--gateway-url`, `--gateway-token`,
+`--gateway-token-file`, `--gateway-password`, and `--gateway-password-file`
+aliases, validates provenance modes, rejects mixed inline/file secret sources,
+validates secret-file readability, and warns when inline token or password
+flags are used.
 `acp client` now also builds an OpenClaw-shaped native spawn plan before that
 unavailable boundary: default OpenZues ACP server launches use `openzues acp`,
 set `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys
 case-insensitively, and preserve provider auth when callers choose an explicit
 custom ACP server. The spawn preflight now also mirrors OpenClaw's Windows-safe
 ACP client invocation resolver by unwrapping `.cmd` shims to the Python
-executable without shell execution. Remaining ACP CLI parity is still the real
-bridge client/server protocol runtime rather than the spawn preflight contract.
+executable without shell execution, failing closed for unresolved wrappers,
+and leaving non-Windows / non-shell optional spawn fields unset. Explicit
+`--server openzues` overrides that change the server args now also preserve
+provider auth like OpenClaw's default-executable/custom-entry guard. Native ACP
+client permission resolution now also mirrors OpenClaw's safe search/read
+auto-approval, spoofing guards, owner/exec/control-plane prompting, option
+selection, cancellation, and terminal-title sanitization. Native ACP prompt
+event mapping now covers OpenClaw's text/resource/resource-link extraction,
+resource-link control/delimiter escaping, prompt byte-limit accounting, image
+attachment projection, tool-title control escaping, tool-kind inference,
+tool-call content projection, and bounded file/media location extraction from
+tool args and text markers. Native ACP session metadata mapping now covers
+OpenClaw's `sessionKey` / `session` / `key`, label, reset, require-existing,
+and `prefixCwd` aliases plus label/key resolution precedence and conditional
+reset dispatch. Native ACP available-command projection now carries OpenClaw's
+base slash-command catalog with a fakeable extension hook for dock-style
+commands. Native ACP session storage now mirrors OpenClaw's in-memory session
+creation/update/touch flow, active-run indexing, cancellation, idle reaping,
+and max-session backpressure. Remaining ACP CLI parity is still the real bridge
+client/server protocol runtime rather than the spawn preflight,
+permission-helper, event-mapper, session-mapper, available-command, and
+session-store contracts.
+`acp status [lookup]` now reads native ACP session metadata and linked
+OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
+thread id, runtime session id, label, task id, and run id. JSON output returns
+session/runtime/task metadata, while human output mirrors the upstream
+`ACP status:` lines for backend, agent, session mode, state, task delivery,
+progress, runtime options, capabilities, and last activity.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and
@@ -910,7 +1106,27 @@ through the `channels.status` gateway method owner, and the channel inventory
 service has a fakeable account-probe adapter that records per-account probe
 results when one is registered; remaining channel CLI parity is provider-specific
 credential probe implementations and production provider-backed live resolve
-adapters.
+adapters. Matrix route-backed account probes now mirror OpenClaw's
+`createMatrixProbeAccount` / `probeMatrix` status hook: `channels status
+--probe --timeout <ms> --json` calls the Matrix Client-Server `whoami`
+endpoint through the saved native route token, normalizes Matrix homeserver
+targets that already include `/_matrix/client/v3`, and returns the resolved
+Matrix user/device identity in the per-account probe result. Remaining channel
+CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix and production provider-backed live resolve
+adapters. Zalo route-backed account probes now mirror OpenClaw's
+`probeZaloAccount` / `probeZalo` status hook: `channels status --probe --json`
+calls the Zalo Bot API `getMe` method through the saved native route token and
+returns the upstream bot object in the per-account probe result. Remaining
+channel CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix/Zalo and production provider-backed live resolve
+adapters. LINE route-backed account probes now mirror OpenClaw's `probeLineBot`
+status hook: `channels status --probe --json` calls Bot API `/v2/bot/info`
+through the saved native route token and returns `displayName`, `userId`,
+`basicId`, and `pictureUrl` bot metadata in the per-account probe result.
+Remaining channel CLI parity is provider-specific credential probe breadth
+beyond Slack/Telegram/Discord/Matrix/Zalo/LINE and production provider-backed
+live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
@@ -1372,6 +1588,32 @@ edge cases such as auth/scope rejection, duplicate/freshest session resolution,
 or silent transcript refresh semantics if they map cleanly to OpenZues'
 SQLite-backed session store.
 
+Current queue-head adjustment: no-query direct session-history REST/SSE loads
+now request an explicit full initial history window instead of inheriting the
+RPC `sessions.get` 200-message default. Initial `history` SSE events preserve
+raw `__openclaw.seq` coverage from the first visible row through the latest row,
+return `hasMore: false`, and omit `nextCursor` unless the caller explicitly
+asks for pagination. Remaining direct-history seams should stay with
+source-backed duplicate/freshest resolution or auth/scope edge cases.
+
+Current queue-head adjustment: direct session-history REST now also mirrors
+OpenClaw's duplicate/freshest row selection for mixed-case session aliases. The
+SQLite-backed `sessions.get` path filters merged alias rows down to the
+freshest exact stored alias before assigning `__openclaw.seq` values, so direct
+history returns the fresh transcript instead of merging stale duplicate alias
+history. Remaining transcript seams should move to another source-backed
+`sessions-history-http` / `chat.history` edge rather than this closed duplicate
+alias case.
+
+Current queue-head adjustment: direct session-history REST now sanitizes
+structured assistant content arrays with OpenClaw's explicit phase semantics.
+Commentary-only assistant entries are hidden, mixed phased text blocks keep only
+`final_answer` text, and sequence metadata still reflects the source transcript
+row. The remaining `sessions-history-http.test.ts` direct-history edges are now
+covered by native REST/SSE tests; the transcript queue should move to a new
+source-backed `chat.history`/session read-model mismatch or rotate back to the
+runtime/provider queue.
+
 Current queue-head adjustment: RPC `sessions.get` now accepts explicit limits
 above 1000 like OpenClaw's WebSocket method, while direct HTTP
 `/sessions/{sessionKey}/history` keeps its upstream 1000-row REST cap. The next
@@ -1491,6 +1733,21 @@ Current queue-head adjustment: transcript `session.message` and message-phase
 `lastAccountId`, `lastThreadId`) from the session payload. The next bounded seam
 should move to session message subscription/filtering parity, `sessions.get`
 fidelity, or SSE fast-path replay gaps.
+
+Current queue-head adjustment: OpenZues now also carries the nested
+OpenClaw-shaped `deliveryContext` snapshot through live `session.message`,
+message-phase `sessions.changed`, and mutation `sessions.changed` event
+payloads, preserving numeric and string provider thread ids alongside the
+existing flattened last-route fields. The next bounded seam should stay with
+source-backed session event replay/finality shape or the next concrete
+`sessions.*` lifecycle metadata mismatch.
+
+Current queue-head adjustment: session snapshots, mutation `sessions.changed`,
+live `session.message`, and message-phase `sessions.changed` events now surface
+OpenClaw lifecycle metadata from persisted native session metadata: `status`,
+`startedAt`, `endedAt`, `runtimeMs`, and `abortedLastRun`. The next bounded
+session seam should stay with source-backed event replay/finality behavior,
+direct history SSE edges, or another concrete `sessions.*` lifecycle mismatch.
 
 Current queue-head adjustment: `sessions.get` now supports cursor pagination
 when the visible transcript spans multiple pages, preserving the legacy
@@ -1671,6 +1928,14 @@ abort commands record `origin="stop-command"`, blank partials are ignored, and
 `chat.history` projects the stored abort metadata. The next bounded seam should
 move to `agent.wait` read-model fidelity or another source-backed
 session/runtime mismatch.
+Current queue-head adjustment: `agent.wait` now consumes cached lifecycle
+runtime events in addition to mission-backed terminal snapshots. Native
+runtime `lifecycle` `start` events record `startedAt`, terminal `end` events
+return OpenClaw-shaped `status`, `startedAt`, and `endedAt`, aborted end events
+map to `timeout`, and transient `error` events are held behind the same short
+retry grace before they can become terminal snapshots. The next bounded seam
+should move back to ACP client harness replay, sandboxed spawn media/workspace
+staging, or another source-backed session/runtime mismatch.
 
 ## How To Read This Queue
 

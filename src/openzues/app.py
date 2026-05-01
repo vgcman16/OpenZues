@@ -248,6 +248,7 @@ CONTROL_UI_BOOTSTRAP_CONFIG_PATH = "/__openclaw/control-ui-config.json"
 CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
 DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
+DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -2012,6 +2013,7 @@ def create_app(
         cron_failure_alert=active_settings.cron_failure_alert,
         cron_retry=active_settings.cron_retry,
         outbound_runtime_service=GatewayOutboundRuntimeService(),
+        gateway_config_service=active_gateway_config_service,
         canvas_state_dir=active_settings.data_dir,
     )
     active_gateway_channels_service = GatewayChannelsService(
@@ -2354,7 +2356,8 @@ def create_app(
             ),
             sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
             subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
-                list_notification_route_views=active_ops_mesh_service.list_notification_route_views
+                list_notification_route_views=active_ops_mesh_service.list_notification_route_views,
+                message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
             ),
             chat_send_service=submit_gateway_chat_message,
             chat_attachment_send_service=submit_gateway_chat_attachment_message,
@@ -4230,6 +4233,8 @@ def create_app(
                 pass
         if "cursor" not in params:
             params["cursor"] = 1_000_000_000
+        if not limit_requested and not cursor_requested:
+            params["limit"] = DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT
         requester = await resolve_gateway_node_method_requester(request)
         scope_response = gateway_session_history_scope_response(request)
         if scope_response is not None:

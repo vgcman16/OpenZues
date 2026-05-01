@@ -117,6 +117,61 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py src\openzues\services\gateway_channels.py
   tests\test_cli.py tests\test_app.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_channels.py`.
+- Native LINE route-backed direct sends now dispatch through LINE's Bot API
+  push endpoint with OpenClaw's target normalization, HTTPS image media payload
+  shape, text payload shape, five-message batching, bearer-token auth, and
+  provider metadata persistence.
+- Verified the LINE native-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_native_route"` (`1 passed`), adjacent
+  provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "direct_channel_message or route_provider_send or route_provider_poll or
+  gateway_send or gateway_poll or replay_outbound_deliveries"` (`44 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
+- Native Matrix route-backed direct text sends now dispatch through Matrix
+  Client-Server `m.room.message` events with OpenClaw's room target
+  normalization, reply/thread relation payload, 4000-character text splitting,
+  bearer-token auth, and ordered event-id metadata persistence.
+- Verified the Matrix native-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route"` (`1 passed`), adjacent
+  provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or matrix_native_route or direct_channel_message or
+  route_provider_send or route_provider_poll or gateway_send or gateway_poll or
+  replay_outbound_deliveries"` (`45 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- Native Matrix route-backed polls now dispatch OpenClaw-style `m.poll.start`
+  events with disclosed/undisclosed max-selection handling, answer ids,
+  fallback text, thread relation metadata, bearer-token auth, and `pollId`
+  provider metadata.
+- Verified the Matrix native-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route"` (`2 passed`), adjacent
+  provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_native_route or line_native_route or direct_channel_message or
+  route_provider_send or route_provider_poll or gateway_send or gateway_poll or
+  replay_outbound_deliveries"` (`46 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- Matrix `message.action send` now maps through the native provider route,
+  preserving OpenClaw's `send` / `sendMessage` action aliases, `message` /
+  `content` text aliases, reply/thread metadata, guarded media aliases, and
+  idempotency key as the Matrix transaction id.
+- Verified the Matrix action-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_send_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_send_route or
+  message_action_dispatches_zalo_send_route or
+  message_action_dispatches_zalo_send_media_route or matrix_native_route or
+  message_action_dispatches_discord_send_route or
+  message_action_dispatches_slack_send_route or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_whatsapp_send_document_reply"` (`9 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 - Native `routes send` / `routes poll` now accept OpenClaw-compatible outbound
   CLI aliases: `routes send --media` maps to the same native media list as
   `--media-url`, and both send/poll accept `--thread-id` alongside
@@ -505,6 +560,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_manifest_load_paths or
   bootstrap_file_exceeds_limits or doctor_json_warns"` (`33 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `doctor --json` now carries the upstream `doctor:workspace-status` TaskFlow
+  recovery hint path. Native task-blueprint-backed flows are scanned for broken
+  blocked flows with missing `blockedTaskId` links and running managed flows
+  without linked tasks/wait state, then exposed through
+  `workspaceStatus.taskFlowRecovery` and top-level warnings with the OpenClaw
+  `openclaw tasks flow show <flow-id>` / `cancel <flow-id>` guidance.
+- Verified the workspace-status TaskFlow recovery slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_adds_task_flow_recovery_hints_for_broken_blocked_flows
+  -q` (`1 passed`), adjacent doctor/task-flow proof `python -m pytest
+  tests\test_cli.py -q -k "workspace_status_plugin_counts or
+  task_flow_recovery_hints or tasks_flow_list_json_projects_task_blueprint_flows
+  or tasks_flow_show_json_resolves_task_blueprint_flow or
+  tasks_flow_cancel_disables_task_blueprint_and_pauses_linked_missions or
+  doctor_json_warns"` (`44 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's
   `doctor:device-pairing` gateway-backed pending request warning. It calls
   `device.pair.list` through the native gateway method owner, summarizes
@@ -2154,6 +2224,35 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py -q -k "message_payloads_surface or chat_inject_sanitizes_live_session_message_events or chat_inject_appends or sessions_patch_persists_current_session_metadata"`: 6 passed after rechecking adjacent metadata/event paths.
 - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py`: clean after the session event metadata breadth seam.
 - `mypy src/openzues/services/gateway_sessions.py`: clean after the session event metadata breadth seam.
+- Live `session.message`, message-phase `sessions.changed`, and mutation
+  `sessions.changed` events now include the nested OpenClaw-shaped
+  `deliveryContext` object already present on session snapshots, preserving
+  `channel`, `to`, `accountId`, and numeric/string `threadId` values alongside
+  the existing flattened last-route fields.
+- `python -m pytest tests\test_gateway_sessions.py::test_message_payloads_surface_spawn_and_route_metadata -q`
+  and `python -m pytest tests\test_gateway_sessions.py::test_route_metadata_preserves_string_thread_ids -q`:
+  both passed after extending event payload coverage.
+- `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface_spawn_and_route_metadata or route_metadata_preserves_string_thread_ids or build_snapshot_surfaces_delivery_context_from_route_metadata or build_snapshot_derives_delivery_context_from_origin_metadata or changed_event_payload_surfaces_session_setting_route_metadata or changed_event_payload_surfaces_transcript_usage_metadata"`:
+  6 passed after rechecking session snapshot and event route metadata.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "session_message or sessions_changed or message_event or changed_event"`:
+  3 passed after rechecking the adjacent gateway-method event publisher paths.
+- `ruff check src\openzues\services\gateway_sessions.py
+  tests\test_gateway_sessions.py` and `mypy
+  src\openzues\services\gateway_sessions.py`: clean after the live
+  `deliveryContext` event seam.
+- Session snapshots, mutation `sessions.changed`, live `session.message`, and
+  message-phase `sessions.changed` events now surface persisted lifecycle
+  metadata (`status`, `startedAt`, `endedAt`, `runtimeMs`, and
+  `abortedLastRun`) in the same event snapshot path OpenClaw uses for session
+  run state.
+- `python -m pytest tests\test_gateway_sessions.py::test_session_snapshot_and_events_surface_lifecycle_status_metadata -q`:
+  1 passed after adding native lifecycle metadata projection.
+- `python -m pytest tests\test_gateway_sessions.py -q -k "lifecycle_status_metadata or message_payloads_surface_spawn_and_route_metadata or route_metadata_preserves_string_thread_ids or changed_event_payload_surfaces_session_setting_route_metadata or build_snapshot_surfaces_delivery_context_from_route_metadata or changed_event_payload_surfaces_transcript_usage_metadata"`:
+  6 passed after rechecking adjacent snapshot/event fields.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "session_message or sessions_changed or message_event or changed_event"`:
+  3 passed after rechecking gateway-method event publication, with `ruff check
+  src\openzues\services\gateway_sessions.py tests\test_gateway_sessions.py`
+  and `mypy src\openzues\services\gateway_sessions.py` clean.
 - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_supports_cursor_pagination"`: 1 passed after adding cursor pagination metadata and string `nextCursor` round-trip support to `sessions.get`.
 - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_get"`: 5 passed after rechecking legacy flat responses and API coverage.
 - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the `sessions.get` cursor seam.
@@ -2331,6 +2430,47 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 25 passed after rechecking adjacent session read/event/subscription paths.
 - `ruff check src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the live direct-history SSE seam.
 - `mypy src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py`: clean after the live direct-history SSE seam.
+- Direct `/sessions/{sessionKey}/history` no-query REST/SSE loads now request a
+  full initial history window instead of inheriting the RPC `sessions.get`
+  200-message default, preserving raw `__openclaw.seq` coverage and omitting
+  cursor metadata until pagination is explicitly requested.
+- `python -m pytest tests\test_gateway_nodes_api.py::test_gateway_session_history_rest_endpoint_full_initial_sse_without_query -q`:
+  1 passed after proving a 201-message no-query initial `history` SSE event
+  returns seq `1..201`, `hasMore: false`, and no `nextCursor`.
+- `python -m pytest tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"`:
+  16 passed after rechecking direct history REST/SSE behavior. `ruff check
+  src\openzues\app.py tests\test_gateway_nodes_api.py` and `mypy
+  src\openzues\app.py` were clean.
+- Direct `/sessions/{sessionKey}/history` now mirrors OpenClaw's duplicate
+  row resolution for mixed-case session aliases by keeping the freshest exact
+  stored alias transcript before sequence/cursor projection, while
+  `sessions.preview` continues to use the same alias-selection behavior.
+- Verified the direct history freshest-alias slice with `python -m pytest
+  tests\test_gateway_nodes_api.py::test_gateway_session_history_rest_endpoint_prefers_freshest_alias_transcript
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"` (`17
+  passed`), adjacent preview alias proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sessions_preview_resolves_mixed_case_main_alias_duplicates or
+  sessions_preview_preserves_duplicate_keys_like_openclaw or
+  sessions_preview_uses_resolved_subagent_store_key"` (`3 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_nodes_api.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Direct session-history and adjacent `chat.history` projection now sanitize
+  structured assistant content arrays with OpenClaw's phase rules: commentary
+  only entries are hidden, mixed explicit phase text keeps the
+  `final_answer` blocks, and raw `__openclaw.seq` still reflects the source
+  transcript row.
+- Verified the phased assistant history slice with `python -m pytest
+  tests\test_gateway_nodes_api.py::test_gateway_session_history_rest_endpoint_sanitizes_phased_assistant_content
+  -q` (`1 passed`), adjacent direct-history proof `python -m pytest
+  tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"` (`18
+  passed`), adjacent projection proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "chat_history or sessions_history"`
+  (`24 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_nodes_api.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_honors_explicit_limits_above_direct_rest_cap or sessions_get_uses_openclaw_default_limit_of_200 or sessions_get_supports_cursor_pagination"`: 3 passed after separating RPC `sessions.get` explicit limits from the direct REST 1000-row cap.
 - `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 26 passed after rechecking the session read/event/subscription pack.
 - `ruff check src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the RPC `sessions.get` large-limit seam.
@@ -5017,6 +5157,970 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -k "sandbox_explain or sandbox_recreate or sandbox_inventory or
   doctor_sandbox"` (`5 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- The CLI now exposes `acp status [lookup]` as a native read-only ACP status
+  surface. It resolves saved ACP sessions by session key, runtime thread id,
+  runtime session id, label, task id, or run id, then projects backend, agent,
+  session mode, state, runtime options, capabilities, identity, last activity,
+  and linked metadata-backed task delivery/progress in JSON and upstream-style
+  human `ACP status:` lines.
+- Verified the ACP status CLI slice with `python -m pytest tests\test_cli.py
+  -q -k "acp_status_json_and_human"` (`1 passed`), adjacent ACP/task CLI
+  coverage `python -m pytest tests\test_cli.py -q -k
+  "acp_status_json_and_human or acp_bridge_command_reports_native_runtime_unavailable
+  or acp_client_command_reports_native_runtime_unavailable or
+  acp_client_spawn_plan_strips_provider_auth_for_default_bridge or
+  acp_client_command_passes_spawn_plan_to_registered_runner or
+  tasks_cancel_cancels_metadata_backed_acp_task"` (`6 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `agent.wait` now consumes cached native lifecycle runtime events in addition
+  to mission-backed terminal snapshots. Runtime `lifecycle` `start` events
+  record `startedAt`, terminal `end` events return OpenClaw-shaped
+  `status="ok"`, `startedAt`, and `endedAt`, aborted terminal events map to
+  `timeout`, and transient `error` events are kept behind the same short retry
+  grace before becoming terminal snapshots.
+- Verified the lifecycle-backed `agent.wait` slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_returns_cached_lifecycle_terminal_event"` (`1 passed`),
+  adjacent wait/runtime-event coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_returns_cached_lifecycle_terminal_event or
+  agent_wait_zero_timeout_returns_without_sleeping or
+  agent_wait_waits_for_tracked_gateway_run_completion or
+  agent_wait_returns_failed_terminal_snapshot_for_tracked_run or
+  runtime_progress_appends_task_record_summary"` (`5 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Provider-backed `gateway.send` now mirrors OpenClaw's sandbox media bridge
+  inbound fallback for staged media references: `@/.../media/inbound/<name>`
+  resolves to the saved sandbox workspace's `media/inbound/<name>` file when
+  that file exists, while existing `/workspace/...`, `file:///workspace/...`,
+  dedupe, and remote URL behavior are preserved.
+- Verified the sandbox inbound-media alias slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_send_normalizes_sandbox_workspace_media_paths_from_session_metadata
+  -q` (`1 passed`), adjacent send/media coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "send_normalizes_sandbox_workspace_media_paths_from_session_metadata or
+  send_uses_channel_message_runtime_for_media_payloads or
+  send_preserves_provider_native_reply_thread_and_document_options or
+  chat_send_sandboxed_saved_path_attachment_stages_media_in_session_workspace
+  or chat_send_sandboxed_attachment_stages_media_in_session_workspace"` (`5
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- ACP client spawn planning now preserves provider auth when callers
+  explicitly set the default executable (`openzues`) but change the server
+  args, matching OpenClaw's default-executable/custom-entry guard while keeping
+  the implicit default bridge on the provider-auth-stripping path.
+- Verified the ACP client default-command override slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "acp_client_spawn_plan_preserves_provider_auth_for_default_command_override
+  or acp_client_spawn_plan_strips_provider_auth_for_default_bridge or
+  acp_client_spawn_plan_preserves_provider_auth_for_custom_server or
+  acp_client_spawn_invocation_unwraps_windows_cmd_shim or
+  acp_client_command_passes_spawn_plan_to_registered_runner"` (`5 passed`),
+  `ruff check src\openzues\services\acp_client_runtime.py tests\test_cli.py`,
+  and `mypy src\openzues\services\acp_client_runtime.py`.
+- ACP client spawn invocation now mirrors OpenClaw's optional spawn-option
+  shape: non-Windows calls leave `shell` / `windowsHide` unset, resolved
+  Windows `.cmd` shims still unwrap without shell execution and only set
+  `windowsHide`, and unresolved Windows wrappers fail closed.
+- Verified the ACP client invocation-option slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_client_spawn_invocation"` (`3 passed`),
+  adjacent ACP client proof `python -m pytest tests\test_cli.py -q -k
+  "acp_client_spawn_invocation or
+  acp_client_spawn_plan_strips_provider_auth_for_default_bridge or
+  acp_client_spawn_plan_preserves_provider_auth_for_default_command_override
+  or acp_client_spawn_plan_preserves_provider_auth_for_custom_server or
+  acp_client_command_passes_spawn_plan_to_registered_runner"` (`7 passed`),
+  `ruff check src\openzues\services\acp_client_runtime.py tests\test_cli.py`,
+  and `mypy src\openzues\services\acp_client_runtime.py`.
+- The top-level ACP bridge command now accepts OpenClaw's gateway option
+  aliases (`--gateway-url`, `--gateway-token`, `--gateway-token-file`,
+  `--gateway-password`, and `--gateway-password-file`) while reusing the same
+  native unavailable boundary, file-secret reads, and mixed inline/file secret
+  validation.
+- Verified the ACP bridge gateway-alias slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_bridge_command"` (`3 passed`), adjacent ACP
+  CLI proof `python -m pytest tests\test_cli.py -q -k "acp_bridge_command or
+  acp_client_command_reports_native_runtime_unavailable or
+  acp_client_spawn_plan or acp_client_spawn_invocation or
+  acp_client_command_passes_spawn_plan_to_registered_runner or
+  acp_status_json_and_human"` (`12 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Native ACP client permission resolution now follows OpenClaw's
+  `resolvePermissionRequest` contract for safe search/read auto-approval,
+  spoofing guard rails, exec/control-plane/owner-only prompting, allow/reject
+  option selection, cancellation when no options are available, and sanitized
+  terminal titles before logging or prompting.
+- Verified the ACP permission resolver slice with `python -m pytest
+  tests\test_acp_client_runtime.py -q` (`7 passed`), adjacent ACP client proof
+  `python -m pytest tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_client or acp_bridge_command or acp_status_json_and_human"` (`19
+  passed`), `ruff check src\openzues\services\acp_client_runtime.py
+  tests\test_acp_client_runtime.py tests\test_cli.py`, and `mypy
+  src\openzues\services\acp_client_runtime.py`.
+- Native ACP event mapping now covers OpenClaw's prompt text/resource/resource
+  link extraction, resource metadata control/delimiter escaping, max-byte
+  accounting including newline separators, image-to-attachment projection, and
+  control escaping in formatted tool titles.
+- Verified the ACP event-mapper slice with `python -m pytest
+  tests\test_acp_event_mapper.py -q` (`6 passed`), adjacent ACP runtime proof
+  `python -m pytest tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`25 passed`), `ruff check
+  src\openzues\services\acp_event_mapper.py tests\test_acp_event_mapper.py`,
+  and `mypy src\openzues\services\acp_event_mapper.py`.
+- ACP event mapping now also includes OpenClaw's tool-kind inference,
+  tool-call content extraction from strings/content blocks/fallback text, and
+  bounded file/media location extraction from tool args, file URLs, and
+  `FILE:` / `MEDIA:` text markers.
+- Verified the ACP tool-call mapper extension with `python -m pytest
+  tests\test_acp_event_mapper.py -q -k "tool_call or tool_kinds or location"`
+  (`4 passed`), adjacent ACP runtime proof `python -m pytest
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`29 passed`), `ruff check
+  src\openzues\services\acp_event_mapper.py tests\test_acp_event_mapper.py`,
+  and `mypy src\openzues\services\acp_event_mapper.py`.
+- Native ACP session mapping now follows OpenClaw's `parseSessionMeta`,
+  `resolveSessionKey`, and `resetSessionIfNeeded` contracts for session key
+  aliases, label aliases, reset/require-existing/prefix-cwd booleans,
+  explicit-label precedence, meta-key precedence over default labels,
+  require-existing key lookups, and conditional `sessions.reset` dispatch.
+- Verified the ACP session-mapper slice with `python -m pytest
+  tests\test_acp_session_mapper.py -q` (`5 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_session_mapper or acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`34 passed`), `ruff check
+  src\openzues\services\acp_session_mapper.py tests\test_acp_session_mapper.py`,
+  and `mypy src\openzues\services\acp_session_mapper.py`.
+- Native ACP available commands now expose OpenClaw's base ACP slash-command
+  catalog (`help`, `commands`, `status`, context/model/runtime/session commands,
+  and `compact`) plus a fakeable extension hook for dock-style commands.
+- Verified the ACP available-command slice with `python -m pytest
+  tests\test_acp_commands.py -q` (`2 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`36 passed`), `ruff check
+  src\openzues\services\acp_commands.py tests\test_acp_commands.py`, and
+  `mypy src\openzues\services\acp_commands.py`.
+- Native ACP session storage now follows OpenClaw's in-memory store behavior:
+  create/update by session id, touch on reads, index active runs, clear or
+  cancel active runs, abort on cancel/removal, reap idle sessions, evict the
+  oldest idle session, and fail closed when all sessions are active at the
+  configured limit.
+- Verified the ACP session-store slice with `python -m pytest
+  tests\test_acp_session_store.py -q` (`5 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_session_store.py tests\test_acp_commands.py
+  tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`41 passed`), `ruff check
+  src\openzues\services\acp_session_store.py tests\test_acp_session_store.py`,
+  and `mypy src\openzues\services\acp_session_store.py`.
+- Native ACP prompt request assembly now follows OpenClaw's translator prompt
+  send contract for cwd prefixing, home redaction with Windows separator
+  preservation, prompt attachment forwarding, `_meta` thinking/deliver/timeout
+  options, and system provenance metadata/receipt construction.
+- Verified the ACP translator prompt-send slice with `python -m pytest
+  tests\test_acp_translator.py -q` (`4 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py tests\test_cli.py
+  -q -k "acp_translator or acp_session_store or acp_available_commands or
+  acp_session_mapper or acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`45 passed`), `ruff check
+  src\openzues\services\acp_translator.py tests\test_acp_translator.py`, and
+  `mypy src\openzues\services\acp_translator.py`.
+- Native `AcpGatewayAgent` lifecycle now covers OpenClaw's ACP
+  `initialize`, `newSession`, and `loadSession` bridge behavior: advertised
+  load/prompt/MCP/session-list capabilities, session store materialization via
+  session meta, gateway-backed session presentation snapshots, usage updates,
+  transcript replay for user/assistant/thinking text, and available command
+  updates.
+- Verified the ACP agent lifecycle-foundation slice with `python -m pytest
+  tests\test_acp_agent.py -q` (`3 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_agent.py tests\test_acp_translator.py
+  tests\test_acp_session_store.py tests\test_acp_commands.py
+  tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_gateway_agent or acp_translator or acp_session_store or
+  acp_available_commands or acp_session_mapper or acp_event_mapper or
+  acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`48 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent.prompt` now follows OpenClaw's prompt lifecycle for
+  gateway `chat.send` dispatch, active-run tracking, chat delta projection into
+  assistant text/thinking ACP chunks, terminal chat-event stop reason mapping,
+  session snapshot refresh on finish, and `cancel` scoping through
+  `chat.abort`.
+- Verified the ACP agent prompt/cancel slice with `python -m pytest
+  tests\test_acp_agent.py -q` (`6 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_agent.py tests\test_acp_translator.py
+  tests\test_acp_session_store.py tests\test_acp_commands.py
+  tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_gateway_agent or acp_translator or acp_session_store or
+  acp_available_commands or acp_session_mapper or acp_event_mapper or
+  acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`51 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent.handle_gateway_event` now also mirrors OpenClaw's
+  gateway `agent` tool stream mapping for tool start/update/result phases,
+  preserving tool ids, titles, kind inference, raw input/output, textual
+  content blocks, file/media locations, and completion/failure status.
+- Verified the ACP agent tool-stream slice with `python -m pytest
+  tests\test_acp_agent.py -q -k "tool_call_events"` (`1 passed`), full ACP
+  agent proof `python -m pytest tests\test_acp_agent.py -q` (`7 passed`),
+  adjacent ACP support proof `python -m pytest tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_gateway_agent or acp_translator or
+  acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`52 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent` session controls now follow OpenClaw's ACP
+  `setSessionMode` and `setSessionConfigOption` behavior: mode changes patch
+  `thinkingLevel`, config ids map to the corresponding `sessions.patch`
+  fields, non-string config values fail closed, and ACP current-mode/config
+  updates refresh from the gateway snapshot after each patch.
+- Verified the ACP agent session-control slice with `python -m pytest
+  tests\test_acp_agent.py -q -k "set_session"` (`2 passed`), full ACP agent
+  proof `python -m pytest tests\test_acp_agent.py -q` (`9 passed`), adjacent
+  ACP support proof `python -m pytest tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_gateway_agent or acp_translator or
+  acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`54 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent` now enforces OpenClaw's fixed-window ACP session
+  creation rate limit for `newSession` and new `loadSession` ids while keeping
+  existing `loadSession` refreshes outside the budget.
+- Verified the ACP agent session-rate-limit slice with `python -m pytest
+  tests\test_acp_agent.py -q -k "rate_limit"` (`2 passed`), full ACP agent
+  proof `python -m pytest tests\test_acp_agent.py -q` (`11 passed`), adjacent
+  ACP support proof `python -m pytest tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_gateway_agent or acp_translator or
+  acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`56 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent.prompt` now mirrors OpenClaw's admin-scope
+  provenance fallback: when gateway `chat.send` rejects
+  `systemInputProvenance` / `systemProvenanceReceipt` with the upstream
+  `INVALID_REQUEST` shape, the prompt retries without those fields while
+  keeping the same active run and pending ACP prompt.
+- Verified the ACP prompt provenance fallback slice with `python -m pytest
+  tests\test_acp_agent.py -q -k "provenance"` (`1 passed`), full ACP agent
+  proof `python -m pytest tests\test_acp_agent.py -q` (`12 passed`), adjacent
+  ACP support proof `python -m pytest tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_gateway_agent or acp_translator or
+  acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`57 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent` reconnect handling now covers OpenClaw's missed-final
+  reconciliation for accepted prompts: reconnect clears the disconnect posture,
+  rechecks each accepted pending run with `agent.wait timeoutMs=0`, and resolves
+  the ACP prompt as `end_turn` when the gateway reports completion.
+- Verified the ACP reconnect reconciliation slice with `python -m pytest
+  tests\test_acp_agent.py -q -k "reconnect"` (`1 passed`), full ACP agent proof
+  `python -m pytest tests\test_acp_agent.py -q` (`13 passed`), adjacent ACP
+  support proof `python -m pytest tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_gateway_agent or acp_translator or
+  acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`58 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
+- The top-level `openzues acp` command now has a native fakeable bridge-runner
+  seam matching the existing ACP client runner path: resolved gateway URL,
+  token/password sources, default session key/label, require/reset posture,
+  cwd-prefix, provenance mode, and verbosity are passed to the registered
+  runner before the legacy unavailable fallback is emitted.
+- Verified the ACP bridge runner CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_bridge_command"` (`4 passed`), adjacent ACP CLI
+  and support proof `python -m pytest tests\test_cli.py tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py -q -k
+  "acp_bridge_command or acp_client_command or acp_status_json_and_human or
+  acp_client_spawn_plan or acp_client_spawn_invocation or acp_gateway_agent or
+  acp_translator or acp_session_store or acp_available_commands or
+  acp_session_mapper or acp_event_mapper or acp_permission"` (`59 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Saved failed provider-backed `gateway/send` and `gateway/poll` replay now
+  preserves OpenClaw's delivery-queue recovery context by forwarding stored
+  `gatewayClientScopes`, requester session, requester account, and requester
+  sender metadata back into the native outbound runtime request.
+- Verified the provider replay context slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "retries_saved_failed_gateway_send_via_provider_runtime
+  or retries_saved_failed_gateway_poll_via_provider_runtime"` (`2 passed`),
+  adjacent OpsMesh outbound proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "replay_outbound_deliveries or direct_send or direct_channel or
+  provider_result or gateway_poll or gateway_send"` (`62 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Provider-backed `gateway/send` replay now also preserves the explicit
+  source-session runtime context saved by the first delivery attempt:
+  `sourceSessionKey` / `runtime_session_key` drives native runtime dispatch
+  while the announce delivery row remains attached to the channel-derived
+  history session.
+- Verified the provider replay source-session slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "retries_saved_failed_gateway_send_via_provider_runtime"`
+  (`1 passed`), adjacent OpsMesh outbound proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "replay_outbound_deliveries or direct_send or
+  direct_channel or provider_result or gateway_poll or gateway_send"` (`62
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed `message.action edit` / `editMessage` now maps to
+  OpenClaw-shaped `m.replace` replacement events, including `m.new_content`,
+  replacement body prefixing, optional thread reply metadata, route token auth,
+  and idempotency-key transaction ids.
+- Verified the Matrix edit action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_edit_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_edit_route or
+  message_action_dispatches_slack_edit_route or
+  message_action_dispatches_zalo_send_route"` (`7 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed `message.action delete` / `deleteMessage` now maps to
+  OpenClaw's `redactEvent` behavior through Matrix Client-Server `redact`
+  requests, preserving optional reason payloads, route token auth, and
+  idempotency-key transaction ids while returning `{ok:true, deleted:true}`.
+- Verified the Matrix delete action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_delete_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_delete_route or
+  message_action_dispatches_slack_delete_route"` (`7 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed reaction-add parity now maps `message.action react`
+  through OpenClaw's `m.reaction` / `m.annotation` send shape, preserving route
+  token auth, idempotency-key transaction ids, and `{ok:true, added:<emoji>}`
+  action results.
+- Verified the Matrix reaction-add slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_react_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_react_route or
+  message_action_dispatches_slack_react_route or
+  message_action_dispatches_telegram_react_route"` (`9 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed reaction remove/list parity now uses OpenClaw's relation
+  history path: `message.action reactions` summarizes v1 relation chunks by key
+  and unique sender, while `message.action react remove=true` resolves the bot
+  through Matrix `whoami` and redacts only matching current-user reaction events.
+- Verified the Matrix reaction remove/list slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_reactions_list_route or
+  matrix_react_remove_route or matrix_react_route"` (`3 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_reactions_list_route or
+  message_action_dispatches_slack_reactions_list_route or
+  message_action_dispatches_discord_react_remove_route or
+  message_action_dispatches_slack_react_remove_route"` (`12 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed pin action parity now uses OpenClaw's
+  `m.room.pinned_events` state behavior for `pinMessage`, `unpinMessage`, and
+  `listPins`, including idempotent pin append, targeted unpin filtering, and
+  pinned-event summaries for resolvable message events.
+- Verified the Matrix pin action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_pin_mutation_route or
+  matrix_list_pins_route"` (`3 passed`), adjacent action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_pin_mutation_route or
+  message_action_dispatches_discord_list_pins_route or
+  message_action_dispatches_slack_pin_route or
+  message_action_dispatches_slack_unpin_route or
+  message_action_dispatches_slack_list_pins_route"` (`17 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed `readMessages` action parity now uses OpenClaw's room
+  history endpoint shape, including backward/forward cursor direction,
+  bounded limits, optional `before` / `after` tokens, redaction filtering,
+  message summaries, and `nextBatch` / `prevBatch` projection.
+- Verified the Matrix read action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_read_messages_route"` (`1 passed`),
+  adjacent action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_read_route or
+  message_action_dispatches_slack_read_route or
+  message_action_dispatches_slack_thread_read_route"` (`15 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed member/room probe parity now covers `memberInfo` and
+  `channelInfo` with OpenClaw-shaped profile projection, room name/topic/canonical
+  alias state reads, joined-member counts, and null membership/power-level fields.
+- Verified the Matrix member/channel probe slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_member_info_route or
+  matrix_channel_info_route"` (`2 passed`), adjacent action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_member_info_route or
+  message_action_dispatches_discord_channel_info_route"` (`16 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed unencrypted media-send parity now uploads outbound media
+  through the Matrix media repository, sends `m.image` / `m.video` / `m.audio` /
+  `m.file` room messages with MXC URLs, caption text, relation metadata,
+  mimetype/size info, and persisted media delivery metadata.
+- Verified the Matrix media send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route and media"` (`1 passed`),
+  adjacent Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "matrix_native_route or message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`15 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed alias resolution now calls the Matrix directory endpoint
+  for `#room:server` targets before native send/poll delivery, so provider
+  results and room send endpoints use the resolved room id instead of the alias.
+- Verified the Matrix alias-resolution slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route and alias"` (`1 passed`),
+  adjacent Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "matrix_native_route or message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`16 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix direct-user routing now classifies `user:` / `matrix:user:` targets as
+  direct peers and resolves the first OpenClaw direct-room path through Matrix
+  `whoami`, `m.direct` account data, and strict two-member joined-room
+  validation before native delivery.
+- Verified the Matrix direct-room slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_direct_room"` (`1 passed`), adjacent
+  Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_native_route or matrix_direct_room or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`17 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix direct-user fallback now follows OpenClaw's joined-room repair path:
+  stale or missing `m.direct` mappings fall back to joined-room inspection,
+  strict two-member rooms are selected, and the primary `m.direct` account-data
+  mapping is persisted before native delivery.
+- Verified the Matrix direct-room fallback slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_direct_room"` (`2 passed`), adjacent
+  Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_native_route or matrix_direct_room or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`18 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed self-profile parity now covers `message.action
+  setProfile`: Matrix `whoami` resolves the bot user, current profile reads
+  suppress no-op writes, `displayname` / `avatar_url` profile PUTs update the
+  live account, HTTP avatar URLs convert through Matrix media upload, and the
+  native config owner persists `name` / `avatarUrl` under
+  `channels.matrix.accounts.<accountId>`.
+- Verified the Matrix profile slice with `python -m pytest tests\test_ops_mesh.py
+  -q -k "matrix_set_profile"` (`2 passed`), adjacent Matrix route/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "matrix_native_route or
+  matrix_direct_room or message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`20 passed`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_config.py src\openzues\app.py src\openzues\cli.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_config.py`.
+- Matrix route-backed image media sends now add OpenClaw-style dimensional media
+  metadata: native PNG/GIF/JPEG header parsing populates `info.w` / `info.h`
+  alongside `size` and `mimetype` before sending the Matrix `m.room.message`
+  media event.
+- Verified the Matrix image-info slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route and media"` (`1 passed`),
+  adjacent Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "matrix_native_route or matrix_direct_room or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`20 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed WAV audio media sends now add OpenClaw-style
+  `info.duration` metadata by parsing native RIFF/WAVE headers, preserving the
+  existing Matrix `m.audio` upload and provider result path.
+- Verified the Matrix audio-duration slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_audio_includes_duration or
+  matrix_native_route and media"` (`2 passed`), adjacent Matrix route/action
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "matrix_native_route or
+  matrix_direct_room or matrix_audio_includes_duration or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`21 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed large-image media sends now mirror OpenClaw's
+  unencrypted thumbnail metadata path: Pillow-backed native resizing creates an
+  800px-bounded JPEG thumbnail, uploads it through the Matrix media repository,
+  and adds `thumbnail_url` / `thumbnail_info` beside the primary image
+  dimensions. `Pillow>=10.0.0` is now a runtime dependency for that native
+  thumbnail branch.
+- Verified the Matrix thumbnail slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_large_image_uploads_thumbnail"` (`1
+  passed`), adjacent Matrix route/action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_direct_room or
+  matrix_audio_includes_duration or matrix_large_image_uploads_thumbnail or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`22 passed`), `ruff check pyproject.toml
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Matrix route-backed MP4/MOV-family video media sends now add OpenClaw-style
+  `info.duration` metadata by parsing native ISO-BMFF `mvhd` timing, preserving
+  the existing Matrix `m.video` upload and provider result path.
+- Verified the Matrix video-duration slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_video_includes_duration or
+  matrix_audio_includes_duration"` (`2 passed`), adjacent Matrix route/action
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "matrix_native_route or
+  matrix_direct_room or matrix_audio_includes_duration or
+  matrix_video_includes_duration or matrix_large_image_uploads_thumbnail or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`23 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed encrypted media sends now mirror OpenClaw's `file` /
+  `thumbnail_file` branch: room media sends opportunistically probe
+  `m.room.encryption`, encrypt the main media and generated large-image
+  thumbnails with native AES-CTR encrypted-file metadata, upload encrypted bytes
+  as `application/octet-stream`, and omit top-level `url` /
+  `info.thumbnail_url` when encrypted file payloads are present.
+- Verified the Matrix encrypted-media slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_encrypted_image_uses_file_payloads or
+  matrix_large_image_uploads_thumbnail or matrix_native_route and media"` (`3
+  passed`), adjacent Matrix route/action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_direct_room or
+  matrix_audio_includes_duration or matrix_video_includes_duration or
+  matrix_large_image_uploads_thumbnail or
+  matrix_encrypted_image_uses_file_payloads or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`24 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed MP3 audio media sends now add OpenClaw-style
+  `info.duration` metadata by parsing common MPEG frame headers, completing the
+  Matrix media-info duration queue for WAV, MP3, and MP4/MOV-family media in
+  the native OpenZues path.
+- Verified the Matrix MP3-duration slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_mp3_includes_duration or
+  matrix_audio_includes_duration or matrix_video_includes_duration"` (`3
+  passed`), adjacent Matrix route/action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_direct_room or
+  matrix_audio_includes_duration or matrix_mp3_includes_duration or
+  matrix_video_includes_duration or matrix_large_image_uploads_thumbnail or
+  matrix_encrypted_image_uses_file_payloads or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`25 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed thread-bound subagent spawns now mirror OpenClaw's
+  provider child-thread creation path: the production binder invokes the native
+  `message.action thread-create` adapter with a 60-minute auto-archive default,
+  delivers the initial child run to the parent route plus created thread id, and
+  persists child-placement session binding metadata for
+  `channel:<createdThreadId>`. App and CLI construction wire the binder to the
+  same OpsMesh message-action dispatcher used by provider actions.
+- Verified the Discord child-thread binding slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "creates_discord_child_thread_with_route_binder"` (`1 passed`), adjacent
+  thread-binding proof `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "thread_mode_preserves_no_hook_with_unresolved_registry or
+  thread_mode_uses_route_backed_thread_binder or
+  creates_discord_child_thread_with_route_binder or
+  thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_target_agent_bound_account or
+  thread_mode_requires_spawn_policy_for_child_placement or
+  thread_mode_delivers_initial_child_run_to_bound_origin or
+  thread_bound_subagent_startup_failure_unbinds_prepared_binding"` (`9
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py
+  src\openzues\cli.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py`.
+- Matrix route-backed thread-bound subagent spawns without an existing thread id
+  now mirror OpenClaw's child-placement Matrix adapter: the native binder sends
+  the intro root message through `message.action send`, uses the returned event
+  id as the child thread id for initial delivery/completion delivery, and
+  persists a Matrix session binding with `conversationId=<event id>` and
+  `parentConversationId=<room id>`.
+- Verified the Matrix child-thread binding slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "creates_matrix_child_thread_with_route_binder"` (`1 passed`), adjacent
+  thread-binding proof `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "thread_mode_preserves_no_hook_with_unresolved_registry or
+  thread_mode_uses_route_backed_thread_binder or
+  creates_discord_child_thread_with_route_binder or
+  creates_matrix_child_thread_with_route_binder or
+  thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_target_agent_bound_account or
+  thread_mode_requires_spawn_policy_for_child_placement or
+  thread_mode_delivers_initial_child_run_to_bound_origin or
+  thread_bound_subagent_startup_failure_unbinds_prepared_binding"` (`10
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py`.
+- Completion announcement delivery now has the OpenClaw bound-delivery fallback
+  for saved session bindings: when a child session has an active
+  `sessionBinding` but no persisted `completionDelivery`, `agent.wait` derives a
+  provider delivery target from the binding conversation, persists that derived
+  route, and sends the completion announcement through the same provider channel
+  delivery owner.
+- Verified the session-binding completion fallback with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "completion_falls_back_to_session_binding"` (`1 passed`), adjacent completion
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "agent_wait_announces_spawn_completion or
+  thread_bound_completion_uses_completion_delivery_route or
+  completion_falls_back_to_session_binding or no_completion_announce or
+  completion_dedupe or marks_acp_task_record_succeeded"` (`4 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Matrix route-backed channel account probes now mirror OpenClaw's
+  `createMatrixProbeAccount` / `probeMatrix` path: native Matrix routes are
+  included in the probeable provider set, `channels status --probe --json`
+  calls `/_matrix/client/v3/account/whoami` with the saved route access token,
+  and the account probe result exposes the Matrix user/device identity.
+- Verified the Matrix account-probe slice with `python -m pytest
+  tests\test_cli.py -q -k "route_backed_matrix_probe"` (`1 passed`), adjacent
+  status-probe proof `python -m pytest tests\test_cli.py -q -k
+  "channels_status_json_uses_route_backed_slack_probe or
+  channels_status_json_uses_route_backed_telegram_probe or
+  channels_status_json_uses_route_backed_discord_probe or
+  channels_status_json_uses_route_backed_matrix_probe or
+  channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded or
+  channels_status_json_accepts_probe_timeout_options"` (`6 passed`), plus
+  `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Zalo route-backed channel account probes now mirror OpenClaw's
+  `probeZaloAccount` / `probeZalo` path: native Zalo routes are included in the
+  probeable provider set, `channels status --probe --json` calls Bot API
+  `getMe` with the saved route token, and the account probe result exposes the
+  returned bot object.
+- Verified the Zalo account-probe slice with `python -m pytest
+  tests\test_cli.py -q -k "route_backed_zalo_probe"` (`1 passed`) and adjacent
+  status-probe proof `python -m pytest tests\test_cli.py -q -k
+  "channels_status_json_uses_route_backed_slack_probe or
+  channels_status_json_uses_route_backed_telegram_probe or
+  channels_status_json_uses_route_backed_discord_probe or
+  channels_status_json_uses_route_backed_matrix_probe or
+  channels_status_json_uses_route_backed_zalo_probe or
+  channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded or
+  channels_status_json_accepts_probe_timeout_options"` (`7 passed`), plus
+  `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- LINE route-backed channel account probes now mirror OpenClaw's `probeLineBot`
+  path: native LINE routes are included in the probeable provider set,
+  `channels status --probe --json` calls Bot API `/v2/bot/info` with the saved
+  route token, and the account probe result exposes `displayName`, `userId`,
+  `basicId`, and `pictureUrl` bot metadata.
+- Verified the LINE account-probe slice with `python -m pytest
+  tests\test_cli.py -q -k "route_backed_line_probe"` (`1 passed`) and adjacent
+  status-probe proof `python -m pytest tests\test_cli.py -q -k
+  "route_backed_slack_probe or route_backed_telegram_probe or
+  route_backed_discord_probe or route_backed_matrix_probe or
+  route_backed_zalo_probe or route_backed_line_probe or
+  whatsapp_no_hook_probe_non_degraded or channels_status_probe_timeout_options"`
+  (`7 passed`), plus `ruff check src\openzues\services\ops_mesh.py
+  tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- LINE route-backed direct sends now carry OpenClaw's `replyToken` send option
+  through `GatewayOutboundRuntimeMessageRequest`, persist it on saved outbound
+  delivery payloads for replay, and use Bot API `/v2/bot/message/reply` with
+  `messageId="reply"` instead of `/push` when the token is present.
+- Verified the LINE reply-token slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_reply_token"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or preserves_provider_native_options
+  or shared_outbound_runtime_owner or prefers_provider_runtime"` (`6 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's explicit video media
+  options through the shared outbound runtime: `mediaKind="video"` and
+  `previewImageUrl` persist on saved delivery payloads and the native LINE
+  adapter emits Bot API video message payloads instead of default image media.
+- Verified the LINE video media slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_video_media_kind"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or line_video_media_kind or
+  preserves_provider_native_options or shared_outbound_runtime_owner or
+  prefers_provider_runtime"` (`7 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's explicit audio media
+  options through the shared outbound runtime: `mediaKind="audio"` and
+  `durationMs` persist on saved delivery payloads and the native LINE adapter
+  emits Bot API audio message payloads with the requested duration.
+- Verified the LINE audio media slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_audio_duration"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or preserves_provider_native_options or
+  shared_outbound_runtime_owner or prefers_provider_runtime"` (`8 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's structured location
+  payload through the shared outbound runtime, allow location-only sends, keep
+  location payloads replayable, and emit Bot API location messages with
+  title/address truncation plus latitude/longitude preservation.
+- Verified the LINE location slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_location"` (`1 passed`), adjacent outbound
+  runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or preserves_provider_native_options or
+  shared_outbound_runtime_owner or prefers_provider_runtime"` (`9 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's `quickReplies` through the
+  shared outbound runtime and attach LINE `quickReply` action items to the final
+  outgoing message, preserving the upstream 13-item cap and 20-character label
+  truncation while storing the source labels on the delivery payload.
+- Verified the LINE quick-replies slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_quick_replies"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or line_quick_replies or
+  preserves_provider_native_options or shared_outbound_runtime_owner or
+  prefers_provider_runtime"` (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's `flexMessage` through the
+  shared outbound runtime, keep the payload replayable, emit Bot API Flex
+  messages with the upstream 400-character `altText` boundary, preserve
+  `contents`, and leave companion text sends intact.
+- Verified the LINE Flex slice with `python -m pytest tests\test_ops_mesh.py
+  -q -k "line_flex_message"` (`1 passed`), adjacent outbound runtime proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "line_native_route or
+  line_reply_token or line_video_media_kind or line_audio_duration or
+  line_location or line_quick_replies or line_flex_message or
+  preserves_provider_native_options or shared_outbound_runtime_owner or
+  prefers_provider_runtime"` (`11 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's confirm
+  `templateMessage` through the shared outbound runtime, keep the payload
+  replayable, map confirm/cancel data to URI, postback, or message actions, and
+  emit Bot API confirm templates before companion text sends while enforcing
+  OpenClaw/LINE truncation boundaries.
+- Verified the LINE confirm-template slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_confirm_template"` (`1 passed`),
+  adjacent outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or line_quick_replies or
+  line_flex_message or line_confirm_template or preserves_provider_native_options
+  or shared_outbound_runtime_owner or prefers_provider_runtime"` (`12 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's buttons
+  `templateMessage` through the shared outbound runtime, preserve source
+  actions for replay, emit Bot API buttons templates with title/text/action
+  truncation, default image layout options, optional thumbnails, and
+  URI/postback/message action mapping before companion text sends.
+- Verified the LINE buttons-template slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_buttons_template"` (`1 passed`),
+  adjacent outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or line_quick_replies or
+  line_flex_message or line_confirm_template or line_buttons_template or
+  preserves_provider_native_options or shared_outbound_runtime_owner or
+  prefers_provider_runtime"` (`13 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's carousel
+  `templateMessage` through the shared outbound runtime, preserve source
+  columns/actions for replay, emit Bot API carousel templates with the upstream
+  10-column and 3-action-per-column boundaries, title/text truncation, optional
+  thumbnails, default image layout options, and URI/postback/message action
+  mapping before companion text sends.
+- Verified the LINE carousel-template slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_carousel_template"` (`1 passed`),
+  adjacent outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or line_quick_replies or
+  line_flex_message or line_confirm_template or line_buttons_template or
+  line_carousel_template or preserves_provider_native_options or
+  shared_outbound_runtime_owner or prefers_provider_runtime"` (`14 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 
 ## References
 

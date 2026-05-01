@@ -19742,6 +19742,122 @@ def test_gateway_session_history_rest_endpoint_supports_cursor_pagination() -> N
     assert "nextCursor" not in second_body
 
 
+def test_gateway_session_history_rest_endpoint_prefers_freshest_alias_transcript() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-session-history-rest-freshest-alias-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="stale history",
+                session_key="agent:main:MAIN",
+                created_at="2024-01-02T03:04:05Z",
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="fresh history",
+                session_key="agent:main:Main",
+                created_at="2024-01-02T03:04:06Z",
+            )
+        )
+
+        encoded_key = quote("agent:main:main", safe="")
+        response = client.get(f"/sessions/{encoded_key}/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sessionKey"] == "agent:main:main"
+    assert [message["content"][0]["text"] for message in body["messages"]] == [
+        "fresh history"
+    ]
+    assert [message["__openclaw"]["seq"] for message in body["messages"]] == [1]
+    assert body["hasMore"] is False
+    assert "nextCursor" not in body
+
+
+def test_gateway_session_history_rest_endpoint_sanitizes_phased_assistant_content() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-session-history-rest-phased-assistant-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "agent:main:main"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="NO_REPLY",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=json.dumps(
+                    [
+                        {
+                            "type": "text",
+                            "text": "internal reasoning",
+                            "textSignature": json.dumps(
+                                {
+                                    "v": 1,
+                                    "id": "item_commentary",
+                                    "phase": "commentary",
+                                }
+                            ),
+                        },
+                        {
+                            "type": "text",
+                            "text": "Done.",
+                            "textSignature": json.dumps(
+                                {
+                                    "v": 1,
+                                    "id": "item_final",
+                                    "phase": "final_answer",
+                                }
+                            ),
+                        },
+                    ]
+                ),
+                session_key=session_key,
+            )
+        )
+
+        response = client.get(f"/sessions/{quote(session_key, safe='')}/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sessionKey"] == session_key
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["content"][0]["text"] == "Done."
+    assert body["messages"][0]["__openclaw"]["seq"] == 2
+
+
 def test_gateway_session_history_rest_endpoint_reports_unknown_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-missing-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -19911,6 +20027,50 @@ def test_gateway_session_history_rest_endpoint_streams_initial_sse_history() -> 
     assert payload["messages"][0]["content"][0]["text"] == "streamed initial history"
 
 
+def test_gateway_session_history_rest_endpoint_full_initial_sse_without_query() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-sse-full-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:sse-full"
+
+    asyncio.run(app.state.database.initialize())
+    for index in range(201):
+        asyncio.run(
+            app.state.database.append_control_chat_message(
+                role="assistant",
+                content=f"history message {index + 1}",
+                session_key=session_key,
+            )
+        )
+
+    base_url, server, thread = _start_test_server(app)
+    try:
+        encoded_key = quote(session_key, safe="")
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                payload = _read_sse_payload(stream.iter_lines(), "history")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert payload["sessionKey"] == session_key
+    assert len(payload["messages"]) == 201
+    assert payload["messages"][0]["__openclaw"]["seq"] == 1
+    assert payload["messages"][-1]["__openclaw"]["seq"] == 201
+    assert payload["hasMore"] is False
+    assert "nextCursor" not in payload
+
+
 def test_gateway_session_history_rest_endpoint_streams_live_message_updates() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-live-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -20009,6 +20169,7 @@ def test_gateway_session_history_rest_endpoint_streams_live_message_updates() ->
             "id": "2",
             "role": "assistant",
             "content": [{"type": "text", "text": "live streamed update"}],
+            "parentId": "1",
             "__openclaw": {"id": "2", "seq": 2},
         },
         "messageId": "2",
@@ -20125,6 +20286,7 @@ def test_gateway_session_history_rest_endpoint_suppresses_no_reply_live_messages
             "id": "3",
             "role": "assistant",
             "content": [{"type": "text", "text": "visible after silent reply"}],
+            "parentId": "2",
             "__openclaw": {"id": "3", "seq": 3},
         },
         "messageId": "3",
@@ -20263,6 +20425,7 @@ def test_gateway_session_history_rest_endpoint_resyncs_sequence_after_silent_ref
             "id": "4",
             "role": "assistant",
             "content": [{"type": "text", "text": "third visible history"}],
+            "parentId": "3",
             "__openclaw": {"id": "4", "seq": 4},
         },
         "messageId": "4",

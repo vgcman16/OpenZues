@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -751,6 +752,261 @@ def test_channels_status_json_uses_route_backed_discord_probe(tmp_path, monkeypa
             "Bot discord-token",
             2.5,
         ),
+    ]
+
+
+def test_channels_status_json_uses_route_backed_matrix_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Matrix Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Matrix Native Probe Route",
+            kind="matrix",
+            target="https://matrix.example.org/_matrix/client/v3",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "matrix",
+                "account_id": "ops",
+                "peer_kind": "channel",
+                "peer_id": "room:!ops:matrix.example",
+                "summary": "matrix ops room !ops:matrix.example",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="matrix-access-token",
+            vault_secret_id=None,
+        )
+    )
+    matrix_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        matrix_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {"user_id": "@openzues:matrix.example", "device_id": "OPENZUES"}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["matrix"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "matrix",
+        "runtime": "native-provider-backed",
+        "userId": "@openzues:matrix.example",
+        "deviceId": "OPENZUES",
+        "timeoutMs": 2500,
+    }
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+            2.5,
+        )
+    ]
+
+
+def test_channels_status_json_uses_route_backed_zalo_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Zalo Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Zalo Native Probe Route",
+            kind="zalo",
+            target="https://bot-api.zaloplatforms.test",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "zalo",
+                "account_id": "oa-bot",
+                "peer_kind": "direct",
+                "peer_id": "zalo:12345",
+                "summary": "zalo oa-bot direct 12345",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="zalo-access-token",
+            vault_secret_id=None,
+        )
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "id": "oa-123",
+                "name": "OpenZues OA",
+                "username": "openzues_oa",
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["zalo"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "zalo",
+        "runtime": "native-provider-backed",
+        "bot": {
+            "id": "oa-123",
+            "name": "OpenZues OA",
+            "username": "openzues_oa",
+        },
+        "timeoutMs": 2500,
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/getMe",
+            {},
+            None,
+            None,
+        )
+    ]
+
+
+def test_channels_status_json_uses_route_backed_line_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI LINE Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="LINE Native Probe Route",
+            kind="line",
+            target="https://api.line.me/v2/bot/message",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "line",
+                "account_id": "line-bot",
+                "peer_kind": "direct",
+                "peer_id": "line:user:U1234567890abcdef1234567890abcdef",
+                "summary": "line bot direct U1234567890abcdef1234567890abcdef",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="line-channel-token",
+            vault_secret_id=None,
+        )
+    )
+    line_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        line_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {
+            "displayName": "OpenZues LINE",
+            "userId": "Ubot123",
+            "basicId": "@openzues",
+            "pictureUrl": "https://example.com/bot.png",
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["line"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "line",
+        "runtime": "native-provider-backed",
+        "bot": {
+            "displayName": "OpenZues LINE",
+            "userId": "Ubot123",
+            "basicId": "@openzues",
+            "pictureUrl": "https://example.com/bot.png",
+        },
+        "timeoutMs": 2500,
+    }
+    assert line_gets == [
+        (
+            "https://api.line.me/v2/bot/info",
+            "Authorization",
+            "Bearer line-channel-token",
+            2.5,
+        )
     ]
 
 
@@ -2197,6 +2453,107 @@ def test_acp_bridge_command_reports_native_runtime_unavailable() -> None:
     assert "sessions spawn --runtime acp" in result.stderr
 
 
+def test_acp_bridge_command_accepts_gateway_option_aliases(tmp_path: Path) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    password_file = tmp_path / "gateway-password.txt"
+    token_file.write_text("gateway-token\n", encoding="utf-8")
+    password_file.write_text("gateway-password\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--gateway-url",
+            "ws://gateway.invalid/openzues",
+            "--gateway-token-file",
+            str(token_file),
+            "--gateway-password-file",
+            str(password_file),
+            "--session-label",
+            "Main",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ACP Gateway bridge is not available" in result.stderr
+    assert "url: ws://gateway.invalid/openzues" in result.stderr
+    assert f"tokenFile: {token_file}" in result.stderr
+    assert f"passwordFile: {password_file}" in result.stderr
+    assert "gateway-token\n" not in result.stderr
+    assert "gateway-password\n" not in result.stderr
+
+
+def test_acp_bridge_command_rejects_mixed_gateway_alias_secret_sources(
+    tmp_path: Path,
+) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    token_file.write_text("gateway-token\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--gateway-token",
+            "inline-token",
+            "--gateway-token-file",
+            str(token_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either --token or --token-file for Gateway token." in result.stderr
+
+
+def test_acp_bridge_command_passes_options_to_registered_runner(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    token_file.write_text("gateway-token\n", encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    def fake_runner(options: dict[str, object]) -> int:
+        calls.append(options)
+        return 6
+
+    monkeypatch.setattr(cli_module, "_acp_bridge_runner", fake_runner)
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--gateway-url",
+            "ws://gateway.invalid/openzues",
+            "--gateway-token-file",
+            str(token_file),
+            "--session",
+            "agent:main:main",
+            "--require-existing",
+            "--reset-session",
+            "--no-prefix-cwd",
+            "--provenance",
+            "meta+receipt",
+            "--verbose",
+        ],
+    )
+
+    assert result.exit_code == 6
+    assert calls == [
+        {
+            "gatewayUrl": "ws://gateway.invalid/openzues",
+            "gatewayToken": "gateway-token",
+            "gatewayPassword": None,
+            "defaultSessionKey": "agent:main:main",
+            "defaultSessionLabel": None,
+            "requireExistingSession": True,
+            "resetSession": True,
+            "prefixCwd": False,
+            "provenanceMode": "meta+receipt",
+            "verbose": True,
+        }
+    ]
+
+
 def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     result = runner.invoke(
         app,
@@ -2214,6 +2571,109 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     assert result.exit_code == 1
     assert "ACP client bridge is not available" in result.stderr
     assert r"C:\work\OpenZues" in result.stderr
+
+
+def test_acp_status_json_and_human_output_uses_saved_metadata(monkeypatch) -> None:
+    child_session_key = "agent:codex:acp:thread-acp-status"
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": child_session_key,
+                    "updated_at": "2026-05-01T00:00:00Z",
+                    "metadata": {
+                        "runtime": "acp",
+                        "runtimeThreadId": "thread-acp-status",
+                        "runtimeSessionId": "session-acp-status",
+                        "agentId": "codex",
+                        "spawnMode": "session",
+                        "state": "running",
+                        "label": "Codex ACP",
+                        "runtimeOptions": {"model": "gpt-5.4"},
+                        "capabilities": {"controls": ["cancel", "setMode"]},
+                        "identity": {"account": "codex-desktop"},
+                        "taskRecord": {
+                            "taskId": "acp:run-acp-status-1",
+                            "runtime": "acp",
+                            "sourceId": "run-acp-status-1",
+                            "requesterSessionKey": "agent:main:main",
+                            "ownerKey": "agent:main:main",
+                            "scopeKind": "session",
+                            "childSessionKey": child_session_key,
+                            "agentId": "codex",
+                            "runId": "run-acp-status-1",
+                            "task": "Finish the ACP status check.",
+                            "status": "running",
+                            "deliveryStatus": "session_queued",
+                            "notifyPolicy": "done_only",
+                            "createdAt": 1_777_612_800_000,
+                            "startedAt": 1_777_612_800_000,
+                            "lastEventAt": 1_777_612_900_000,
+                            "progressSummary": "runtime accepted",
+                        },
+                    },
+                },
+                {
+                    "session_key": "agent:main:main",
+                    "metadata": {"label": "Main"},
+                },
+            ]
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["acp", "status", "session-acp-status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["lookup"] == "session-acp-status"
+    assert payload["count"] == 1
+    session = payload["session"]
+    assert session["sessionKey"] == child_session_key
+    assert session["backend"] == "codex"
+    assert session["agent"] == "codex"
+    assert session["sessionMode"] == "session"
+    assert session["state"] == "running"
+    assert session["runtimeThreadId"] == "thread-acp-status"
+    assert session["runtimeSessionId"] == "session-acp-status"
+    assert session["runtimeOptions"] == {"model": "gpt-5.4"}
+    assert session["capabilities"] == {"controls": ["cancel", "setMode"]}
+    assert session["identity"] == {"account": "codex-desktop"}
+    assert session["task"]["taskId"] == "acp:run-acp-status-1"
+    assert session["task"]["status"] == "running"
+    assert session["task"]["deliveryStatus"] == "session_queued"
+    assert session["task"]["progressSummary"] == "runtime accepted"
+    assert session["task"]["taskUpdatedAt"].startswith("2026-")
+
+    human = runner.invoke(app, ["acp", "status", "thread-acp-status"])
+
+    assert human.exit_code == 0, human.stdout
+    assert "ACP status:" in human.stdout
+    assert f"session: {child_session_key}" in human.stdout
+    assert "backend: codex" in human.stdout
+    assert "agent: codex" in human.stdout
+    assert "sessionMode: session" in human.stdout
+    assert "state: running" in human.stdout
+    assert "taskId: acp:run-acp-status-1" in human.stdout
+    assert "delivery: session_queued" in human.stdout
+    assert "taskProgress: runtime accepted" in human.stdout
 
 
 def test_acp_client_spawn_plan_strips_provider_auth_for_default_bridge() -> None:
@@ -2275,6 +2735,47 @@ def test_acp_client_spawn_plan_preserves_provider_auth_for_custom_server() -> No
     assert plan.stripped_env_keys == ()
 
 
+def test_acp_client_spawn_plan_preserves_provider_auth_for_default_command_override() -> None:
+    from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
+
+    plan = build_acp_client_spawn_plan(
+        server="openzues",
+        server_args=["custom-entry.py"],
+        base_env={
+            "OPENAI_API_KEY": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "OPENCLAW_SHELL": "interactive",
+        },
+    )
+
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp", "custom-entry.py")
+    assert plan.strip_provider_auth_env_vars is False
+    assert plan.env == {
+        "OPENAI_API_KEY": "openai-secret",
+        "GITHUB_TOKEN": "github-secret",
+        "OPENCLAW_SHELL": "acp-client",
+    }
+    assert plan.stripped_env_keys == ()
+
+
+def test_acp_client_spawn_invocation_keeps_non_windows_options_unset() -> None:
+    from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
+
+    invocation = resolve_acp_client_spawn_invocation(
+        server_command="openzues",
+        server_args=("acp", "--verbose"),
+        platform="darwin",
+        env={},
+        executable="/usr/bin/python",
+    )
+
+    assert invocation == {
+        "command": "openzues",
+        "args": ("acp", "--verbose"),
+    }
+
+
 def test_acp_client_spawn_invocation_unwraps_windows_cmd_shim(tmp_path: Path) -> None:
     from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
 
@@ -2298,9 +2799,26 @@ def test_acp_client_spawn_invocation_unwraps_windows_cmd_shim(tmp_path: Path) ->
     assert invocation == {
         "command": r"C:\Python312\python.exe",
         "args": (str(script_path), "acp", "--verbose"),
-        "shell": False,
         "windowsHide": True,
     }
+
+
+def test_acp_client_spawn_invocation_fails_closed_for_unresolved_windows_wrapper(
+    tmp_path: Path,
+) -> None:
+    from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
+
+    shim_path = tmp_path / "openzues.cmd"
+    shim_path.write_text("@ECHO off\r\necho wrapper\r\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="without shell execution"):
+        resolve_acp_client_spawn_invocation(
+            server_command=str(shim_path),
+            server_args=("acp",),
+            platform="win32",
+            env={"PATH": str(tmp_path), "PATHEXT": ".CMD;.EXE;.BAT"},
+            executable=r"C:\Python312\python.exe",
+        )
 
 
 def test_acp_client_command_passes_spawn_plan_to_registered_runner(monkeypatch) -> None:
@@ -14589,6 +15107,8 @@ def _invoke_doctor_json_with_config_snapshot(
     settings: object | None = None,
     args: list[str] | None = None,
     gateway_node_methods: object | None = None,
+    mission_service: object | None = None,
+    ops_mesh: object | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -14617,6 +15137,8 @@ def _invoke_doctor_json_with_config_snapshot(
                 hermes_platform=FakeHermesPlatform(),
                 gateway_config=FakeGatewayConfig(),
                 gateway_node_methods=gateway_node_methods,
+                mission_service=mission_service,
+                ops_mesh=ops_mesh,
             )
         )
 
@@ -15149,6 +15671,57 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
             }
         ],
     }
+
+
+def test_doctor_json_adds_task_flow_recovery_hints_for_broken_blocked_flows(
+    monkeypatch,
+) -> None:
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=123,
+                    name="Broken TaskFlow",
+                    objective_template="Investigate PR batch",
+                    summary="Investigate PR batch",
+                    schedule_kind="manual",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status="blocked",
+                    blockedTaskId="task-missing",
+                    last_result_summary=None,
+                    last_launched_at=None,
+                    created_at=datetime(2026, 4, 29, 14, 30, tzinfo=UTC),
+                    updated_at=datetime(2026, 4, 29, 14, 45, tzinfo=UTC),
+                )
+            ]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        mission_service=FakeMissionService(),
+        ops_mesh=FakeOpsMesh(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    workspace_status = payload["workspaceStatus"]
+    recovery = workspace_status["taskFlowRecovery"]
+    expected_finding = (
+        "task-blueprint:123: blocked TaskFlow points at missing task task-missing; "
+        "inspect before retrying."
+    )
+    assert recovery["status"] == "warning"
+    assert recovery["findings"] == [expected_finding]
+    warning = workspace_status["warnings"][0]
+    assert "task-blueprint:123" in warning
+    assert "openclaw tasks flow show <flow-id>" in warning
+    assert "openclaw tasks flow cancel <flow-id>" in warning
+    assert warning in payload["warnings"]
 
 
 def test_doctor_json_warns_about_pending_device_pairing_from_gateway(
