@@ -5544,6 +5544,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_discord_channel_info_route"` (`16 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed unencrypted media-send parity now uploads outbound media
+  through the Matrix media repository, sends `m.image` / `m.video` / `m.audio` /
+  `m.file` room messages with MXC URLs, caption text, relation metadata,
+  mimetype/size info, and persisted media delivery metadata.
+- Verified the Matrix media send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route and media"` (`1 passed`),
+  adjacent Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "matrix_native_route or message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`15 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

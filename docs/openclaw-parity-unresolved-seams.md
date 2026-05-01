@@ -530,8 +530,13 @@ message summaries, and `nextBatch` / `prevBatch` cursor projection.
 Matrix `message.action memberInfo` and `channelInfo` now map to OpenClaw's
 profile, room-state, and joined-member probe shapes, including display/avatar
 profile projection, room name/topic/canonical alias reads, and member counts.
-Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, and self-profile update/config persistence breadth.
+Matrix route-backed media sends now upload outbound media to the Matrix media
+repository, send unencrypted `m.image` / `m.video` / `m.audio` / `m.file`
+content with MXC URLs, caption text, relation metadata, mimetype/size info, and
+persisted media delivery metadata.
+Remaining Matrix provider parity is encrypted media/thumbnail/duration metadata,
+alias and direct-room resolution, and self-profile update/config persistence
+breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

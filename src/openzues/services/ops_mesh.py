@@ -2387,6 +2387,41 @@ def _matrix_messages_endpoint(
     )
 
 
+def _matrix_media_upload_endpoint(
+    target: str | None,
+    *,
+    filename: str | None,
+) -> str:
+    base_url = _matrix_base_url(target)
+    normalized_filename = str(filename or "").strip()
+    query = f"?{urlencode({'filename': normalized_filename})}" if normalized_filename else ""
+    return f"{base_url}/_matrix/media/v3/upload{query}"
+
+
+def _matrix_media_msgtype(content_type: str | None, filename: str | None) -> str:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    if normalized_content_type.startswith("image/"):
+        return "m.image"
+    if normalized_content_type.startswith("video/"):
+        return "m.video"
+    if normalized_content_type.startswith("audio/"):
+        return "m.audio"
+    if normalized_filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+        return "m.image"
+    if normalized_filename.endswith((".mp4", ".mov", ".webm", ".mkv")):
+        return "m.video"
+    if normalized_filename.endswith((".mp3", ".wav", ".ogg", ".m4a", ".flac")):
+        return "m.audio"
+    return "m.file"
+
+
+def _matrix_media_filename(media_url: str, fallback: str = "file") -> str:
+    parsed = urlparse(media_url)
+    name = unquote(Path(parsed.path).name).replace("\\", "_").replace("/", "_").strip()
+    return name[:120] if name else fallback
+
+
 def _matrix_joined_members_endpoint(target: str | None, *, room_id: str) -> str:
     return (
         f"{_matrix_base_url(target)}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
@@ -12928,7 +12963,7 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower() in {"whatsapp", "zalo", "line"}
+                    resolved_target.channel.lower() in {"whatsapp", "zalo", "line", "matrix"}
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()
@@ -14480,6 +14515,81 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
 
+    def _download_matrix_media_url(self, media_url: str) -> tuple[bytes, str | None, str | None]:
+        filename = _matrix_media_filename(media_url)
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+        parsed = urlparse(media_url)
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+            raise RuntimeError(f"Media path does not exist: {media_url}")
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                content_type = response.headers.get("Content-Type")
+                return response.read(), content_type, filename
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _upload_matrix_media(
+        self,
+        route: dict[str, Any],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        headers = {"Content-Type": content_type or "application/octet-stream"}
+        headers["Authorization"] = _matrix_bearer_token(secret_token)
+        request = Request(
+            _matrix_media_upload_endpoint(str(route.get("target") or ""), filename=filename),
+            data=media,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Matrix media upload returned HTTP {response.status}")
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            message = _http_error_message("Matrix media upload returned HTTP", exc)
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Matrix media upload failed: {exc.reason}") from exc
+        try:
+            result = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Matrix media upload returned a non-JSON response.") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("Matrix media upload returned a non-object response.")
+        content_uri = result.get("content_uri") or result.get("contentUri")
+        if not isinstance(content_uri, str) or not content_uri.strip():
+            raise RuntimeError("Matrix media upload response did not include content_uri.")
+        return content_uri.strip()
+
     def _load_discord_media(self, media_url: str, *, max_bytes: int) -> tuple[bytes, str]:
         data_match = re.match(
             r"^data:([^;,]+);base64,(.*)$",
@@ -15443,10 +15553,8 @@ class OpsMeshService:
                 else None
             ),
         )
-        if media_urls:
-            raise RuntimeError("Matrix native provider route media sends are not implemented yet.")
         chunks = _matrix_text_chunks(str(event.get("message") or ""))
-        if not chunks:
+        if not chunks and not media_urls:
             raise RuntimeError("Matrix send requires text or media.")
         relation = _matrix_relation(
             thread_id=str(event.get("threadId") or "").strip() or None,
@@ -15455,7 +15563,56 @@ class OpsMeshService:
         bearer_token = _matrix_bearer_token(secret_token)
         transaction_id = _matrix_transaction_id(event)
         message_ids: list[str] = []
-        for index, chunk in enumerate(chunks, start=1):
+        uploaded_media_urls: list[str] = []
+        text_chunks = chunks
+        for media_index, media_url in enumerate(media_urls, start=1):
+            media, content_type, filename = self._download_matrix_media_url(media_url)
+            filename = filename or _matrix_media_filename(media_url)
+            mxc_url = self._upload_matrix_media(
+                route,
+                media,
+                content_type=content_type,
+                filename=filename,
+                secret_token=secret_token,
+            )
+            uploaded_media_urls.append(mxc_url)
+            caption = text_chunks[0] if media_index == 1 and text_chunks else ""
+            if media_index == 1 and text_chunks:
+                text_chunks = text_chunks[1:]
+            body = caption or filename or "(file)"
+            media_content: dict[str, object] = {
+                "msgtype": _matrix_media_msgtype(content_type, filename),
+                "body": body,
+                "filename": filename,
+                "url": mxc_url,
+                "info": {
+                    "size": len(media),
+                },
+            }
+            if content_type:
+                cast(dict[str, object], media_content["info"])["mimetype"] = content_type
+            if relation is not None:
+                media_content["m.relates_to"] = relation
+            result = self._put_json_provider(
+                _matrix_send_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.message",
+                    transaction_id=(
+                        transaction_id
+                        if len(media_urls) == 1 and not text_chunks
+                        else f"{transaction_id}-media-{media_index}"
+                    ),
+                ),
+                media_content,
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            message_id = _matrix_message_id(result)
+            if message_id is None:
+                raise RuntimeError("Matrix API response did not include an event id.")
+            message_ids.append(message_id)
+        for index, chunk in enumerate(text_chunks, start=1):
             content: dict[str, object] = {
                 "msgtype": "m.text",
                 "body": chunk,
@@ -15463,7 +15620,9 @@ class OpsMeshService:
             if relation is not None:
                 content["m.relates_to"] = relation
             chunk_transaction_id = (
-                transaction_id if len(chunks) == 1 else f"{transaction_id}-{index}"
+                transaction_id
+                if not media_urls and len(text_chunks) == 1
+                else f"{transaction_id}-{index}"
             )
             result = self._put_json_provider(
                 _matrix_send_endpoint(
@@ -15480,7 +15639,7 @@ class OpsMeshService:
             if message_id is None:
                 raise RuntimeError("Matrix API response did not include an event id.")
             message_ids.append(message_id)
-        return {
+        native_result: dict[str, object] = {
             "runtime": "native-provider-backed",
             "messageId": message_ids[-1],
             "roomId": room_id,
@@ -15489,6 +15648,9 @@ class OpsMeshService:
             "primaryMessageId": message_ids[0],
             "messageIds": message_ids,
         }
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
 
     def _post_matrix_poll_provider_event(
         self,

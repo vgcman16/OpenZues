@@ -13173,6 +13173,164 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_matrix_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/photo.png"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    matrix_uploads: list[tuple[str, bytes, str | None, str | None]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (b"pngdata", "image/png", "photo.png")
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self
+        matrix_uploads.append(
+            (str(route.get("target") or ""), media, content_type, secret_token)
+        )
+        assert filename == "photo.png"
+        return "mxc://matrix.example.org/uploaded-photo"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-media-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Photo caption.",
+        media_urls=[media_url],
+        reply_to_id="$reply",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-media",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["ok"] is True
+    assert result["channel"] == "matrix"
+    assert result["messageId"] == "$matrix-media-1"
+    assert result["roomId"] == "!ops:matrix.example"
+    assert result["primaryMessageId"] == "$matrix-media-1"
+    assert result["messageIds"] == ["$matrix-media-1"]
+    assert result["mediaUrls"] == [media_url]
+    assert matrix_uploads == [
+        (
+            "https://matrix.example.org",
+            b"pngdata",
+            "image/png",
+            "matrix-access-token",
+        )
+    ]
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21ops%3Amatrix\.example/send/m\.room\.message/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "msgtype": "m.image",
+        "body": "Photo caption.",
+        "filename": "photo.png",
+        "url": "mxc://matrix.example.org/uploaded-photo",
+        "info": {
+            "mimetype": "image/png",
+            "size": 7,
+        },
+        "m.relates_to": {
+            "m.in_reply_to": {"event_id": "$reply"},
+        },
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "$matrix-media-1",
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "primaryMessageId": "$matrix-media-1",
+        "messageIds": ["$matrix-media-1"],
+        "mediaUrls": [media_url],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_matrix_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
