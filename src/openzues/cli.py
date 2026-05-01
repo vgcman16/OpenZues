@@ -9218,6 +9218,43 @@ def _emit_plugins_inventory(
                 "  capabilities: "
                 + ", ".join(str(item) for item in capabilities if str(item).strip())
             )
+    if verbose:
+        runtime_executors = payload.get("runtimeExecutors")
+        runtime_payload = runtime_executors if isinstance(runtime_executors, dict) else {}
+        raw_tools = runtime_payload.get("tools")
+        tool_rows = raw_tools if isinstance(raw_tools, list) else []
+        if tool_rows:
+            raw_count = runtime_payload.get("count")
+            count = raw_count if isinstance(raw_count, int) else len(tool_rows)
+            raw_owner_only_count = runtime_payload.get("ownerOnlyCount")
+            owner_only_count = (
+                raw_owner_only_count
+                if isinstance(raw_owner_only_count, int)
+                else sum(
+                    1
+                    for entry in tool_rows
+                    if isinstance(entry, dict) and entry.get("ownerOnly") is True
+                )
+            )
+            typer.echo(f"Runtime executors ({count} registered, {owner_only_count} owner-only)")
+            for entry in tool_rows:
+                if not isinstance(entry, dict):
+                    continue
+                tool = _optional_cli_string(entry.get("tool"))
+                if tool is None:
+                    continue
+                runtime_plugin_id = _optional_cli_string(entry.get("pluginId"))
+                runtime_source = _optional_cli_string(entry.get("source"))
+                parts = [f"- {tool}"]
+                if runtime_plugin_id is not None:
+                    parts.append(f"[{runtime_plugin_id}]")
+                if runtime_source is not None:
+                    parts.append(f"source={runtime_source}")
+                if entry.get("optional") is True:
+                    parts.append("optional")
+                if entry.get("ownerOnly") is True:
+                    parts.append("owner-only")
+                typer.echo(" ".join(parts))
 
 
 def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> None:

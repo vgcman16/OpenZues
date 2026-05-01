@@ -711,19 +711,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `runtimeExecutors` inventory from the native
   `GatewayPluginRuntimeService.catalog_specs()` projection, using the same
   `status`, `count`, `ownerOnlyCount`, and per-tool provider metadata shape as
-  the runtime bridge doctor surface.
+  the runtime bridge doctor surface. `plugins list --verbose` now also prints
+  the same registered runtime executor tools, including plugin id, source,
+  optional, and owner-only markers, for human operator parity.
 - Verified the plugin list runtime-executor inventory slice with `python -m
   pytest
   tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory
+  -q` (`1 passed`), human-output proof `python -m pytest
+  tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory
   -q` (`1 passed`), adjacent plugin CLI proof `python -m pytest
   tests\test_cli.py -q -k
   "plugins_list_json_projects_runtime_executor_inventory or
+  plugins_list_verbose_reports_runtime_executor_inventory or
   plugins_list_json_projects_hermes_plugin_inventory or
   plugins_list_enabled_filters_loaded_plugins or
   plugins_list_json_includes_saved_config_install_records or
   plugins_list_json_discovers_openclaw_manifest_load_paths or
   plugins_inspect_json_projects_runtime_executor_tools or
-  plugins_inspect_json_preserves_runtime_executor_optional_metadata"` (`7
+  plugins_inspect_json_preserves_runtime_executor_optional_metadata"` (`8
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 - `plugins list --json`, `plugins inspect --json`, and `plugins doctor --json`
@@ -1573,7 +1578,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin runtime inspect projection slice.
 - `mypy src\openzues\cli.py`: clean after the plugin runtime inspect projection slice.
 - `python -m pytest tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory -q`: 1 passed after projecting top-level plugin runtime executor inventory through `plugins list --json`.
-- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_projects_runtime_executor_inventory or plugins_list_json_projects_hermes_plugin_inventory or plugins_list_enabled_filters_loaded_plugins or plugins_list_json_includes_saved_config_install_records or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_preserves_runtime_executor_optional_metadata"`: 7 passed after rechecking adjacent plugin list/inspect runtime surfaces.
+- `python -m pytest tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory -q`: 1 passed after adding verbose human output for the same runtime executor inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_projects_runtime_executor_inventory or plugins_list_verbose_reports_runtime_executor_inventory or plugins_list_json_projects_hermes_plugin_inventory or plugins_list_enabled_filters_loaded_plugins or plugins_list_json_includes_saved_config_install_records or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_preserves_runtime_executor_optional_metadata"`: 8 passed after rechecking adjacent plugin list/inspect runtime surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin list runtime executor inventory slice.
 - `mypy src\openzues\cli.py`: clean after the plugin list runtime executor inventory slice.
 - `python -m pytest tests\test_cli.py::test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies tests\test_cli.py::test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies tests\test_cli.py::test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins -q`: 3 passed after adding bundled plugin runtime dependency inventory and doctor diagnostics.

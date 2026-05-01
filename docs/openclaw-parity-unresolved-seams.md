@@ -1370,7 +1370,9 @@ OpenClaw-shaped runtime tool entries with `names` / `optional` metadata.
 inventory at the top level as `runtimeExecutors`, including `count`,
 `ownerOnlyCount`, `optional`, `ownerOnly`, plugin id/name, and source metadata
 so operator/plugin inventory can see runtime-backed tools without inspecting a
-single plugin first.
+single plugin first. `plugins list --verbose` now also prints those registered
+runtime executor tools with plugin id, source, optional, and owner-only markers
+for human operator parity.
 Inspect reports now also project OpenClaw-shaped policy summaries from
 `plugins.entries.<id>.hooks.allowPromptInjection` and
 `plugins.entries.<id>.subagent` (`allowModelOverride`, `allowedModels`, and
@@ -3361,10 +3363,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   top-level `runtimeExecutors` projected from the native
   `GatewayPluginRuntimeService.catalog_specs()` registry, preserving tool,
   plugin id/name, owner-only, optional, and source metadata without importing
-  the TypeScript runtime. Verified with `python -m pytest
+  the TypeScript runtime, and `plugins list --verbose` prints the same
+  registered executor inventory for humans. Verified with `python -m pytest
   tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory
+  -q`, `python -m pytest
+  tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory
   -q`, adjacent `python -m pytest tests\test_cli.py -q -k
   "plugins_list_json_projects_runtime_executor_inventory or
+  plugins_list_verbose_reports_runtime_executor_inventory or
   plugins_list_json_projects_hermes_plugin_inventory or
   plugins_list_enabled_filters_loaded_plugins or
   plugins_list_json_includes_saved_config_install_records or
