@@ -725,10 +725,10 @@ unmanaged status instead of omitting the managed-service read model. Text-mode
 `status --all` now renders the OpenClaw-shaped
 pasteable report skeleton with overview, channel, agent, and read-only
 diagnosis sections backed by the same native status payload. Remaining
-CLI/runtime parity includes ACP/sandbox status commands, deeper model
-auth/probe inspection, production provider usage/security-audit adapter wiring,
-plugin/runtime inspection, deeper runtime bridge doctor checks, non-metadata
-external sandbox container cleanup, and broader TUI ergonomics.
+CLI/runtime parity includes deeper model auth/probe inspection, production
+provider usage/security-audit adapter wiring, plugin/runtime inspection, deeper
+runtime bridge doctor checks, non-metadata external sandbox container cleanup,
+and broader TUI ergonomics.
 `status --json --usage
 --all` now consumes fakeable native provider-usage and security-audit runtime
 adapters when registered while keeping the honest unavailable placeholders
@@ -819,6 +819,12 @@ custom ACP server. The spawn preflight now also mirrors OpenClaw's Windows-safe
 ACP client invocation resolver by unwrapping `.cmd` shims to the Python
 executable without shell execution. Remaining ACP CLI parity is still the real
 bridge client/server protocol runtime rather than the spawn preflight contract.
+`acp status [lookup]` now reads native ACP session metadata and linked
+OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
+thread id, runtime session id, label, task id, and run id. JSON output returns
+session/runtime/task metadata, while human output mirrors the upstream
+`ACP status:` lines for backend, agent, session mode, state, task delivery,
+progress, runtime options, capabilities, and last activity.
 The CLI now also exposes `models list` as a thin OpenClaw-shaped JSON/human
 wrapper over the production `models.list` gateway method owner, including
 provider/local filters without duplicating the model catalog runtime, and

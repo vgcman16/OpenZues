@@ -5017,6 +5017,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -k "sandbox_explain or sandbox_recreate or sandbox_inventory or
   doctor_sandbox"` (`5 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- The CLI now exposes `acp status [lookup]` as a native read-only ACP status
+  surface. It resolves saved ACP sessions by session key, runtime thread id,
+  runtime session id, label, task id, or run id, then projects backend, agent,
+  session mode, state, runtime options, capabilities, identity, last activity,
+  and linked metadata-backed task delivery/progress in JSON and upstream-style
+  human `ACP status:` lines.
+- Verified the ACP status CLI slice with `python -m pytest tests\test_cli.py
+  -q -k "acp_status_json_and_human"` (`1 passed`), adjacent ACP/task CLI
+  coverage `python -m pytest tests\test_cli.py -q -k
+  "acp_status_json_and_human or acp_bridge_command_reports_native_runtime_unavailable
+  or acp_client_command_reports_native_runtime_unavailable or
+  acp_client_spawn_plan_strips_provider_auth_for_default_bridge or
+  acp_client_command_passes_spawn_plan_to_registered_runner or
+  tasks_cancel_cancels_metadata_backed_acp_task"` (`6 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 

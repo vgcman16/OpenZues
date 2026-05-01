@@ -2216,6 +2216,109 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     assert r"C:\work\OpenZues" in result.stderr
 
 
+def test_acp_status_json_and_human_output_uses_saved_metadata(monkeypatch) -> None:
+    child_session_key = "agent:codex:acp:thread-acp-status"
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "session_key": child_session_key,
+                    "updated_at": "2026-05-01T00:00:00Z",
+                    "metadata": {
+                        "runtime": "acp",
+                        "runtimeThreadId": "thread-acp-status",
+                        "runtimeSessionId": "session-acp-status",
+                        "agentId": "codex",
+                        "spawnMode": "session",
+                        "state": "running",
+                        "label": "Codex ACP",
+                        "runtimeOptions": {"model": "gpt-5.4"},
+                        "capabilities": {"controls": ["cancel", "setMode"]},
+                        "identity": {"account": "codex-desktop"},
+                        "taskRecord": {
+                            "taskId": "acp:run-acp-status-1",
+                            "runtime": "acp",
+                            "sourceId": "run-acp-status-1",
+                            "requesterSessionKey": "agent:main:main",
+                            "ownerKey": "agent:main:main",
+                            "scopeKind": "session",
+                            "childSessionKey": child_session_key,
+                            "agentId": "codex",
+                            "runId": "run-acp-status-1",
+                            "task": "Finish the ACP status check.",
+                            "status": "running",
+                            "deliveryStatus": "session_queued",
+                            "notifyPolicy": "done_only",
+                            "createdAt": 1_777_612_800_000,
+                            "startedAt": 1_777_612_800_000,
+                            "lastEventAt": 1_777_612_900_000,
+                            "progressSummary": "runtime accepted",
+                        },
+                    },
+                },
+                {
+                    "session_key": "agent:main:main",
+                    "metadata": {"label": "Main"},
+                },
+            ]
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["acp", "status", "session-acp-status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["lookup"] == "session-acp-status"
+    assert payload["count"] == 1
+    session = payload["session"]
+    assert session["sessionKey"] == child_session_key
+    assert session["backend"] == "codex"
+    assert session["agent"] == "codex"
+    assert session["sessionMode"] == "session"
+    assert session["state"] == "running"
+    assert session["runtimeThreadId"] == "thread-acp-status"
+    assert session["runtimeSessionId"] == "session-acp-status"
+    assert session["runtimeOptions"] == {"model": "gpt-5.4"}
+    assert session["capabilities"] == {"controls": ["cancel", "setMode"]}
+    assert session["identity"] == {"account": "codex-desktop"}
+    assert session["task"]["taskId"] == "acp:run-acp-status-1"
+    assert session["task"]["status"] == "running"
+    assert session["task"]["deliveryStatus"] == "session_queued"
+    assert session["task"]["progressSummary"] == "runtime accepted"
+    assert session["task"]["taskUpdatedAt"].startswith("2026-")
+
+    human = runner.invoke(app, ["acp", "status", "thread-acp-status"])
+
+    assert human.exit_code == 0, human.stdout
+    assert "ACP status:" in human.stdout
+    assert f"session: {child_session_key}" in human.stdout
+    assert "backend: codex" in human.stdout
+    assert "agent: codex" in human.stdout
+    assert "sessionMode: session" in human.stdout
+    assert "state: running" in human.stdout
+    assert "taskId: acp:run-acp-status-1" in human.stdout
+    assert "delivery: session_queued" in human.stdout
+    assert "taskProgress: runtime accepted" in human.stdout
+
+
 def test_acp_client_spawn_plan_strips_provider_auth_for_default_bridge() -> None:
     from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
 

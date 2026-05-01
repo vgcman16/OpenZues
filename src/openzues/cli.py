@@ -17278,6 +17278,26 @@ def acp_client_command(
     raise typer.Exit(code=1)
 
 
+@acp_app.command("status")
+def acp_status_command(
+    lookup: str | None = typer.Argument(
+        None,
+        help="ACP session key, runtime id, session id, task id, run id, or label.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    try:
+        payload = _run(
+            _run_with_services(
+                lambda services: _build_acp_status_payload(services, lookup=lookup)
+            )
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_acp_status(payload, json_output=json_output)
+
+
 @capability_app.command("list")
 def capability_list_command(
     json_output: bool = typer.Option(False, "--json", help="Output JSON."),
@@ -18806,6 +18826,17 @@ def _openclaw_task_matches_lookup(task: dict[str, object], lookup: str) -> bool:
     return False
 
 
+def _cli_timestamp_ms_iso(value: object) -> str | None:
+    timestamp_ms = _openclaw_task_metadata_timestamp_ms(value)
+    if timestamp_ms is None:
+        return None
+    return (
+        datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
 async def _resolve_openclaw_task(services: CliServices, lookup: str) -> dict[str, object] | None:
     for task in await _list_openclaw_background_tasks(services):
         if _openclaw_task_matches_lookup(task, lookup):
@@ -18829,6 +18860,362 @@ def _acp_runtime_id_from_session_key(session_key: str | None) -> str | None:
         return None
     runtime_id = normalized.rsplit(":acp:", 1)[-1].strip()
     return runtime_id or None
+
+
+def _acp_status_json_mapping(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if isinstance(key, str)
+    }
+
+
+def _acp_status_is_row(row: object) -> bool:
+    if not isinstance(row, dict):
+        return False
+    session_key = _optional_cli_string(row.get("session_key"))
+    metadata = row.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    return metadata.get("runtime") == "acp" or (
+        session_key is not None and ":acp:" in session_key
+    )
+
+
+def _acp_status_latest_task_for_session(
+    tasks: list[dict[str, object]],
+    session_key: str,
+) -> dict[str, object] | None:
+    matches = [
+        task
+        for task in tasks
+        if _optional_cli_string(task.get("childSessionKey")) == session_key
+        or _optional_cli_string(task.get("requesterSessionKey")) == session_key
+    ]
+    if not matches:
+        return None
+    return max(
+        matches,
+        key=lambda task: (
+            _openclaw_task_metadata_timestamp_ms(task.get("lastEventAt"))
+            or _openclaw_task_metadata_timestamp_ms(task.get("startedAt"))
+            or _openclaw_task_metadata_timestamp_ms(task.get("createdAt"))
+            or 0
+        ),
+    )
+
+
+def _acp_status_task_payload(task: dict[str, object]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for key in (
+        "taskId",
+        "status",
+        "deliveryStatus",
+        "runId",
+        "progressSummary",
+        "terminalSummary",
+        "error",
+    ):
+        value = _optional_cli_string(task.get(key))
+        if value is not None:
+            payload[key] = value
+    updated_at = _cli_timestamp_ms_iso(task.get("lastEventAt"))
+    if updated_at is not None:
+        payload["taskUpdatedAt"] = updated_at
+    return payload
+
+
+def _acp_status_record_from_metadata_row(
+    row: dict[str, object],
+    *,
+    linked_task: dict[str, object] | None,
+) -> dict[str, object] | None:
+    session_key = _optional_cli_string(row.get("session_key"))
+    metadata = row.get("metadata")
+    if session_key is None or not isinstance(metadata, Mapping):
+        return None
+    metadata_mapping = cast("Mapping[str, object]", metadata)
+    backend = (
+        _optional_cli_string(metadata_mapping.get("backend"))
+        or _optional_cli_string(metadata_mapping.get("acpBackend"))
+        or "codex"
+    )
+    agent = (
+        _optional_cli_string(metadata_mapping.get("agentId"))
+        or _optional_cli_string(metadata_mapping.get("targetAgentId"))
+        or _agent_id_from_session_key(session_key)
+        or "openzues"
+    )
+    session_mode = (
+        _optional_cli_string(metadata_mapping.get("acpMode"))
+        or _optional_cli_string(metadata_mapping.get("mode"))
+        or _optional_cli_string(metadata_mapping.get("spawnMode"))
+        or "run"
+    )
+    state = (
+        _optional_cli_string(metadata_mapping.get("acpState"))
+        or _optional_cli_string(metadata_mapping.get("state"))
+        or (
+            _optional_cli_string(linked_task.get("status"))
+            if linked_task is not None
+            else None
+        )
+        or "known"
+    )
+    last_activity_at = (
+        _optional_cli_string(metadata_mapping.get("lastActivityAt"))
+        or _optional_cli_string(row.get("updated_at"))
+        or (
+            _cli_timestamp_ms_iso(linked_task.get("lastEventAt"))
+            if linked_task is not None
+            else None
+        )
+        or _cli_timestamp_ms_iso(metadata_mapping.get("createdAt"))
+        or _cli_timestamp_ms_iso(metadata_mapping.get("startedAt"))
+    )
+    record: dict[str, object] = {
+        "sessionKey": session_key,
+        "backend": backend,
+        "agent": agent,
+        "sessionMode": session_mode,
+        "state": state,
+        "runtimeOptions": _acp_status_json_mapping(
+            metadata_mapping.get("runtimeOptions")
+        ),
+        "capabilities": _acp_status_json_mapping(metadata_mapping.get("capabilities")),
+    }
+    if last_activity_at is not None:
+        record["lastActivityAt"] = last_activity_at
+    for source_key, output_key in (
+        ("label", "label"),
+        ("runtimeThreadId", "runtimeThreadId"),
+        ("runtimeSessionId", "runtimeSessionId"),
+        ("streamTo", "streamTo"),
+        ("streamLogPath", "streamLogPath"),
+        ("spawnedWorkspaceDir", "cwd"),
+    ):
+        value = _optional_cli_string(metadata_mapping.get(source_key))
+        if value is not None:
+            record[output_key] = value
+    runtime_id = metadata_mapping.get("runtimeId")
+    if isinstance(runtime_id, int) and not isinstance(runtime_id, bool):
+        record["runtimeId"] = runtime_id
+    identity = _acp_status_json_mapping(metadata_mapping.get("identity"))
+    if identity:
+        record["identity"] = identity
+    if linked_task is not None:
+        task_payload = _acp_status_task_payload(linked_task)
+        if task_payload:
+            record["task"] = task_payload
+            task_key_map = (
+                ("taskId", "taskId"),
+                ("status", "taskStatus"),
+                ("deliveryStatus", "delivery"),
+                ("progressSummary", "taskProgress"),
+                ("terminalSummary", "taskSummary"),
+                ("error", "taskError"),
+                ("taskUpdatedAt", "taskUpdatedAt"),
+            )
+            for task_key, record_key in task_key_map:
+                task_value = task_payload.get(task_key)
+                if task_value is not None:
+                    record[record_key] = task_value
+    last_error = _optional_cli_string(metadata_mapping.get("lastError"))
+    if last_error is not None:
+        record["lastError"] = last_error
+    runtime_status = _acp_status_json_mapping(metadata_mapping.get("runtimeStatus"))
+    if runtime_status:
+        record["runtimeStatus"] = runtime_status
+    return record
+
+
+def _acp_status_record_matches_lookup(
+    record: dict[str, object],
+    lookup: str,
+) -> bool:
+    lookup_token = lookup.strip()
+    if not lookup_token:
+        return False
+    for key in (
+        "sessionKey",
+        "runtimeThreadId",
+        "runtimeSessionId",
+        "label",
+        "taskId",
+    ):
+        if _optional_cli_string(record.get(key)) == lookup_token:
+            return True
+    session_runtime_id = _acp_runtime_id_from_session_key(
+        _optional_cli_string(record.get("sessionKey"))
+    )
+    if session_runtime_id == lookup_token:
+        return True
+    task = record.get("task")
+    if isinstance(task, dict):
+        for key in ("taskId", "runId"):
+            if _optional_cli_string(task.get(key)) == lookup_token:
+                return True
+    return False
+
+
+async def _list_acp_status_records(
+    services: CliServices,
+) -> list[dict[str, object]]:
+    database = getattr(services, "database", None)
+    list_rows = getattr(database, "list_gateway_session_metadata_rows", None)
+    if not callable(list_rows):
+        return []
+    tasks = await _list_openclaw_background_tasks(services)
+    records: list[dict[str, object]] = []
+    for row in await list_rows():
+        if not _acp_status_is_row(row):
+            continue
+        typed_row = cast("dict[str, object]", row)
+        session_key = _optional_cli_string(typed_row.get("session_key"))
+        if session_key is None:
+            continue
+        record = _acp_status_record_from_metadata_row(
+            typed_row,
+            linked_task=_acp_status_latest_task_for_session(tasks, session_key),
+        )
+        if record is not None:
+            records.append(record)
+    records.sort(key=lambda item: str(item.get("sessionKey") or ""))
+    return records
+
+
+async def _build_acp_status_payload(
+    services: CliServices,
+    *,
+    lookup: str | None,
+) -> dict[str, object]:
+    normalized_lookup = _optional_cli_string(lookup)
+    records = await _list_acp_status_records(services)
+    if normalized_lookup is not None:
+        matches = [
+            record
+            for record in records
+            if _acp_status_record_matches_lookup(record, normalized_lookup)
+        ]
+        if not matches:
+            raise ValueError(f"ACP session not found: {normalized_lookup}")
+        return {
+            "ok": True,
+            "lookup": normalized_lookup,
+            "count": len(matches),
+            "session": matches[0],
+            "sessions": matches,
+        }
+    payload: dict[str, object] = {
+        "ok": True,
+        "lookup": None,
+        "count": len(records),
+        "sessions": records,
+    }
+    if len(records) == 1:
+        payload["session"] = records[0]
+    return payload
+
+
+def _format_acp_status_value(value: object) -> str:
+    if isinstance(value, Mapping) or isinstance(value, list):
+        if not value:
+            return "-"
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    text = _optional_cli_string(value)
+    return text or "-"
+
+
+def _format_acp_status_capabilities(value: object) -> str:
+    if isinstance(value, Mapping):
+        controls = value.get("controls")
+        if isinstance(controls, list):
+            items = [
+                item
+                for item in (_optional_cli_string(raw_item) for raw_item in controls)
+                if item is not None
+            ]
+            if items:
+                return ", ".join(items)
+    return _format_acp_status_value(value)
+
+
+def _emit_acp_status_single(record: dict[str, object]) -> None:
+    typer.echo("ACP status:")
+    typer.echo("-----")
+    typer.echo(f"session: {record.get('sessionKey')}")
+    typer.echo(f"backend: {record.get('backend')}")
+    typer.echo(f"agent: {record.get('agent')}")
+    identity = record.get("identity")
+    if isinstance(identity, Mapping):
+        for key in sorted(identity):
+            value = _optional_cli_string(identity.get(key))
+            if value is not None:
+                typer.echo(f"identity.{key}: {value}")
+    typer.echo(f"sessionMode: {record.get('sessionMode')}")
+    typer.echo(f"state: {record.get('state')}")
+    for key, label in (
+        ("taskId", "taskId"),
+        ("taskStatus", "taskStatus"),
+        ("delivery", "delivery"),
+        ("taskProgress", "taskProgress"),
+        ("taskSummary", "taskSummary"),
+        ("taskError", "taskError"),
+        ("taskUpdatedAt", "taskUpdatedAt"),
+    ):
+        value = _optional_cli_string(record.get(key))
+        if value is not None:
+            typer.echo(f"{label}: {value}")
+    typer.echo(
+        "runtimeOptions: "
+        + _format_acp_status_value(record.get("runtimeOptions"))
+    )
+    typer.echo(
+        "capabilities: "
+        + _format_acp_status_capabilities(record.get("capabilities"))
+    )
+    typer.echo(f"lastActivityAt: {record.get('lastActivityAt') or '-'}")
+    last_error = _optional_cli_string(record.get("lastError"))
+    if last_error is not None:
+        typer.echo(f"lastError: {last_error}")
+    runtime_status = record.get("runtimeStatus")
+    if isinstance(runtime_status, Mapping):
+        summary = _optional_cli_string(runtime_status.get("summary"))
+        details = _optional_cli_string(runtime_status.get("details"))
+        if summary is not None:
+            typer.echo(f"runtime: {summary}")
+        if details is not None:
+            typer.echo(f"runtimeDetails: {details}")
+
+
+def _emit_acp_status(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    session = payload.get("session")
+    if isinstance(session, dict):
+        _emit_acp_status_single(cast("dict[str, object]", session))
+        return
+    raw_sessions = payload.get("sessions")
+    sessions = (
+        [cast("dict[str, object]", item) for item in raw_sessions if isinstance(item, dict)]
+        if isinstance(raw_sessions, list)
+        else []
+    )
+    if not sessions:
+        typer.echo("No ACP sessions found.")
+        return
+    typer.echo(f"ACP sessions: {len(sessions)}")
+    for record in sessions:
+        session_key = _optional_cli_string(record.get("sessionKey")) or "-"
+        mode = _optional_cli_string(record.get("sessionMode")) or "run"
+        state = _optional_cli_string(record.get("state")) or "known"
+        backend = _optional_cli_string(record.get("backend")) or "codex"
+        runtime_thread_id = _optional_cli_string(record.get("runtimeThreadId"))
+        thread_text = f", thread:{runtime_thread_id}" if runtime_thread_id is not None else ""
+        typer.echo(f"- {session_key} ({mode}, {state}, backend:{backend}{thread_text})")
 
 
 def _cli_acp_spawn_service(services: CliServices) -> object | None:
