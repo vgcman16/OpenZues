@@ -509,8 +509,12 @@ the direct-send delivery path. LINE native route-backed direct sends now also
 carry OpenClaw's `replyToken` option through the shared outbound runtime and
 send the prepared message batch to Bot API `/v2/bot/message/reply`, returning
 `messageId="reply"` while preserving saved delivery replay metadata. Remaining
-LINE provider parity is rich Flex/template/location/quick-reply sends, explicit
-video/audio media options, and account probe/action breadth.
+LINE native route-backed direct sends now also carry OpenClaw's
+`mediaKind="video"` and `previewImageUrl` options through the shared outbound
+runtime and emit LINE video message payloads with `originalContentUrl` /
+`previewImageUrl` instead of default image payloads. Remaining LINE provider
+parity is rich Flex/template/location/quick-reply sends, explicit audio media
+options, and account probe/action breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
 targets to room ids, preserve reply/thread relation metadata, split text at

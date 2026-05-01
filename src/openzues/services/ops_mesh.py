@@ -6163,6 +6163,9 @@ class OpsMeshService:
                             media_urls=media_urls,
                         )
                     ),
+                    media_kind=str(payload.get("mediaKind") or "").strip() or None,
+                    preview_image_url=str(payload.get("previewImageUrl") or "").strip()
+                    or None,
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13446,6 +13449,10 @@ class OpsMeshService:
             if len(request.media_urls) == 1:
                 payload["mediaUrl"] = request.media_urls[0]
             payload["mediaUrls"] = list(request.media_urls)
+        if request.media_kind is not None:
+            payload["mediaKind"] = request.media_kind
+        if request.preview_image_url is not None:
+            payload["previewImageUrl"] = request.preview_image_url
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
@@ -13801,6 +13808,9 @@ class OpsMeshService:
                     channel=resolved_target.channel,
                     target=runtime_target,
                     media_urls=normalized_media_urls,
+                    media_kind=str(payload.get("mediaKind") or "").strip() or None,
+                    preview_image_url=str(payload.get("previewImageUrl") or "").strip()
+                    or None,
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13881,6 +13891,8 @@ class OpsMeshService:
         to: str,
         message: str,
         media_urls: list[str] | None = None,
+        media_kind: str | None = None,
+        preview_image_url: str | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -13924,6 +13936,12 @@ class OpsMeshService:
             if len(normalized_media_urls) == 1:
                 payload["mediaUrl"] = normalized_media_urls[0]
             payload["mediaUrls"] = normalized_media_urls
+            normalized_media_kind = str(media_kind or "").strip() or None
+            if normalized_media_kind is not None:
+                payload["mediaKind"] = normalized_media_kind
+            normalized_preview_image_url = str(preview_image_url or "").strip() or None
+            if normalized_preview_image_url is not None:
+                payload["previewImageUrl"] = normalized_preview_image_url
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
             if audio_as_voice is not None:
@@ -16440,16 +16458,32 @@ class OpsMeshService:
                 else None
             ),
         )
+        media_kind = str(event.get("mediaKind") or "").strip().lower()
+        preview_image_url = str(event.get("previewImageUrl") or "").strip()
         messages: list[dict[str, object]] = []
         for media_url in media_urls:
             _line_validate_media_url(media_url)
-            messages.append(
-                {
-                    "type": "image",
-                    "originalContentUrl": media_url,
-                    "previewImageUrl": media_url,
-                }
-            )
+            if media_kind == "video":
+                if not preview_image_url:
+                    raise RuntimeError(
+                        "LINE video messages require previewImageUrl to reference an image URL."
+                    )
+                _line_validate_media_url(preview_image_url)
+                messages.append(
+                    {
+                        "type": "video",
+                        "originalContentUrl": media_url,
+                        "previewImageUrl": preview_image_url,
+                    }
+                )
+            else:
+                messages.append(
+                    {
+                        "type": "image",
+                        "originalContentUrl": media_url,
+                        "previewImageUrl": preview_image_url or media_url,
+                    }
+                )
         messages.extend(
             {"type": "text", "text": chunk}
             for chunk in _line_text_chunks(text)

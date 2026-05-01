@@ -5899,6 +5899,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's explicit video media
+  options through the shared outbound runtime: `mediaKind="video"` and
+  `previewImageUrl` persist on saved delivery payloads and the native LINE
+  adapter emits Bot API video message payloads instead of default image media.
+- Verified the LINE video media slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_video_media_kind"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or line_video_media_kind or
+  preserves_provider_native_options or shared_outbound_runtime_owner or
+  prefers_provider_runtime"` (`7 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 
 ## References
 
