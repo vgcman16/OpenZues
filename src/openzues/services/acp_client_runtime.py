@@ -124,7 +124,7 @@ def build_acp_client_spawn_plan(
         server_command=server,
         server_args=effective_server_args,
         default_server_command=DEFAULT_ACP_SERVER_COMMAND,
-        default_server_args=effective_server_args,
+        default_server_args=DEFAULT_ACP_SERVER_ARGS,
     )
     strip_keys = build_acp_client_strip_keys(
         strip_provider_auth_env_vars=strip_provider_auth_env_vars,

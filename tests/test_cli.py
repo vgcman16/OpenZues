@@ -2378,6 +2378,30 @@ def test_acp_client_spawn_plan_preserves_provider_auth_for_custom_server() -> No
     assert plan.stripped_env_keys == ()
 
 
+def test_acp_client_spawn_plan_preserves_provider_auth_for_default_command_override() -> None:
+    from openzues.services.acp_client_runtime import build_acp_client_spawn_plan
+
+    plan = build_acp_client_spawn_plan(
+        server="openzues",
+        server_args=["custom-entry.py"],
+        base_env={
+            "OPENAI_API_KEY": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "OPENCLAW_SHELL": "interactive",
+        },
+    )
+
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp", "custom-entry.py")
+    assert plan.strip_provider_auth_env_vars is False
+    assert plan.env == {
+        "OPENAI_API_KEY": "openai-secret",
+        "GITHUB_TOKEN": "github-secret",
+        "OPENCLAW_SHELL": "acp-client",
+    }
+    assert plan.stripped_env_keys == ()
+
+
 def test_acp_client_spawn_invocation_unwraps_windows_cmd_shim(tmp_path: Path) -> None:
     from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
 

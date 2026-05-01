@@ -5068,6 +5068,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- ACP client spawn planning now preserves provider auth when callers
+  explicitly set the default executable (`openzues`) but change the server
+  args, matching OpenClaw's default-executable/custom-entry guard while keeping
+  the implicit default bridge on the provider-auth-stripping path.
+- Verified the ACP client default-command override slice with `python -m pytest
+  tests\test_cli.py -q -k
+  "acp_client_spawn_plan_preserves_provider_auth_for_default_command_override
+  or acp_client_spawn_plan_strips_provider_auth_for_default_bridge or
+  acp_client_spawn_plan_preserves_provider_auth_for_custom_server or
+  acp_client_spawn_invocation_unwraps_windows_cmd_shim or
+  acp_client_command_passes_spawn_plan_to_registered_runner"` (`5 passed`),
+  `ruff check src\openzues\services\acp_client_runtime.py tests\test_cli.py`,
+  and `mypy src\openzues\services\acp_client_runtime.py`.
 
 ## References
 
