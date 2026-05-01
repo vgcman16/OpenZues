@@ -5716,6 +5716,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`22 passed`), `ruff check pyproject.toml
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed MP4/MOV-family video media sends now add OpenClaw-style
+  `info.duration` metadata by parsing native ISO-BMFF `mvhd` timing, preserving
+  the existing Matrix `m.video` upload and provider result path.
+- Verified the Matrix video-duration slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_video_includes_duration or
+  matrix_audio_includes_duration"` (`2 passed`), adjacent Matrix route/action
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "matrix_native_route or
+  matrix_direct_room or matrix_audio_includes_duration or
+  matrix_video_includes_duration or matrix_large_image_uploads_thumbnail or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`23 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

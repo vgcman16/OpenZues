@@ -13806,6 +13806,131 @@ async def test_ops_mesh_service_send_direct_channel_matrix_audio_includes_durati
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_video_includes_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-video-duration"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/clip.mp4"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+
+    def mp4_box(name: bytes, payload: bytes) -> bytes:
+        return (len(payload) + 8).to_bytes(4, "big") + name + payload
+
+    mvhd_payload = (
+        b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + (1000).to_bytes(4, "big")
+        + (2500).to_bytes(4, "big")
+    )
+    mp4_bytes = mp4_box(b"ftyp", b"isom\x00\x00\x02\x00isom") + mp4_box(
+        b"moov",
+        mp4_box(b"mvhd", mvhd_payload),
+    )
+    matrix_puts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (mp4_bytes, "video/mp4", "clip.mp4")
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, media, content_type, filename, secret_token
+        return "mxc://matrix.example.org/uploaded-video"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        matrix_puts.append((target, payload))
+        return {"event_id": "$matrix-video-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="video",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-video-duration",
+    )
+
+    assert result["messageId"] == "$matrix-video-1"
+    assert len(matrix_puts) == 1
+    _matrix_endpoint, matrix_payload = matrix_puts[0]
+    assert matrix_payload["msgtype"] == "m.video"
+    assert matrix_payload["url"] == "mxc://matrix.example.org/uploaded-video"
+    assert matrix_payload["info"] == {
+        "mimetype": "video/mp4",
+        "size": len(mp4_bytes),
+        "duration": 2500,
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_matrix_large_image_uploads_thumbnail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

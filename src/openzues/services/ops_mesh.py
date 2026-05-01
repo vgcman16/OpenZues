@@ -2534,12 +2534,81 @@ def _matrix_wav_duration_ms(
     return None
 
 
+def _matrix_mp4_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_mp4_family = normalized_content_type in {
+        "audio/mp4",
+        "audio/x-m4a",
+        "video/mp4",
+        "video/quicktime",
+        "video/x-m4v",
+    } or normalized_filename.endswith((".m4a", ".m4v", ".mov", ".mp4"))
+    if not is_mp4_family:
+        return None
+
+    def parse_mvhd(payload_start: int, payload_end: int) -> int | None:
+        if payload_end - payload_start < 20:
+            return None
+        version = media[payload_start]
+        field_start = payload_start + 4
+        if version == 1:
+            if payload_end - field_start < 28:
+                return None
+            timescale = int.from_bytes(media[field_start + 16 : field_start + 20], "big")
+            duration = int.from_bytes(media[field_start + 20 : field_start + 28], "big")
+        else:
+            timescale = int.from_bytes(media[field_start + 8 : field_start + 12], "big")
+            duration = int.from_bytes(media[field_start + 12 : field_start + 16], "big")
+        if timescale <= 0:
+            return None
+        return max(0, round((duration / timescale) * 1000))
+
+    def scan_boxes(start: int, end: int, depth: int = 0) -> int | None:
+        if depth > 8:
+            return None
+        index = start
+        while index + 8 <= end:
+            box_size = int.from_bytes(media[index : index + 4], "big")
+            box_type = media[index + 4 : index + 8]
+            header_size = 8
+            if box_size == 1:
+                if index + 16 > end:
+                    return None
+                box_size = int.from_bytes(media[index + 8 : index + 16], "big")
+                header_size = 16
+            elif box_size == 0:
+                box_size = end - index
+            if box_size < header_size or index + box_size > end:
+                return None
+            payload_start = index + header_size
+            payload_end = index + box_size
+            if box_type == b"mvhd":
+                return parse_mvhd(payload_start, payload_end)
+            if box_type in {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"udta"}:
+                duration_ms = scan_boxes(payload_start, payload_end, depth + 1)
+                if duration_ms is not None:
+                    return duration_ms
+            index += box_size
+        return None
+
+    return scan_boxes(0, len(media))
+
+
 def _matrix_media_duration_ms(
     media: bytes,
     content_type: str | None,
     filename: str | None,
 ) -> int | None:
-    return _matrix_wav_duration_ms(media, content_type, filename)
+    return _matrix_wav_duration_ms(media, content_type, filename) or _matrix_mp4_duration_ms(
+        media,
+        content_type,
+        filename,
+    )
 
 
 def _is_matrix_mxc_uri(value: str | None) -> bool:

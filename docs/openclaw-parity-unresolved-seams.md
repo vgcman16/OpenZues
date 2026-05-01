@@ -556,8 +556,11 @@ Matrix route-backed large-image sends now also mirror OpenClaw's unencrypted
 thumbnail branch: images larger than 800px generate and upload a JPEG
 thumbnail, then attach `thumbnail_url` and `thumbnail_info` metadata to the
 primary media event.
-Remaining Matrix provider parity is encrypted media and broader video/non-WAV
-duration metadata.
+Matrix route-backed MP4/MOV-family video sends now parse native ISO-BMFF
+`mvhd` duration metadata into Matrix `info.duration`, matching OpenClaw's
+timed media-info contract for common video events.
+Remaining Matrix provider parity is encrypted media and non-WAV audio duration
+metadata.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the
