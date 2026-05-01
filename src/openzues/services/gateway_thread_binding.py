@@ -128,6 +128,58 @@ def _provider_thread_id(result: object) -> str | None:
     return None
 
 
+def _provider_message_id(result: object) -> str | None:
+    if not isinstance(result, Mapping):
+        return None
+    for key in ("messageId", "eventId", "event_id", "threadId", "id"):
+        value = _optional_string(result.get(key))
+        if value is not None:
+            return value
+    for nested_key in ("result", "message", "event", "thread"):
+        nested = result.get(nested_key)
+        if isinstance(nested, Mapping):
+            nested_value = _provider_message_id(nested)
+            if nested_value is not None:
+                return nested_value
+    return None
+
+
+def _matrix_room_id(value: str | None) -> str | None:
+    text = _optional_string(value)
+    if text is None:
+        return None
+    for _ in range(3):
+        normalized = text.lower()
+        for prefix in ("matrix:room:", "room:"):
+            if normalized.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                break
+        else:
+            break
+    return text or None
+
+
+def _matrix_room_target(room_id: str) -> str:
+    return f"room:{room_id}"
+
+
+def _matrix_binding_intro_text(*, child: dict[str, object]) -> str:
+    label = _optional_string(child.get("label"))
+    agent_id = _optional_string(child.get("agentId"))
+    child_session_key = _optional_string(child.get("sessionKey"))
+    session_agent_id: str | None = None
+    if child_session_key is not None:
+        _prefix, separator, tail = child_session_key.rpartition(":subagent:")
+        if separator:
+            session_agent_id = _optional_string(tail)
+    base = label or agent_id or session_agent_id or "session"
+    base = " ".join(base.split()) or "session"
+    return (
+        "\u2699\ufe0f "
+        f"{base} session active. Messages here go directly to this session."
+    )
+
+
 def _session_binding_record(
     *,
     child: dict[str, object],
@@ -160,6 +212,45 @@ def _session_binding_record(
         "targetSessionKey": target_session_key,
         "targetKind": "subagent",
         "conversation": conversation,
+        "status": "active",
+        "boundAt": bound_at,
+        "metadata": metadata,
+    }
+
+
+def _matrix_child_session_binding_record(
+    *,
+    child: dict[str, object],
+    account_id: str,
+    room_id: str,
+    thread_id: str,
+) -> dict[str, object] | None:
+    target_session_key = _optional_string(child.get("sessionKey"))
+    if target_session_key is None:
+        return None
+    bound_at = int(time.time() * 1000)
+    metadata: dict[str, object] = {
+        "placement": "child",
+        "lastActivityAt": bound_at,
+        "threadId": thread_id,
+        "boundBy": "system",
+    }
+    agent_id = _optional_string(child.get("agentId"))
+    label = _optional_string(child.get("label"))
+    if agent_id is not None:
+        metadata["agentId"] = agent_id
+    if label is not None:
+        metadata["label"] = label
+    return {
+        "bindingId": f"{account_id}:{room_id}:{thread_id}",
+        "targetSessionKey": target_session_key,
+        "targetKind": "subagent",
+        "conversation": {
+            "channel": "matrix",
+            "accountId": account_id,
+            "conversationId": thread_id,
+            "parentConversationId": room_id,
+        },
         "status": "active",
         "boundAt": bound_at,
         "metadata": metadata,
@@ -252,6 +343,43 @@ class GatewaySubagentThreadBinderRegistry:
         )
         return _provider_thread_id(result)
 
+    async def _create_matrix_child_thread(
+        self,
+        *,
+        parent_room: str,
+        account_id: str,
+        child: dict[str, object],
+    ) -> tuple[str, str, str] | None:
+        if self._message_action_dispatcher is None:
+            return None
+        room_id = _matrix_room_id(parent_room)
+        if room_id is None:
+            return None
+        child_session_key = _optional_string(child.get("sessionKey"))
+        child_agent_id = _optional_string(child.get("agentId"))
+        result = await self._message_action_dispatcher(
+            GatewayMessageActionDispatchRequest(
+                channel="matrix",
+                action="send",
+                params={
+                    "to": _matrix_room_target(room_id),
+                    "message": _matrix_binding_intro_text(child=child),
+                },
+                idempotency_key=(
+                    f"subagent-thread-create:{child_session_key}"
+                    if child_session_key is not None
+                    else "subagent-thread-create"
+                ),
+                account_id=account_id,
+                session_key=child_session_key,
+                agent_id=child_agent_id,
+            )
+        )
+        thread_id = _provider_message_id(result)
+        if thread_id is None:
+            return None
+        return _matrix_room_target(room_id), room_id, thread_id
+
     async def __call__(
         self,
         parent: dict[str, object],
@@ -290,6 +418,7 @@ class GatewaySubagentThreadBinderRegistry:
             }
         thread_id = _optional_string(context.get("threadId"))
         provider_created_thread_id: str | None = None
+        matrix_parent_room_id: str | None = None
         if channel == "discord" and thread_id is None:
             provider_created_thread_id = await self._create_discord_child_thread(
                 parent_channel=resolved_to,
@@ -304,6 +433,28 @@ class GatewaySubagentThreadBinderRegistry:
                         "Session mode is unavailable for this target."
                     ),
                 }
+            thread_id = provider_created_thread_id
+        if channel == "matrix" and thread_id is None:
+            try:
+                matrix_created = await self._create_matrix_child_thread(
+                    parent_room=resolved_to,
+                    account_id=account_id,
+                    child=child,
+                )
+            except Exception as exc:
+                return {
+                    "status": "error",
+                    "error": f"Matrix thread bind failed: {exc}",
+                }
+            if matrix_created is None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "Unable to create or bind a Matrix thread for this subagent session. "
+                        "Session mode is unavailable for this target."
+                    ),
+                }
+            resolved_to, matrix_parent_room_id, provider_created_thread_id = matrix_created
             thread_id = provider_created_thread_id
         binding: dict[str, object] = {
             "channel": channel,
@@ -321,13 +472,25 @@ class GatewaySubagentThreadBinderRegistry:
             channel=channel,
             target=conversation_target,
         )
-        session_binding = _session_binding_record(
-            child=child,
-            channel=channel,
-            account_id=account_id,
-            conversation_id=conversation_id,
-            thread_id=thread_id,
-        )
+        if (
+            channel == "matrix"
+            and matrix_parent_room_id is not None
+            and provider_created_thread_id is not None
+        ):
+            session_binding = _matrix_child_session_binding_record(
+                child=child,
+                account_id=account_id,
+                room_id=matrix_parent_room_id,
+                thread_id=provider_created_thread_id,
+            )
+        else:
+            session_binding = _session_binding_record(
+                child=child,
+                channel=channel,
+                account_id=account_id,
+                conversation_id=conversation_id,
+                thread_id=thread_id,
+            )
         result: dict[str, object] = {
             "status": "ok",
             "threadBindingReady": True,

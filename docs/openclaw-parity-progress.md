@@ -5814,6 +5814,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_thread_binding.py
   src\openzues\services\gateway_node_methods.py`.
+- Matrix route-backed thread-bound subagent spawns without an existing thread id
+  now mirror OpenClaw's child-placement Matrix adapter: the native binder sends
+  the intro root message through `message.action send`, uses the returned event
+  id as the child thread id for initial delivery/completion delivery, and
+  persists a Matrix session binding with `conversationId=<event id>` and
+  `parentConversationId=<room id>`.
+- Verified the Matrix child-thread binding slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "creates_matrix_child_thread_with_route_binder"` (`1 passed`), adjacent
+  thread-binding proof `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "thread_mode_preserves_no_hook_with_unresolved_registry or
+  thread_mode_uses_route_backed_thread_binder or
+  creates_discord_child_thread_with_route_binder or
+  creates_matrix_child_thread_with_route_binder or
+  thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_target_agent_bound_account or
+  thread_mode_requires_spawn_policy_for_child_placement or
+  thread_mode_delivers_initial_child_run_to_bound_origin or
+  thread_bound_subagent_startup_failure_unbinds_prepared_binding"` (`10
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py`.
 
 ## References
 
