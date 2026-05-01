@@ -3947,7 +3947,7 @@ async def test_ops_mesh_service_message_action_dispatches_slack_send_route(
 
 
 @pytest.mark.asyncio
-async def test_ops_mesh_service_message_action_dispatches_slack_poll_route(
+async def test_ops_mesh_service_message_action_rejects_slack_poll_like_openclaw(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-poll"
@@ -4021,33 +4021,8 @@ async def test_ops_mesh_service_message_action_dispatches_slack_poll_route(
         )
     )
 
-    assert result == {
-        "ok": True,
-        "result": {
-            "messageId": "1710000000.0020",
-            "channelId": "C123",
-            "conversationId": "C123",
-            "pollId": "1710000000.0020",
-        },
-    }
-    assert slack_posts == [
-        (
-            "https://slack.test/api/chat.postMessage",
-            {
-                "channel": "C123",
-                "text": (
-                    "Poll: Lunch?\n"
-                    "1. Pizza\n"
-                    "2. Sushi\n"
-                    "3. Soup\n\n"
-                    "Settings: maxSelections=3, durationHours=2, silent=true"
-                ),
-                "thread_ts": "1710000000.0010",
-            },
-            "Authorization",
-            "Bearer xoxb-action-token",
-        )
-    ]
+    assert result is None
+    assert slack_posts == []
 
 
 @pytest.mark.asyncio

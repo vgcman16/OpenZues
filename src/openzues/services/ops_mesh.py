@@ -9477,7 +9477,6 @@ class OpsMeshService:
             "list-pins",
             "member-info",
             "pin",
-            "poll",
             "read",
             "react",
             "reactions",
@@ -9568,13 +9567,6 @@ class OpsMeshService:
         if action == "send":
             return await asyncio.to_thread(
                 self._dispatch_slack_send_message_action,
-                route,
-                request,
-                secret_token,
-            )
-        if action == "poll":
-            return await asyncio.to_thread(
-                self._dispatch_slack_poll_message_action,
                 route,
                 request,
                 secret_token,

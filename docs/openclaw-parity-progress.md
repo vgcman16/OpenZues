@@ -5099,21 +5099,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
-- Slack `message.action poll` now reaches the native route-backed poll runtime
-  instead of falling through unsupported. The action forwards OpenClaw-style
-  `to`, `pollQuestion`, `pollOption`, `pollMulti`, `pollDurationHours`,
-  `threadId`, and `silent` into `gateway/poll`, returning provider
-  `messageId`, `channelId`, `conversationId`, and `pollId` metadata.
-- Verified the Slack action-poll slice with `python -m pytest
-  tests\test_ops_mesh.py -q -k "slack_poll_route"` (`1 passed`), adjacent
-  route/provider coverage `python -m pytest tests\test_ops_mesh.py -q -k
-  "message_action_dispatches_slack_poll_route or
-  message_action_dispatches_slack_send_route or
-  send_direct_channel_poll_uses_slack_native_route or
-  message_action_dispatches_telegram_poll_route or
-  message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
-  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
-  src\openzues\services\ops_mesh.py`.
+- Slack `message.action poll` now matches OpenClaw's channel-actions contract:
+  Slack message actions return unsupported for `poll` and do not post through
+  the synthetic poll route, while the separate direct `gateway.poll` Slack
+  runtime remains available for route-backed direct polls.
+- Verified the Slack action-poll unsupported slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_rejects_slack_poll_like_openclaw
+  -q` (`1 passed`), adjacent Slack action coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "message_action_dispatches_slack or
+  rejects_slack_poll"` (`17 passed`), direct Slack poll coverage
+  `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_slack_native_route
+  -q` (`1 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - WhatsApp `message.action poll` now reaches the native Cloud API
   interactive-button poll runtime instead of falling through unsupported. The
   action forwards OpenClaw-style `to`, `pollQuestion`, `pollOption`, and
@@ -5125,7 +5123,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "message_action_dispatches_whatsapp_poll_route or
   message_action_dispatches_whatsapp_react_route or
   send_direct_channel_poll_uses_whatsapp_native_route or
-  message_action_dispatches_slack_poll_route or
+  message_action_rejects_slack_poll_like_openclaw or
   message_action_dispatches_telegram_poll_route or
   message_action_dispatches_discord_poll_route"` (`6 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy

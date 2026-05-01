@@ -647,10 +647,9 @@ token, and returns saved local media path metadata.
 Slack `send` now dispatches through the native Slack route as OpenClaw's generic
 action entrypoint, including `threadId` / `replyTo` routing, blocks validation,
 and the same external upload helper for media sends.
-Slack `message.action poll` now also dispatches through the native route-backed
-poll owner, preserving OpenClaw's `pollQuestion`, `pollOption`, `pollMulti`,
-`pollDurationHours`, `threadId`, and `silent` fields while returning provider
-`messageId`, `channelId`, `conversationId`, and `pollId` metadata.
+Slack `message.action poll` now matches OpenClaw's channel-actions contract by
+returning unsupported before native route dispatch, while direct `gateway.poll`
+Slack delivery remains route-backed through the shared outbound runtime.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
