@@ -6262,6 +6262,7 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             ],
             "parityStatus": "metadata",
             "version": "0.3.0",
+            "enabledByDefault": True,
             "rootDir": str(plugin_dir),
             "manifestPath": str(manifest_path),
             "configSchema": True,
@@ -6272,6 +6273,469 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             "toolNames": ["native_runtime.search"],
         }
     ]
+
+
+def test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    codex_dir = tmp_path / "plugins" / "codex-bundle"
+    (codex_dir / ".codex-plugin").mkdir(parents=True)
+    (codex_dir / "skills").mkdir()
+    (codex_dir / "hooks").mkdir()
+    (codex_dir / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Codex Sample",
+                "description": "Codex bundle fixture.",
+                "version": "1.0.0",
+                "skills": "skills",
+                "hooks": "hooks",
+                "mcpServers": {"sample": {"command": "node"}},
+                "apps": {"sample": {"title": "Sample app"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    claude_dir = tmp_path / "plugins" / "claude-bundle"
+    (claude_dir / ".claude-plugin").mkdir(parents=True)
+    for relative in ("skills", "commands", "agents", "hooks-pack", "styles"):
+        (claude_dir / relative).mkdir()
+    (claude_dir / "hooks").mkdir()
+    (claude_dir / "hooks" / "hooks.json").write_text(
+        json.dumps({"hooks": []}),
+        encoding="utf-8",
+    )
+    (claude_dir / ".mcp.json").write_text(json.dumps({"servers": {}}), encoding="utf-8")
+    (claude_dir / ".lsp.json").write_text(json.dumps({"servers": {}}), encoding="utf-8")
+    (claude_dir / "settings.json").write_text(
+        json.dumps({"hideThinkingBlock": True}),
+        encoding="utf-8",
+    )
+    (claude_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Claude Sample",
+                "description": "Claude bundle fixture.",
+                "skills": "skills",
+                "commands": "commands",
+                "agents": "agents",
+                "hooks": "hooks-pack",
+                "mcpServers": ".mcp.json",
+                "lspServers": ".lsp.json",
+                "outputStyles": "styles",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cursor_dir = tmp_path / "plugins" / "cursor-bundle"
+    (cursor_dir / ".cursor-plugin").mkdir(parents=True)
+    for relative in (
+        "skills",
+        ".cursor",
+        ".cursor/commands",
+        ".cursor/agents",
+        ".cursor/rules",
+    ):
+        (cursor_dir / relative).mkdir(exist_ok=True)
+    (cursor_dir / ".cursor" / "hooks.json").write_text(
+        json.dumps({"hooks": []}),
+        encoding="utf-8",
+    )
+    (cursor_dir / ".mcp.json").write_text(json.dumps({"servers": {}}), encoding="utf-8")
+    (cursor_dir / ".cursor-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Cursor Sample",
+                "description": "Cursor bundle fixture.",
+                "mcpServers": "./.mcp.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {
+                        "codex-sample": {"enabled": True},
+                        "claude-sample": {"enabled": True},
+                        "cursor-sample": {"enabled": True},
+                    },
+                    "load": {
+                        "paths": [
+                            str(codex_dir),
+                            str(claude_dir),
+                            str(cursor_dir),
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        plugin["id"]: plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["codex-sample"] == {
+        "id": "codex-sample",
+        "name": "Codex Sample",
+        "status": "loaded",
+        "format": "bundle",
+        "source": str(codex_dir),
+        "origin": "config",
+        "description": "Codex bundle fixture.",
+        "capabilities": [
+            "bundle:skills",
+            "bundle:hooks",
+            "bundle:mcpServers",
+            "bundle:apps",
+        ],
+        "parityStatus": "metadata",
+        "version": "1.0.0",
+        "rootDir": str(codex_dir),
+        "manifestPath": str(codex_dir / ".codex-plugin" / "plugin.json"),
+        "bundleFormat": "codex",
+        "bundleCapabilities": ["skills", "hooks", "mcpServers", "apps"],
+        "skills": ["skills"],
+        "hooks": ["hooks"],
+        "mcpServers": ["sample"],
+    }
+    assert plugins["claude-sample"]["bundleFormat"] == "claude"
+    assert plugins["claude-sample"]["bundleCapabilities"] == [
+        "skills",
+        "commands",
+        "agents",
+        "hooks",
+        "mcpServers",
+        "lspServers",
+        "outputStyles",
+        "settings",
+    ]
+    assert plugins["claude-sample"]["skills"] == [
+        "skills",
+        "commands",
+        "agents",
+        "styles",
+    ]
+    assert plugins["claude-sample"]["hooks"] == ["hooks/hooks.json", "hooks-pack"]
+    assert plugins["claude-sample"]["settingsFiles"] == ["settings.json"]
+    assert plugins["cursor-sample"]["bundleFormat"] == "cursor"
+    assert plugins["cursor-sample"]["bundleCapabilities"] == [
+        "skills",
+        "commands",
+        "agents",
+        "hooks",
+        "rules",
+        "mcpServers",
+    ]
+    assert plugins["cursor-sample"]["skills"] == ["skills", ".cursor/commands"]
+
+
+def test_plugins_list_json_discovers_manifestless_claude_bundle_load_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "manifestless-claude"
+    (plugin_dir / "skills").mkdir(parents=True)
+    (plugin_dir / "commands").mkdir()
+    (plugin_dir / "settings.json").write_text(
+        json.dumps({"hideThinkingBlock": True}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"manifestless-claude": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == [
+        {
+            "id": "manifestless-claude",
+            "name": "manifestless-claude",
+            "status": "loaded",
+            "format": "bundle",
+            "source": str(plugin_dir),
+            "origin": "config",
+            "description": "",
+            "capabilities": [
+                "bundle:skills",
+                "bundle:commands",
+                "bundle:settings",
+            ],
+            "parityStatus": "metadata",
+            "rootDir": str(plugin_dir),
+            "manifestPath": str(plugin_dir / ".claude-plugin" / "plugin.json"),
+            "bundleFormat": "claude",
+            "bundleCapabilities": ["skills", "commands", "settings"],
+            "skills": ["skills", "commands"],
+            "hooks": [],
+            "settingsFiles": ["settings.json"],
+        }
+    ]
+
+
+def test_plugins_list_json_accepts_json5_bundle_manifests(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "json5-bundle"
+    (plugin_dir / ".codex-plugin").mkdir(parents=True)
+    (plugin_dir / "skills").mkdir()
+    (plugin_dir / "hooks").mkdir()
+    (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
+        """
+{
+  // Bundle manifests match OpenClaw JSON5 parsing.
+  name: "Codex JSON5 Bundle",
+  description: "JSON5 bundle fixture.",
+  version: "1.1.0",
+  skills: "skills",
+  hooks: "hooks",
+}
+""",
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"codex-json5-bundle": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["id"] == "codex-json5-bundle"
+    assert payload["plugins"][0]["name"] == "Codex JSON5 Bundle"
+    assert payload["plugins"][0]["format"] == "bundle"
+    assert payload["plugins"][0]["bundleFormat"] == "codex"
+    assert payload["plugins"][0]["bundleCapabilities"] == ["skills", "hooks"]
+    assert payload["plugins"][0]["version"] == "1.1.0"
+
+
+def test_plugins_inspect_json_projects_claude_bundle_commands(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "claude-commands"
+    commands_dir = plugin_dir / "commands"
+    nested_dir = commands_dir / "ops"
+    (plugin_dir / ".claude-plugin").mkdir(parents=True)
+    nested_dir.mkdir(parents=True)
+    (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Claude Commands",
+                "description": "Claude command bundle.",
+                "commands": "commands",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (commands_dir / "deploy.md").write_text(
+        """---
+name: ship-it
+description: Ship the app
+---
+Run the deploy playbook.
+""",
+        encoding="utf-8",
+    )
+    (nested_dir / "status.md").write_text(
+        "Show operational status.",
+        encoding="utf-8",
+    )
+    (commands_dir / "disabled.md").write_text(
+        """---
+name: disabled
+disable-model-invocation: true
+---
+Do not expose this command.
+""",
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"claude-commands": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "inspect", "claude-commands", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["commands"] == ["ship-it", "ops:status"]
+    assert payload["commands"] == ["ship-it", "ops:status"]
+    assert payload["bundleCapabilities"] == ["skills", "commands"]
+
+
+def test_plugins_inspect_json_projects_bundle_mcp_and_lsp_servers(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "claude-servers"
+    (plugin_dir / ".claude-plugin").mkdir(parents=True)
+    (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Claude Servers",
+                "description": "Claude server bundle.",
+                "mcpServers": ".mcp.json",
+                "lspServers": ".lsp.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "bundleProbe": {
+                        "command": "node",
+                        "args": ["./server.mjs"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / ".lsp.json").write_text(
+        json.dumps(
+            {
+                "lspServers": {
+                    "languageProbe": {
+                        "command": "node",
+                        "args": ["./lsp.mjs"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"claude-servers": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "inspect", "claude-servers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["mcpServers"] == ["bundleProbe"]
+    assert payload["plugin"]["lspServers"] == ["languageProbe"]
+    assert payload["mcpServers"] == ["bundleProbe"]
+    assert payload["lspServers"] == ["languageProbe"]
+    assert payload["bundleCapabilities"] == ["mcpServers", "lspServers"]
 
 
 def test_plugins_list_json_preserves_manifest_command_aliases(
@@ -6743,6 +7207,320 @@ def test_plugins_list_json_preserves_manifest_model_support(
         "modelPrefixes": ["gpt-"],
         "modelPatterns": ["^o[0-9]+"],
     }
+
+
+def test_plugins_list_json_preserves_manifest_config_contracts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "acpx"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "acpx",
+                "configSchema": {"type": "object"},
+                "configContracts": {
+                    "compatibilityMigrationPaths": ["models.bedrockDiscovery", ""],
+                    "compatibilityRuntimePaths": ["tools.web.search.apiKey", ""],
+                    "dangerousFlags": [
+                        {"path": "permissionMode", "equals": "approve-all"},
+                        {"path": "ignored"},
+                        {"path": ""},
+                    ],
+                    "secretInputs": {
+                        "bundledDefaultEnabled": False,
+                        "paths": [
+                            {
+                                "path": "mcpServers.*.env.*",
+                                "expected": "string",
+                            },
+                            {"path": "ignored", "expected": "number"},
+                            {"path": ""},
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["configContracts"] == {
+        "compatibilityMigrationPaths": ["models.bedrockDiscovery"],
+        "compatibilityRuntimePaths": ["tools.web.search.apiKey"],
+        "dangerousFlags": [{"path": "permissionMode", "equals": "approve-all"}],
+        "secretInputs": {
+            "bundledDefaultEnabled": False,
+            "paths": [
+                {
+                    "path": "mcpServers.*.env.*",
+                    "expected": "string",
+                },
+                {"path": "ignored"},
+            ],
+        },
+    }
+
+
+def test_plugins_list_json_preserves_manifest_identity_and_classification(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "configSchema": {"type": "object"},
+                "enabledByDefault": True,
+                "legacyPluginIds": ["openai-legacy", ""],
+                "autoEnableWhenConfiguredProviders": ["openai", ""],
+                "kind": ["memory", "context-engine", ""],
+                "channels": ["slack", ""],
+                "providers": ["openai", "openai-codex", ""],
+                "providerDiscoveryEntry": "extensions/openai/providers",
+                "cliBackends": ["openai-cli", ""],
+                "skills": ["skills/openai", ""],
+                "uiHints": {"apiKey": {"label": "API key"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["enabledByDefault"] is True
+    assert plugin["legacyPluginIds"] == ["openai-legacy"]
+    assert plugin["autoEnableWhenConfiguredProviders"] == ["openai"]
+    assert plugin["kind"] == ["memory", "context-engine"]
+    assert plugin["channels"] == ["slack"]
+    assert plugin["providers"] == ["openai", "openai-codex"]
+    assert plugin["providerDiscoverySource"] == str(
+        (plugin_dir / "extensions/openai/providers").resolve()
+    )
+    assert plugin["cliBackends"] == ["openai-cli"]
+    assert plugin["skills"] == ["skills/openai"]
+    assert plugin["configUiHints"] == {"apiKey": {"label": "API key"}}
+    assert "text-inference:openai" in plugin["capabilities"]
+
+
+def test_plugins_list_json_preserves_package_manifest_runtime_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "matrix"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "matrix",
+                "channels": ["matrix"],
+                "configSchema": {"type": "object"},
+                "channelConfigs": {
+                    "matrix": {
+                        "schema": {"type": "object"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    package_path = plugin_dir / "package.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/matrix",
+                "version": "1.2.3",
+                "description": "Matrix package channel.",
+                "openclaw": {
+                    "extensions": ["index.ts"],
+                    "setupEntry": "setup.ts",
+                    "startup": {
+                        "deferConfiguredChannelFullLoadUntilAfterListen": True,
+                    },
+                    "channel": {
+                        "id": "matrix",
+                        "label": "Matrix",
+                        "blurb": "Matrix package setup.",
+                        "preferOver": ["matrix-legacy", ""],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["name"] == "@openclaw/matrix"
+    assert plugin["version"] == "1.2.3"
+    assert plugin["description"] == "Matrix package channel."
+    assert plugin["setupSource"] == str((plugin_dir / "setup.ts").resolve())
+    assert plugin["startupDeferConfiguredChannelFullLoadUntilAfterListen"] is True
+    assert plugin["channelCatalogMeta"] == {
+        "id": "matrix",
+        "label": "Matrix",
+        "blurb": "Matrix package setup.",
+        "preferOver": ["matrix-legacy"],
+    }
+    assert plugin["channelConfigs"]["matrix"] == {
+        "schema": {"type": "object"},
+        "label": "Matrix",
+        "description": "Matrix package setup.",
+        "preferOver": ["matrix-legacy"],
+    }
+
+
+def test_plugins_list_json_skips_incompatible_package_manifest_min_host_version(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "synology-chat"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps({"id": "synology-chat", "configSchema": {"type": "object"}}),
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/synology-chat",
+                "openclaw": {
+                    "extensions": ["index.ts"],
+                    "install": {
+                        "npmSpec": "@openclaw/synology-chat",
+                        "minHostVersion": ">=2026.3.22",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.3.21",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == []
+    assert payload["diagnostics"] == [
+        {
+            "level": "error",
+            "message": (
+                "plugin requires OpenClaw >=2026.3.22, but this host is "
+                "2026.3.21"
+            ),
+            "pluginId": "synology-chat",
+            "source": str(manifest_path),
+        }
+    ]
 
 
 def test_plugins_list_json_projects_runtime_executor_inventory(
@@ -7808,10 +8586,68 @@ def test_plugins_marketplace_list_json_reads_local_manifest(tmp_path) -> None:
                 "name": "frontend-design",
                 "version": "0.2.0",
                 "description": "Design helper.",
-                "source": {"type": "path", "path": "plugins/frontend-design"},
+                "source": {"kind": "path", "path": "plugins/frontend-design"},
             }
         ],
     }
+
+
+def test_plugins_marketplace_list_json_reads_cloned_github_shorthand(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    manifest_dir = repo_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    plugin_file = repo_dir / "plugins" / "frontend-design.tgz"
+    plugin_file.parent.mkdir(parents=True)
+    plugin_file.write_text("plugin archive", encoding="utf-8")
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "source": "./plugins/frontend-design.tgz",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cleanup_calls: list[str] = []
+
+    def fake_clone_marketplace_source(source: str) -> SimpleNamespace:
+        assert source == "owner/repo"
+        return SimpleNamespace(
+            root_dir=repo_dir,
+            label="owner/repo",
+            cleanup=lambda: cleanup_calls.append("cleanup"),
+        )
+
+    monkeypatch.setattr(
+        "openzues.cli._clone_cli_plugins_marketplace_source",
+        fake_clone_marketplace_source,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["plugins", "marketplace", "list", "owner/repo", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "source": "owner/repo",
+        "plugins": [
+            {
+                "name": "frontend-design",
+                "source": {"kind": "path", "path": "./plugins/frontend-design.tgz"},
+            }
+        ],
+    }
+    assert cleanup_calls == ["cleanup"]
 
 
 def test_plugins_install_marketplace_json_persists_local_manifest_entry(
@@ -7919,6 +8755,214 @@ def test_plugins_install_marketplace_json_persists_local_manifest_entry(
     )
     assert stored["plugins"]["installs"]["frontend-design"]["version"] == "0.2.0"
     assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
+
+
+def test_plugins_install_json_resolves_known_marketplace_shortcut(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": [],
+                    "entries": {},
+                    "load": {"paths": []},
+                },
+            }
+        )
+    )
+    marketplace_dir = tmp_path / "marketplace"
+    plugin_dir = marketplace_dir / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Claude Local",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.3.0",
+                        "source": {"type": "path", "path": "plugins/frontend-design"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    known_path = tmp_path / "home" / ".claude" / "plugins" / "known_marketplaces.json"
+    known_path.parent.mkdir(parents=True)
+    known_path.write_text(
+        json.dumps({"claude-local": {"installLocation": str(marketplace_dir)}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "openzues.cli._CLI_CLAUDE_KNOWN_MARKETPLACES_PATH",
+        known_path,
+        raising=False,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", "frontend-design@claude-local", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["pluginId"] == "frontend-design"
+    assert payload["install"]["source"] == "marketplace"
+    assert payload["install"]["marketplaceName"] == "Claude Local"
+    assert payload["install"]["marketplaceSource"] == "claude-local"
+    assert payload["install"]["marketplacePlugin"] == "frontend-design"
+    assert payload["install"]["installPath"] == str(plugin_dir.resolve())
+    assert payload["install"]["version"] == "0.3.0"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["frontend-design"]
+    assert stored["plugins"]["load"]["paths"] == [str(plugin_dir.resolve())]
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceSource"] == (
+        "claude-local"
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplacePlugin"] == (
+        "frontend-design"
+    )
+
+
+def test_plugins_install_marketplace_json_persists_cloned_github_entry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": [],
+                    "entries": {},
+                    "load": {"paths": []},
+                },
+            }
+        )
+    )
+    repo_dir = tmp_path / "repo"
+    plugin_dir = repo_dir / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text('{"id":"frontend-design"}', encoding="utf-8")
+    manifest_dir = repo_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "Remote Marketplace",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.4.0",
+                        "source": "./plugins/frontend-design",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cleanup_calls: list[str] = []
+
+    def fake_clone_marketplace_source(source: str) -> SimpleNamespace:
+        assert source == "owner/repo"
+        return SimpleNamespace(
+            root_dir=repo_dir,
+            label="owner/repo",
+            cleanup=lambda: cleanup_calls.append("cleanup"),
+        )
+
+    monkeypatch.setattr(
+        "openzues.cli._clone_cli_plugins_marketplace_source",
+        fake_clone_marketplace_source,
+        raising=False,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "plugins",
+            "install",
+            "frontend-design",
+            "--marketplace",
+            "owner/repo",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    install_path = Path(payload["install"]["installPath"])
+    assert install_path.is_dir()
+    assert install_path.is_relative_to(tmp_path / "plugins" / "marketplace")
+    assert (install_path / "plugin.json").read_text(encoding="utf-8") == (
+        '{"id":"frontend-design"}'
+    )
+    assert payload["install"]["marketplaceName"] == "Remote Marketplace"
+    assert payload["install"]["marketplaceSource"] == "owner/repo"
+    assert payload["install"]["marketplacePlugin"] == "frontend-design"
+    assert payload["install"]["version"] == "0.4.0"
+    assert cleanup_calls == ["cleanup"]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["load"]["paths"] == [str(install_path)]
+    assert stored["plugins"]["installs"]["frontend-design"]["installPath"] == str(
+        install_path
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceSource"] == (
+        "owner/repo"
+    )
 
 
 def test_plugins_uninstall_json_removes_native_install_metadata(

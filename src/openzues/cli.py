@@ -20,6 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -11850,11 +11851,17 @@ async def _build_plugins_inventory_payload(
     gateway_config = getattr(services, "gateway_config", None)
     if isinstance(gateway_config, GatewayConfigService):
         existing_ids = {str(plugin.get("id") or "") for plugin in plugins}
-        for plugin in _plugin_records_from_config_snapshot(gateway_config.build_snapshot()):
+        config_diagnostics: list[dict[str, object]] = []
+        for plugin in _plugin_records_from_config_snapshot(
+            gateway_config.build_snapshot(),
+            diagnostics=config_diagnostics,
+        ):
             plugin_id = str(plugin.get("id") or "")
             if plugin_id not in existing_ids:
                 plugins.append(plugin)
                 existing_ids.add(plugin_id)
+    else:
+        config_diagnostics = []
     if enabled_only:
         plugins = [
             plugin
@@ -11862,11 +11869,12 @@ async def _build_plugins_inventory_payload(
             if str(plugin.get("status") or "").strip() == "loaded"
         ]
     warnings = view_payload.get("warnings")
-    diagnostics = [
+    diagnostics: list[dict[str, object]] = [
         {"level": "warn", "message": str(warning)}
         for warning in (warnings if isinstance(warnings, list) else [])
         if str(warning).strip()
     ]
+    diagnostics.extend(config_diagnostics)
     return {
         "workspaceDir": workspace_dir,
         "plugins": plugins,
@@ -11948,8 +11956,383 @@ async def _build_plugins_toggle_payload(
     }
 
 
-def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
-    manifest_path = _resolve_plugins_marketplace_manifest_path(source)
+_CLI_CLAUDE_KNOWN_MARKETPLACES_PATH = (
+    Path("~") / ".claude" / "plugins" / "known_marketplaces.json"
+)
+_CLI_MARKETPLACE_MANIFEST_CANDIDATES = (
+    Path(".claude-plugin") / "marketplace.json",
+    Path("marketplace.json"),
+)
+_CLI_MARKETPLACE_GIT_TIMEOUT_SECONDS = 120
+
+
+@dataclass(frozen=True)
+class _CliMarketplaceSource:
+    manifest_path: Path
+    root_dir: Path
+    source_label: str
+    origin: Literal["local", "remote"]
+    cleanup: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True)
+class _CliMarketplaceClone:
+    root_dir: Path
+    label: str
+    cleanup: Callable[[], None]
+
+
+def _read_cli_claude_known_marketplaces() -> dict[str, dict[str, object]]:
+    known_path = Path(_CLI_CLAUDE_KNOWN_MARKETPLACES_PATH).expanduser()
+    try:
+        parsed = json.loads(known_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, dict[str, object]] = {}
+    for name, value in parsed.items():
+        known_name = _optional_cli_string(name)
+        if known_name is None or not isinstance(value, dict):
+            continue
+        record: dict[str, object] = {}
+        install_location = _optional_cli_string(value.get("installLocation"))
+        if install_location is not None:
+            record["installLocation"] = install_location
+        if "source" in value:
+            record["source"] = value["source"]
+        result[known_name] = record
+    return result
+
+
+def _cli_known_marketplace_record(marketplace: str) -> dict[str, object] | None:
+    normalized = _optional_cli_string(marketplace)
+    if normalized is None:
+        return None
+    return _read_cli_claude_known_marketplaces().get(normalized)
+
+
+def _cli_marketplace_entry_source_to_input(source: object) -> str | None:
+    if isinstance(source, str):
+        return _optional_cli_string(source)
+    if not isinstance(source, dict):
+        return None
+    source_kind = _optional_cli_string(source.get("type")) or _optional_cli_string(
+        source.get("source")
+    )
+    if source_kind == "path":
+        return _optional_cli_string(source.get("path"))
+    if source_kind == "github":
+        repo = _optional_cli_string(source.get("repo")) or _optional_cli_string(
+            source.get("url")
+        )
+        ref = (
+            _optional_cli_string(source.get("ref"))
+            or _optional_cli_string(source.get("branch"))
+            or _optional_cli_string(source.get("tag"))
+        )
+        if repo is None:
+            return None
+        return f"{repo}#{ref}" if ref is not None else repo
+    if source_kind in {"git", "git-subdir"}:
+        url = _optional_cli_string(source.get("url")) or _optional_cli_string(
+            source.get("repo")
+        )
+        ref = (
+            _optional_cli_string(source.get("ref"))
+            or _optional_cli_string(source.get("branch"))
+            or _optional_cli_string(source.get("tag"))
+        )
+        if url is None:
+            return None
+        return f"{url}#{ref}" if ref is not None else url
+    if source_kind == "url":
+        return _optional_cli_string(source.get("url"))
+    return None
+
+
+def _cli_known_marketplace_source_input(marketplace: str) -> str | None:
+    record = _cli_known_marketplace_record(marketplace)
+    if record is None:
+        return None
+    install_location = _optional_cli_string(record.get("installLocation"))
+    if install_location is not None:
+        return install_location
+    return _cli_marketplace_entry_source_to_input(record.get("source"))
+
+
+def _resolve_cli_marketplace_install_shortcut(raw: str) -> tuple[str, str] | None:
+    trimmed = raw.strip()
+    at_index = trimmed.rfind("@")
+    if at_index <= 0 or at_index >= len(trimmed) - 1:
+        return None
+    plugin = trimmed[:at_index].strip()
+    marketplace = trimmed[at_index + 1 :].strip()
+    if not plugin or not marketplace or "/" in plugin:
+        return None
+    if _cli_known_marketplace_record(marketplace) is None:
+        return None
+    return plugin, marketplace
+
+
+def _cli_marketplace_split_ref(source: str) -> tuple[str, str | None]:
+    trimmed = source.strip()
+    hash_index = trimmed.rfind("#")
+    if hash_index <= 0 or hash_index >= len(trimmed) - 1:
+        return trimmed, None
+    return trimmed[:hash_index], _optional_cli_string(trimmed[hash_index + 1 :])
+
+
+def _cli_marketplace_is_http_url(value: str) -> bool:
+    return re.match(r"^https?://", value, flags=re.IGNORECASE) is not None
+
+
+def _cli_marketplace_is_git_url(value: str) -> bool:
+    return (
+        re.match(r"^git@", value, flags=re.IGNORECASE) is not None
+        or re.match(r"^ssh://", value, flags=re.IGNORECASE) is not None
+        or re.match(r"^https?://.+\.git(?:#.*)?$", value, flags=re.IGNORECASE)
+        is not None
+    )
+
+
+def _cli_marketplace_looks_like_github_repo(value: str) -> bool:
+    return (
+        re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#.+)?$", value.strip())
+        is not None
+    )
+
+
+def _normalize_cli_marketplace_git_source(
+    source: str,
+) -> tuple[str, str | None, str] | None:
+    base, ref = _cli_marketplace_split_ref(source)
+    if _cli_marketplace_looks_like_github_repo(base):
+        return f"https://github.com/{base}.git", ref, base
+    if _cli_marketplace_is_git_url(source):
+        return base, ref, base
+    if _cli_marketplace_is_http_url(source):
+        parsed = urlparse(base)
+        if parsed.hostname != "github.com":
+            return None
+        parts = [part for part in parsed.path.strip("/").split("/") if part]
+        if len(parts) < 2:
+            return None
+        repo = f"{parts[0]}/{parts[1].removesuffix('.git')}"
+        return f"https://github.com/{repo}.git", ref, repo
+    return None
+
+
+def _clone_cli_plugins_marketplace_source(source: str) -> _CliMarketplaceClone:
+    normalized = _normalize_cli_marketplace_git_source(source)
+    if normalized is None:
+        raise ValueError(f"unsupported marketplace source: {source}")
+    clone_url, ref, label = normalized
+    tmp_dir = Path(tempfile.mkdtemp(prefix="openzues-marketplace-"))
+    repo_dir = tmp_dir / "repo"
+    argv = ["git", "clone", "--depth", "1"]
+    if ref is not None:
+        argv.extend(["--branch", ref])
+    argv.extend([clone_url, str(repo_dir)])
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=_CLI_MARKETPLACE_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise ValueError(
+            f"failed to clone marketplace source {label}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        detail = result.stderr.strip() or result.stdout.strip() or "git clone failed"
+        raise ValueError(f"failed to clone marketplace source {label}: {detail}")
+    return _CliMarketplaceClone(
+        root_dir=repo_dir,
+        label=label,
+        cleanup=lambda: shutil.rmtree(tmp_dir, ignore_errors=True),
+    )
+
+
+def _derive_cli_marketplace_root_from_manifest_path(manifest_path: Path) -> Path:
+    manifest_dir = manifest_path.parent
+    return manifest_dir.parent if manifest_dir.name == ".claude-plugin" else manifest_dir
+
+
+def _find_cli_marketplace_manifest(root_dir: Path) -> Path | None:
+    for relative in _CLI_MARKETPLACE_MANIFEST_CANDIDATES:
+        candidate = root_dir / relative
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _resolve_cli_local_marketplace_source(source: str) -> _CliMarketplaceSource | None:
+    source_path = Path(source).expanduser()
+    if not source_path.exists():
+        return None
+    if source_path.is_file():
+        manifest_path = source_path.resolve()
+        return _CliMarketplaceSource(
+            manifest_path=manifest_path,
+            root_dir=_derive_cli_marketplace_root_from_manifest_path(manifest_path).resolve(),
+            source_label=str(manifest_path),
+            origin="local",
+        )
+    if source_path.is_dir():
+        root_dir = source_path.parent if source_path.name == ".claude-plugin" else source_path
+        discovered_manifest_path = _find_cli_marketplace_manifest(root_dir)
+        if discovered_manifest_path is not None:
+            return _CliMarketplaceSource(
+                manifest_path=discovered_manifest_path,
+                root_dir=root_dir.resolve(),
+                source_label=str(discovered_manifest_path),
+                origin="local",
+            )
+        raise ValueError(f"marketplace manifest not found under {source}")
+    raise ValueError(f"unsupported marketplace source: {source_path.resolve()}")
+
+
+def _resolve_cli_plugins_marketplace_source(source: str) -> _CliMarketplaceSource:
+    normalized_source = _optional_cli_string(source)
+    if normalized_source is None:
+        raise ValueError("marketplace source is required")
+    known_source = _cli_known_marketplace_source_input(normalized_source)
+    if known_source is not None and known_source != normalized_source:
+        resolved = _resolve_cli_plugins_marketplace_source(known_source)
+        if _cli_known_marketplace_record(normalized_source) is not None:
+            return _CliMarketplaceSource(
+                manifest_path=resolved.manifest_path,
+                root_dir=resolved.root_dir,
+                source_label=normalized_source,
+                origin=resolved.origin,
+                cleanup=resolved.cleanup,
+            )
+        return resolved
+    local = _resolve_cli_local_marketplace_source(normalized_source)
+    if local is not None:
+        return local
+    cloned = _clone_cli_plugins_marketplace_source(normalized_source)
+    root_dir = Path(cloned.root_dir).resolve()
+    manifest_path = _find_cli_marketplace_manifest(root_dir)
+    if manifest_path is None:
+        cloned.cleanup()
+        raise ValueError(f"marketplace manifest not found in {cloned.label}")
+    return _CliMarketplaceSource(
+        manifest_path=manifest_path,
+        root_dir=root_dir,
+        source_label=cloned.label,
+        origin="remote",
+        cleanup=cloned.cleanup,
+    )
+
+
+def _normalize_cli_marketplace_plugin_source(source: object) -> dict[str, object]:
+    if isinstance(source, str):
+        value = _optional_cli_string(source)
+        if value is None:
+            raise ValueError("empty plugin source")
+        if _cli_marketplace_is_http_url(value):
+            return {"kind": "url", "url": value}
+        return {"kind": "path", "path": value}
+    if not isinstance(source, dict):
+        raise ValueError("plugin source must be a string or object")
+    source_kind = _optional_cli_string(source.get("type")) or _optional_cli_string(
+        source.get("source")
+    )
+    if source_kind is None:
+        raise ValueError('plugin source object missing "type" or "source"')
+    if source_kind == "path":
+        path_value = _optional_cli_string(source.get("path"))
+        if path_value is None:
+            raise ValueError('path source missing "path"')
+        return {"kind": "path", "path": path_value}
+    if source_kind == "github":
+        repo = _optional_cli_string(source.get("repo")) or _optional_cli_string(
+            source.get("url")
+        )
+        if repo is None:
+            raise ValueError('github source missing "repo"')
+        result: dict[str, object] = {"kind": "github", "repo": repo}
+    elif source_kind == "git":
+        url = _optional_cli_string(source.get("url")) or _optional_cli_string(
+            source.get("repo")
+        )
+        if url is None:
+            raise ValueError('git source missing "url"')
+        result = {"kind": "git", "url": url}
+    elif source_kind == "git-subdir":
+        url = _optional_cli_string(source.get("url")) or _optional_cli_string(
+            source.get("repo")
+        )
+        path_value = _optional_cli_string(source.get("path")) or _optional_cli_string(
+            source.get("subdir")
+        )
+        if url is None:
+            raise ValueError('git-subdir source missing "url"')
+        if path_value is None:
+            raise ValueError('git-subdir source missing "path"')
+        result = {"kind": "git-subdir", "url": url, "path": path_value}
+    elif source_kind == "url":
+        url = _optional_cli_string(source.get("url"))
+        if url is None:
+            raise ValueError('url source missing "url"')
+        return {"kind": "url", "url": url}
+    else:
+        raise ValueError(f"unsupported plugin source kind: {source_kind}")
+    ref = (
+        _optional_cli_string(source.get("ref"))
+        or _optional_cli_string(source.get("branch"))
+        or _optional_cli_string(source.get("tag"))
+    )
+    path_value = _optional_cli_string(source.get("path"))
+    if path_value is not None and "path" not in result:
+        result["path"] = path_value
+    if ref is not None:
+        result["ref"] = ref
+    return result
+
+
+def _validate_cli_remote_marketplace_plugin_source(
+    *,
+    marketplace: _CliMarketplaceSource,
+    source: dict[str, object],
+) -> None:
+    source_kind = _optional_cli_string(source.get("kind"))
+    if source_kind != "path":
+        raise ValueError(
+            f'remote marketplaces may not use {source_kind or "unknown"} plugin sources'
+        )
+    source_path_value = _optional_cli_string(source.get("path"))
+    if source_path_value is None:
+        raise ValueError('path source missing "path"')
+    if _cli_marketplace_is_http_url(source_path_value):
+        raise ValueError("remote marketplaces may not use HTTP(S) plugin paths")
+    source_path = Path(source_path_value)
+    if source_path.is_absolute():
+        raise ValueError("remote marketplaces may only use relative plugin paths")
+    root = marketplace.root_dir.resolve()
+    resolved = (root / source_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"plugin source escapes marketplace root: {source_path_value}"
+        ) from exc
+    if not resolved.exists():
+        raise ValueError(
+            f"plugin source not found in marketplace root: {source_path_value}"
+        )
+
+
+def _build_plugins_marketplace_list_payload_from_source(
+    marketplace: _CliMarketplaceSource,
+) -> dict[str, object]:
+    manifest_path = marketplace.manifest_path
     try:
         parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
     except ValueError as exc:
@@ -11968,20 +12351,26 @@ def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
         name = _optional_cli_string(raw_plugin.get("name"))
         if name is None:
             raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
-        source_value = raw_plugin.get("source")
-        if not isinstance(source_value, (str, dict)):
+        try:
+            source_value = _normalize_cli_marketplace_plugin_source(raw_plugin.get("source"))
+            if marketplace.origin == "remote":
+                _validate_cli_remote_marketplace_plugin_source(
+                    marketplace=marketplace,
+                    source=source_value,
+                )
+        except ValueError as exc:
             raise ValueError(
-                f'invalid marketplace entry "{name}" in {manifest_path}: missing source'
-            )
+                f'invalid marketplace entry "{name}" in {marketplace.source_label}: {exc}'
+            ) from exc
         plugin: dict[str, object] = {"name": name}
         for key in ("version", "description"):
             value = _optional_cli_string(raw_plugin.get(key))
             if value is not None:
                 plugin[key] = value
-        plugin["source"] = dict(source_value) if isinstance(source_value, dict) else source_value
+        plugin["source"] = source_value
         plugins.append(plugin)
     payload: dict[str, object] = {
-        "source": str(manifest_path),
+        "source": marketplace.source_label,
         "plugins": plugins,
     }
     name = _optional_cli_string(parsed.get("name"))
@@ -11993,6 +12382,54 @@ def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
     return payload
 
 
+def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
+    marketplace = _resolve_cli_plugins_marketplace_source(source)
+    try:
+        return _build_plugins_marketplace_list_payload_from_source(marketplace)
+    finally:
+        if marketplace.cleanup is not None:
+            marketplace.cleanup()
+
+
+def _safe_cli_marketplace_install_leaf(plugin_id: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", plugin_id.strip()).strip(".-")
+    return safe or "plugin"
+
+
+def _cli_gateway_config_data_dir(gateway_config: object) -> Path:
+    data_dir = getattr(gateway_config, "_data_dir", None)
+    if isinstance(data_dir, Path):
+        return data_dir
+    raise RuntimeError("Gateway config data directory is unavailable.")
+
+
+def _copy_cli_remote_marketplace_plugin_install(
+    *,
+    services: CliServices,
+    plugin_id: str,
+    source_path: Path,
+) -> Path:
+    data_dir = _cli_gateway_config_data_dir(services.gateway_config)
+    install_root = data_dir / "plugins" / "marketplace"
+    install_root.mkdir(parents=True, exist_ok=True)
+    target_root = install_root / _safe_cli_marketplace_install_leaf(plugin_id)
+    source = source_path.resolve()
+    if target_root.exists():
+        if target_root.is_dir():
+            shutil.rmtree(target_root)
+        else:
+            target_root.unlink()
+    if source.is_dir():
+        shutil.copytree(source, target_root)
+        return target_root.resolve()
+    if source.is_file():
+        target_root.mkdir(parents=True, exist_ok=True)
+        target_file = target_root / source.name
+        shutil.copy2(source, target_file)
+        return target_file.resolve()
+    raise ValueError(f'plugin "{plugin_id}" source not found: {source_path}')
+
+
 async def _build_plugins_marketplace_install_payload(
     services: CliServices,
     *,
@@ -12000,35 +12437,51 @@ async def _build_plugins_marketplace_install_payload(
     marketplace: str,
     force: bool,
 ) -> dict[str, object]:
-    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace)
-    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
-    plugins = marketplace_payload.get("plugins")
-    plugin_rows = plugins if isinstance(plugins, list) else []
-    requested_id = plugin_id.strip()
-    if not requested_id:
-        raise ValueError("plugin id is required")
-    match = next(
-        (
-            plugin
-            for plugin in plugin_rows
-            if isinstance(plugin, dict)
-            and str(plugin.get("name") or "").strip() == requested_id
-        ),
-        None,
-    )
-    if match is None:
-        raise ValueError(
-            f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
+    marketplace_ref = _resolve_cli_plugins_marketplace_source(marketplace)
+    manifest_path = marketplace_ref.manifest_path
+    marketplace_source = marketplace_ref.source_label
+    if marketplace_ref.origin == "local" and _cli_known_marketplace_record(marketplace) is None:
+        marketplace_source = str(manifest_path)
+    try:
+        marketplace_payload = _build_plugins_marketplace_list_payload_from_source(
+            marketplace_ref
         )
-    install_path = _resolve_marketplace_plugin_install_path(
-        manifest_path=manifest_path,
-        source=match.get("source"),
-        plugin_name=requested_id,
-    )
+        plugins = marketplace_payload.get("plugins")
+        plugin_rows = plugins if isinstance(plugins, list) else []
+        requested_id = plugin_id.strip()
+        if not requested_id:
+            raise ValueError("plugin id is required")
+        match = next(
+            (
+                plugin
+                for plugin in plugin_rows
+                if isinstance(plugin, dict)
+                and str(plugin.get("name") or "").strip() == requested_id
+            ),
+            None,
+        )
+        if match is None:
+            raise ValueError(
+                f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
+            )
+        install_path = _resolve_marketplace_plugin_install_path(
+            manifest_path=manifest_path,
+            source=match.get("source"),
+            plugin_name=requested_id,
+        )
+        if marketplace_ref.origin == "remote":
+            install_path = _copy_cli_remote_marketplace_plugin_install(
+                services=services,
+                plugin_id=requested_id,
+                source_path=install_path,
+            )
+    finally:
+        if marketplace_ref.cleanup is not None:
+            marketplace_ref.cleanup()
     result = services.gateway_config.record_marketplace_plugin_install(
         plugin_id=requested_id,
         install_path=str(install_path),
-        marketplace_source=str(manifest_path),
+        marketplace_source=marketplace_source,
         marketplace_plugin=requested_id,
         marketplace_name=_optional_cli_string(marketplace_payload.get("name")),
         version=_optional_cli_string(match.get("version")),
@@ -12042,7 +12495,8 @@ async def _build_plugins_marketplace_install_payload(
         "pluginId": result.get("pluginId") or requested_id,
         "source": "marketplace",
         "marketplace": {
-            "source": str(manifest_path),
+            "source": marketplace_source,
+            "manifestPath": str(manifest_path),
             "name": marketplace_payload.get("name"),
             "version": marketplace_payload.get("version"),
         },
@@ -12211,6 +12665,9 @@ def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
     normalized_source = _optional_cli_string(source)
     if normalized_source is None:
         raise ValueError("marketplace source is required")
+    known_source = _cli_known_marketplace_source_input(normalized_source)
+    if known_source is not None and known_source != normalized_source:
+        return _resolve_plugins_marketplace_manifest_path(known_source)
     if re.match(r"^(https?|ssh)://", normalized_source, flags=re.IGNORECASE):
         raise ValueError(f"unsupported marketplace source: {normalized_source}")
     source_path = Path(normalized_source).expanduser()
@@ -12234,7 +12691,11 @@ def _resolve_marketplace_plugin_install_path(
     plugin_name: str,
 ) -> Path:
     if isinstance(source, dict):
-        source_type = _optional_cli_string(source.get("type"))
+        source_type = (
+            _optional_cli_string(source.get("type"))
+            or _optional_cli_string(source.get("kind"))
+            or _optional_cli_string(source.get("source"))
+        )
         if source_type not in (None, "path"):
             raise ValueError(
                 f'unsupported marketplace source for plugin "{plugin_name}": {source_type}'
@@ -13139,8 +13600,8 @@ def _plugin_inspect_report(
         "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
         "services": _plugin_record_string_list(plugin, "services"),
         "gatewayMethods": _plugin_record_string_list(plugin, "gatewayMethods"),
-        "mcpServers": [],
-        "lspServers": [],
+        "mcpServers": _plugin_record_string_list(plugin, "mcpServers"),
+        "lspServers": _plugin_record_string_list(plugin, "lspServers"),
         "httpRouteCount": _plugin_record_http_route_count(plugin),
         "policy": dict(policy) if policy is not None else {},
         "diagnostics": [],
@@ -13408,6 +13869,12 @@ def _plugin_record_from_deck_item(
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
+    item_root_dir = _optional_cli_string(item.get("rootDir"))
+    for metadata_key, metadata_value in _plugin_manifest_root_metadata(
+        item,
+        root_dir=Path(item_root_dir) if item_root_dir is not None else None,
+    ).items():
+        record[metadata_key] = metadata_value
     for key in (
         "commands",
         "cliCommands",
@@ -13436,6 +13903,9 @@ def _plugin_record_from_deck_item(
     model_support = _plugin_manifest_model_support(item.get("modelSupport"))
     if model_support:
         record["modelSupport"] = model_support
+    config_contracts = _plugin_manifest_config_contracts(item.get("configContracts"))
+    if config_contracts:
+        record["configContracts"] = config_contracts
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
         record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
@@ -13445,6 +13915,30 @@ def _plugin_record_from_deck_item(
 
 
 _OPENCLAW_PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
+_OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS: dict[str, Path] = {
+    "codex": Path(".codex-plugin") / "plugin.json",
+    "claude": Path(".claude-plugin") / "plugin.json",
+    "cursor": Path(".cursor-plugin") / "plugin.json",
+}
+_OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES = (
+    "index.ts",
+    "index.js",
+    "index.mjs",
+    "index.cjs",
+)
+_OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS = (
+    "skills",
+    "commands",
+    "agents",
+    "hooks/hooks.json",
+    ".mcp.json",
+    ".lsp.json",
+    "settings.json",
+)
+_OPENCLAW_MIN_HOST_VERSION_FORMAT = (
+    'openclaw.install.minHostVersion must use a semver floor in the form ">=x.y.z"'
+)
+_OPENCLAW_MIN_HOST_VERSION_RE = re.compile(r"^>=(\d+)\.(\d+)\.(\d+)$")
 _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "tools": "tool",
     "speechProviders": "speech",
@@ -13756,12 +14250,349 @@ def _plugin_manifest_model_support(value: object) -> dict[str, object]:
     return model_support
 
 
+def _plugin_manifest_kind(value: object) -> str | list[str] | None:
+    if isinstance(value, str):
+        return _optional_cli_string(value)
+    if not isinstance(value, list):
+        return None
+    values = _plugin_manifest_string_list(value)
+    if len(values) == 1:
+        return values[0]
+    return values if values else None
+
+
+def _plugin_manifest_root_metadata(
+    source: dict[str, object],
+    *,
+    root_dir: Path | None = None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if source.get("enabledByDefault") is True:
+        metadata["enabledByDefault"] = True
+    for key in (
+        "legacyPluginIds",
+        "autoEnableWhenConfiguredProviders",
+        "channels",
+        "providers",
+        "cliBackends",
+        "skills",
+    ):
+        values = _plugin_manifest_string_list(source.get(key))
+        if values:
+            metadata[key] = values
+    kind = _plugin_manifest_kind(source.get("kind"))
+    if kind is not None:
+        metadata["kind"] = kind
+    provider_discovery_source = _optional_cli_string(
+        source.get("providerDiscoverySource")
+    )
+    if provider_discovery_source is not None:
+        metadata["providerDiscoverySource"] = provider_discovery_source
+    else:
+        provider_discovery_entry = _optional_cli_string(
+            source.get("providerDiscoveryEntry")
+        )
+        if provider_discovery_entry is not None and root_dir is not None:
+            metadata["providerDiscoverySource"] = str(
+                (root_dir / provider_discovery_entry).resolve(strict=False)
+            )
+    ui_hints = source.get("uiHints")
+    if isinstance(ui_hints, dict):
+        metadata["configUiHints"] = dict(ui_hints)
+    return metadata
+
+
+def _plugin_manifest_config_literal(value: object) -> bool:
+    return value is None or isinstance(value, str | int | float | bool)
+
+
+def _plugin_manifest_dangerous_config_flags(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    flags: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        path = _optional_cli_string(entry.get("path"))
+        if path is None or "equals" not in entry:
+            continue
+        equals = entry.get("equals")
+        if not _plugin_manifest_config_literal(equals):
+            continue
+        flags.append({"path": path, "equals": equals})
+    return flags
+
+
+def _plugin_manifest_secret_input_paths(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    paths: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        path = _optional_cli_string(entry.get("path"))
+        if path is None:
+            continue
+        secret_input: dict[str, object] = {"path": path}
+        if entry.get("expected") == "string":
+            secret_input["expected"] = "string"
+        paths.append(secret_input)
+    return paths
+
+
+def _plugin_manifest_config_contracts(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    contracts: dict[str, object] = {}
+    migration_paths = _plugin_manifest_string_list(
+        value.get("compatibilityMigrationPaths")
+    )
+    if migration_paths:
+        contracts["compatibilityMigrationPaths"] = migration_paths
+    runtime_paths = _plugin_manifest_string_list(value.get("compatibilityRuntimePaths"))
+    if runtime_paths:
+        contracts["compatibilityRuntimePaths"] = runtime_paths
+    dangerous_flags = _plugin_manifest_dangerous_config_flags(
+        value.get("dangerousFlags")
+    )
+    if dangerous_flags:
+        contracts["dangerousFlags"] = dangerous_flags
+    raw_secret_inputs = value.get("secretInputs")
+    if isinstance(raw_secret_inputs, dict):
+        secret_input_paths = _plugin_manifest_secret_input_paths(
+            raw_secret_inputs.get("paths")
+        )
+        if secret_input_paths:
+            secret_inputs: dict[str, object] = {"paths": secret_input_paths}
+            bundled_default_enabled = raw_secret_inputs.get("bundledDefaultEnabled")
+            if isinstance(bundled_default_enabled, bool):
+                secret_inputs["bundledDefaultEnabled"] = bundled_default_enabled
+            contracts["secretInputs"] = secret_inputs
+    return contracts
+
+
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _strip_cli_json5_comments(text: str) -> str:
+    result: list[str] = []
+    in_string: str | None = None
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if in_string is not None:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            index += 1
+            continue
+        if char in {'"', "'"}:
+            in_string = char
+            result.append('"' if char == "'" else char)
+            index += 1
+            continue
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
+                index += 1
+            index += 2 if index + 1 < len(text) else 0
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _normalize_cli_json5_subset(text: str) -> str:
+    without_comments = _strip_cli_json5_comments(text)
+    quoted_keys = re.sub(
+        r'([{\[,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:',
+        r'\1"\2":',
+        without_comments,
+    )
+    return re.sub(r",(\s*[}\]])", r"\1", quoted_keys)
+
+
+def _read_cli_json5_object(path: Path) -> dict[str, object] | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for candidate in (text, _normalize_cli_json5_subset(text)):
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _plugin_package_json_metadata(plugin_root: Path) -> dict[str, object]:
+    package_json = _read_cli_json_object(plugin_root / "package.json")
+    if package_json is None:
+        return {}
+    metadata: dict[str, object] = {}
+    for key in ("name", "version", "description"):
+        value = _optional_cli_string(package_json.get(key))
+        if value is not None:
+            metadata[key] = value
+    openclaw = package_json.get("openclaw")
+    if isinstance(openclaw, dict):
+        metadata["openclaw"] = openclaw
+    return metadata
+
+
+def _plugin_package_channel_catalog_meta(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    channel_id = _optional_cli_string(value.get("id"))
+    if channel_id is None:
+        return {}
+    metadata: dict[str, object] = {"id": channel_id}
+    label = _optional_cli_string(value.get("label"))
+    if label is not None:
+        metadata["label"] = label
+    blurb = _optional_cli_string(value.get("blurb"))
+    if blurb is not None:
+        metadata["blurb"] = blurb
+    prefer_over = _plugin_manifest_string_list(value.get("preferOver"))
+    if prefer_over:
+        metadata["preferOver"] = prefer_over
+    return metadata
+
+
+def _plugin_package_openclaw_record_metadata(
+    value: object,
+    *,
+    plugin_root: Path,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    metadata: dict[str, object] = {}
+    setup_entry = _optional_cli_string(value.get("setupEntry"))
+    if setup_entry is not None:
+        metadata["setupSource"] = str((plugin_root / setup_entry).resolve(strict=False))
+    startup = value.get("startup")
+    if (
+        isinstance(startup, dict)
+        and startup.get("deferConfiguredChannelFullLoadUntilAfterListen") is True
+    ):
+        metadata["startupDeferConfiguredChannelFullLoadUntilAfterListen"] = True
+    channel_catalog_meta = _plugin_package_channel_catalog_meta(value.get("channel"))
+    if channel_catalog_meta:
+        metadata["channelCatalogMeta"] = channel_catalog_meta
+    return metadata
+
+
+def _plugin_semver_tuple(value: object) -> tuple[int, int, int] | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", text)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _plugin_min_host_version_diagnostic(
+    package_openclaw: object,
+    *,
+    current_version: str,
+    plugin_id: str,
+    source: str,
+) -> dict[str, object] | None:
+    if not isinstance(package_openclaw, dict):
+        return None
+    install = package_openclaw.get("install")
+    if not isinstance(install, dict) or "minHostVersion" not in install:
+        return None
+    raw_min_host_version = install.get("minHostVersion")
+    min_host_text = _optional_cli_string(raw_min_host_version)
+    match = (
+        _OPENCLAW_MIN_HOST_VERSION_RE.match(min_host_text)
+        if min_host_text is not None
+        else None
+    )
+    if match is None:
+        return {
+            "level": "error",
+            "message": f"plugin manifest invalid | {_OPENCLAW_MIN_HOST_VERSION_FORMAT}",
+            "pluginId": plugin_id,
+            "source": source,
+        }
+    minimum_label = f"{match.group(1)}.{match.group(2)}.{match.group(3)}"
+    current_semver = _plugin_semver_tuple(current_version)
+    if current_semver is None:
+        return {
+            "level": "warn",
+            "message": (
+                f"plugin requires OpenClaw >={minimum_label}, but host version "
+                "could not be determined"
+            ),
+            "pluginId": plugin_id,
+            "source": source,
+        }
+    minimum_semver = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    if current_semver < minimum_semver:
+        return {
+            "level": "error",
+            "message": (
+                f"plugin requires OpenClaw >={minimum_label}, but this host is "
+                f"{current_version}"
+            ),
+            "pluginId": plugin_id,
+            "source": source,
+        }
+    return None
+
+
+def _merge_package_channel_meta(
+    channel_configs: dict[str, object],
+    package_openclaw: object,
+) -> dict[str, object]:
+    if not isinstance(package_openclaw, dict):
+        return channel_configs
+    channel = package_openclaw.get("channel")
+    if not isinstance(channel, dict):
+        return channel_configs
+    channel_id = _optional_cli_string(channel.get("id"))
+    if channel_id is None:
+        return channel_configs
+    raw_config = channel_configs.get(channel_id)
+    if not isinstance(raw_config, dict):
+        return channel_configs
+    merged_configs = dict(channel_configs)
+    config = dict(raw_config)
+    if _optional_cli_string(config.get("label")) is None:
+        label = _optional_cli_string(channel.get("label"))
+        if label is not None:
+            config["label"] = label
+    if _optional_cli_string(config.get("description")) is None:
+        blurb = _optional_cli_string(channel.get("blurb"))
+        if blurb is not None:
+            config["description"] = blurb
+    if not _plugin_manifest_string_list(config.get("preferOver")):
+        prefer_over = _plugin_manifest_string_list(channel.get("preferOver"))
+        if prefer_over:
+            config["preferOver"] = prefer_over
+    merged_configs[channel_id] = config
+    return merged_configs
 
 
 def _plugin_manifest_contracts(manifest: dict[str, object]) -> dict[str, object]:
@@ -14026,6 +14857,455 @@ def _plugin_manifest_path_for_load_path(load_path: Path) -> Path | None:
     return manifest_path if manifest_path.is_file() else None
 
 
+def _plugin_bundle_manifest_path_for_load_path(
+    load_path: Path,
+) -> tuple[str, Path, Path] | None:
+    if load_path.is_file():
+        for bundle_format, relative_path in _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS.items():
+            if (
+                load_path.name == relative_path.name
+                and load_path.parent.name == relative_path.parent.name
+            ):
+                return bundle_format, load_path, load_path.parent.parent
+        return None
+    for bundle_format, relative_path in _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS.items():
+        manifest_path = load_path / relative_path
+        if manifest_path.is_file():
+            return bundle_format, manifest_path, load_path
+    if _plugin_manifestless_claude_bundle_root(load_path):
+        return "claude", load_path / _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS["claude"], load_path
+    return None
+
+
+def _plugin_manifestless_claude_bundle_root(load_path: Path) -> bool:
+    if not load_path.is_dir():
+        return False
+    if (load_path / _OPENCLAW_PLUGIN_MANIFEST_FILENAME).exists():
+        return False
+    if any(
+        (load_path / candidate).exists()
+        for candidate in _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES
+    ):
+        return False
+    return any((load_path / marker).exists() for marker in _OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS)
+
+
+def _plugin_bundle_path_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    return _plugin_manifest_string_list(value)
+
+
+def _plugin_bundle_merge_path_lists(*groups: list[str]) -> list[str]:
+    return _dedupe_cli_strings([entry for group in groups for entry in group])
+
+
+def _plugin_bundle_has_inline_capability(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value)
+    if isinstance(value, dict):
+        return bool(value)
+    return value is True
+
+
+def _plugin_bundle_existing_defaults(root_dir: Path, defaults: list[str]) -> list[str]:
+    return [relative for relative in defaults if (root_dir / relative).exists()]
+
+
+def _plugin_bundle_slug_id(raw_name: str | None, root_dir: Path) -> str:
+    source = (raw_name or root_dir.name).strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", source)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "bundle-plugin"
+
+
+def _plugin_bundle_codex_skills(manifest: dict[str, object], root_dir: Path) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get("skills"))
+    if declared:
+        return declared
+    return ["skills"] if (root_dir / "skills").exists() else []
+
+
+def _plugin_bundle_codex_hooks(manifest: dict[str, object], root_dir: Path) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get("hooks"))
+    if declared:
+        return declared
+    return ["hooks"] if (root_dir / "hooks").exists() else []
+
+
+def _plugin_bundle_claude_component_paths(
+    manifest: dict[str, object],
+    root_dir: Path,
+    key: str,
+    defaults: list[str],
+) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get(key))
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_existing_defaults(root_dir, defaults),
+        declared,
+    )
+
+
+def _plugin_bundle_claude_skill_paths(
+    manifest: dict[str, object],
+    root_dir: Path,
+) -> list[str]:
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_claude_component_paths(manifest, root_dir, "skills", ["skills"]),
+        _plugin_bundle_claude_component_paths(manifest, root_dir, "commands", ["commands"]),
+        _plugin_bundle_claude_component_paths(manifest, root_dir, "agents", ["agents"]),
+        _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "outputStyles",
+            ["output-styles"],
+        ),
+    )
+
+
+def _plugin_bundle_markdown_files(root_dir: Path) -> list[Path]:
+    files: list[Path] = []
+    if not root_dir.is_dir():
+        return files
+    for current, dirs, filenames in os.walk(root_dir):
+        dirs[:] = [dirname for dirname in dirs if not dirname.startswith(".")]
+        current_path = Path(current)
+        for filename in filenames:
+            if filename.startswith(".") or not filename.lower().endswith(".md"):
+                continue
+            files.append(current_path / filename)
+    return sorted(files, key=lambda path: str(path).lower())
+
+
+def _plugin_bundle_frontmatter(raw: str) -> tuple[dict[str, str], str]:
+    normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.startswith("---"):
+        return {}, normalized.strip()
+    end_index = normalized.find("\n---", 3)
+    if end_index == -1:
+        return {}, normalized.strip()
+    frontmatter: dict[str, str] = {}
+    for line in normalized[3:end_index].splitlines():
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        normalized_key = key.strip()
+        normalized_value = value.strip().strip("\"'")
+        if normalized_key:
+            frontmatter[normalized_key] = normalized_value
+    return frontmatter, normalized[end_index + 4 :].strip()
+
+
+def _plugin_bundle_frontmatter_bool(value: str | None, fallback: bool = False) -> bool:
+    normalized = (value or "").strip().lower()
+    if normalized in {"true", "yes", "1"}:
+        return True
+    if normalized in {"false", "no", "0"}:
+        return False
+    return fallback
+
+
+def _plugin_bundle_default_command_name(command_root: Path, file_path: Path) -> str:
+    relative = file_path.relative_to(command_root)
+    without_suffix = relative.with_suffix("")
+    return ":".join(without_suffix.parts)
+
+
+def _plugin_bundle_claude_commands(
+    manifest: dict[str, object],
+    root_dir: Path,
+) -> list[str]:
+    commands: list[str] = []
+    for relative_root in _plugin_bundle_claude_component_paths(
+        manifest,
+        root_dir,
+        "commands",
+        ["commands"],
+    ):
+        command_root = root_dir / relative_root
+        if not command_root.is_dir():
+            continue
+        for file_path in _plugin_bundle_markdown_files(command_root):
+            try:
+                raw = file_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            frontmatter, prompt = _plugin_bundle_frontmatter(raw)
+            if _plugin_bundle_frontmatter_bool(frontmatter.get("disable-model-invocation")):
+                continue
+            if not prompt:
+                continue
+            command_name = (
+                _optional_cli_string(frontmatter.get("name"))
+                or _plugin_bundle_default_command_name(command_root, file_path)
+            )
+            if command_name:
+                commands.append(command_name)
+    return _dedupe_cli_strings(commands)
+
+
+def _plugin_bundle_server_names_from_payload(
+    raw: object,
+    *,
+    key: str,
+) -> list[str]:
+    if not isinstance(raw, dict):
+        return []
+    nested = raw.get(key)
+    if isinstance(nested, dict):
+        source = nested
+    elif key == "mcpServers" and isinstance(raw.get("servers"), dict):
+        source = raw["servers"]
+    else:
+        source = raw
+    return [
+        server_name
+        for raw_name, raw_config in source.items()
+        if (server_name := _optional_cli_string(raw_name)) is not None
+        and isinstance(raw_config, dict)
+    ]
+
+
+def _plugin_bundle_server_config_paths(
+    bundle_format: str,
+    manifest: dict[str, object],
+    root_dir: Path,
+    *,
+    key: str,
+) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get(key))
+    default_path = ".mcp.json" if key == "mcpServers" else ".lsp.json"
+    if key == "lspServers" and bundle_format != "claude":
+        return declared
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_existing_defaults(root_dir, [default_path]),
+        declared,
+    )
+
+
+def _plugin_bundle_server_names(
+    bundle_format: str,
+    manifest: dict[str, object],
+    root_dir: Path,
+    *,
+    key: str,
+) -> list[str]:
+    names: list[str] = []
+    raw_inline = manifest.get(key)
+    if isinstance(raw_inline, dict):
+        names.extend(_plugin_bundle_server_names_from_payload(raw_inline, key=key))
+    for relative_path in _plugin_bundle_server_config_paths(
+        bundle_format,
+        manifest,
+        root_dir,
+        key=key,
+    ):
+        loaded = _read_cli_json5_object(root_dir / relative_path)
+        if loaded is None:
+            continue
+        names.extend(_plugin_bundle_server_names_from_payload(loaded, key=key))
+    return _dedupe_cli_strings(names)
+
+
+def _plugin_bundle_cursor_skill_paths(
+    manifest: dict[str, object],
+    root_dir: Path,
+) -> list[str]:
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_existing_defaults(root_dir, ["skills"]),
+        _plugin_bundle_path_list(manifest.get("skills")),
+        _plugin_bundle_existing_defaults(root_dir, [".cursor/commands"]),
+        _plugin_bundle_path_list(manifest.get("commands")),
+    )
+
+
+def _plugin_bundle_capabilities(
+    bundle_format: str,
+    manifest: dict[str, object],
+    root_dir: Path,
+    *,
+    skills: list[str],
+    hooks: list[str],
+    settings_files: list[str],
+) -> list[str]:
+    capabilities: list[str] = []
+    if skills:
+        capabilities.append("skills")
+    if bundle_format == "codex":
+        if hooks:
+            capabilities.append("hooks")
+        if _plugin_bundle_has_inline_capability(manifest.get("mcpServers")) or (
+            root_dir / ".mcp.json"
+        ).exists():
+            capabilities.append("mcpServers")
+        if _plugin_bundle_has_inline_capability(manifest.get("apps")) or (
+            root_dir / ".app.json"
+        ).exists():
+            capabilities.append("apps")
+        return capabilities
+    if bundle_format == "claude":
+        if _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "commands",
+            ["commands"],
+        ):
+            capabilities.append("commands")
+        if _plugin_bundle_claude_component_paths(manifest, root_dir, "agents", ["agents"]):
+            capabilities.append("agents")
+        if hooks:
+            capabilities.append("hooks")
+        if _plugin_bundle_has_inline_capability(manifest.get("mcpServers")) or (
+            _plugin_bundle_claude_component_paths(
+                manifest,
+                root_dir,
+                "mcpServers",
+                [".mcp.json"],
+            )
+        ):
+            capabilities.append("mcpServers")
+        if _plugin_bundle_has_inline_capability(manifest.get("lspServers")) or (
+            _plugin_bundle_claude_component_paths(
+                manifest,
+                root_dir,
+                "lspServers",
+                [".lsp.json"],
+            )
+        ):
+            capabilities.append("lspServers")
+        if _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "outputStyles",
+            ["output-styles"],
+        ):
+            capabilities.append("outputStyles")
+        if settings_files:
+            capabilities.append("settings")
+        return capabilities
+    if _plugin_bundle_existing_defaults(root_dir, [".cursor/commands"]) or _plugin_bundle_path_list(
+        manifest.get("commands")
+    ):
+        capabilities.append("commands")
+    if _plugin_bundle_existing_defaults(root_dir, [".cursor/agents"]) or _plugin_bundle_path_list(
+        manifest.get("subagents") or manifest.get("agents")
+    ):
+        capabilities.append("agents")
+    if _plugin_bundle_has_inline_capability(manifest.get("hooks")) or (
+        root_dir / ".cursor" / "hooks.json"
+    ).exists():
+        capabilities.append("hooks")
+    if _plugin_bundle_has_inline_capability(manifest.get("rules")) or (
+        root_dir / ".cursor" / "rules"
+    ).exists():
+        capabilities.append("rules")
+    if _plugin_bundle_has_inline_capability(manifest.get("mcpServers")) or (
+        root_dir / ".mcp.json"
+    ).exists():
+        capabilities.append("mcpServers")
+    return capabilities
+
+
+def _plugin_bundle_manifest_record(
+    bundle_format: str,
+    manifest_path: Path,
+    root_dir: Path,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object] | None = None,
+) -> dict[str, object] | None:
+    manifest = _read_cli_json5_object(manifest_path)
+    if manifest is None:
+        if bundle_format != "claude" or manifest_path.exists():
+            return None
+        manifest = {}
+    interface_record = manifest.get("interface")
+    interface_payload = interface_record if isinstance(interface_record, dict) else {}
+    name = _optional_cli_string(manifest.get("name"))
+    plugin_id = _plugin_bundle_slug_id(name, root_dir)
+    description = (
+        _optional_cli_string(manifest.get("description"))
+        or _optional_cli_string(manifest.get("shortDescription"))
+        or _optional_cli_string(interface_payload.get("shortDescription"))
+        or ""
+    )
+    settings_files: list[str] = []
+    if bundle_format == "codex":
+        skills = _plugin_bundle_codex_skills(manifest, root_dir)
+        hooks = _plugin_bundle_codex_hooks(manifest, root_dir)
+    elif bundle_format == "claude":
+        skills = _plugin_bundle_claude_skill_paths(manifest, root_dir)
+        hooks = _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "hooks",
+            ["hooks/hooks.json"],
+        )
+        settings_files = _plugin_bundle_existing_defaults(root_dir, ["settings.json"])
+    else:
+        skills = _plugin_bundle_cursor_skill_paths(manifest, root_dir)
+        hooks = []
+    bundle_capabilities = _plugin_bundle_capabilities(
+        bundle_format,
+        manifest,
+        root_dir,
+        skills=skills,
+        hooks=hooks,
+        settings_files=settings_files,
+    )
+    record: dict[str, object] = {
+        "id": plugin_id,
+        "name": name or plugin_id,
+        "status": _plugin_manifest_status(
+            {},
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+        ),
+        "format": "bundle",
+        "source": str(root_dir),
+        "origin": "config",
+        "description": description,
+        "capabilities": [f"bundle:{capability}" for capability in bundle_capabilities],
+        "parityStatus": "metadata",
+        "rootDir": str(root_dir),
+        "manifestPath": str(manifest_path),
+        "bundleFormat": bundle_format,
+        "bundleCapabilities": bundle_capabilities,
+        "skills": skills,
+        "hooks": hooks,
+    }
+    version = _optional_cli_string(manifest.get("version"))
+    if version is not None:
+        record["version"] = version
+    if settings_files:
+        record["settingsFiles"] = settings_files
+    if bundle_format == "claude":
+        commands = _plugin_bundle_claude_commands(manifest, root_dir)
+        if commands:
+            record["commands"] = commands
+    mcp_servers = _plugin_bundle_server_names(
+        bundle_format,
+        manifest,
+        root_dir,
+        key="mcpServers",
+    )
+    if mcp_servers:
+        record["mcpServers"] = mcp_servers
+    lsp_servers = _plugin_bundle_server_names(
+        bundle_format,
+        manifest,
+        root_dir,
+        key="lspServers",
+    )
+    if lsp_servers:
+        record["lspServers"] = lsp_servers
+    return record
+
+
 def _plugin_manifest_status(
     manifest: dict[str, object],
     *,
@@ -14061,6 +15341,7 @@ def _plugin_record_from_openclaw_manifest(
     *,
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
+    diagnostics: list[dict[str, object]] | None = None,
 ) -> dict[str, object] | None:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -14074,10 +15355,35 @@ def _plugin_record_from_openclaw_manifest(
         return None
     contracts = _plugin_manifest_contracts(manifest)
     capabilities = _plugin_manifest_capabilities(manifest, contracts)
-    description = _optional_cli_string(manifest.get("description")) or ""
+    package_metadata = _plugin_package_json_metadata(manifest_path.parent)
+    package_openclaw = package_metadata.get("openclaw")
+    current_version = (
+        _optional_cli_string(config_snapshot.get("serverVersion"))
+        if config_snapshot is not None
+        else None
+    ) or __version__
+    min_host_diagnostic = _plugin_min_host_version_diagnostic(
+        package_openclaw,
+        current_version=current_version,
+        plugin_id=plugin_id,
+        source=str(manifest_path),
+    )
+    if min_host_diagnostic is not None:
+        if diagnostics is not None:
+            diagnostics.append(min_host_diagnostic)
+        return None
+    description = (
+        _optional_cli_string(manifest.get("description"))
+        or _optional_cli_string(package_metadata.get("description"))
+        or ""
+    )
     record: dict[str, object] = {
         "id": plugin_id,
-        "name": _optional_cli_string(manifest.get("name")) or plugin_id,
+        "name": (
+            _optional_cli_string(manifest.get("name"))
+            or _optional_cli_string(package_metadata.get("name"))
+            or plugin_id
+        ),
         "status": _plugin_manifest_status(
             manifest,
             plugin_id=plugin_id,
@@ -14094,9 +15400,21 @@ def _plugin_record_from_openclaw_manifest(
         "manifestPath": str(manifest_path),
         "configSchema": True,
     }
-    version = _optional_cli_string(manifest.get("version"))
+    version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
+        package_metadata.get("version")
+    )
     if version is not None:
         record["version"] = version
+    for metadata_key, metadata_value in _plugin_package_openclaw_record_metadata(
+        package_openclaw,
+        plugin_root=manifest_path.parent,
+    ).items():
+        record[metadata_key] = metadata_value
+    for metadata_key, metadata_value in _plugin_manifest_root_metadata(
+        manifest,
+        root_dir=manifest_path.parent,
+    ).items():
+        record[metadata_key] = metadata_value
     if contracts:
         record["contracts"] = contracts
     tool_names = contracts.get("tools")
@@ -14115,11 +15433,15 @@ def _plugin_record_from_openclaw_manifest(
     if qa_runners:
         record["qaRunners"] = qa_runners
     channel_configs = _plugin_manifest_channel_configs(manifest.get("channelConfigs"))
+    channel_configs = _merge_package_channel_meta(channel_configs, package_openclaw)
     if channel_configs:
         record["channelConfigs"] = channel_configs
     model_support = _plugin_manifest_model_support(manifest.get("modelSupport"))
     if model_support:
         record["modelSupport"] = model_support
+    config_contracts = _plugin_manifest_config_contracts(manifest.get("configContracts"))
+    if config_contracts:
+        record["configContracts"] = config_contracts
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
         record[metadata_key] = metadata_value
     for key in (
@@ -14147,18 +15469,30 @@ def _plugin_manifest_records_from_config_snapshot(
     plugins_config: dict[str, object],
     *,
     config_snapshot: dict[str, object],
+    diagnostics: list[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     seen_ids: set[str] = set()
     for load_path in _plugin_manifest_load_paths(plugins_config):
         manifest_path = _plugin_manifest_path_for_load_path(load_path)
-        if manifest_path is None:
+        if manifest_path is not None:
+            record = _plugin_record_from_openclaw_manifest(
+                manifest_path,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+                diagnostics=diagnostics,
+            )
+        elif bundle_match := _plugin_bundle_manifest_path_for_load_path(load_path):
+            bundle_format, bundle_manifest_path, bundle_root_dir = bundle_match
+            record = _plugin_bundle_manifest_record(
+                bundle_format,
+                bundle_manifest_path,
+                bundle_root_dir,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+            )
+        else:
             continue
-        record = _plugin_record_from_openclaw_manifest(
-            manifest_path,
-            plugins_config=plugins_config,
-            config_snapshot=config_snapshot,
-        )
         if record is None:
             continue
         plugin_id = str(record.get("id") or "")
@@ -14169,12 +15503,17 @@ def _plugin_manifest_records_from_config_snapshot(
     return records
 
 
-def _plugin_records_from_config_snapshot(snapshot: dict[str, object]) -> list[dict[str, object]]:
+def _plugin_records_from_config_snapshot(
+    snapshot: dict[str, object],
+    *,
+    diagnostics: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
     plugins = snapshot.get("plugins")
     plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
     manifest_records = _plugin_manifest_records_from_config_snapshot(
         plugins_config,
         config_snapshot=snapshot,
+        diagnostics=diagnostics,
     )
     records_by_id = {
         str(record.get("id") or ""): dict(record)
@@ -17845,7 +19184,13 @@ def plugins_install_command(
     json_output: bool = typer.Option(False, "--json", help="Emit install result as JSON."),
 ) -> None:
     del dangerously_force_unsafe_install
-    if marketplace is None:
+    resolved_plugin_id = plugin_id
+    resolved_marketplace = marketplace
+    if resolved_marketplace is None:
+        shortcut = _resolve_cli_marketplace_install_shortcut(plugin_id)
+        if shortcut is not None:
+            resolved_plugin_id, resolved_marketplace = shortcut
+    if resolved_marketplace is None:
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",
@@ -17862,8 +19207,8 @@ def plugins_install_command(
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_plugins_marketplace_install_payload(
             services,
-            plugin_id=plugin_id,
-            marketplace=marketplace,
+            plugin_id=resolved_plugin_id,
+            marketplace=resolved_marketplace,
             force=force,
         )
 

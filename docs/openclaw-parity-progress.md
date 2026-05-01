@@ -7,7 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support metadata slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, and remote marketplace path-entry install slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~97% after closing the bundle metadata mini-queue, the known-local marketplace install shortcut, remote marketplace source listing, and durable remote path-entry installs; remote plugin entry-source downloads/update breadth still keeps plugin install parity short of complete.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -842,6 +843,101 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_inspect_all_json_includes_saved_install_records"` (`11 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest
+  `configContracts` entries, including compatibility migration/runtime paths,
+  dangerous literal config flags, and secret input materialization hints for
+  pre-runtime config ownership.
+- Verified the manifest config-contract metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_config_contracts
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`12 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest root
+  identity/classification metadata: `enabledByDefault`, `legacyPluginIds`,
+  `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
+  `providerDiscoverySource` resolved from `providerDiscoveryEntry`,
+  `cliBackends`, `skills`, and `configUiHints` projected from top-level
+  `uiHints`.
+- Verified the manifest root metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`13 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also reads adjacent `package.json`
+  OpenClaw metadata for package name/version/description fallbacks,
+  `setupSource`, startup deferral, channel catalog metadata, and package-owned
+  channel label/description/prefer-over hydration.
+- Verified the package manifest runtime metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`14 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Package manifest `openclaw.install.minHostVersion` now gates metadata-only
+  plugin discovery with OpenClaw-shaped skip diagnostics for incompatible,
+  invalid, or indeterminate host versions.
+- Verified the package min-host metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_skips_incompatible_package_manifest_min_host_version
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_skips_incompatible_package_manifest_min_host_version or
+  plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`15 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - `plugins list --json`, `plugins inspect --json`, and `plugins doctor --json`
   now project OpenClaw-style bundled plugin runtime dependency inventory from
   `package.json` `dependencies` / `optionalDependencies`, compute bundled
@@ -1645,7 +1741,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~99% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, direct-announce provider metadata, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~91% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, and model-support metadata, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Partial | ~95% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
@@ -1717,6 +1813,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_model_support or plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 11 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest model-support metadata slice.
 - `mypy src\openzues\cli.py`: clean after the manifest model-support metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_config_contracts -q`: 1 passed after preserving OpenClaw manifest config-contract metadata in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_config_contracts or plugins_list_json_preserves_manifest_model_support or plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 12 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest config-contract metadata slice.
+- `mypy src\openzues\cli.py`: clean after the manifest config-contract metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification -q`: 1 passed after preserving OpenClaw manifest root identity/classification metadata in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_identity_and_classification or plugins_list_json_preserves_manifest_config_contracts or plugins_list_json_preserves_manifest_model_support or plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 13 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest root metadata slice.
+- `mypy src\openzues\cli.py`: clean after the manifest root metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata -q`: 1 passed after preserving OpenClaw package manifest runtime metadata in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_package_manifest_runtime_metadata or plugins_list_json_preserves_manifest_identity_and_classification or plugins_list_json_preserves_manifest_config_contracts or plugins_list_json_preserves_manifest_model_support or plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 14 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the package manifest runtime metadata slice.
+- `mypy src\openzues\cli.py`: clean after the package manifest runtime metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_skips_incompatible_package_manifest_min_host_version -q`: 1 passed after adding OpenClaw package min-host skip diagnostics.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_skips_incompatible_package_manifest_min_host_version or plugins_list_json_preserves_package_manifest_runtime_metadata or plugins_list_json_preserves_manifest_identity_and_classification or plugins_list_json_preserves_manifest_config_contracts or plugins_list_json_preserves_manifest_model_support or plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 15 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the package min-host metadata slice.
+- `mypy src\openzues\cli.py`: clean after the package min-host metadata slice.
 - `python -m pytest tests\test_cli.py::test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies tests\test_cli.py::test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies tests\test_cli.py::test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins -q`: 3 passed after adding bundled plugin runtime dependency inventory and doctor diagnostics.
 - `python -m pytest tests\test_cli.py -q -k "plugins_list_json_discovers_openclaw_manifest_load_paths or runtime_deps or runtime_dependencies or plugins_doctor or plugins_inspect_json_projects_runtime_executor_tools"`: 8 passed after rechecking adjacent plugin CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the bundled plugin runtime dependency doctor slice.
@@ -6712,6 +6824,178 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -q` (`2 failed` before implementation because the CLI rejected the aliases),
   then the same command (`2 passed`), adjacent route send/poll proof `python -m
   pytest tests\test_cli.py -q -k "routes_send or routes_poll"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins list --json` now also discovers explicit OpenClaw bundle manifests
+  from configured `plugins.load.paths`: `.codex-plugin/plugin.json`,
+  `.claude-plugin/plugin.json`, and `.cursor-plugin/plugin.json` are projected
+  as native metadata-only `format="bundle"` records with bundle format,
+  capability, skill, hook, and settings-file metadata, instead of falling back
+  to bare `plugins.entries.<id>` configured rows.
+- Progress estimates were adjusted after this slice: CLI + operator control
+  plane parity moves from roughly 93% to 94%. Repo-wide parity remains roughly
+  48% because packaging/distribution, companion app breadth, TUI surfaces, and
+  standalone ACP bridge work still dominate the whole-product estimate.
+- Verified the bundle-manifest inventory slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths
+  -q` (`1 failed` before implementation because bundle paths fell back to
+  configured plugin rows), then the same command (`1 passed`), adjacent plugin
+  inventory proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_skips_incompatible_package_manifest_min_host_version or
+  plugins_inspect_json_projects_record_runtime_surfaces"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins list --json` now also mirrors OpenClaw's manifestless Claude bundle
+  detection: configured plugin roots with Claude bundle marker paths such as
+  `skills`, `commands`, or `settings.json` become metadata-only
+  `format="bundle"` / `bundleFormat="claude"` records when no native plugin
+  manifest or default runtime entry file is present.
+- Progress estimates remain at roughly 48% repo-wide and ~94% for the
+  CLI/operator control plane after this adjacent sub-slice; the unresolved
+  plugin-bundle queue now focuses on JSON5 parsing and runtime command/MCP/LSP
+  projection.
+- Verified the manifestless Claude bundle slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_discovers_manifestless_claude_bundle_load_paths
+  -q` (`1 failed` before implementation because the marker-only root fell back
+  to a configured plugin row), then the same command (`1 passed`), adjacent
+  bundle inventory proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_discovers_manifestless_claude_bundle_load_paths or
+  plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_preserves_package_manifest_runtime_metadata"` (`4 passed`),
+  focused bundle recheck (`2 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Bundle manifest discovery now accepts the same JSON5-style syntax covered by
+  OpenClaw's `bundle-manifest.test.ts` fixtures for metadata inventory:
+  comments, unquoted object keys, and trailing commas are normalized on the
+  bundle-manifest read path before projection.
+- Progress estimates remain at roughly 48% repo-wide and ~94% for the
+  CLI/operator control plane after this adjacent parsing slice; the next plugin
+  bundle queue head is command/MCP/LSP runtime projection rather than metadata
+  file discovery.
+- Verified the JSON5 bundle manifest slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_accepts_json5_bundle_manifests -q`
+  (`1 failed` before implementation because the row used the configured plugin
+  fallback name), then the same command (`1 passed`), adjacent bundle inventory
+  proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_accepts_json5_bundle_manifests or
+  plugins_list_json_discovers_manifestless_claude_bundle_load_paths or
+  plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`4 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Claude bundle command roots now project OpenClaw-style Markdown command
+  metadata into native plugin records and `plugins inspect --json`: command
+  names come from frontmatter `name` or relative path defaults, and
+  `disable-model-invocation` entries are skipped.
+- Progress estimates remain at roughly 48% repo-wide and ~94% for the
+  CLI/operator control plane after this command-projection slice; remaining
+  plugin-bundle runtime projection is now MCP/LSP breadth plus deeper activation
+  and import behavior.
+- Verified the Claude bundle command projection slice with `python -m pytest
+  tests\test_cli.py::test_plugins_inspect_json_projects_claude_bundle_commands
+  -q` (`1 failed` before implementation because `commands` was absent), then
+  the same command (`1 passed`), adjacent bundle/plugin proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_inspect_json_projects_claude_bundle_commands or
+  plugins_list_json_accepts_json5_bundle_manifests or
+  plugins_list_json_discovers_manifestless_claude_bundle_load_paths or
+  plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
+  plugins_inspect_json_projects_record_runtime_surfaces"` (`5 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Bundle MCP/LSP server names now project into native plugin records and
+  `plugins inspect --json`, covering inline and file-backed server maps for the
+  OpenClaw bundle config shapes (`mcpServers`, `servers`, and `lspServers`).
+- Progress estimates were adjusted after closing the bundle metadata/projection
+  mini-queue: CLI + operator control plane parity moves from roughly 94% to
+  95%. Repo-wide parity remains roughly 48% while packaging/distribution,
+  companion apps, TUI surfaces, and standalone ACP bridge work remain large.
+- Verified the bundle MCP/LSP server projection slice with `python -m pytest
+  tests\test_cli.py::test_plugins_inspect_json_projects_bundle_mcp_and_lsp_servers
+  -q` (`1 failed` before implementation because `mcpServers` was absent), then
+  the same command (`1 passed`), adjacent bundle/plugin proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_inspect_json_projects_bundle_mcp_and_lsp_servers or
+  plugins_inspect_json_projects_claude_bundle_commands or
+  plugins_list_json_accepts_json5_bundle_manifests or
+  plugins_list_json_discovers_manifestless_claude_bundle_load_paths or
+  plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
+  plugins_inspect_json_projects_record_runtime_surfaces"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins install <plugin>@<known-marketplace>` now mirrors OpenClaw's Claude
+  known marketplace shortcut for local `installLocation` records. The native
+  CLI reads `~/.claude/plugins/known_marketplaces.json`, resolves the shortcut
+  into the existing marketplace install flow, persists the known marketplace
+  name as `marketplaceSource`, and keeps local update compatibility through the
+  same resolver.
+- Progress estimates were adjusted after this shortcut slice: CLI + operator
+  control plane parity moves from roughly 95% to 96%. Repo-wide parity remains
+  roughly 48% while remote marketplace clone/download/update behavior,
+  packaging/distribution, companion apps, TUI surfaces, and standalone ACP
+  bridge work remain large.
+- Verified the known marketplace shortcut slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_resolves_known_marketplace_shortcut
+  -q` (`1 failed` before implementation because `plugins install` still
+  required `--marketplace`), then the same command (`1 passed`), adjacent
+  marketplace/install/update proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_resolves_known_marketplace_shortcut or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_marketplace_list_json_reads_local_manifest or
+  plugins_update_json_refreshes_local_marketplace_install or
+  plugins_uninstall_json_removes_native_install_metadata"` (`5 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins marketplace list <github-source>` now follows OpenClaw's remote
+  marketplace listing shape for GitHub/Git sources through a fakeable clone
+  adapter. The native CLI resolves cloned `.claude-plugin/marketplace.json`
+  files, preserves the remote source label, normalizes plugin sources to
+  `kind` records, validates remote path entries stay inside the cloned root,
+  and runs clone cleanup after JSON projection.
+- Progress estimates remain roughly 48% repo-wide and ~96% for the
+  CLI/operator control plane after this remote-listing slice; the remaining
+  plugin marketplace queue is now remote install/download/update execution for
+  Git/GitHub/URL plugin sources, not source listing.
+- Verified the remote marketplace listing slice with `python -m pytest
+  tests\test_cli.py::test_plugins_marketplace_list_json_reads_cloned_github_shorthand
+  -q` (`1 failed` before implementation because the CLI only resolved local
+  marketplace paths), then the same command (`1 passed`), adjacent marketplace
+  proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_marketplace_list_json_reads_cloned_github_shorthand or
+  plugins_marketplace_list_json_reads_local_manifest or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut or
+  plugins_update_json_refreshes_local_marketplace_install"` (`5 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins install <plugin> --marketplace <github-source>` now supports the
+  first remote marketplace install path natively. The fakeable clone adapter is
+  reused for Git/GitHub marketplace sources, remote path entries are resolved
+  inside the cloned marketplace root, plugin directories/files are copied into
+  a durable OpenZues data-dir install root before clone cleanup, and the saved
+  `plugins.installs.<id>` record preserves the remote marketplace source label.
+- Progress estimates were adjusted after this remote install slice: CLI +
+  operator control plane parity moves from roughly 96% to 97%. Repo-wide parity
+  remains roughly 48% while remote entry-source downloads/update,
+  packaging/distribution, companion apps, TUI surfaces, and standalone ACP
+  bridge work remain large.
+- Verified the remote marketplace install slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_marketplace_json_persists_cloned_github_entry
+  -q` (`1 failed` before implementation because `plugins install` still
+  resolved only local marketplace manifests), then the same command (`1
+  passed`), adjacent marketplace proof `python -m pytest tests\test_cli.py -q
+  -k "plugins_install_marketplace_json_persists_cloned_github_entry or
+  plugins_marketplace_list_json_reads_cloned_github_shorthand or
+  plugins_marketplace_list_json_reads_local_manifest or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut or
+  plugins_update_json_refreshes_local_marketplace_install or
+  plugins_uninstall_json_removes_native_install_metadata"` (`7 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 

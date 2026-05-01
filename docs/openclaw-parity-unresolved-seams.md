@@ -15,7 +15,14 @@ Current percentage rollup:
 - The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
-  channel-config/model-support metadata slices.
+  channel-config/model-support/config-contract/root/package/min-host plus
+  JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
+  plus MCP/LSP server projection, known Claude marketplace shortcut, remote
+  marketplace listing, and remote marketplace path-entry install slices.
+- The CLI/operator control-plane family is estimated at ~97% after the bundle
+  metadata mini-queue, known-local marketplace install shortcut, remote
+  marketplace source listing, and durable remote path-entry installs; remote
+  plugin entry-source downloads/update breadth remains open.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1335,17 +1342,29 @@ existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
 append configured allowlists on enable, and mirror built-in channel plugin
 toggles into `channels.<id>.enabled` for channel-backed providers. Remaining
-plugin CLI parity is remote marketplace clone/update breadth and deeper
-production plugin manifest/runtime metadata discovery. `plugins marketplace list` now
+plugin CLI parity is remote marketplace entry-source download/update breadth
+beyond source listing, path-entry install, and known local shortcuts, plus deeper production plugin
+manifest/runtime metadata discovery. `plugins marketplace list` now
 supports local Claude-compatible marketplace manifests from
 `.claude-plugin/marketplace.json` or `marketplace.json`, returning the
 OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while
-leaving remote clone semantics to the heavier packaging/install queue.
+also supporting fakeable Git/GitHub source clone/list flows with remote source
+labels, normalized `kind` source records, remote path validation, and clone
+cleanup. Remote plugin install/download execution remains in the heavier
+packaging/install queue for non-path entry sources and update refreshes.
 `plugins install <name> --marketplace <local>` now resolves local manifest
 entries, rejects escaping/missing plugin sources, persists an OpenClaw-shaped
 `plugins.installs.<id>` marketplace record, enables the plugin, appends the
 native load path, and returns JSON/human restart posture without importing the
-TypeScript runtime. `plugins uninstall` now removes native plugin config
+TypeScript runtime. `plugins install <name>@<known-marketplace>` now also reads
+Claude's `known_marketplaces.json` local `installLocation` records, routes the
+shortcut through the same native marketplace install flow, and preserves the
+known marketplace name as `marketplaceSource` for later updates. `plugins
+install <name> --marketplace <github-source>` now also supports remote
+marketplace path entries by cloning through the fakeable Git/GitHub adapter,
+copying the resolved plugin directory/file into a durable OpenZues data-dir
+install root, cleaning up the clone, and preserving the remote source label in
+the install record. `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
 intact and reporting OpenClaw-shaped action metadata. `plugins update` now
@@ -1371,7 +1390,36 @@ provider auth choice metadata. Manifest `qaRunners` descriptors are also
 preserved for QA fallback command inventory, and manifest `channelConfigs`
 metadata is preserved for setup/onboarding channel configuration. Manifest
 `modelSupport` metadata is preserved for pre-runtime model-family ownership
-hints. `plugins inspect --json`
+hints, and manifest `configContracts` metadata is preserved for compatibility
+config path ownership, dangerous literal flags, and secret input materialization
+hints. Manifest root identity/classification fields are now also preserved,
+including `enabledByDefault`, `legacyPluginIds`,
+`autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
+`providerDiscoverySource` resolved from `providerDiscoveryEntry`,
+`cliBackends`, `skills`, and `configUiHints` projected from top-level
+`uiHints`. Adjacent package manifest metadata now also supplies package
+name/version/description fallbacks, setup source, startup deferral, channel
+catalog metadata, and package-owned channel label/description/prefer-over
+hydration. Package `openclaw.install.minHostVersion` now also gates
+metadata-only plugin discovery with OpenClaw-shaped skip diagnostics.
+Configured plugin load paths that point at explicit OpenClaw bundle roots now
+also produce metadata-only `format="bundle"` records for Codex, Claude, and
+Cursor bundle manifests, preserving `bundleFormat`, `bundleCapabilities`,
+skills, hooks, settings-file metadata, root/manifest paths, and configured
+enablement without importing external bundle runtimes.
+Configured marker-only Claude bundle roots now also match OpenClaw's
+manifestless bundle detection when they contain markers such as `skills`,
+`commands`, or `settings.json` and no native plugin manifest/default entry file,
+preserving the same metadata-only bundle projection.
+Bundle manifest reads now also accept OpenClaw's JSON5 fixture subset for
+metadata inventory: comments, unquoted object keys, and trailing commas are
+normalized before Codex/Claude/Cursor bundle projection.
+Claude bundle command roots now also project Markdown command names into native
+plugin inventory/inspect metadata, including frontmatter `name` overrides,
+relative-path defaults, and `disable-model-invocation` skips.
+Bundle MCP/LSP server maps now also project into native plugin inventory/inspect
+metadata for inline and file-backed OpenClaw bundle config shapes.
+`plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
 runtime executor specs mark discovered plugins as imported, switch the inspect
@@ -1392,9 +1440,10 @@ Inspect reports now also project OpenClaw-shaped policy summaries from
 surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
 `httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
 metadata-only manifest records instead of being zeroed in the report.
-Remaining plugin CLI parity is remote marketplace clone/update breadth and
-deeper runtime activation/import metadata beyond the native metadata/runtime
-projection.
+Remaining plugin CLI parity is remote marketplace entry-source execution for
+Git/GitHub/git-subdir/URL plugin sources, archive/download handling, remote
+update refreshes, and deeper runtime activation/import metadata beyond the
+native metadata/runtime projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
@@ -3479,6 +3528,96 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_cli.py::test_plugins_list_json_preserves_manifest_model_support
   -q`, adjacent `python -m pytest tests\test_cli.py -q -k
   "plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest config-contract metadata seam from OpenClaw
+  `manifest.ts` / `manifest-registry.test.ts`: metadata-only plugin discovery
+  now preserves `configContracts` compatibility migration/runtime paths,
+  dangerous config flags with literal values, and secret input path contracts
+  from `openclaw.plugin.json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_config_contracts
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest root identity/classification metadata seam from
+  OpenClaw `manifest.ts` /
+  `contracts/inventory/bundled-capability-metadata.ts`: metadata-only plugin
+  discovery now preserves `enabledByDefault`, `legacyPluginIds`,
+  `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
+  `providerDiscoverySource` resolved from `providerDiscoveryEntry`,
+  `cliBackends`, `skills`, and `configUiHints` projected from top-level
+  `uiHints` in `openclaw.plugin.json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the package manifest runtime metadata seam from OpenClaw
+  `manifest-registry.ts` / `discovery.ts`: metadata-only plugin discovery now
+  reads adjacent `package.json` `openclaw` metadata for package
+  name/version/description fallbacks, `setupSource`, startup deferral, channel
+  catalog metadata, and package channel label/description/prefer-over hydration.
+  Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the package min-host metadata seam from OpenClaw
+  `min-host-version.ts` / `manifest-registry.test.ts`: metadata-only plugin
+  discovery now skips packages whose `openclaw.install.minHostVersion` is
+  incompatible, invalid, or indeterminate, and returns OpenClaw-shaped
+  diagnostics from `plugins list --json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_skips_incompatible_package_manifest_min_host_version
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_skips_incompatible_package_manifest_min_host_version or
+  plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
   plugins_list_json_preserves_manifest_channel_configs or
   plugins_list_json_preserves_manifest_qa_runners or
   plugins_list_json_preserves_manifest_auth_and_env_metadata or
