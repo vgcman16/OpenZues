@@ -6123,6 +6123,147 @@ def _with_doctor_gateway_config_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+_GATEWAY_RUNTIME_NODE_MIGRATION_CODES = {
+    "gateway-runtime-bun",
+    "gateway-runtime-node-version-manager",
+}
+_GATEWAY_RUNTIME_MISSING_SYSTEM_NODE_WARNING = (
+    "System Node 22 LTS (22.14+) or Node 24 not found. Install via "
+    "Homebrew/apt/choco and rerun doctor to migrate off Bun/version managers."
+)
+
+
+def _doctor_node_version_tuple(version: str | None) -> tuple[int, int, int] | None:
+    if version is None:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _doctor_node_version_supported(version: str | None) -> bool:
+    parsed = _doctor_node_version_tuple(version)
+    if parsed is None:
+        return False
+    return parsed >= (22, 14, 0)
+
+
+def _resolve_doctor_gateway_system_node_info() -> dict[str, object] | None:
+    node_path = shutil.which("node")
+    if node_path is None:
+        return None
+    version: str | None = None
+    try:
+        completed = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        completed = None
+    if completed is not None and completed.returncode == 0:
+        version = _optional_cli_string(completed.stdout)
+    return {
+        "path": node_path,
+        "version": version.lstrip("v") if version is not None else None,
+        "supported": _doctor_node_version_supported(version),
+    }
+
+
+def _doctor_gateway_service_audit_issues(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    gateway = _dict_config(snapshot.get("gateway"))
+    containers = (
+        gateway.get("serviceAudit"),
+        snapshot.get("gatewayServiceAudit"),
+        snapshot.get("serviceAudit"),
+    )
+    issues: list[dict[str, object]] = []
+    for container in containers:
+        if isinstance(container, dict):
+            raw_issues = container.get("issues")
+        else:
+            raw_issues = container
+        if not isinstance(raw_issues, list):
+            continue
+        for issue in raw_issues:
+            if isinstance(issue, dict):
+                issues.append(dict(issue))
+    return issues
+
+
+def _doctor_gateway_needs_node_runtime_migration(issues: Sequence[object]) -> bool:
+    return any(
+        isinstance(issue, dict)
+        and _optional_cli_string(issue.get("code")) in _GATEWAY_RUNTIME_NODE_MIGRATION_CODES
+        for issue in issues
+    )
+
+
+def _doctor_gateway_system_node_warning(
+    system_node: dict[str, object] | None,
+) -> str | None:
+    if system_node is None or system_node.get("supported") is True:
+        return None
+    version = _optional_cli_string(system_node.get("version")) or "unknown"
+    path = _optional_cli_string(system_node.get("path")) or "unknown"
+    return (
+        f"System Node {version} at {path} is below the required Node 22.14+. "
+        "Install Node 24 (recommended) or Node 22 LTS from nodejs.org or Homebrew."
+    )
+
+
+def _build_doctor_gateway_runtime_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    issues = _doctor_gateway_service_audit_issues(snapshot)
+    if not _doctor_gateway_needs_node_runtime_migration(issues):
+        return None
+    system_node = _resolve_doctor_gateway_system_node_info()
+    if isinstance(system_node, dict) and system_node.get("supported") is True:
+        return None
+    warnings = [
+        warning
+        for warning in (
+            _doctor_gateway_system_node_warning(system_node),
+            _GATEWAY_RUNTIME_MISSING_SYSTEM_NODE_WARNING,
+        )
+        if warning is not None
+    ]
+    return {
+        "status": "warning",
+        "summary": "Gateway runtime needs a supported system Node before migration.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-runtime",
+        "reason": "node_runtime_migration_requires_system_node",
+        "needsNodeRuntimeMigration": True,
+        "systemNode": system_node,
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_gateway_runtime_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    gateway_runtime = _build_doctor_gateway_runtime_payload(config_service)
+    if gateway_runtime is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["gatewayRuntime"] = gateway_runtime
+    warnings = [
+        str(warning)
+        for warning in _object_list(gateway_runtime.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
 _CLAUDE_CLI_PROVIDER_ID = "claude-cli"
 _CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli"
 
@@ -21840,6 +21981,10 @@ def doctor(
             services.gateway_config,
         )
         payload = _with_doctor_gateway_config_payload(
+            payload,
+            services.gateway_config,
+        )
+        payload = _with_doctor_gateway_runtime_payload(
             payload,
             services.gateway_config,
         )

@@ -6272,6 +6272,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Top-level `doctor --json` now includes an OpenClaw-shaped
+  `doctor:gateway-runtime` contribution for service-audit rows that need Node
+  runtime migration. The native probe reports too-old system Node with the
+  upstream `below the required Node 22.14+` warning, reports missing system
+  Node with the upstream Node 22 LTS / Node 24 guidance, and promotes the
+  warning text into the top-level doctor warnings list.
+- Verified the gateway-runtime Node doctor slice with `python -m pytest
+  tests\test_cli.py -q -k "gateway_runtime_node"` (`2 failed` before
+  implementation, missing `gatewayRuntime`), then the same command (`2
+  passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
+  "gateway_runtime_node or gateway_mode_is_unset or
+  gateway_auth_missing_local_token or
+  doctor_and_update_status_json_include_hermes_sections"` (`5 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 

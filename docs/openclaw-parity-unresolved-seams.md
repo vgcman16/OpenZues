@@ -930,7 +930,13 @@ Sandbox doctor preflight for `agents.defaults.sandbox.mode`: when mode is
 `non-main` or `all`, the effective backend defaults to Docker, and `docker
 version` is unavailable, the Hermes doctor payload carries the same actionable
 Sandbox warning text while preserving the existing warning surface. The
-top-level human/JSON doctor view now also reports OpenClaw-style session lock
+top-level doctor view now also includes a native `doctor:gateway-runtime`
+contribution for OpenClaw service-audit rows that still require migration to a
+stable system Node runtime. It reports too-old system Node versions with the
+upstream `Node 22.14+` warning, reports missing system Node with the upstream
+Node 22 LTS / Node 24 install guidance, and promotes those warnings into the
+top-level doctor warning list.
+The top-level human/JSON doctor view now also reports OpenClaw-style session lock
 health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
 liveness, age, stale posture, read-only guidance, and `doctor --fix`
 stale-lock removal with `removedCount` / per-lock `removed` metadata while
