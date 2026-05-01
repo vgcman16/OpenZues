@@ -92,12 +92,15 @@ RuntimeManager-backed ACP thread-binding records now also include OpenClaw-style
 thread intro metadata, including `threadName`, optional `label`, and the
 runtime cwd line when `cwd` is present.
 Native configured ACP binding helpers now also mirror OpenClaw's
-`persistent-bindings.types.ts` key/record/parse/resolve contract: configured
-ACP session keys use the SHA-256 `channel:accountId:conversationId` hash suffix,
-generated binding records carry `targetKind="session"`, `boundAt=0`, config
-source metadata, conversation ids, and the runtime ACP session target key, and
-stored records parse back into normalized configured binding specs.
-Remaining ACP binding parity is the configured binding lifecycle runner, real
+`persistent-bindings.types.ts` and `persistent-bindings.lifecycle.ts`
+key/record/parse/resolve/ensure contract: configured ACP session keys use the
+SHA-256 `channel:accountId:conversationId` hash suffix, generated binding
+records carry `targetKind="session"`, `boundAt=0`, config source metadata,
+conversation ids, and the runtime ACP session target key, stored records parse
+back into normalized configured binding specs, and the fakeable native ensure
+adapter keeps matching ready ACP sessions while closing/reinitializing stale,
+mismatched, or errored runtime sessions.
+Remaining ACP binding parity is in-place configured binding reset, real
 provider-native child-thread creation/store breadth, unbind lifecycle breadth,
 and the standalone ACP bridge server/client runtime. Native
 ACP prompt request assembly now also mirrors OpenClaw's translator contract for

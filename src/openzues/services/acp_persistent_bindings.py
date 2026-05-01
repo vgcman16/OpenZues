@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 from openzues.services.session_keys import (
     normalize_account_id,
@@ -28,6 +28,17 @@ class ConfiguredAcpBindingSpec:
     label: str | None = None
 
 
+class ConfiguredAcpSessionManager(Protocol):
+    async def resolve_session(self, **kwargs: object) -> Mapping[str, object]:
+        ...
+
+    async def close_session(self, **kwargs: object) -> Mapping[str, object]:
+        ...
+
+    async def initialize_session(self, **kwargs: object) -> Mapping[str, object]:
+        ...
+
+
 def _normalize_text(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -42,6 +53,10 @@ def _normalize_optional_lowercase_string(value: object) -> str | None:
 
 def normalize_mode(value: object) -> AcpRuntimeSessionMode:
     return "oneshot" if _normalize_optional_lowercase_string(value) == "oneshot" else "persistent"
+
+
+def _metadata_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _binding_hash(
@@ -135,8 +150,7 @@ def resolve_configured_acp_binding_spec_from_record(
     conversation_id = _normalize_text(conversation.get("conversationId"))
     if conversation_id is None:
         return None
-    metadata = record.get("metadata")
-    metadata_mapping: Mapping[str, object] = metadata if isinstance(metadata, Mapping) else {}
+    metadata_mapping = _metadata_mapping(record.get("metadata"))
     agent_id = _normalize_text(
         metadata_mapping.get("agentId")
     ) or resolve_agent_id_from_session_key(
@@ -156,3 +170,77 @@ def resolve_configured_acp_binding_spec_from_record(
         backend=_normalize_text(metadata_mapping.get("backend")),
         label=_normalize_text(metadata_mapping.get("label")),
     )
+
+
+def _runtime_options_mapping(meta: Mapping[str, object]) -> Mapping[str, object]:
+    return _metadata_mapping(meta.get("runtimeOptions"))
+
+
+def _session_matches_configured_binding(
+    *,
+    spec: ConfiguredAcpBindingSpec,
+    meta: Mapping[str, object],
+    default_backend: str | None,
+) -> bool:
+    if meta.get("state") == "error":
+        return False
+    desired_agent = _normalize_optional_lowercase_string(spec.acp_agent_id or spec.agent_id)
+    current_agent = _normalize_optional_lowercase_string(meta.get("agent"))
+    if current_agent is None or current_agent != desired_agent:
+        return False
+    if meta.get("mode") != spec.mode:
+        return False
+    desired_backend = _normalize_text(spec.backend) or _normalize_text(default_backend) or ""
+    if desired_backend:
+        current_backend = _normalize_text(meta.get("backend"))
+        if current_backend is None or current_backend != desired_backend:
+            return False
+    desired_cwd = _normalize_text(spec.cwd)
+    if desired_cwd is not None:
+        runtime_options = _runtime_options_mapping(meta)
+        current_cwd = _normalize_text(runtime_options.get("cwd")) or _normalize_text(
+            meta.get("cwd")
+        )
+        if current_cwd != desired_cwd:
+            return False
+    return True
+
+
+async def ensure_configured_acp_binding_session(
+    spec: ConfiguredAcpBindingSpec,
+    *,
+    manager: ConfiguredAcpSessionManager,
+    default_backend: str | None = None,
+) -> dict[str, object]:
+    session_key = build_configured_acp_session_key(spec)
+    try:
+        resolution = await manager.resolve_session(session_key=session_key)
+        resolution_kind = _normalize_text(resolution.get("kind"))
+        meta = _metadata_mapping(resolution.get("meta"))
+        if (
+            resolution_kind == "ready"
+            and _session_matches_configured_binding(
+                spec=spec,
+                meta=meta,
+                default_backend=default_backend,
+            )
+        ):
+            return {"ok": True, "sessionKey": session_key}
+        if resolution_kind != "none":
+            await manager.close_session(
+                session_key=session_key,
+                reason="config-binding-reconfigure",
+                clear_meta=False,
+                allow_backend_unavailable=True,
+                require_acp_session=False,
+            )
+        await manager.initialize_session(
+            session_key=session_key,
+            agent=spec.acp_agent_id or spec.agent_id,
+            mode=spec.mode,
+            cwd=spec.cwd,
+            backend_id=spec.backend,
+        )
+        return {"ok": True, "sessionKey": session_key}
+    except Exception as exc:
+        return {"ok": False, "sessionKey": session_key, "error": str(exc)}
