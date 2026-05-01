@@ -5838,6 +5838,7 @@ class GatewayNodeMethodService:
                     "replyToMessageId",
                     "silent",
                     "forceDocument",
+                    "channelData",
                     "channel",
                     "accountId",
                     "agentId",
@@ -5926,6 +5927,11 @@ class GatewayNodeMethodService:
                 if "forceDocument" in payload
                 else None
             )
+            channel_data = (
+                _require_unknown_mapping(payload.get("channelData"), label="channelData")
+                if "channelData" in payload and payload.get("channelData") is not None
+                else None
+            )
             source_session_key = _optional_normalized_string(
                 payload.get("sessionKey"),
                 label="sessionKey",
@@ -5979,6 +5985,8 @@ class GatewayNodeMethodService:
                 send_payload["silent"] = silent
             if force_document is not None:
                 send_payload["force_document"] = force_document
+            if channel_data is not None:
+                send_payload["channel_data"] = channel_data
             return await self._send_channel_message_service(**send_payload)
 
         if resolved_method == "poll":

@@ -41524,6 +41524,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
         reply_to_id: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
+        channel_data: dict[str, object] | None = None,
     ) -> dict[str, object]:
         calls.append(
             {
@@ -41538,6 +41539,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
                 "reply_to_id": reply_to_id,
                 "silent": silent,
                 "force_document": force_document,
+                "channel_data": channel_data,
             }
         )
         return {
@@ -41564,6 +41566,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
             "replyToMessageId": "message-99",
             "silent": True,
             "forceDocument": True,
+            "channelData": {"telegram": {"pin": True}},
             "idempotencyKey": "idem-send-provider-native-options",
         },
     )
@@ -41581,6 +41584,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
             "reply_to_id": "message-99",
             "silent": True,
             "force_document": True,
+            "channel_data": {"telegram": {"pin": True}},
         }
     ]
     assert payload == {

@@ -493,6 +493,11 @@ silent, and topic-thread options.
 Telegram poll delivery now also carries OpenClaw-style reply context through
 gateway `poll`, the shared outbound runtime, direct route sends, replay, CLI
 `routes poll --reply-to`, and native Bot API `reply_to_message_id` payloads.
+Telegram direct message delivery now also carries OpenClaw-style
+`channelData.telegram.pin` through gateway `send`, the shared outbound runtime,
+saved delivery payloads, and native Bot API route sends, then calls
+`pinChatMessage` with `disable_notification=true` for the first delivered
+message while preserving the delivered send result when pinning fails.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery

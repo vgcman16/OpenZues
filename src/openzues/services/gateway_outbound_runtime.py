@@ -137,6 +137,7 @@ class GatewayOutboundRuntimeMessageRequest:
     reply_token: str | None = None
     silent: bool | None = None
     force_document: bool | None = None
+    channel_data: dict[str, object] | None = None
     account_id: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
@@ -332,6 +333,7 @@ class GatewayOutboundRuntimeService:
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
+        channel_data: dict[str, object] | None = None,
         account_id: str | None = None,
         thread_id: str | None = None,
         agent_id: str | None = None,
@@ -373,6 +375,9 @@ class GatewayOutboundRuntimeService:
                         reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
+                        channel_data=(
+                            dict(channel_data) if channel_data is not None else None
+                        ),
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
@@ -446,6 +451,9 @@ class GatewayOutboundRuntimeService:
                         reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
+                        channel_data=(
+                            dict(channel_data) if channel_data is not None else None
+                        ),
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),

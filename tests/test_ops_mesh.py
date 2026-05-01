@@ -12824,6 +12824,184 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_pins_telegram_first_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-pin"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Pin Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        if target.endswith("/pinChatMessage"):
+            return {"ok": True, "result": True}
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 101,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Pin the first delivered message.",
+        account_id="telegram-bot",
+        channel_data={"telegram": {"pin": True}},
+        idempotency_key="idem-native-telegram-pin",
+    )
+
+    assert result["messageId"] == "101"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Pin the first delivered message.",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/pinChatMessage",
+            {
+                "chat_id": "-100123",
+                "message_id": 101,
+                "disable_notification": True,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_keeps_delivery_when_telegram_pin_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-pin-fails"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Pin Failure Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        if target.endswith("/pinChatMessage"):
+            raise RuntimeError("pin failed")
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 102,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Pin failures do not fail delivery.",
+        account_id="telegram-bot",
+        channel_data={"telegram": {"pin": True}},
+        idempotency_key="idem-native-telegram-pin-fails",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "102"
+    assert delivery is not None
+    assert delivery["delivery_state"] == "delivered"
+    assert delivery["delivery_message_id"] == "102"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Pin failures do not fail delivery.",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/pinChatMessage",
+            {
+                "chat_id": "-100123",
+                "message_id": 102,
+                "disable_notification": True,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_parses_telegram_topic_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

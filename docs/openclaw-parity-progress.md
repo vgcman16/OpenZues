@@ -6203,6 +6203,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py -q -k "matrix and message_action"` (`15 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`.
+- Telegram direct sends now preserve OpenClaw's `channelData.telegram.pin`
+  through gateway `send`, `GatewayOutboundRuntimeMessageRequest`, OpsMesh saved
+  delivery payloads, and native Bot API route sends. The Telegram route-backed
+  sender pins the first delivered message via `pinChatMessage` with
+  `disable_notification=true`, and pin failures are logged as best-effort
+  follow-up failures without changing the original delivery to failed.
+- Verified the Telegram pin-on-delivery slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "pins_telegram_first_delivery or
+  keeps_delivery_when_telegram_pin_fails"` (`2 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "send_preserves_provider_native_reply_thread_and_document_options"` (`1
+  passed`), adjacent send proofs `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_native_route or telegram_native_options or telegram_topic or
+  telegram_media_group or pins_telegram_first_delivery or
+  keeps_delivery_when_telegram_pin_fails"` (`11 passed`) and `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "send_preserves_provider_native_reply_thread_and_document_options
+  or send_endpoint or direct_channel or send_uses"` (`7 passed`), `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

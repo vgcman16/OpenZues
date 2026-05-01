@@ -1442,6 +1442,17 @@ def _telegram_message_id(result: object) -> str | None:
     return str(candidate).strip() or None
 
 
+def _telegram_first_delivered_message_id(result: object) -> int | str | None:
+    payload = _telegram_result_payload(result)
+    candidate = payload.get("message_id")
+    if candidate is None or isinstance(candidate, bool):
+        return None
+    if isinstance(candidate, int):
+        return candidate
+    normalized = str(candidate).strip()
+    return normalized or None
+
+
 def _telegram_chat_from_result(result: object, fallback: str) -> str:
     payload = _telegram_result_payload(result)
     chat = payload.get("chat")
@@ -1487,6 +1498,13 @@ def _telegram_media_ids(result: object) -> list[str]:
                 media_ids.append(file_id)
                 break
     return media_ids
+
+
+def _telegram_channel_data_should_pin(channel_data: object) -> bool:
+    if not isinstance(channel_data, dict):
+        return False
+    telegram_data = channel_data.get("telegram")
+    return isinstance(telegram_data, dict) and telegram_data.get("pin") is True
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -14374,6 +14392,8 @@ class OpsMeshService:
             payload["silent"] = request.silent
         if request.force_document is not None:
             payload["forceDocument"] = request.force_document
+        if request.channel_data is not None:
+            payload["channelData"] = dict(request.channel_data)
         if request.account_id is not None:
             payload["accountId"] = request.account_id
         if request.thread_id is not None:
@@ -14738,6 +14758,11 @@ class OpsMeshService:
                     reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
+                    channel_data=(
+                        dict(cast(dict[str, object], payload["channelData"]))
+                        if isinstance(payload.get("channelData"), dict)
+                        else None
+                    ),
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
@@ -14826,6 +14851,7 @@ class OpsMeshService:
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
+        channel_data: dict[str, object] | None = None,
         account_id: str | None = None,
         agent_id: str | None = None,
         thread_id: str | int | None = None,
@@ -14912,6 +14938,8 @@ class OpsMeshService:
             payload["silent"] = silent
         if force_document is not None:
             payload["forceDocument"] = force_document
+        if channel_data is not None:
+            payload["channelData"] = dict(channel_data)
         if account_id is not None:
             payload["accountId"] = account_id
         if agent_id is not None:
@@ -16951,6 +16979,39 @@ class OpsMeshService:
         if message_id is None:
             raise RuntimeError("Telegram API response did not include a message id.")
         delivered_chat = _telegram_chat_from_result(result, chat_id)
+        first_delivered_message_id = _telegram_first_delivered_message_id(result)
+        if (
+            event_type == "gateway/send"
+            and _telegram_channel_data_should_pin(event.get("channelData"))
+            and first_delivered_message_id is not None
+        ):
+            try:
+                pin_result = self._post_json_webhook(
+                    _telegram_api_endpoint(
+                        str(route.get("target") or ""),
+                        token,
+                        "pinChatMessage",
+                    ),
+                    {
+                        "chat_id": chat_id,
+                        "message_id": first_delivered_message_id,
+                        "disable_notification": True,
+                    },
+                )
+                if isinstance(pin_result, dict) and pin_result.get("ok") is False:
+                    logger.debug(
+                        "Telegram pinChatMessage returned an error for chat=%s message=%s: %s",
+                        chat_id,
+                        first_delivered_message_id,
+                        pin_result.get("description") or pin_result.get("error_code"),
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "Telegram pinChatMessage failed for chat=%s message=%s: %s",
+                    chat_id,
+                    first_delivered_message_id,
+                    exc,
+                )
         native_result: dict[str, object] = {
             "runtime": "native-provider-backed",
             "messageId": message_id,
