@@ -7231,6 +7231,97 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_nat
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_rejects_bluebubbles_voice_non_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-voice-invalid"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Voice Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_download_bluebubbles_media_url(
+        self: OpsMeshService,
+        media_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert media_url == "https://example.com/not-audio.png"
+        return b"image-bytes", "image/png", "not-audio.png"
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-voice-should-not-send"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_bluebubbles_media_url",
+        fake_download_bluebubbles_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="voice messages require audio media"):
+        await service.send_direct_channel_message(
+            channel="bluebubbles",
+            to="chat_guid:iMessage;+;group-1",
+            message="",
+            media_urls=["https://example.com/not-audio.png"],
+            account_id="personal",
+            audio_as_voice=True,
+            idempotency_key="idem-native-bluebubbles-voice-invalid",
+        )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert multipart_requests == []
+    assert delivery is not None
+    assert delivery["delivery_state"] == "failed"
+    assert "voice messages require audio media" in str(delivery["last_error"])
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

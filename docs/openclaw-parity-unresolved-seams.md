@@ -3718,12 +3718,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   BlueBubbles text message, preserve reply threading metadata, and return
   native attachment ids, media ids, media URLs, and saved delivery metadata.
   Verified with focused and adjacent OpsMesh proofs, `ruff check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage outbound voice-media
-  hardening remains open. Source anchors are
-  `extensions/bluebubbles/src/media-send.ts` and
-  `extensions/bluebubbles/src/attachments.ts`; OpenZues must reject
-  `audioAsVoice=true` unless the outbound media is MP3/CAF audio and must keep
-  the native `isAudioMessage` multipart field only for valid voice sends.
+- Closed the BlueBubbles/iMessage outbound voice-media hardening seam from
+  OpenClaw `extensions/bluebubbles/src/media-send.ts` and
+  `extensions/bluebubbles/src/attachments.ts`: `audioAsVoice=true` now
+  rejects non-audio media before upload, only allows MP3/CAF voice media, and
+  normalizes valid voice filenames/content types before setting
+  `isAudioMessage` on the native multipart request. Verified with focused and
+  adjacent OpsMesh proofs, `ruff check`, and `mypy`.
+- Next provider-native queue head: BlueBubbles/iMessage outbound local-media
+  and size hardening remains open. Source anchor is
+  `extensions/bluebubbles/src/media-send.ts`; OpenZues still needs the
+  OpenClaw-shaped `mediaLocalRoots` / max-byte policy for native BlueBubbles
+  local file sends instead of allowing arbitrary local paths through the
+  downloader.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

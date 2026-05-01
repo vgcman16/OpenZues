@@ -151,6 +151,8 @@ TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
+BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
+BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
 BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
 BLUEBUBBLES_REACTION_ALIASES = {
     "heart": "love",
@@ -1066,6 +1068,45 @@ def _bluebubbles_safe_filename(raw: str | None, fallback: str) -> str:
     filename = normalized.rsplit("/", 1)[-1].strip() if normalized else ""
     safe = re.sub(r'[\r\n"\\]', "_", filename or fallback).strip()
     return safe or fallback
+
+
+def _bluebubbles_filename_with_extension(
+    filename: str,
+    extension: str,
+    fallback_base: str,
+) -> str:
+    current_extension = Path(filename).suffix
+    if current_extension.lower() == extension:
+        return filename
+    base = filename[: -len(current_extension)] if current_extension else filename
+    return f"{base or fallback_base}{extension}"
+
+
+def _bluebubbles_voice_media_info(
+    filename: str,
+    content_type: str | None,
+) -> tuple[str, str]:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    is_mp3 = extension == ".mp3" or normalized_type in BLUEBUBBLES_AUDIO_MIME_MP3
+    is_caf = extension == ".caf" or normalized_type in BLUEBUBBLES_AUDIO_MIME_CAF
+    is_audio = is_mp3 or is_caf or normalized_type.startswith("audio/")
+    if not is_audio:
+        raise RuntimeError("BlueBubbles voice messages require audio media (mp3 or caf).")
+    fallback_name = "Audio Message"
+    if is_mp3:
+        return (
+            _bluebubbles_filename_with_extension(filename, ".mp3", fallback_name),
+            content_type or "audio/mpeg",
+        )
+    if is_caf:
+        return (
+            _bluebubbles_filename_with_extension(filename, ".caf", fallback_name),
+            content_type or "audio/x-caf",
+        )
+    raise RuntimeError(
+        "BlueBubbles voice messages require mp3 or caf audio (convert before sending)."
+    )
 
 
 def _message_action_param_string(
@@ -10593,6 +10634,12 @@ class OpsMeshService:
                     media_url
                 )
                 safe_filename = _bluebubbles_safe_filename(filename, "attachment")
+                resolved_content_type = content_type or "application/octet-stream"
+                if as_voice:
+                    safe_filename, resolved_content_type = _bluebubbles_voice_media_info(
+                        safe_filename,
+                        content_type,
+                    )
                 fields: dict[str, str] = {
                     "chatGuid": chat_guid,
                     "name": safe_filename,
@@ -10611,7 +10658,7 @@ class OpsMeshService:
                         {
                             "field": "attachment",
                             "filename": safe_filename,
-                            "contentType": content_type or "application/octet-stream",
+                            "contentType": resolved_content_type,
                             "content": media_bytes,
                         }
                     ],

@@ -6431,6 +6431,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -q -k "bluebubbles_"` (`11 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound voice media now follows OpenClaw's attachment
+  guard: `audioAsVoice=true` rejects non-audio media before upload, accepts
+  only MP3/CAF voice media, normalizes valid voice filenames/content types,
+  and keeps `isAudioMessage` scoped to valid native multipart sends.
+- Verified the BlueBubbles outbound voice-media hardening slice with `python
+  -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_rejects_bluebubbles_voice_non_audio
+  -q` (`1 failed` before implementation, PNG media uploaded with
+  `isAudioMessage`), then the same command (`1 passed`), adjacent BlueBubbles
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`12
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
