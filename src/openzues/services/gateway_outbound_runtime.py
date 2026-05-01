@@ -126,6 +126,7 @@ class GatewayOutboundRuntimeMessageRequest:
     gif_playback: bool | None = None
     audio_as_voice: bool | None = None
     reply_to_id: str | None = None
+    reply_token: str | None = None
     silent: bool | None = None
     force_document: bool | None = None
     account_id: str | None = None
@@ -312,6 +313,7 @@ class GatewayOutboundRuntimeService:
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
         account_id: str | None = None,
@@ -343,6 +345,7 @@ class GatewayOutboundRuntimeService:
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
+                        reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
                         account_id=_normalize_optional_string(account_id),
@@ -407,6 +410,7 @@ class GatewayOutboundRuntimeService:
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
+                        reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
                         account_id=_normalize_optional_string(account_id),

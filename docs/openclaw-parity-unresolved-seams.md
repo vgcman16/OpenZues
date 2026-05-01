@@ -505,8 +505,11 @@ LINE native route-backed direct sends now use OpenClaw's Bot API
 `line:user:` / `line:group:` / `line:room:` targets to provider chat ids,
 batch push messages at LINE's five-message boundary, and persist provider
 `messageId="push"`, `chatId`, `channelId`, and `mediaUrls` metadata through
-the direct-send delivery path. Remaining LINE provider parity is rich
-Flex/template/location/quick-reply sends, reply-token sends, explicit
+the direct-send delivery path. LINE native route-backed direct sends now also
+carry OpenClaw's `replyToken` option through the shared outbound runtime and
+send the prepared message batch to Bot API `/v2/bot/message/reply`, returning
+`messageId="reply"` while preserving saved delivery replay metadata. Remaining
+LINE provider parity is rich Flex/template/location/quick-reply sends, explicit
 video/audio media options, and account probe/action breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`

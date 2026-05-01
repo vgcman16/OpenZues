@@ -5886,6 +5886,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   channels_status_json_accepts_probe_timeout_options"` (`7 passed`), plus
   `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- LINE route-backed direct sends now carry OpenClaw's `replyToken` send option
+  through `GatewayOutboundRuntimeMessageRequest`, persist it on saved outbound
+  delivery payloads for replay, and use Bot API `/v2/bot/message/reply` with
+  `messageId="reply"` instead of `/push` when the token is present.
+- Verified the LINE reply-token slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_reply_token"` (`1 passed`), adjacent
+  outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "line_native_route or line_reply_token or preserves_provider_native_options
+  or shared_outbound_runtime_owner or prefers_provider_runtime"` (`6 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 
 ## References
 

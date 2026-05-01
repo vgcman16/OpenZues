@@ -2252,6 +2252,20 @@ def _line_push_endpoint(target: str | None) -> str:
     return endpoint
 
 
+def _line_reply_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip() or LINE_API_BASE_URL
+    stripped = normalized.rstrip("/")
+    if stripped.endswith("/reply"):
+        endpoint = stripped
+    elif stripped.endswith("/push"):
+        endpoint = f"{stripped[: -len('/push')]}/reply"
+    else:
+        endpoint = f"{stripped}/reply"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("LINE route target must be an http(s) Bot API message URL.")
+    return endpoint
+
+
 def _line_bearer_token(secret_token: str | None) -> str:
     token = str(secret_token or "").strip()
     if not token:
@@ -6152,6 +6166,7 @@ class OpsMeshService:
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
                     account_id=str(
@@ -13437,6 +13452,8 @@ class OpsMeshService:
             payload["audioAsVoice"] = request.audio_as_voice
         if request.reply_to_id is not None:
             payload["replyToId"] = request.reply_to_id
+        if request.reply_token is not None:
+            payload["replyToken"] = request.reply_token
         if request.silent is not None:
             payload["silent"] = request.silent
         if request.force_document is not None:
@@ -13787,6 +13804,7 @@ class OpsMeshService:
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
+                    reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
                     account_id=resolved_target.account_id,
@@ -13866,6 +13884,7 @@ class OpsMeshService:
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
+        reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
         account_id: str | None = None,
@@ -13914,6 +13933,9 @@ class OpsMeshService:
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
+        normalized_reply_token = str(reply_token or "").strip() or None
+        if normalized_reply_token is not None:
+            payload["replyToken"] = normalized_reply_token
         if silent is not None:
             payload["silent"] = silent
         if force_document is not None:
@@ -16434,8 +16456,32 @@ class OpsMeshService:
         )
         if not messages:
             raise RuntimeError("Message must be non-empty for LINE sends.")
-        endpoint = _line_push_endpoint(str(route.get("target") or ""))
         bearer_token = _line_bearer_token(secret_token)
+        reply_token = str(event.get("replyToken") or "").strip()
+        if reply_token:
+            if len(messages) > 5:
+                raise RuntimeError("LINE reply-token sends support at most 5 messages.")
+            result = self._post_json_webhook(
+                _line_reply_endpoint(str(route.get("target") or "")),
+                {
+                    "replyToken": reply_token,
+                    "messages": messages,
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("LINE API returned a non-JSON response.")
+            reply_result: dict[str, object] = {
+                "runtime": "native-provider-backed",
+                "messageId": "reply",
+                "chatId": chat_id,
+                "channelId": chat_id,
+            }
+            if media_urls:
+                reply_result["mediaUrls"] = media_urls
+            return reply_result
+        endpoint = _line_push_endpoint(str(route.get("target") or ""))
         for index in range(0, len(messages), 5):
             result = self._post_json_webhook(
                 endpoint,
