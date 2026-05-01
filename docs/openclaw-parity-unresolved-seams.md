@@ -509,9 +509,13 @@ Matrix `message.action edit` / `editMessage` now also sends OpenClaw-shaped
 `m.replace` replacement events with `m.new_content`, replacement body prefix,
 thread reply metadata, route token auth, and the action idempotency key as the
 Matrix transaction id when present.
+Matrix `message.action delete` / `deleteMessage` now maps to OpenClaw's
+`redactEvent` behavior with Matrix Client-Server `redact` requests, optional
+reason payloads, route token auth, idempotency-key transaction ids, and
+`{ok:true, deleted:true}` action results.
 Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, profile/account probes, and read/reaction/delete/pin
-action breadth.
+direct-room resolution, profile/account probes, and read/reaction/pin action
+breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

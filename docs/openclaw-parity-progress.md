@@ -5428,6 +5428,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_zalo_send_route"` (`7 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed `message.action delete` / `deleteMessage` now maps to
+  OpenClaw's `redactEvent` behavior through Matrix Client-Server `redact`
+  requests, preserving optional reason payloads, route token auth, and
+  idempotency-key transaction ids while returning `{ok:true, deleted:true}`.
+- Verified the Matrix delete action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_delete_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_delete_route or
+  message_action_dispatches_slack_delete_route"` (`7 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
