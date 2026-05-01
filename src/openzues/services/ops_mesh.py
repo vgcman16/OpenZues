@@ -149,6 +149,7 @@ SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
+BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
 NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -791,6 +792,30 @@ def _http_error_message(prefix: str, exc: HTTPError) -> str:
     detail = _http_error_detail(exc)
     message = f"{prefix} {exc.code}"
     return f"{message}: {detail}" if detail else message
+
+
+def _canonical_native_provider_channel(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES:
+        return "bluebubbles"
+    return normalized
+
+
+def _bluebubbles_api_endpoint(
+    target: str | None,
+    path: str,
+    *,
+    password: str | None,
+) -> str:
+    normalized = str(target or "").strip()
+    if _normalized_http_webhook_url(normalized) is None:
+        raise RuntimeError("BlueBubbles route target must be an http(s) server URL.")
+    secret = str(password or "").strip()
+    if not secret:
+        raise RuntimeError("BlueBubbles route is missing a password secret.")
+    endpoint = f"{normalized.rstrip('/')}/{path.lstrip('/')}"
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{urlencode({'password': secret})}"
 
 
 def _slack_api_endpoint(target: str | None, method: str) -> str:
@@ -7941,6 +7966,47 @@ class OpsMeshService:
                 return route
         return None
 
+    async def _bluebubbles_route_for_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel != "bluebubbles":
+            return None
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            route_kind = _canonical_native_provider_channel(
+                str(route.get("kind") or "").strip()
+            )
+            if route_kind != "bluebubbles":
+                continue
+            route_target = _normalize_conversation_target(route.get("conversation_target"))
+            if route_target is None:
+                if normalized_account_id == DEFAULT_ACCOUNT_ID:
+                    return route
+                continue
+            route_channel = _canonical_native_provider_channel(
+                str(route_target.get("channel") or "").strip()
+            )
+            if route_channel != "bluebubbles":
+                continue
+            route_account_id = (
+                normalize_optional_account_id(
+                    str(route_target.get("account_id") or "").strip()
+                )
+                or DEFAULT_ACCOUNT_ID
+            )
+            if route_account_id == normalized_account_id:
+                return route
+        return None
+
     async def probe_channel_account(
         self,
         *,
@@ -9056,6 +9122,22 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
+        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action == "unsend":
+            route = await self._bluebubbles_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native BlueBubbles route is configured for message.action unsend."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_bluebubbles_unsend_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
         if channel == "matrix" and action in {"send", "sendMessage"}:
@@ -9842,6 +9924,35 @@ class OpsMeshService:
             request,
             secret_token,
         )
+
+    def _dispatch_bluebubbles_unsend_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles unsend requires messageId.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        payload = {"partIndex": part_index if part_index is not None else 0}
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            f"/api/v1/message/{quote(message_id, safe='')}/unsend",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "unsent": message_id}
 
     async def _dispatch_zalo_send_message_action(
         self,

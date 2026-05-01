@@ -3647,6 +3647,24 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_ops_mesh.py -q -k "matrix and message_action"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the BlueBubbles/iMessage native `message.action unsend` seam from
+  OpenClaw `src/channels/plugins/bluebubbles-actions.ts`,
+  `src/infra/outbound/message-action-spec.ts`,
+  `extensions/bluebubbles/src/actions.ts`, and
+  `extensions/bluebubbles/src/chat.ts`: gateway `message.action` now accepts
+  the public `imessage` channel, OpsMesh resolves a route-backed
+  `bluebubbles` provider route by account, and the native provider HTTP
+  adapter sends `POST /api/v1/message/{messageId}/unsend` with `partIndex`.
+  Verified with the focused OpsMesh and gateway tests, adjacent message-action
+  selections, `ruff check` on touched source/tests, and `mypy` on touched
+  source modules.
+- Next provider-native queue head: BlueBubbles/iMessage `message.action edit`
+  remains open. Source anchors are
+  `extensions/bluebubbles/src/actions.ts` and
+  `extensions/bluebubbles/src/chat.ts`; OpenZues must route `messageId` plus
+  `text` / `newText` / `message`, `partIndex`, and
+  `backwardsCompatMessage` to `POST /api/v1/message/{messageId}/edit` while
+  preserving OpenClaw-shaped `{ ok: true, edited: rawMessageId }` results.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

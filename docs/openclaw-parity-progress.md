@@ -6311,6 +6311,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   matrix_list_pins_route or matrix_read_alias_route"` (`7 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage `message.action unsend` now follows OpenClaw's
+  BlueBubbles action adapter by accepting the public `imessage` gateway
+  channel, resolving a route-backed `bluebubbles` provider account, and
+  sending `POST /api/v1/message/{messageId}/unsend` with `partIndex` through
+  OpenZues' native provider HTTP adapter.
+- Verified the BlueBubbles unsend slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_bluebubbles_unsend_route
+  -q` (`1 failed` before implementation, action returned `None`), then the
+  same command (`1 passed`), gateway channel proof `python -m pytest
+  tests\test_gateway_node_methods.py::test_message_action_dispatches_imessage_native_action_runtime
+  -q` (`1 failed` before implementation, unsupported `imessage` channel), then
+  the same command (`1 passed`), adjacent message-action proofs `python -m
+  pytest tests\test_ops_mesh.py -q -k "bluebubbles_unsend_route or
+  message_action_dispatches_zalo_send_route or
+  message_action_dispatches_matrix_read_alias_route"` (`3 passed`) and `python
+  -m pytest tests\test_gateway_node_methods.py -q -k "imessage_native_action
+  or message_action_dispatches_registered_native_action_runtime or
+  message_action_dispatches_zalo_send_runtime"` (`3 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_ops_mesh.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
 
 ## References
 

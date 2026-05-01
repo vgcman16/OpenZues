@@ -40983,6 +40983,51 @@ async def test_message_action_dispatches_registered_native_action_runtime() -> N
 
 
 @pytest.mark.asyncio
+async def test_message_action_dispatches_imessage_native_action_runtime() -> None:
+    calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        calls.append(request)
+        return {"ok": True, "unsent": "msg-1"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        message_action_dispatcher=fake_message_action_dispatcher,
+    )
+
+    result = await service.call(
+        "message.action",
+        {
+            "channel": "imessage",
+            "action": "unsend",
+            "params": {"messageId": "msg-1"},
+            "accountId": "personal",
+            "requesterSenderId": "+15551234567",
+            "senderIsOwner": True,
+            "sessionKey": "agent:main:bluebubbles:direct:+15551234567",
+            "idempotencyKey": "idem-message-action-imessage-unsend",
+        },
+        requester=GatewayNodeMethodRequester(
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert result == {"ok": True, "unsent": "msg-1"}
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.channel == "imessage"
+    assert request.action == "unsend"
+    assert request.params == {"messageId": "msg-1"}
+    assert request.account_id == "personal"
+    assert request.requester_sender_id == "+15551234567"
+    assert request.sender_is_owner is True
+    assert request.session_key == "agent:main:bluebubbles:direct:+15551234567"
+    assert request.idempotency_key == "idem-message-action-imessage-unsend"
+
+
+@pytest.mark.asyncio
 async def test_message_action_dispatches_zalo_send_runtime() -> None:
     calls: list[GatewayMessageActionDispatchRequest] = []
 
