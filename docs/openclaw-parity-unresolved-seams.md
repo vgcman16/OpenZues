@@ -552,8 +552,12 @@ for PNG/GIF/JPEG payloads in Matrix `info.w` / `info.h`, matching the
 OpenClaw media-info contract for image events.
 Matrix route-backed WAV audio sends now include OpenClaw-style `info.duration`
 metadata parsed from native RIFF/WAVE headers.
-Remaining Matrix provider parity is encrypted media, thumbnail generation, and
-broader video/non-WAV duration metadata.
+Matrix route-backed large-image sends now also mirror OpenClaw's unencrypted
+thumbnail branch: images larger than 800px generate and upload a JPEG
+thumbnail, then attach `thumbnail_url` and `thumbnail_info` metadata to the
+primary media event.
+Remaining Matrix provider parity is encrypted media and broader video/non-WAV
+duration metadata.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

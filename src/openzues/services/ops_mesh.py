@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import math
@@ -15058,6 +15059,49 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
 
+    def _prepare_matrix_image_thumbnail(
+        self,
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        dimensions: tuple[int, int],
+    ) -> tuple[bytes, str, str, dict[str, object]] | None:
+        del content_type, filename
+        if max(dimensions) <= 800:
+            return None
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+        try:
+            with Image.open(io.BytesIO(media)) as image:
+                image.thumbnail((800, 800))
+                thumbnail_image: Any = image
+                if image.mode not in {"RGB", "L"}:
+                    thumbnail_image = image.convert("RGB")
+                output = io.BytesIO()
+                thumbnail_image.save(output, format="JPEG", quality=80)
+        except Exception:
+            return None
+        thumbnail = output.getvalue()
+        if not thumbnail:
+            return None
+        thumbnail_filename = "thumbnail.jpg"
+        thumbnail_info: dict[str, object] = {
+            "mimetype": "image/jpeg",
+            "size": len(thumbnail),
+        }
+        thumbnail_dimensions = _matrix_image_dimensions(
+            thumbnail,
+            "image/jpeg",
+            thumbnail_filename,
+        )
+        if thumbnail_dimensions is not None:
+            thumbnail_info["w"] = thumbnail_dimensions[0]
+            thumbnail_info["h"] = thumbnail_dimensions[1]
+        return thumbnail, "image/jpeg", thumbnail_filename, thumbnail_info
+
     def _upload_matrix_media(
         self,
         route: dict[str, Any],
@@ -16097,6 +16141,27 @@ class OpsMeshService:
             if dimensions is not None:
                 media_info["w"] = dimensions[0]
                 media_info["h"] = dimensions[1]
+                thumbnail = self._prepare_matrix_image_thumbnail(
+                    media,
+                    content_type=content_type,
+                    filename=filename,
+                    dimensions=dimensions,
+                )
+                if thumbnail is not None:
+                    (
+                        thumbnail_media,
+                        thumbnail_content_type,
+                        thumbnail_filename,
+                        thumbnail_info,
+                    ) = thumbnail
+                    media_info["thumbnail_url"] = self._upload_matrix_media(
+                        route,
+                        thumbnail_media,
+                        content_type=thumbnail_content_type,
+                        filename=thumbnail_filename,
+                        secret_token=secret_token,
+                    )
+                    media_info["thumbnail_info"] = thumbnail_info
             duration_ms = _matrix_media_duration_ms(media, content_type, filename)
             if duration_ms is not None:
                 media_info["duration"] = duration_ms

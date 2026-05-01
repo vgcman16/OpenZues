@@ -13806,6 +13806,169 @@ async def test_ops_mesh_service_send_direct_channel_matrix_audio_includes_durati
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_matrix_large_image_uploads_thumbnail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-thumbnail"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    media_url = "https://cdn.example.org/large.png"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\r"
+        b"IHDR"
+        b"\x00\x00\x06\x40"
+        b"\x00\x00\x04\xb0"
+    )
+    matrix_puts: list[dict[str, object]] = []
+    matrix_uploads: list[tuple[bytes, str | None, str | None]] = []
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        download_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert download_url == media_url
+        return (png_bytes, "image/png", "large.png")
+
+    def fake_prepare_matrix_image_thumbnail(
+        self: OpsMeshService,
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        dimensions: tuple[int, int],
+    ) -> tuple[bytes, str, str, dict[str, object]] | None:
+        del self
+        assert media == png_bytes
+        assert content_type == "image/png"
+        assert filename == "large.png"
+        assert dimensions == (1600, 1200)
+        return (
+            b"thumb",
+            "image/jpeg",
+            "thumbnail.jpg",
+            {"w": 800, "h": 600, "mimetype": "image/jpeg", "size": 5},
+        )
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route, secret_token
+        matrix_uploads.append((media, content_type, filename))
+        if filename == "thumbnail.jpg":
+            return "mxc://matrix.example.org/thumb"
+        return "mxc://matrix.example.org/main"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, target, secret_header_name, secret_token
+        matrix_puts.append(payload)
+        return {"event_id": "$matrix-thumbnail-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_prepare_matrix_image_thumbnail",
+        fake_prepare_matrix_image_thumbnail,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="large image",
+        media_urls=[media_url],
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-thumbnail",
+    )
+
+    assert result["messageId"] == "$matrix-thumbnail-1"
+    assert matrix_uploads == [
+        (png_bytes, "image/png", "large.png"),
+        (b"thumb", "image/jpeg", "thumbnail.jpg"),
+    ]
+    assert matrix_puts == [
+        {
+            "msgtype": "m.image",
+            "body": "large image",
+            "filename": "large.png",
+            "url": "mxc://matrix.example.org/main",
+            "info": {
+                "mimetype": "image/png",
+                "size": len(png_bytes),
+                "w": 1600,
+                "h": 1200,
+                "thumbnail_url": "mxc://matrix.example.org/thumb",
+                "thumbnail_info": {
+                    "w": 800,
+                    "h": 600,
+                    "mimetype": "image/jpeg",
+                    "size": 5,
+                },
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_alias_resolves_matrix_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -5691,6 +5691,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
   (`21 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed large-image media sends now mirror OpenClaw's
+  unencrypted thumbnail metadata path: Pillow-backed native resizing creates an
+  800px-bounded JPEG thumbnail, uploads it through the Matrix media repository,
+  and adds `thumbnail_url` / `thumbnail_info` beside the primary image
+  dimensions. `Pillow>=10.0.0` is now a runtime dependency for that native
+  thumbnail branch.
+- Verified the Matrix thumbnail slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_large_image_uploads_thumbnail"` (`1
+  passed`), adjacent Matrix route/action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_direct_room or
+  matrix_audio_includes_duration or matrix_large_image_uploads_thumbnail or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`22 passed`), `ruff check pyproject.toml
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
