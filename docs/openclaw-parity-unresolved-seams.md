@@ -534,8 +534,13 @@ also carry OpenClaw's buttons-style `templateMessage` payload through the shared
 outbound runtime, preserve the source action list for replay, emit Bot API
 buttons templates with title/text/action truncation, default image layout
 options, optional thumbnail support, and URI/postback/message action mapping.
-Remaining LINE provider parity is carousel template sends and account
-probe/action breadth.
+LINE native route-backed direct sends now also carry OpenClaw's carousel-style
+`templateMessage` payload through the shared outbound runtime, preserve source
+columns/actions for replay, emit Bot API carousel templates with the upstream
+10-column and 3-action-per-column boundaries, title/text truncation, optional
+thumbnail support, default image layout options, and URI/postback/message action
+mapping. Remaining LINE provider parity is account probe and richer
+action/rich-menu management breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
 targets to room ids, preserve reply/thread relation metadata, split text at

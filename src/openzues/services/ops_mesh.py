@@ -2435,7 +2435,60 @@ def _normalize_line_template_message_payload(value: object) -> dict[str, object]
         if alt_text:
             normalized["altText"] = alt_text
         return normalized
-    raise RuntimeError("LINE templateMessage currently supports confirm and buttons templates.")
+    if template_type == "carousel":
+        columns_value = value.get("columns")
+        if not isinstance(columns_value, (list, tuple)):
+            raise RuntimeError("LINE carousel template requires a columns list.")
+        columns: list[dict[str, object]] = []
+        for column in columns_value:
+            if not isinstance(column, Mapping):
+                raise RuntimeError("LINE carousel template columns must be objects.")
+            text = str(column.get("text") or "")
+            if not text.strip():
+                raise RuntimeError("LINE carousel template columns require text.")
+            column_actions_value = column.get("actions")
+            if not isinstance(column_actions_value, (list, tuple)):
+                raise RuntimeError("LINE carousel template columns require an actions list.")
+            column_actions: list[dict[str, object]] = []
+            for action in column_actions_value:
+                if not isinstance(action, Mapping):
+                    raise RuntimeError("LINE carousel template actions must be objects.")
+                label = str(action.get("label") or "")
+                if not label.strip():
+                    raise RuntimeError("LINE carousel template actions require label.")
+                normalized_column_action: dict[str, object] = {"label": label}
+                action_type = str(action.get("type") or "").strip().lower()
+                if action_type in {"message", "uri", "postback"}:
+                    normalized_column_action["type"] = action_type
+                data = str(action.get("data") or "")
+                uri = str(action.get("uri") or "")
+                if data:
+                    normalized_column_action["data"] = data
+                if uri:
+                    normalized_column_action["uri"] = uri
+                column_actions.append(normalized_column_action)
+            normalized_column: dict[str, object] = {
+                "text": text,
+                "actions": column_actions,
+            }
+            title = str(column.get("title") or "")
+            if title:
+                normalized_column["title"] = title
+            thumbnail_image_url = str(column.get("thumbnailImageUrl") or "")
+            if thumbnail_image_url:
+                normalized_column["thumbnailImageUrl"] = thumbnail_image_url
+            columns.append(normalized_column)
+        normalized = {
+            "type": "carousel",
+            "columns": columns,
+        }
+        alt_text = str(value.get("altText") or "")
+        if alt_text:
+            normalized["altText"] = alt_text
+        return normalized
+    raise RuntimeError(
+        "LINE templateMessage currently supports confirm, buttons, and carousel templates."
+    )
 
 
 def _line_template_action(label: str, data: str) -> dict[str, object]:
@@ -2530,7 +2583,39 @@ def _line_template_message_payload(template_message: dict[str, object]) -> dict[
             "altText": alt_text[:400],
             "template": template,
         }
-    raise RuntimeError("LINE templateMessage currently supports confirm and buttons templates.")
+    if template_type == "carousel":
+        columns: list[dict[str, object]] = []
+        for column in cast(list[object], template_message["columns"])[:10]:
+            column_mapping = cast(Mapping[str, object], column)
+            actions = [
+                _line_template_payload_action(cast(Mapping[str, object], action))
+                for action in cast(list[object], column_mapping["actions"])[:3]
+            ]
+            column_payload: dict[str, object] = {
+                "text": str(column_mapping["text"])[:120],
+                "actions": actions,
+            }
+            title = str(column_mapping.get("title") or "")
+            if title:
+                column_payload["title"] = title[:40]
+            thumbnail_image_url = str(column_mapping.get("thumbnailImageUrl") or "")
+            if thumbnail_image_url:
+                column_payload["thumbnailImageUrl"] = thumbnail_image_url
+            columns.append(column_payload)
+        alt_text = str(template_message.get("altText") or "View carousel")
+        return {
+            "type": "template",
+            "altText": alt_text[:400],
+            "template": {
+                "type": "carousel",
+                "columns": columns,
+                "imageAspectRatio": "rectangle",
+                "imageSize": "cover",
+            },
+        }
+    raise RuntimeError(
+        "LINE templateMessage currently supports confirm, buttons, and carousel templates."
+    )
 
 
 def _matrix_bearer_token(secret_token: str | None) -> str:
