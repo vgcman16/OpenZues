@@ -5095,6 +5095,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_client_command_passes_spawn_plan_to_registered_runner"` (`7 passed`),
   `ruff check src\openzues\services\acp_client_runtime.py tests\test_cli.py`,
   and `mypy src\openzues\services\acp_client_runtime.py`.
+- The top-level ACP bridge command now accepts OpenClaw's gateway option
+  aliases (`--gateway-url`, `--gateway-token`, `--gateway-token-file`,
+  `--gateway-password`, and `--gateway-password-file`) while reusing the same
+  native unavailable boundary, file-secret reads, and mixed inline/file secret
+  validation.
+- Verified the ACP bridge gateway-alias slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_bridge_command"` (`3 passed`), adjacent ACP
+  CLI proof `python -m pytest tests\test_cli.py -q -k "acp_bridge_command or
+  acp_client_command_reports_native_runtime_unavailable or
+  acp_client_spawn_plan or acp_client_spawn_invocation or
+  acp_client_command_passes_spawn_plan_to_registered_runner or
+  acp_status_json_and_human"` (`12 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 

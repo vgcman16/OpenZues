@@ -17150,18 +17150,31 @@ def acp_bridge_command(
     url: str | None = typer.Option(
         None,
         "--url",
+        "--gateway-url",
         help="Gateway WebSocket URL.",
     ),
-    token: str | None = typer.Option(None, "--token", help="Gateway token."),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        "--gateway-token",
+        help="Gateway token.",
+    ),
     token_file: str | None = typer.Option(
         None,
         "--token-file",
+        "--gateway-token-file",
         help="Read gateway token from file.",
     ),
-    password: str | None = typer.Option(None, "--password", help="Gateway password."),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        "--gateway-password",
+        help="Gateway password.",
+    ),
     password_file: str | None = typer.Option(
         None,
         "--password-file",
+        "--gateway-password-file",
         help="Read gateway password from file.",
     ),
     session: str | None = typer.Option(None, "--session", help="Default session key."),

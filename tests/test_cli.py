@@ -2198,6 +2198,57 @@ def test_acp_bridge_command_reports_native_runtime_unavailable() -> None:
     assert "sessions spawn --runtime acp" in result.stderr
 
 
+def test_acp_bridge_command_accepts_gateway_option_aliases(tmp_path: Path) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    password_file = tmp_path / "gateway-password.txt"
+    token_file.write_text("gateway-token\n", encoding="utf-8")
+    password_file.write_text("gateway-password\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--gateway-url",
+            "ws://gateway.invalid/openzues",
+            "--gateway-token-file",
+            str(token_file),
+            "--gateway-password-file",
+            str(password_file),
+            "--session-label",
+            "Main",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ACP Gateway bridge is not available" in result.stderr
+    assert "url: ws://gateway.invalid/openzues" in result.stderr
+    assert f"tokenFile: {token_file}" in result.stderr
+    assert f"passwordFile: {password_file}" in result.stderr
+    assert "gateway-token\n" not in result.stderr
+    assert "gateway-password\n" not in result.stderr
+
+
+def test_acp_bridge_command_rejects_mixed_gateway_alias_secret_sources(
+    tmp_path: Path,
+) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    token_file.write_text("gateway-token\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--gateway-token",
+            "inline-token",
+            "--gateway-token-file",
+            str(token_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Use either --token or --token-file for Gateway token." in result.stderr
+
+
 def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     result = runner.invoke(
         app,

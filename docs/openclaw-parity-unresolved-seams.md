@@ -811,9 +811,11 @@ The top-level `acp` and `acp client` command surfaces now accept the
 upstream option shape and return precise native-unavailable bridge errors that
 point users to the supported `sessions spawn --runtime acp` path; remaining
 ACP CLI parity is the real bridge server/client runtime. The unavailable
-boundary now validates provenance modes, rejects mixed inline/file secret
-sources, validates secret-file readability, and warns when inline token or
-password flags are used.
+boundary now accepts OpenClaw's `--gateway-url`, `--gateway-token`,
+`--gateway-token-file`, `--gateway-password`, and `--gateway-password-file`
+aliases, validates provenance modes, rejects mixed inline/file secret sources,
+validates secret-file readability, and warns when inline token or password
+flags are used.
 `acp client` now also builds an OpenClaw-shaped native spawn plan before that
 unavailable boundary: default OpenZues ACP server launches use `openzues acp`,
 set `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys
