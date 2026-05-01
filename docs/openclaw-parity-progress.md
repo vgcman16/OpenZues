@@ -2457,6 +2457,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_nodes_api.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Direct session-history and adjacent `chat.history` projection now sanitize
+  structured assistant content arrays with OpenClaw's phase rules: commentary
+  only entries are hidden, mixed explicit phase text keeps the
+  `final_answer` blocks, and raw `__openclaw.seq` still reflects the source
+  transcript row.
+- Verified the phased assistant history slice with `python -m pytest
+  tests\test_gateway_nodes_api.py::test_gateway_session_history_rest_endpoint_sanitizes_phased_assistant_content
+  -q` (`1 passed`), adjacent direct-history proof `python -m pytest
+  tests\test_gateway_nodes_api.py -q -k "session_history_rest_endpoint"` (`18
+  passed`), adjacent projection proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "chat_history or sessions_history"`
+  (`24 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_nodes_api.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_honors_explicit_limits_above_direct_rest_cap or sessions_get_uses_openclaw_default_limit_of_200 or sessions_get_supports_cursor_pagination"`: 3 passed after separating RPC `sessions.get` explicit limits from the direct REST 1000-row cap.
 - `pytest tests/test_gateway_nodes_api.py tests/test_gateway_node_methods.py -q -k "sessions_get or session_history_rest or session_message or sessions_subscribe"`: 26 passed after rechecking the session read/event/subscription pack.
 - `ruff check src/openzues/app.py src/openzues/services/gateway_node_methods.py src/openzues/services/hub.py src/openzues/services/gateway_sessions.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the RPC `sessions.get` large-limit seam.

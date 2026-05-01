@@ -1605,6 +1605,15 @@ history. Remaining transcript seams should move to another source-backed
 `sessions-history-http` / `chat.history` edge rather than this closed duplicate
 alias case.
 
+Current queue-head adjustment: direct session-history REST now sanitizes
+structured assistant content arrays with OpenClaw's explicit phase semantics.
+Commentary-only assistant entries are hidden, mixed phased text blocks keep only
+`final_answer` text, and sequence metadata still reflects the source transcript
+row. The remaining `sessions-history-http.test.ts` direct-history edges are now
+covered by native REST/SSE tests; the transcript queue should move to a new
+source-backed `chat.history`/session read-model mismatch or rotate back to the
+runtime/provider queue.
+
 Current queue-head adjustment: RPC `sessions.get` now accepts explicit limits
 above 1000 like OpenClaw's WebSocket method, while direct HTTP
 `/sessions/{sessionKey}/history` keeps its upstream 1000-row REST cap. The next

@@ -19790,6 +19790,74 @@ def test_gateway_session_history_rest_endpoint_prefers_freshest_alias_transcript
     assert "nextCursor" not in body
 
 
+def test_gateway_session_history_rest_endpoint_sanitizes_phased_assistant_content() -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "gateway-session-history-rest-phased-assistant-api"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "agent:main:main"
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        database = client.app.state.database
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content="NO_REPLY",
+                session_key=session_key,
+            )
+        )
+        asyncio.run(
+            database.append_control_chat_message(
+                role="assistant",
+                content=json.dumps(
+                    [
+                        {
+                            "type": "text",
+                            "text": "internal reasoning",
+                            "textSignature": json.dumps(
+                                {
+                                    "v": 1,
+                                    "id": "item_commentary",
+                                    "phase": "commentary",
+                                }
+                            ),
+                        },
+                        {
+                            "type": "text",
+                            "text": "Done.",
+                            "textSignature": json.dumps(
+                                {
+                                    "v": 1,
+                                    "id": "item_final",
+                                    "phase": "final_answer",
+                                }
+                            ),
+                        },
+                    ]
+                ),
+                session_key=session_key,
+            )
+        )
+
+        response = client.get(f"/sessions/{quote(session_key, safe='')}/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sessionKey"] == session_key
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["content"][0]["text"] == "Done."
+    assert body["messages"][0]["__openclaw"]["seq"] == 2
+
+
 def test_gateway_session_history_rest_endpoint_reports_unknown_session() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-missing-api"
     shutil.rmtree(tmp_path, ignore_errors=True)

@@ -15920,15 +15920,7 @@ def _project_control_chat_messages(
     *,
     max_chars: int | None,
 ) -> list[dict[str, Any]]:
-    normalized: list[
-        tuple[
-            str,
-            str,
-            dict[str, Any] | None,
-            dict[str, Any] | None,
-            dict[str, Any] | None,
-        ]
-    ] = []
+    messages: list[dict[str, Any]] = []
     for row in rows:
         role = str(row.get("role") or "").strip()
         if role not in {"user", "assistant"}:
@@ -15941,33 +15933,37 @@ def _project_control_chat_messages(
         metadata = (
             _chat_history_json_object(row.get("metadata_json")) if role == "assistant" else None
         )
-        normalized.append((role, text, usage, cost, metadata))
-
-    if max_chars is None:
-        return _cap_chat_history_messages_by_json_bytes(
-            [
-                _bounded_chat_history_message_payload(
+        structured_content = _chat_history_structured_content(
+            text,
+            role=role,
+            max_chars=max_chars,
+        )
+        if structured_content is not None:
+            if not structured_content:
+                continue
+            messages.append(
+                _bounded_chat_history_content_payload(
                     role,
-                    text,
+                    structured_content,
                     usage=usage,
                     cost=cost,
                     metadata=metadata,
                 )
-                for role, text, usage, cost, metadata in normalized
-            ]
-        )
-    return _cap_chat_history_messages_by_json_bytes(
-        [
+            )
+            continue
+        if max_chars is not None:
+            text = _chat_history_truncated_text(text, max_chars)
+        messages.append(
             _bounded_chat_history_message_payload(
                 role,
-                _chat_history_truncated_text(text, max_chars),
+                text,
                 usage=usage,
                 cost=cost,
                 metadata=metadata,
             )
-            for role, text, usage, cost, metadata in normalized
-        ]
-    )
+        )
+
+    return _cap_chat_history_messages_by_json_bytes(messages)
 
 
 def _project_sessions_history_messages(
@@ -16023,6 +16019,111 @@ def _sessions_history_display_role(role: str) -> str:
 
 def _sessions_history_is_tool_role(role: str) -> bool:
     return role in {"tool", "toolResult"}
+
+
+def _chat_history_structured_content(
+    text: str,
+    *,
+    role: str,
+    max_chars: int | None,
+) -> list[dict[str, Any]] | None:
+    if not text.lstrip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        return None
+
+    content = [
+        _sanitize_chat_history_content_block(item, max_chars=max_chars)
+        for item in parsed
+    ]
+    if role != "assistant":
+        return content
+    if _assistant_content_phase(content) == "commentary":
+        return []
+    content = _assistant_final_answer_content_blocks(content)
+    if _assistant_structured_content_is_suppressed(content):
+        return []
+    return content
+
+
+def _sanitize_chat_history_content_block(
+    block: Mapping[str, Any],
+    *,
+    max_chars: int | None,
+) -> dict[str, Any]:
+    sanitized = dict(block)
+    for key in ("text", "content", "thinking"):
+        value = sanitized.get(key)
+        if not isinstance(value, str):
+            continue
+        value = _chat_history_display_text(value)
+        if max_chars is not None:
+            value = _chat_history_truncated_text(value, max_chars)
+        sanitized[key] = value
+    if "thinkingSignature" in sanitized:
+        sanitized.pop("thinkingSignature", None)
+    return sanitized
+
+
+def _assistant_content_phase(content: list[dict[str, Any]]) -> str | None:
+    phases: set[str] = set()
+    for block in content:
+        if block.get("type") != "text":
+            continue
+        phase = _assistant_text_signature_phase(block.get("textSignature"))
+        if phase is not None:
+            phases.add(phase)
+    return next(iter(phases)) if len(phases) == 1 else None
+
+
+def _assistant_final_answer_content_blocks(
+    content: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    has_explicit_phased_text = any(
+        block.get("type") == "text"
+        and _assistant_text_signature_phase(block.get("textSignature")) is not None
+        for block in content
+    )
+    if not has_explicit_phased_text:
+        return content
+    return [
+        block
+        for block in content
+        if block.get("type") != "text"
+        or _assistant_text_signature_phase(block.get("textSignature")) == "final_answer"
+    ]
+
+
+def _assistant_text_signature_phase(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip().startswith("{"):
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or parsed.get("v") != 1:
+        return None
+    phase = parsed.get("phase")
+    return phase if phase in {"commentary", "final_answer"} else None
+
+
+def _assistant_structured_content_is_suppressed(content: list[dict[str, Any]]) -> bool:
+    if not content:
+        return False
+    texts: list[str] = []
+    for block in content:
+        if block.get("type") != "text":
+            return False
+        text = block.get("text")
+        if not isinstance(text, str):
+            return False
+        texts.append(text)
+    joined = "\n".join(texts).strip()
+    return bool(joined) and joined.upper() in _CHAT_HISTORY_ASSISTANT_SKIP_TEXTS
 
 
 def _sessions_history_structured_content(text: str) -> dict[str, Any] | None:
@@ -16244,7 +16345,24 @@ def _chat_history_message_payload(
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {"role": role, "content": [{"type": "text", "text": text}]}
+    return _chat_history_content_payload(
+        role,
+        [{"type": "text", "text": text}],
+        usage=usage,
+        cost=cost,
+        metadata=metadata,
+    )
+
+
+def _chat_history_content_payload(
+    role: str,
+    content: list[dict[str, Any]],
+    *,
+    usage: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"role": role, "content": content}
     if usage is not None:
         payload["usage"] = usage
     if cost is not None:
@@ -16256,17 +16374,17 @@ def _chat_history_message_payload(
     return payload
 
 
-def _bounded_chat_history_message_payload(
+def _bounded_chat_history_content_payload(
     role: str,
-    text: str,
+    content: list[dict[str, Any]],
     *,
     usage: dict[str, Any] | None = None,
     cost: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = _chat_history_message_payload(
+    payload = _chat_history_content_payload(
         role,
-        text,
+        content,
         usage=usage,
         cost=cost,
         metadata=metadata,
@@ -16280,6 +16398,23 @@ def _bounded_chat_history_message_payload(
     )
     placeholder["__openclaw"] = {"truncated": True, "reason": "oversized"}
     return placeholder
+
+
+def _bounded_chat_history_message_payload(
+    role: str,
+    text: str,
+    *,
+    usage: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _bounded_chat_history_content_payload(
+        role,
+        [{"type": "text", "text": text}],
+        usage=usage,
+        cost=cost,
+        metadata=metadata,
+    )
 
 
 def _cap_chat_history_messages_by_json_bytes(
