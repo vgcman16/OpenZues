@@ -4990,6 +4990,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_discord_poll_route"` (`6 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- WhatsApp `message.action send` now reaches the native Cloud API send runtime
+  instead of falling through unsupported. The action forwards OpenClaw-style
+  `to`, `message`, `media` / `mediaUrl`, `replyTo`, `gifPlayback`,
+  `audioAsVoice`, and `forceDocument` / `asDocument` into `gateway/send`,
+  returning provider `messageId`, `channelId`, `mediaIds`, and `mediaUrls`
+  metadata.
+- Verified the WhatsApp action-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "whatsapp_send_document_reply"` (`1 passed`),
+  adjacent route/provider coverage `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_whatsapp_send_document_reply or
+  message_action_dispatches_whatsapp_poll_route or
+  message_action_dispatches_whatsapp_react_route or
+  send_direct_channel_message_preserves_whatsapp_reply_document or
+  send_direct_channel_message_uses_whatsapp_gif_video_payload or
+  send_direct_channel_message_uses_whatsapp_native_route"` (`6 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 - Sandbox `explain` now includes OpenClaw's read-only agent workspace mount
   hint: when the effective sandbox workspace access is `ro`, JSON and human
   output expose `agentWorkspaceMount="/agent"` so callers can distinguish the
