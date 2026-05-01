@@ -5197,6 +5197,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_bridge_command or acp_status_json_and_human"` (`45 passed`), `ruff check
   src\openzues\services\acp_translator.py tests\test_acp_translator.py`, and
   `mypy src\openzues\services\acp_translator.py`.
+- Native `AcpGatewayAgent` lifecycle now covers OpenClaw's ACP
+  `initialize`, `newSession`, and `loadSession` bridge behavior: advertised
+  load/prompt/MCP/session-list capabilities, session store materialization via
+  session meta, gateway-backed session presentation snapshots, usage updates,
+  transcript replay for user/assistant/thinking text, and available command
+  updates.
+- Verified the ACP agent lifecycle-foundation slice with `python -m pytest
+  tests\test_acp_agent.py -q` (`3 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_agent.py tests\test_acp_translator.py
+  tests\test_acp_session_store.py tests\test_acp_commands.py
+  tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_gateway_agent or acp_translator or acp_session_store or
+  acp_available_commands or acp_session_mapper or acp_event_mapper or
+  acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`48 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
 
 ## References
 

@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
+from typing import Any, Protocol
+
+from openzues.services.acp_commands import get_available_commands
+from openzues.services.acp_session_mapper import parse_session_meta, resolve_session_key
+from openzues.services.acp_session_store import (
+    InMemoryAcpSessionStore,
+    default_acp_session_store,
+)
+
+ACP_PROTOCOL_VERSION = "0.4.0"
+ACP_LOAD_SESSION_REPLAY_LIMIT = 1_000_000
+ACP_AGENT_INFO = {
+    "name": "openclaw-acp",
+    "title": "OpenClaw ACP Gateway",
+    "version": "0.0.0-openzues",
+}
+_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "adaptive"]
+
+
+class AcpGatewayClient(Protocol):
+    async def request(self, method: str, params: dict[str, object]) -> Mapping[str, Any]:
+        ...
+
+
+class AcpConnection(Protocol):
+    async def session_update(self, payload: dict[str, object]) -> object:
+        ...
+
+
+def _normalize_optional_string(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _format_thinking_level_name(level: str) -> str:
+    if level == "xhigh":
+        return "Extra High"
+    if level == "adaptive":
+        return "Adaptive"
+    return f"{level[0].upper()}{level[1:]}" if level else "Unknown"
+
+
+def _format_config_value_name(value: str) -> str:
+    if value == "xhigh":
+        return "Extra High"
+    return f"{value[0].upper()}{value[1:]}" if value else "Unknown"
+
+
+def _build_select_config_option(
+    *,
+    option_id: str,
+    name: str,
+    description: str,
+    current_value: str,
+    values: Sequence[str],
+    category: str | None = None,
+) -> dict[str, object]:
+    option: dict[str, object] = {
+        "type": "select",
+        "id": option_id,
+        "name": name,
+        "description": description,
+        "currentValue": current_value,
+        "options": [
+            {"value": value, "name": _format_config_value_name(value)}
+            for value in values
+        ],
+    }
+    if category is not None:
+        option["category"] = category
+    return option
+
+
+def _session_row(row: Mapping[str, Any] | None) -> dict[str, Any]:
+    return dict(row) if row is not None else {}
+
+
+def _build_session_presentation(
+    row: Mapping[str, Any] | None = None,
+    overrides: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    merged = _session_row(row)
+    if overrides is not None:
+        merged.update(overrides)
+    available_level_ids = list(_THINKING_LEVELS)
+    current_mode_id = _normalize_optional_string(merged.get("thinkingLevel")) or "adaptive"
+    if current_mode_id not in available_level_ids:
+        available_level_ids.append(current_mode_id)
+
+    modes = {
+        "currentModeId": current_mode_id,
+        "availableModes": [
+            {
+                "id": level,
+                "name": _format_thinking_level_name(level),
+                **(
+                    {"description": "Use the Gateway session default thought level."}
+                    if level == "adaptive"
+                    else {}
+                ),
+            }
+            for level in available_level_ids
+        ],
+    }
+    config_options = [
+        _build_select_config_option(
+            option_id="thought_level",
+            name="Thought level",
+            category="thought_level",
+            description=(
+                "Controls how much deliberate reasoning OpenClaw requests from "
+                "the Gateway model."
+            ),
+            current_value=current_mode_id,
+            values=available_level_ids,
+        ),
+        _build_select_config_option(
+            option_id="fast_mode",
+            name="Fast mode",
+            description="Controls whether OpenAI sessions use the Gateway fast-mode profile.",
+            current_value="on" if merged.get("fastMode") is True else "off",
+            values=("off", "on"),
+        ),
+        _build_select_config_option(
+            option_id="verbose_level",
+            name="Tool verbosity",
+            description=(
+                "Controls how much tool progress and output detail OpenClaw "
+                "keeps enabled for the session."
+            ),
+            current_value=_normalize_optional_string(merged.get("verboseLevel")) or "off",
+            values=("off", "on", "full"),
+        ),
+        _build_select_config_option(
+            option_id="trace_level",
+            name="Plugin trace",
+            description="Controls whether plugin-owned trace lines are shown for the session.",
+            current_value=_normalize_optional_string(merged.get("traceLevel")) or "off",
+            values=("off", "on"),
+        ),
+        _build_select_config_option(
+            option_id="reasoning_level",
+            name="Reasoning stream",
+            description=(
+                "Controls whether reasoning-capable models emit reasoning text "
+                "for the session."
+            ),
+            current_value=_normalize_optional_string(merged.get("reasoningLevel")) or "off",
+            values=("off", "on", "stream"),
+        ),
+        _build_select_config_option(
+            option_id="response_usage",
+            name="Usage detail",
+            description=(
+                "Controls how much usage information OpenClaw attaches to "
+                "responses for the session."
+            ),
+            current_value=_normalize_optional_string(merged.get("responseUsage")) or "off",
+            values=("off", "tokens", "full"),
+        ),
+        _build_select_config_option(
+            option_id="elevated_level",
+            name="Elevated actions",
+            description=(
+                "Controls how aggressively the session allows elevated execution behavior."
+            ),
+            current_value=_normalize_optional_string(merged.get("elevatedLevel")) or "off",
+            values=("off", "on", "ask", "full"),
+        ),
+    ]
+    return {"configOptions": config_options, "modes": modes}
+
+
+def _format_updated_at(value: object) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    timestamp = datetime.fromtimestamp(float(value) / 1000, tz=UTC)
+    return timestamp.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _build_session_metadata(
+    *,
+    row: Mapping[str, Any] | None,
+    session_key: str,
+) -> dict[str, object]:
+    record = _session_row(row)
+    title = (
+        _normalize_optional_string(record.get("derivedTitle"))
+        or _normalize_optional_string(record.get("displayName"))
+        or _normalize_optional_string(record.get("label"))
+        or session_key
+    )
+    return {
+        "title": title,
+        "updatedAt": _format_updated_at(record.get("updatedAt")),
+    }
+
+
+def _build_session_usage_snapshot(row: Mapping[str, Any] | None) -> dict[str, int] | None:
+    if row is None or row.get("totalTokensFresh") is not True:
+        return None
+    total_tokens = row.get("totalTokens")
+    context_tokens = row.get("contextTokens")
+    if (
+        isinstance(total_tokens, bool)
+        or isinstance(context_tokens, bool)
+        or not isinstance(total_tokens, int | float)
+        or not isinstance(context_tokens, int | float)
+        or context_tokens <= 0
+    ):
+        return None
+    size = max(0, int(context_tokens))
+    used = max(0, min(int(total_tokens), size))
+    return {"size": size, "used": used}
+
+
+def _extract_replay_chunks(message: Mapping[str, Any]) -> list[dict[str, object]]:
+    role = message.get("role") if isinstance(message.get("role"), str) else ""
+    if role not in {"user", "assistant"}:
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        if not content:
+            return []
+        return [
+            {
+                "sessionUpdate": (
+                    "user_message_chunk" if role == "user" else "agent_message_chunk"
+                ),
+                "text": content,
+            }
+        ]
+    if not isinstance(content, list):
+        return []
+    chunks: list[dict[str, object]] = []
+    for block in content:
+        if not isinstance(block, Mapping):
+            continue
+        block_type = block.get("type")
+        if block_type == "text" and isinstance(block.get("text"), str) and block.get("text"):
+            chunks.append(
+                {
+                    "sessionUpdate": (
+                        "user_message_chunk" if role == "user" else "agent_message_chunk"
+                    ),
+                    "text": block["text"],
+                }
+            )
+            continue
+        thinking = block.get("thinking")
+        if (
+            role == "assistant"
+            and block_type == "thinking"
+            and isinstance(thinking, str)
+            and thinking
+        ):
+            chunks.append({"sessionUpdate": "agent_thought_chunk", "text": thinking})
+    return chunks
+
+
+class AcpGatewayAgent:
+    def __init__(
+        self,
+        connection: AcpConnection,
+        gateway: AcpGatewayClient,
+        *,
+        session_store: InMemoryAcpSessionStore | None = None,
+        **opts: object,
+    ) -> None:
+        self._connection = connection
+        self._gateway = gateway
+        self._session_store = session_store or default_acp_session_store
+        self._opts = opts
+
+    async def initialize(self, _params: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "protocolVersion": ACP_PROTOCOL_VERSION,
+            "agentCapabilities": {
+                "loadSession": True,
+                "promptCapabilities": {
+                    "image": True,
+                    "audio": False,
+                    "embeddedContext": True,
+                },
+                "mcpCapabilities": {
+                    "http": False,
+                    "sse": False,
+                },
+                "sessionCapabilities": {"list": {}},
+            },
+            "agentInfo": dict(ACP_AGENT_INFO),
+            "authMethods": [],
+        }
+
+    async def newSession(self, params: Mapping[str, object]) -> dict[str, object]:  # noqa: N802
+        return await self.new_session(params)
+
+    async def new_session(self, params: Mapping[str, object]) -> dict[str, object]:
+        self._assert_supported_session_setup(params.get("mcpServers"))
+        meta = parse_session_meta(params.get("_meta"))
+        session_key = await resolve_session_key(
+            meta=meta,
+            fallback_key="acp:pending",
+            gateway=self._gateway,
+            opts=self._opts,
+        )
+        cwd = str(params.get("cwd") or "")
+        session = self._session_store.create_session(session_key=session_key, cwd=cwd)
+        session_id = str(session["sessionId"])
+        if session_key == "acp:pending":
+            session_key = f"acp:{session_id}"
+            session["sessionKey"] = session_key
+        snapshot = await self._get_session_snapshot(session_key)
+        await self._send_session_snapshot_update(session_id, snapshot, include_controls=False)
+        await self._send_available_commands(session_id)
+        return {
+            "sessionId": session_id,
+            "configOptions": snapshot["configOptions"],
+            "modes": snapshot["modes"],
+        }
+
+    async def loadSession(self, params: Mapping[str, object]) -> dict[str, object]:  # noqa: N802
+        return await self.load_session(params)
+
+    async def load_session(self, params: Mapping[str, object]) -> dict[str, object]:
+        self._assert_supported_session_setup(params.get("mcpServers"))
+        session_id = str(params.get("sessionId") or "")
+        meta = parse_session_meta(params.get("_meta"))
+        session_key = await resolve_session_key(
+            meta=meta,
+            fallback_key=session_id,
+            gateway=self._gateway,
+            opts=self._opts,
+        )
+        cwd = str(params.get("cwd") or "")
+        session = self._session_store.create_session(
+            session_id=session_id,
+            session_key=session_key,
+            cwd=cwd,
+        )
+        snapshot = await self._get_session_snapshot(session_key)
+        transcript = await self._get_session_transcript(session_key)
+        await self._replay_session_transcript(str(session["sessionId"]), transcript)
+        await self._send_session_snapshot_update(
+            str(session["sessionId"]),
+            snapshot,
+            include_controls=False,
+        )
+        await self._send_available_commands(str(session["sessionId"]))
+        return {
+            "configOptions": snapshot["configOptions"],
+            "modes": snapshot["modes"],
+        }
+
+    def _assert_supported_session_setup(self, mcp_servers: object) -> None:
+        if not isinstance(mcp_servers, Sequence) or isinstance(mcp_servers, str | bytes):
+            return
+        if len(mcp_servers) == 0:
+            return
+        raise ValueError(
+            "ACP bridge mode does not support per-session MCP servers. Configure MCP "
+            "on the OpenClaw gateway or agent instead."
+        )
+
+    async def _get_session_snapshot(self, session_key: str) -> dict[str, object]:
+        try:
+            row = await self._get_gateway_session_row(session_key)
+        except Exception:  # noqa: BLE001 - bridge snapshot fallback mirrors OpenClaw.
+            row = None
+        snapshot = _build_session_presentation(row)
+        snapshot["metadata"] = _build_session_metadata(row=row, session_key=session_key)
+        usage = _build_session_usage_snapshot(row)
+        if usage is not None:
+            snapshot["usage"] = usage
+        return snapshot
+
+    async def _get_gateway_session_row(self, session_key: str) -> Mapping[str, Any] | None:
+        result = await self._gateway.request(
+            "sessions.list",
+            {"limit": 200, "search": session_key, "includeDerivedTitles": True},
+        )
+        sessions = result.get("sessions")
+        if not isinstance(sessions, list):
+            return None
+        for entry in sessions:
+            if isinstance(entry, Mapping) and entry.get("key") == session_key:
+                return entry
+        return None
+
+    async def _get_session_transcript(
+        self,
+        session_key: str,
+    ) -> list[Mapping[str, Any]]:
+        try:
+            result = await self._gateway.request(
+                "sessions.get",
+                {"key": session_key, "limit": ACP_LOAD_SESSION_REPLAY_LIMIT},
+            )
+        except Exception:  # noqa: BLE001 - loadSession falls back to an empty transcript.
+            return []
+        messages = result.get("messages")
+        if not isinstance(messages, list):
+            return []
+        return [message for message in messages if isinstance(message, Mapping)]
+
+    async def _replay_session_transcript(
+        self,
+        session_id: str,
+        transcript: Sequence[Mapping[str, Any]],
+    ) -> None:
+        for message in transcript:
+            for chunk in _extract_replay_chunks(message):
+                await self._session_update(
+                    {
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": chunk["sessionUpdate"],
+                            "content": {"type": "text", "text": chunk["text"]},
+                        },
+                    }
+                )
+
+    async def _send_session_snapshot_update(
+        self,
+        session_id: str,
+        snapshot: Mapping[str, object],
+        *,
+        include_controls: bool,
+    ) -> None:
+        if include_controls:
+            modes = snapshot.get("modes")
+            if isinstance(modes, Mapping):
+                await self._session_update(
+                    {
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "current_mode_update",
+                            "currentModeId": modes.get("currentModeId"),
+                        },
+                    }
+                )
+            await self._session_update(
+                {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "config_option_update",
+                        "configOptions": snapshot.get("configOptions"),
+                    },
+                }
+            )
+        metadata = snapshot.get("metadata")
+        if isinstance(metadata, Mapping):
+            await self._session_update(
+                {
+                    "sessionId": session_id,
+                    "update": {"sessionUpdate": "session_info_update", **dict(metadata)},
+                }
+            )
+        usage = snapshot.get("usage")
+        if isinstance(usage, Mapping):
+            await self._session_update(
+                {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "usage_update",
+                        "used": usage.get("used"),
+                        "size": usage.get("size"),
+                        "_meta": {
+                            "source": "gateway-session-store",
+                            "approximate": True,
+                        },
+                    },
+                }
+            )
+
+    async def _send_available_commands(self, session_id: str) -> None:
+        await self._session_update(
+            {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "available_commands_update",
+                    "availableCommands": get_available_commands(),
+                },
+            }
+        )
+
+    async def _session_update(self, payload: dict[str, object]) -> None:
+        await self._connection.session_update(payload)
