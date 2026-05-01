@@ -13408,7 +13408,11 @@ def _plugin_record_from_deck_item(
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
-    for metadata_key, metadata_value in _plugin_manifest_root_metadata(item).items():
+    item_root_dir = _optional_cli_string(item.get("rootDir"))
+    for metadata_key, metadata_value in _plugin_manifest_root_metadata(
+        item,
+        root_dir=Path(item_root_dir) if item_root_dir is not None else None,
+    ).items():
         record[metadata_key] = metadata_value
     for key in (
         "commands",
@@ -13772,7 +13776,11 @@ def _plugin_manifest_kind(value: object) -> str | list[str] | None:
     return values if values else None
 
 
-def _plugin_manifest_root_metadata(source: dict[str, object]) -> dict[str, object]:
+def _plugin_manifest_root_metadata(
+    source: dict[str, object],
+    *,
+    root_dir: Path | None = None,
+) -> dict[str, object]:
     metadata: dict[str, object] = {}
     if source.get("enabledByDefault") is True:
         metadata["enabledByDefault"] = True
@@ -13790,11 +13798,19 @@ def _plugin_manifest_root_metadata(source: dict[str, object]) -> dict[str, objec
     kind = _plugin_manifest_kind(source.get("kind"))
     if kind is not None:
         metadata["kind"] = kind
-    provider_discovery_entry = _optional_cli_string(
-        source.get("providerDiscoveryEntry")
+    provider_discovery_source = _optional_cli_string(
+        source.get("providerDiscoverySource")
     )
-    if provider_discovery_entry is not None:
-        metadata["providerDiscoveryEntry"] = provider_discovery_entry
+    if provider_discovery_source is not None:
+        metadata["providerDiscoverySource"] = provider_discovery_source
+    else:
+        provider_discovery_entry = _optional_cli_string(
+            source.get("providerDiscoveryEntry")
+        )
+        if provider_discovery_entry is not None and root_dir is not None:
+            metadata["providerDiscoverySource"] = str(
+                (root_dir / provider_discovery_entry).resolve(strict=False)
+            )
     ui_hints = source.get("uiHints")
     if isinstance(ui_hints, dict):
         metadata["configUiHints"] = dict(ui_hints)
@@ -14211,7 +14227,10 @@ def _plugin_record_from_openclaw_manifest(
     version = _optional_cli_string(manifest.get("version"))
     if version is not None:
         record["version"] = version
-    for metadata_key, metadata_value in _plugin_manifest_root_metadata(manifest).items():
+    for metadata_key, metadata_value in _plugin_manifest_root_metadata(
+        manifest,
+        root_dir=manifest_path.parent,
+    ).items():
         record[metadata_key] = metadata_value
     if contracts:
         record["contracts"] = contracts

@@ -6889,7 +6889,9 @@ def test_plugins_list_json_preserves_manifest_identity_and_classification(
     assert plugin["kind"] == ["memory", "context-engine"]
     assert plugin["channels"] == ["slack"]
     assert plugin["providers"] == ["openai", "openai-codex"]
-    assert plugin["providerDiscoveryEntry"] == "extensions/openai/providers"
+    assert plugin["providerDiscoverySource"] == str(
+        (plugin_dir / "extensions/openai/providers").resolve()
+    )
     assert plugin["cliBackends"] == ["openai-cli"]
     assert plugin["skills"] == ["skills/openai"]
     assert plugin["configUiHints"] == {"apiKey": {"label": "API key"}}

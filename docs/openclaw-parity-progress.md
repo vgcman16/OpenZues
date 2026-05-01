@@ -867,8 +867,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Metadata-only plugin discovery now also preserves OpenClaw manifest root
   identity/classification metadata: `enabledByDefault`, `legacyPluginIds`,
   `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
-  `providerDiscoveryEntry`, `cliBackends`, `skills`, and `configUiHints`
-  projected from top-level `uiHints`.
+  `providerDiscoverySource` resolved from `providerDiscoveryEntry`,
+  `cliBackends`, `skills`, and `configUiHints` projected from top-level
+  `uiHints`.
 - Verified the manifest root metadata slice with `python -m pytest
   tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification
   -q` (`1 passed`), adjacent metadata proof `python -m pytest
