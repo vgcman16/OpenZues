@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from openzues.services.acp_commands import get_available_commands
+from openzues.services.acp_event_mapper import (
+    extract_tool_call_content,
+    extract_tool_call_locations,
+    format_tool_title,
+    infer_tool_kind,
+)
 from openzues.services.acp_session_mapper import parse_session_meta, resolve_session_key
 from openzues.services.acp_session_store import (
     InMemoryAcpSessionStore,
@@ -43,6 +49,7 @@ class _PendingPrompt:
     future: asyncio.Future[dict[str, object]]
     sent_text_length: int = 0
     sent_thought_length: int = 0
+    tool_calls: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 def _normalize_optional_string(value: object) -> str | None:
@@ -435,6 +442,9 @@ class AcpGatewayAgent:
         await self.handle_gateway_event(event)
 
     async def handle_gateway_event(self, event: Mapping[str, object]) -> None:
+        if event.get("event") == "agent":
+            await self._handle_agent_event(event)
+            return
         if event.get("event") != "chat":
             return
         payload = event.get("payload")
@@ -468,6 +478,92 @@ class AcpGatewayAgent:
             error_kind = payload.get("errorKind")
             stop_reason = "refusal" if error_kind == "refusal" else "end_turn"
             await self._finish_prompt(pending, stop_reason)
+
+    async def _handle_agent_event(self, event: Mapping[str, object]) -> None:
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            return
+        if payload.get("stream") != "tool":
+            return
+        session_key = payload.get("sessionKey")
+        run_id = payload.get("runId")
+        data = payload.get("data")
+        if not isinstance(session_key, str) or not isinstance(data, Mapping):
+            return
+        pending = self._find_pending_by_session_key(
+            session_key,
+            run_id if isinstance(run_id, str) else None,
+        )
+        if pending is None:
+            return
+        phase = data.get("phase")
+        tool_call_id = data.get("toolCallId")
+        if not isinstance(phase, str) or not isinstance(tool_call_id, str) or not tool_call_id:
+            return
+        if phase == "start":
+            if tool_call_id in pending.tool_calls:
+                return
+            name = data.get("name") if isinstance(data.get("name"), str) else None
+            args = data.get("args") if isinstance(data.get("args"), Mapping) else None
+            raw_input = dict(args) if args is not None else None
+            locations = extract_tool_call_locations(raw_input)
+            pending.tool_calls[tool_call_id] = {
+                "locations": locations,
+            }
+            await self._session_update(
+                {
+                    "sessionId": pending.session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": tool_call_id,
+                        "title": format_tool_title(name, raw_input),
+                        "status": "in_progress",
+                        "rawInput": raw_input,
+                        "kind": infer_tool_kind(name),
+                        "locations": locations,
+                    },
+                }
+            )
+            return
+        if phase == "update":
+            tool_state = pending.tool_calls.get(tool_call_id, {})
+            partial_result = data.get("partialResult")
+            await self._session_update(
+                {
+                    "sessionId": pending.session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": tool_call_id,
+                        "status": "in_progress",
+                        "rawOutput": partial_result,
+                        "content": extract_tool_call_content(partial_result),
+                        "locations": extract_tool_call_locations(
+                            tool_state.get("locations"),
+                            partial_result,
+                        ),
+                    },
+                }
+            )
+            return
+        if phase == "result":
+            tool_state = pending.tool_calls.pop(tool_call_id, {})
+            result = data.get("result")
+            await self._session_update(
+                {
+                    "sessionId": pending.session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": tool_call_id,
+                        "status": "failed" if data.get("isError") else "completed",
+                        "rawOutput": result,
+                        "content": extract_tool_call_content(result),
+                        "locations": extract_tool_call_locations(
+                            tool_state.get("locations"),
+                            result,
+                        ),
+                    },
+                }
+            )
 
     def _assert_supported_session_setup(self, mcp_servers: object) -> None:
         if not isinstance(mcp_servers, Sequence) or isinstance(mcp_servers, str | bytes):

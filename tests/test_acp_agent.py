@@ -378,3 +378,133 @@ async def test_acp_gateway_agent_cancel_aborts_active_prompt_run() -> None:
 
     assert ("chat.abort", {"sessionKey": "agent:main:main", "runId": run_id}) in gateway.calls
     assert await prompt_task == {"stopReason": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_streams_tool_call_events() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    connection = FakeAcpConnection()
+    gateway = FakeGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:main",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(connection, gateway, session_store=store)
+    prompt_task = asyncio.create_task(
+        agent.prompt(
+            {
+                "sessionId": "session-1",
+                "prompt": [{"type": "text", "text": "hello"}],
+                "_meta": {"prefixCwd": False},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    run_id = gateway.calls[-1][1]["idempotencyKey"]
+    connection.session_updates.clear()
+
+    await agent.handle_gateway_event(
+        {
+            "event": "agent",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "stream": "tool",
+                "data": {
+                    "phase": "start",
+                    "toolCallId": "tool-1",
+                    "name": "shell.exec",
+                    "args": {"path": "C:/work/app.py", "line": 4},
+                },
+            },
+        }
+    )
+    await agent.handle_gateway_event(
+        {
+            "event": "agent",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "stream": "tool",
+                "data": {
+                    "phase": "update",
+                    "toolCallId": "tool-1",
+                    "partialResult": "running\nFILE:C:/work/app.py",
+                },
+            },
+        }
+    )
+    await agent.handle_gateway_event(
+        {
+            "event": "agent",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "stream": "tool",
+                "data": {
+                    "phase": "result",
+                    "toolCallId": "tool-1",
+                    "result": {"text": "done"},
+                },
+            },
+        }
+    )
+    await agent.handle_gateway_event(
+        {
+            "event": "chat",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "state": "final",
+            },
+        }
+    )
+
+    assert connection.session_updates[:3] == [
+        {
+            "sessionId": "session-1",
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tool-1",
+                "title": "shell.exec: path: C:/work/app.py, line: 4",
+                "status": "in_progress",
+                "rawInput": {"path": "C:/work/app.py", "line": 4},
+                "kind": "execute",
+                "locations": [{"path": "C:/work/app.py", "line": 4}],
+            },
+        },
+        {
+            "sessionId": "session-1",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-1",
+                "status": "in_progress",
+                "rawOutput": "running\nFILE:C:/work/app.py",
+                "content": [
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": "running\nFILE:C:/work/app.py"},
+                    }
+                ],
+                "locations": [{"path": "C:/work/app.py", "line": 4}],
+            },
+        },
+        {
+            "sessionId": "session-1",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-1",
+                "status": "completed",
+                "rawOutput": {"text": "done"},
+                "content": [
+                    {"type": "content", "content": {"type": "text", "text": "done"}}
+                ],
+                "locations": [{"path": "C:/work/app.py", "line": 4}],
+            },
+        },
+    ]
+    assert await prompt_task == {"stopReason": "end_turn"}
