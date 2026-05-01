@@ -5214,6 +5214,11 @@ class OpsMeshService:
         event_payload = delivery_row.get("event_payload")
         payload = event_payload if isinstance(event_payload, dict) else {}
         route_scope = dict(delivery_row.get("route_scope") or {})
+        runtime_session_key = (
+            canonicalize_session_key(payload.get("sourceSessionKey"))
+            or canonicalize_session_key(route_scope.get("runtime_session_key"))
+            or session_key
+        )
         conversation_target = _normalize_conversation_target(
             delivery_row.get("conversation_target")
         ) or _normalize_conversation_target(payload.get("conversationTarget"))
@@ -5301,7 +5306,7 @@ class OpsMeshService:
                     else ()
                 )
                 runtime_result = await runtime.deliver_poll(
-                    session_key=session_key,
+                    session_key=runtime_session_key,
                     message=replay_message,
                     channel=str(
                         payload.get("channel")
@@ -5352,7 +5357,7 @@ class OpsMeshService:
                     else None
                 )
                 runtime_result = await runtime.deliver_message(
-                    session_key=session_key,
+                    session_key=runtime_session_key,
                     message=replay_message,
                     channel=str(
                         payload.get("channel")
@@ -5399,7 +5404,7 @@ class OpsMeshService:
                 )
             else:
                 runtime_result = await runtime.deliver_message(
-                    session_key=session_key,
+                    session_key=runtime_session_key,
                     message=replay_message,
                 )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
@@ -5415,6 +5420,9 @@ class OpsMeshService:
             return False, error
         delivered_route_scope = dict(route_scope)
         delivered_route_scope["transport_runtime"] = runtime_result.transport.runtime
+        if runtime_session_key and runtime_session_key != session_key:
+            delivered_route_scope.setdefault("source_session_key", runtime_session_key)
+            delivered_route_scope["runtime_session_key"] = runtime_session_key
         provider_result = _serialize_gateway_provider_result(runtime_result.native_result)
         if provider_result:
             delivered_route_scope["provider_result"] = provider_result

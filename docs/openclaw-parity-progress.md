@@ -5347,6 +5347,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   provider_result or gateway_poll or gateway_send"` (`62 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Provider-backed `gateway/send` replay now also preserves the explicit
+  source-session runtime context saved by the first delivery attempt:
+  `sourceSessionKey` / `runtime_session_key` drives native runtime dispatch
+  while the announce delivery row remains attached to the channel-derived
+  history session.
+- Verified the provider replay source-session slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "retries_saved_failed_gateway_send_via_provider_runtime"`
+  (`1 passed`), adjacent OpsMesh outbound proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "replay_outbound_deliveries or direct_send or
+  direct_channel or provider_result or gateway_poll or gateway_send"` (`62
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

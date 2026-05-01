@@ -445,7 +445,10 @@ Saved failed provider-backed `gateway/send` and `gateway/poll` replay now also
 preserves OpenClaw's recovery-time caller context: stored
 `gatewayClientScopes`, requester session, requester account, and requester
 sender metadata are forwarded back into the native outbound runtime request
-instead of being dropped on replay.
+instead of being dropped on replay. Replay of explicit source-session sends now
+also honors the saved `sourceSessionKey` / `runtime_session_key` for runtime
+dispatch while keeping the announce delivery row attached to the channel-derived
+history session.
 Direct audio-as-voice media sends now also preserve OpenClaw's
 `audioAsVoice` hint from gateway `send` through OpsMesh saved payloads,
 `GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
