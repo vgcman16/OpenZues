@@ -71,6 +71,7 @@ from openzues.schemas import (
 from openzues.services.continuity import build_continuity_packet
 from openzues.services.ecc_catalog import build_ecc_workspace_lines
 from openzues.services.gateway_canvas_documents import resolve_canvas_http_path_to_local_path
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import cron_expression_next_run_at
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
@@ -164,6 +165,7 @@ DEFAULT_CRON_RETRY_ON = (
     "timeout",
     "server_error",
 )
+MATRIX_PROFILE_AVATAR_MAX_BYTES = 10 * 1024 * 1024
 OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"chat not found", re.IGNORECASE),
     re.compile(r"user not found", re.IGNORECASE),
@@ -2351,6 +2353,14 @@ def _matrix_profile_endpoint(target: str | None, *, user_id: str) -> str:
     return f"{_matrix_base_url(target)}/_matrix/client/v3/profile/{quote(user_id, safe='')}"
 
 
+def _matrix_profile_displayname_endpoint(target: str | None, *, user_id: str) -> str:
+    return f"{_matrix_profile_endpoint(target, user_id=user_id)}/displayname"
+
+
+def _matrix_profile_avatar_url_endpoint(target: str | None, *, user_id: str) -> str:
+    return f"{_matrix_profile_endpoint(target, user_id=user_id)}/avatar_url"
+
+
 def _matrix_directory_room_endpoint(target: str | None, *, alias: str) -> str:
     return f"{_matrix_base_url(target)}/_matrix/client/v3/directory/room/{quote(alias, safe='')}"
 
@@ -2441,6 +2451,15 @@ def _matrix_media_filename(media_url: str, fallback: str = "file") -> str:
     parsed = urlparse(media_url)
     name = unquote(Path(parsed.path).name).replace("\\", "_").replace("/", "_").strip()
     return name[:120] if name else fallback
+
+
+def _is_matrix_mxc_uri(value: str | None) -> bool:
+    return str(value or "").strip().lower().startswith("mxc://")
+
+
+def _is_matrix_http_avatar_uri(value: str | None) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized.startswith("https://") or normalized.startswith("http://")
 
 
 def _matrix_joined_members_endpoint(target: str | None, *, room_id: str) -> str:
@@ -5453,6 +5472,7 @@ class OpsMeshService:
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
+    gateway_config_service: GatewayConfigService | None = None
     canvas_state_dir: Path | None = None
     _task: asyncio.Task[None] | None = field(init=False, default=None)
     _stop_event: asyncio.Event = field(init=False, default_factory=asyncio.Event)
@@ -8184,6 +8204,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "matrix" and action in {"setProfile", "set-profile"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_set_profile_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -9369,6 +9405,173 @@ class OpsMeshService:
                 "memberCount": member_count,
             },
         }
+
+    def _dispatch_matrix_set_profile_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        display_name = _message_action_param_string(request.params, "displayName") or (
+            _message_action_param_string(request.params, "name")
+        )
+        avatar_url = _message_action_param_string(request.params, "avatarUrl")
+        avatar_path = (
+            _message_action_param_string(request.params, "avatarPath")
+            or _message_action_param_string(request.params, "path")
+            or _message_action_param_string(request.params, "filePath")
+        )
+        if display_name is None and avatar_url is None and avatar_path is None:
+            raise RuntimeError("Provide name/displayName and/or avatarUrl/avatarPath.")
+
+        uploaded_avatar_source: str | None = None
+        converted_avatar_from_http = False
+        resolved_avatar_url: str | None = None
+        if avatar_path is not None:
+            media, content_type, filename = self._download_matrix_media_url(avatar_path)
+            if len(media) > MATRIX_PROFILE_AVATAR_MAX_BYTES:
+                raise RuntimeError("Matrix avatar media exceeds 10 MiB.")
+            resolved_avatar_url = self._upload_matrix_media(
+                route,
+                media,
+                content_type=content_type,
+                filename=filename,
+                secret_token=secret_token,
+            )
+            uploaded_avatar_source = "path"
+        elif avatar_url is not None:
+            if _is_matrix_mxc_uri(avatar_url):
+                resolved_avatar_url = avatar_url
+            elif _is_matrix_http_avatar_uri(avatar_url):
+                media, content_type, filename = self._download_matrix_media_url(avatar_url)
+                if len(media) > MATRIX_PROFILE_AVATAR_MAX_BYTES:
+                    raise RuntimeError("Matrix avatar media exceeds 10 MiB.")
+                resolved_avatar_url = self._upload_matrix_media(
+                    route,
+                    media,
+                    content_type=content_type,
+                    filename=filename,
+                    secret_token=secret_token,
+                )
+                uploaded_avatar_source = "http"
+                converted_avatar_from_http = True
+            else:
+                raise RuntimeError(
+                    "Matrix avatar URL must be an mxc:// URI or an http(s) URL."
+                )
+
+        user_id = self._matrix_self_user_id(route, secret_token=secret_token)
+        if user_id is None:
+            raise RuntimeError("Matrix whoami did not return user_id")
+
+        current_display_name: str | None = None
+        current_avatar_url: str | None = None
+        try:
+            current_profile = self._get_json_provider_url(
+                _matrix_profile_endpoint(str(route.get("target") or ""), user_id=user_id),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+            current_display_name = _matrix_optional_string_field(
+                current_profile,
+                "displayname",
+            )
+            current_avatar_url = _matrix_optional_string_field(current_profile, "avatar_url")
+        except RuntimeError:
+            pass
+
+        display_name_updated = False
+        avatar_updated = False
+        if display_name is not None and current_display_name != display_name:
+            self._put_json_provider(
+                _matrix_profile_displayname_endpoint(
+                    str(route.get("target") or ""),
+                    user_id=user_id,
+                ),
+                {"displayname": display_name},
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+            display_name_updated = True
+        if resolved_avatar_url is not None and current_avatar_url != resolved_avatar_url:
+            self._put_json_provider(
+                _matrix_profile_avatar_url_endpoint(
+                    str(route.get("target") or ""),
+                    user_id=user_id,
+                ),
+                {"avatar_url": resolved_avatar_url},
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+            avatar_updated = True
+
+        persisted_avatar_url = (
+            resolved_avatar_url
+            if uploaded_avatar_source is not None and resolved_avatar_url is not None
+            else avatar_url
+        )
+        config_path = self._persist_matrix_profile_config(
+            account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            display_name=display_name,
+            avatar_url=persisted_avatar_url,
+        )
+        return {
+            "ok": True,
+            "accountId": request.account_id or DEFAULT_ACCOUNT_ID,
+            "displayName": display_name,
+            "avatarUrl": persisted_avatar_url,
+            "profile": {
+                "displayNameUpdated": display_name_updated,
+                "avatarUpdated": avatar_updated,
+                "resolvedAvatarUrl": resolved_avatar_url,
+                "uploadedAvatarSource": uploaded_avatar_source,
+                "convertedAvatarFromHttp": converted_avatar_from_http,
+            },
+            "configPath": config_path,
+        }
+
+    def _persist_matrix_profile_config(
+        self,
+        *,
+        account_id: str,
+        display_name: str | None,
+        avatar_url: str | None,
+    ) -> str | None:
+        if self.gateway_config_service is None:
+            return None
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        snapshot = self.gateway_config_service.build_snapshot()
+        channels = snapshot.get("channels")
+        matrix = channels.get("matrix") if isinstance(channels, dict) else None
+        accounts = matrix.get("accounts") if isinstance(matrix, dict) else None
+        top_level = normalized_account_id == DEFAULT_ACCOUNT_ID and not (
+            isinstance(accounts, dict) and accounts
+        )
+        patch_fields: dict[str, object] = {}
+        if display_name is not None:
+            patch_fields["name"] = display_name
+        if avatar_url is not None:
+            patch_fields["avatarUrl"] = avatar_url
+        if not patch_fields:
+            if top_level:
+                return "channels.matrix"
+            return f"channels.matrix.accounts.{normalized_account_id}"
+        if top_level:
+            patch = {"channels": {"matrix": patch_fields}}
+            config_path = "channels.matrix"
+        else:
+            patch = {
+                "channels": {
+                    "matrix": {
+                        "accounts": {
+                            normalized_account_id: patch_fields,
+                        }
+                    }
+                }
+            }
+            config_path = f"channels.matrix.accounts.{normalized_account_id}"
+        self.gateway_config_service.patch_object(patch)
+        return config_path
 
     def _matrix_room_state_event(
         self,

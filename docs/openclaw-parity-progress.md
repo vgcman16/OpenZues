@@ -5625,6 +5625,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_channel_info_route"` (`18 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed self-profile parity now covers `message.action
+  setProfile`: Matrix `whoami` resolves the bot user, current profile reads
+  suppress no-op writes, `displayname` / `avatar_url` profile PUTs update the
+  live account, HTTP avatar URLs convert through Matrix media upload, and the
+  native config owner persists `name` / `avatarUrl` under
+  `channels.matrix.accounts.<accountId>`.
+- Verified the Matrix profile slice with `python -m pytest tests\test_ops_mesh.py
+  -q -k "matrix_set_profile"` (`2 passed`), adjacent Matrix route/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "matrix_native_route or
+  matrix_direct_room or message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`20 passed`), `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_config.py src\openzues\app.py src\openzues\cli.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_config.py`.
 
 ## References
 

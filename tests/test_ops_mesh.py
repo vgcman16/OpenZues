@@ -26,6 +26,7 @@ from openzues.schemas import (
 )
 from openzues.services.ecc_catalog import configure_ecc_catalog
 from openzues.services.gateway_canvas_documents import create_canvas_document
+from openzues.services.gateway_config import GatewayConfigService
 from openzues.services.gateway_cron import build_gateway_cron_task_blueprint
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_outbound_runtime import (
@@ -7508,6 +7509,341 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_channel_info_ro
             "Bearer matrix-access-token",
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_set_profile_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-set-profile"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="test",
+        data_dir=tmp_path,
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if "/profile/%40bot%3Amatrix.example" in target:
+            return {
+                "displayname": "Old Bot",
+                "avatar_url": "mxc://matrix.example/old-avatar",
+            }
+        raise RuntimeError(f"unexpected Matrix GET {target}")
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=config_service,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="setProfile",
+            params={
+                "displayName": "  Ops Bot  ",
+                "avatarUrl": "  mxc://matrix.example/new-avatar  ",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-set-profile-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "accountId": "matrix-bot",
+        "displayName": "Ops Bot",
+        "avatarUrl": "mxc://matrix.example/new-avatar",
+        "profile": {
+            "displayNameUpdated": True,
+            "avatarUpdated": True,
+            "resolvedAvatarUrl": "mxc://matrix.example/new-avatar",
+            "uploadedAvatarSource": None,
+            "convertedAvatarFromHttp": False,
+        },
+        "configPath": "channels.matrix.accounts.matrix-bot",
+    }
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example/displayname"
+            ),
+            {"displayname": "Ops Bot"},
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example/avatar_url"
+            ),
+            {"avatar_url": "mxc://matrix.example/new-avatar"},
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    config = config_service.build_snapshot()
+    assert config["channels"]["matrix"]["accounts"]["matrix-bot"]["name"] == "Ops Bot"
+    assert (
+        config["channels"]["matrix"]["accounts"]["matrix-bot"]["avatarUrl"]
+        == "mxc://matrix.example/new-avatar"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_matrix_set_profile_converts_http_avatar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-matrix-set-profile-http-avatar"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="test",
+        data_dir=tmp_path,
+    )
+    media_downloads: list[str] = []
+    media_uploads: list[tuple[bytes, str | None, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token, timeout_seconds
+        if target.endswith("/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if "/profile/%40bot%3Amatrix.example" in target:
+            return {
+                "displayname": "Ops Bot",
+                "avatar_url": "mxc://matrix.example/old-avatar",
+            }
+        raise RuntimeError(f"unexpected Matrix GET {target}")
+
+    def fake_download_matrix_media_url(
+        self: OpsMeshService,
+        media_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        media_downloads.append(media_url)
+        return b"avatar-bytes", "image/png", "avatar.png"
+
+    def fake_upload_matrix_media(
+        self: OpsMeshService,
+        route: dict[str, object],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+    ) -> str:
+        del self, route
+        media_uploads.append((media, content_type, filename, secret_token))
+        return "mxc://matrix.example/uploaded-avatar"
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        matrix_puts.append((target, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_matrix_media_url",
+        fake_download_matrix_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_matrix_media",
+        fake_upload_matrix_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        gateway_config_service=config_service,
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="setProfile",
+            params={"avatarUrl": "https://cdn.example.org/avatar.png"},
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-set-profile-http-avatar-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "accountId": "matrix-bot",
+        "displayName": None,
+        "avatarUrl": "mxc://matrix.example/uploaded-avatar",
+        "profile": {
+            "displayNameUpdated": False,
+            "avatarUpdated": True,
+            "resolvedAvatarUrl": "mxc://matrix.example/uploaded-avatar",
+            "uploadedAvatarSource": "http",
+            "convertedAvatarFromHttp": True,
+        },
+        "configPath": "channels.matrix.accounts.matrix-bot",
+    }
+    assert media_downloads == ["https://cdn.example.org/avatar.png"]
+    assert media_uploads == [
+        (b"avatar-bytes", "image/png", "avatar.png", "matrix-access-token")
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/profile/"
+                "%40bot%3Amatrix.example/avatar_url"
+            ),
+            {"avatar_url": "mxc://matrix.example/uploaded-avatar"},
+        )
+    ]
+    config = config_service.build_snapshot()
+    assert (
+        config["channels"]["matrix"]["accounts"]["matrix-bot"]["avatarUrl"]
+        == "mxc://matrix.example/uploaded-avatar"
+    )
 
 
 @pytest.mark.asyncio

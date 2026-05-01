@@ -972,19 +972,6 @@ async def _build_services(app_settings: Settings) -> CliServices:
     launch_routing = LaunchRoutingService(database, manager)
     mission_service = MissionService(database, manager, hub)
     project_service = ProjectService(GitHubService())
-    ops_mesh = OpsMeshService(
-        database,
-        manager,
-        mission_service,
-        hub,
-        vault,
-        playbooks=PlaybookService(),
-        launch_routing=launch_routing,
-    )
-    gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
-    gateway_agents = GatewayAgentsService(database=database)
-    gateway_commands = GatewayCommandsService()
-    gateway_node_pairing = GatewayNodePairingService(database)
     gateway_config = GatewayConfigService(
         assistant_name=app_settings.app_name,
         assistant_avatar="/static/favicon.svg",
@@ -995,6 +982,20 @@ async def _build_services(app_settings: Settings) -> CliServices:
         allow_external_embed_urls=False,
         data_dir=app_settings.data_dir,
     )
+    ops_mesh = OpsMeshService(
+        database,
+        manager,
+        mission_service,
+        hub,
+        vault,
+        playbooks=PlaybookService(),
+        launch_routing=launch_routing,
+        gateway_config_service=gateway_config,
+    )
+    gateway_bootstrap = GatewayBootstrapService(database, manager, access, launch_routing)
+    gateway_agents = GatewayAgentsService(database=database)
+    gateway_commands = GatewayCommandsService()
+    gateway_node_pairing = GatewayNodePairingService(database)
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
     onboarding = OnboardingService(
         database,

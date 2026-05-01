@@ -2012,6 +2012,7 @@ def create_app(
         cron_failure_alert=active_settings.cron_failure_alert,
         cron_retry=active_settings.cron_retry,
         outbound_runtime_service=GatewayOutboundRuntimeService(),
+        gateway_config_service=active_gateway_config_service,
         canvas_state_dir=active_settings.data_dir,
     )
     active_gateway_channels_service = GatewayChannelsService(

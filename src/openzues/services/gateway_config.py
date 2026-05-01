@@ -210,6 +210,22 @@ class GatewayConfigService:
             }
         return self._write_snapshot(next_snapshot, base_hash=base_hash)
 
+    def patch_object(self, patch: dict[str, Any]) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        next_snapshot = self._validated_snapshot(_merge_config_patch(current, patch))
+        current_hash = self._snapshot_hash(current)
+        if next_snapshot == current:
+            return {
+                "ok": True,
+                "noop": True,
+                "path": str(config_path),
+                "config": current,
+                "hash": current_hash,
+            }
+        base_hash = current_hash if config_path.exists() else None
+        return self._write_snapshot(next_snapshot, base_hash=base_hash)
+
     def apply_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, Any]:
         result = self.set_raw(raw, base_hash=base_hash)
         result["restart"] = None

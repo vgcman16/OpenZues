@@ -543,8 +543,11 @@ strict two-member joined-room validation before native send/poll delivery.
 Matrix direct-user fallback now also inspects joined rooms when `m.direct` is
 missing or stale, selects a strict two-member room, and persists the repaired
 primary `m.direct` account-data mapping before native delivery.
-Remaining Matrix provider parity is encrypted media/thumbnail/duration metadata,
-and self-profile update/config persistence breadth.
+Matrix `message.action setProfile` now updates the route-backed bot profile via
+Matrix `whoami`, profile comparison, `displayname` / `avatar_url` profile PUTs,
+HTTP/path avatar media conversion through the Matrix media repository, and
+OpenClaw-shaped `channels.matrix.accounts.<accountId>` config persistence.
+Remaining Matrix provider parity is encrypted media/thumbnail/duration metadata.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the
