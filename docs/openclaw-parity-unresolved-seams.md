@@ -1073,6 +1073,12 @@ targets that already include `/_matrix/client/v3`, and returns the resolved
 Matrix user/device identity in the per-account probe result. Remaining channel
 CLI parity is provider-specific credential probe breadth beyond
 Slack/Telegram/Discord/Matrix and production provider-backed live resolve
+adapters. Zalo route-backed account probes now mirror OpenClaw's
+`probeZaloAccount` / `probeZalo` status hook: `channels status --probe --json`
+calls the Zalo Bot API `getMe` method through the saved native route token and
+returns the upstream bot object in the per-account probe result. Remaining
+channel CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix/Zalo and production provider-backed live resolve
 adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over

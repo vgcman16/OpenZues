@@ -834,6 +834,94 @@ def test_channels_status_json_uses_route_backed_matrix_probe(tmp_path, monkeypat
     ]
 
 
+def test_channels_status_json_uses_route_backed_zalo_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Zalo Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Zalo Native Probe Route",
+            kind="zalo",
+            target="https://bot-api.zaloplatforms.test",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "zalo",
+                "account_id": "oa-bot",
+                "peer_kind": "direct",
+                "peer_id": "zalo:12345",
+                "summary": "zalo oa-bot direct 12345",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="zalo-access-token",
+            vault_secret_id=None,
+        )
+    )
+    zalo_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: object,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        zalo_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "result": {
+                "id": "oa-123",
+                "name": "OpenZues OA",
+                "username": "openzues_oa",
+            },
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._post_json_webhook",
+        fake_post_json_webhook,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["zalo"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "zalo",
+        "runtime": "native-provider-backed",
+        "bot": {
+            "id": "oa-123",
+            "name": "OpenZues OA",
+            "username": "openzues_oa",
+        },
+        "timeoutMs": 2500,
+    }
+    assert zalo_posts == [
+        (
+            "https://bot-api.zaloplatforms.test/botzalo-access-token/getMe",
+            {},
+            None,
+            None,
+        )
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

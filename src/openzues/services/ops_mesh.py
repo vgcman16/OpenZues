@@ -158,7 +158,13 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "line",
     "matrix",
 }
-PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "matrix"}
+PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
+    "slack",
+    "telegram",
+    "discord",
+    "matrix",
+    "zalo",
+}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
 DEFAULT_CRON_RETRY_MAX_ATTEMPTS = 3
@@ -7488,6 +7494,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "zalo":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_zalo_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         try:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,
@@ -8292,6 +8316,53 @@ class OpsMeshService:
         if device_id:
             payload["deviceId"] = device_id
         return payload
+
+    def _probe_zalo_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        token = _zalo_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _zalo_api_endpoint(str(route.get("target") or ""), token, "getMe"),
+            {},
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Zalo API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "zalo",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        bot = result.get("result")
+        if not isinstance(bot, dict):
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "zalo",
+                "runtime": "native-provider-backed",
+                "error": "Invalid response from Zalo API",
+                "timeoutMs": timeout_ms,
+            }
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "zalo",
+            "runtime": "native-provider-backed",
+            "bot": {
+                str(key): value
+                for key, value in bot.items()
+                if isinstance(value, (str, int, float, bool, list, dict))
+                and value not in ("", [], {})
+            },
+            "timeoutMs": timeout_ms,
+        }
 
     async def _resolve_explicit_delivery_conversation_target(
         self,

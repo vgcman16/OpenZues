@@ -5869,6 +5869,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   channels_status_json_accepts_probe_timeout_options"` (`6 passed`), plus
   `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Zalo route-backed channel account probes now mirror OpenClaw's
+  `probeZaloAccount` / `probeZalo` path: native Zalo routes are included in the
+  probeable provider set, `channels status --probe --json` calls Bot API
+  `getMe` with the saved route token, and the account probe result exposes the
+  returned bot object.
+- Verified the Zalo account-probe slice with `python -m pytest
+  tests\test_cli.py -q -k "route_backed_zalo_probe"` (`1 passed`) and adjacent
+  status-probe proof `python -m pytest tests\test_cli.py -q -k
+  "channels_status_json_uses_route_backed_slack_probe or
+  channels_status_json_uses_route_backed_telegram_probe or
+  channels_status_json_uses_route_backed_discord_probe or
+  channels_status_json_uses_route_backed_matrix_probe or
+  channels_status_json_uses_route_backed_zalo_probe or
+  channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded or
+  channels_status_json_accepts_probe_timeout_options"` (`7 passed`), plus
+  `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
