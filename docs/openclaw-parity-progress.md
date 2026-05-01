@@ -5501,6 +5501,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_slack_list_pins_route"` (`17 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed `readMessages` action parity now uses OpenClaw's room
+  history endpoint shape, including backward/forward cursor direction,
+  bounded limits, optional `before` / `after` tokens, redaction filtering,
+  message summaries, and `nextBatch` / `prevBatch` projection.
+- Verified the Matrix read action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_read_messages_route"` (`1 passed`),
+  adjacent action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_read_route or
+  message_action_dispatches_slack_read_route or
+  message_action_dispatches_slack_thread_read_route"` (`15 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

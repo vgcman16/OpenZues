@@ -524,8 +524,11 @@ Matrix `message.action pinMessage`, `unpinMessage`, and `listPins` now use
 OpenClaw's `m.room.pinned_events` state behavior: current pins are read from room
 state, pin/unpin writes the updated state, and listPins returns pinned ids plus
 summaries for resolvable pinned message events.
+Matrix `message.action readMessages` now uses OpenClaw's room history endpoint
+shape with `dir`, bounded `limit`, `before`/`after` tokens, redaction filtering,
+message summaries, and `nextBatch` / `prevBatch` cursor projection.
 Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, profile/account probes, and read action breadth.
+direct-room resolution, and profile/account probe breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

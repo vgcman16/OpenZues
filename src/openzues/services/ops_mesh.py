@@ -2364,6 +2364,25 @@ def _matrix_event_endpoint(
     )
 
 
+def _matrix_messages_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    direction: str,
+    limit: int,
+    token: str | None,
+) -> str:
+    base_url = _matrix_base_url(target)
+    query: dict[str, object] = {"dir": direction, "limit": max(1, limit)}
+    normalized_token = str(token or "").strip()
+    if normalized_token:
+        query["from"] = normalized_token
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/messages?{urlencode(query)}"
+    )
+
+
 def _matrix_reaction_relations_endpoint(
     target: str | None,
     *,
@@ -2483,6 +2502,15 @@ def _matrix_pinned_event_ids(result: object) -> list[str]:
     if not isinstance(pinned, list):
         return []
     return [str(event_id).strip() for event_id in pinned if str(event_id).strip()]
+
+
+def _matrix_event_chunk(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        return []
+    chunk = result.get("chunk")
+    if not isinstance(chunk, list):
+        return []
+    return [event for event in chunk if isinstance(event, dict)]
 
 
 def _matrix_message_summary(result: object) -> dict[str, object] | None:
@@ -8001,6 +8029,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "matrix" and action == "readMessages":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action readMessages."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_read_messages_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -9059,6 +9103,53 @@ class OpsMeshService:
             "ok": True,
             "pinned": pinned,
             "events": events,
+        }
+
+    def _dispatch_matrix_read_messages_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix readMessages")
+        limit = max(1, _message_action_param_integer(request.params, "limit") or 20)
+        before = _message_action_param_string(request.params, "before")
+        after = _message_action_param_string(request.params, "after")
+        token = before or after
+        direction = "f" if after is not None else "b"
+        result = self._get_json_provider_url(
+            _matrix_messages_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                direction=direction,
+                limit=limit,
+                token=token,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        messages: list[dict[str, object]] = []
+        for event in _matrix_event_chunk(result):
+            event_type = event.get("type")
+            if isinstance(event_type, str) and event_type != "m.room.message":
+                continue
+            summary = _matrix_message_summary(event)
+            if summary is not None:
+                messages.append(summary)
+        next_batch: object | None = None
+        prev_batch: object | None = None
+        if isinstance(result, dict):
+            maybe_end = result.get("end")
+            maybe_start = result.get("start")
+            if isinstance(maybe_end, str):
+                next_batch = maybe_end
+            if isinstance(maybe_start, str):
+                prev_batch = maybe_start
+        return {
+            "ok": True,
+            "messages": messages,
+            "nextBatch": next_batch,
+            "prevBatch": prev_batch,
         }
 
     def _matrix_action_room_id(
