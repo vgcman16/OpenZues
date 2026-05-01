@@ -537,8 +537,12 @@ persisted media delivery metadata.
 Matrix route-backed sends and polls now resolve `#room:server` aliases through
 the Matrix directory endpoint before sending, matching OpenClaw's alias
 resolution behavior for native room targets.
+Matrix direct-user targets now classify as direct peers and resolve through
+OpenClaw's first `m.direct` path: Matrix `whoami`, account-data lookup, and
+strict two-member joined-room validation before native send/poll delivery.
 Remaining Matrix provider parity is encrypted media/thumbnail/duration metadata,
-direct-user room discovery, and self-profile update/config persistence breadth.
+joined-room direct fallback / mapping persistence, and self-profile update/config
+persistence breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

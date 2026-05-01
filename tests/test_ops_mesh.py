@@ -13444,6 +13444,145 @@ async def test_ops_mesh_service_send_direct_channel_alias_resolves_matrix_native
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_user_resolves_matrix_direct_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-matrix-user"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "user:@alice:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Send Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "direct",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/_matrix/client/v3/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        if target.endswith(
+            "/_matrix/client/v3/user/%40bot%3Amatrix.example/account_data/m.direct"
+        ):
+            return {"@alice:matrix.example": ["!dm:matrix.example"]}
+        if target.endswith("/rooms/%21dm%3Amatrix.example/joined_members"):
+            return {
+                "joined": {
+                    "@bot:matrix.example": {},
+                    "@alice:matrix.example": {},
+                }
+            }
+        raise RuntimeError(f"unexpected Matrix direct-room request: {target}")
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-dm-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="matrix",
+        to=matrix_target,
+        message="Direct routed.",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-user",
+    )
+
+    assert result["ok"] is True
+    assert result["messageId"] == "$matrix-dm-1"
+    assert result["roomId"] == "!dm:matrix.example"
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/user/"
+                "%40bot%3Amatrix.example/account_data/m.direct"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21dm%3Amatrix.example/joined_members"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21dm%3Amatrix\.example/send/m\.room\.message/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "msgtype": "m.text",
+        "body": "Direct routed.",
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_matrix_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

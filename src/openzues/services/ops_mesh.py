@@ -985,7 +985,7 @@ def _message_action_param_integer(
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
-    if normalized.startswith(("direct:", "dm:")):
+    if normalized.startswith(("direct:", "dm:", "user:", "matrix:user:")):
         return "direct"
     if normalized.startswith("group:"):
         return "group"
@@ -2305,6 +2305,16 @@ def _matrix_room_id(target: str | None) -> str | None:
     return normalized or None
 
 
+def _matrix_route_match_target(target: str | None) -> str | None:
+    normalized = _matrix_room_id(target)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered.startswith("user:"):
+        return normalized[len("user:") :].strip() or None
+    return normalized
+
+
 def _matrix_send_endpoint(
     target: str | None,
     *,
@@ -2343,6 +2353,13 @@ def _matrix_profile_endpoint(target: str | None, *, user_id: str) -> str:
 
 def _matrix_directory_room_endpoint(target: str | None, *, alias: str) -> str:
     return f"{_matrix_base_url(target)}/_matrix/client/v3/directory/room/{quote(alias, safe='')}"
+
+
+def _matrix_direct_account_data_endpoint(target: str | None, *, user_id: str) -> str:
+    return (
+        f"{_matrix_base_url(target)}/_matrix/client/v3/user/{quote(user_id, safe='')}"
+        "/account_data/m.direct"
+    )
 
 
 def _matrix_state_endpoint(
@@ -2561,6 +2578,17 @@ def _matrix_event_chunk(result: object) -> list[dict[str, object]]:
     if not isinstance(chunk, list):
         return []
     return [event for event in chunk if isinstance(event, dict)]
+
+
+def _matrix_joined_member_ids(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    joined = result.get("joined")
+    if isinstance(joined, dict):
+        return [str(user_id).strip() for user_id in joined if str(user_id).strip()]
+    if isinstance(joined, list):
+        return [str(user_id).strip() for user_id in joined if str(user_id).strip()]
+    return []
 
 
 def _matrix_optional_string_field(result: object, key: str) -> str | None:
@@ -3403,8 +3431,8 @@ def _conversation_target_peer_id_matches(
         event_thread_id = str(event_target.get("threadId") or "").strip()
         return not route_thread_id or route_thread_id == event_thread_id
     if channel == "matrix":
-        route_room_id = str(_matrix_room_id(route_peer_id) or "").strip().lower()
-        event_room_id = str(_matrix_room_id(event_peer_id) or "").strip().lower()
+        route_room_id = str(_matrix_route_match_target(route_peer_id) or "").strip().lower()
+        event_room_id = str(_matrix_route_match_target(event_peer_id) or "").strip().lower()
         return bool(route_room_id and route_room_id == event_room_id)
     return False
 
@@ -9367,6 +9395,61 @@ class OpsMeshService:
             return len(joined)
         return None
 
+    def _matrix_joined_member_ids(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> list[str]:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_joined_members_endpoint(str(route.get("target") or ""), room_id=room_id),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return []
+        return _matrix_joined_member_ids(result)
+
+    def _resolve_matrix_direct_room_id(
+        self,
+        route: dict[str, Any],
+        *,
+        remote_user_id: str,
+        secret_token: str | None,
+    ) -> str:
+        if not remote_user_id.startswith("@") or ":" not in remote_user_id:
+            raise RuntimeError(f'Matrix user IDs must be fully qualified (got "{remote_user_id}")')
+        self_user_id = self._matrix_self_user_id(route, secret_token=secret_token)
+        if self_user_id is None:
+            raise RuntimeError("Matrix whoami did not return user_id")
+        direct_data = self._get_json_provider_url(
+            _matrix_direct_account_data_endpoint(
+                str(route.get("target") or ""),
+                user_id=self_user_id,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(direct_data, dict):
+            raise RuntimeError(f"No direct room found for {remote_user_id} (m.direct missing)")
+        room_ids_raw = direct_data.get(remote_user_id)
+        room_ids = (
+            [str(room_id).strip() for room_id in room_ids_raw if str(room_id).strip()]
+            if isinstance(room_ids_raw, list)
+            else []
+        )
+        for room_id in room_ids:
+            joined = self._matrix_joined_member_ids(
+                route,
+                room_id=room_id,
+                secret_token=secret_token,
+            )
+            if sorted(joined) == sorted([self_user_id, remote_user_id]):
+                return room_id
+        raise RuntimeError(f"No direct room found for {remote_user_id} (m.direct missing)")
+
     def _resolve_matrix_route_room_id(
         self,
         route: dict[str, Any],
@@ -9377,6 +9460,19 @@ class OpsMeshService:
         room_id = _matrix_room_id(raw_target)
         if room_id is None:
             return None
+        lowered_room_id = room_id.lower()
+        if lowered_room_id.startswith("user:"):
+            return self._resolve_matrix_direct_room_id(
+                route,
+                remote_user_id=room_id[len("user:") :].strip(),
+                secret_token=secret_token,
+            )
+        if room_id.startswith("@") and ":" in room_id:
+            return self._resolve_matrix_direct_room_id(
+                route,
+                remote_user_id=room_id,
+                secret_token=secret_token,
+            )
         if not room_id.startswith("#"):
             return room_id
         result = self._get_json_provider_url(
