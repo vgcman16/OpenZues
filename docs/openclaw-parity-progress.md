@@ -5032,6 +5032,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_client_command_passes_spawn_plan_to_registered_runner or
   tasks_cancel_cancels_metadata_backed_acp_task"` (`6 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `agent.wait` now consumes cached native lifecycle runtime events in addition
+  to mission-backed terminal snapshots. Runtime `lifecycle` `start` events
+  record `startedAt`, terminal `end` events return OpenClaw-shaped
+  `status="ok"`, `startedAt`, and `endedAt`, aborted terminal events map to
+  `timeout`, and transient `error` events are kept behind the same short retry
+  grace before becoming terminal snapshots.
+- Verified the lifecycle-backed `agent.wait` slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_returns_cached_lifecycle_terminal_event"` (`1 passed`),
+  adjacent wait/runtime-event coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_returns_cached_lifecycle_terminal_event or
+  agent_wait_zero_timeout_returns_without_sleeping or
+  agent_wait_waits_for_tracked_gateway_run_completion or
+  agent_wait_returns_failed_terminal_snapshot_for_tracked_run or
+  runtime_progress_appends_task_record_summary"` (`5 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

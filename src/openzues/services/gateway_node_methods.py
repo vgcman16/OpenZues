@@ -456,6 +456,7 @@ class GatewayNodeMethodRequester:
 _SESSION_MUTATION_CONTROL_CLIENT_IDS = frozenset(
     {"openclaw-control-ui", "openzues-control-ui"}
 )
+_AGENT_WAIT_ERROR_RETRY_GRACE_SECONDS = 15.0
 
 
 def _reject_webchat_session_mutation(
@@ -1519,6 +1520,11 @@ class GatewayNodeMethodService:
         self._sessions_yield_service = sessions_yield_service
         self._gateway_chat_run_ids_by_session_key: dict[str, str] = {}
         self._gateway_tracked_chat_runs_by_id: dict[str, GatewayTrackedChatRun] = {}
+        self._gateway_agent_lifecycle_starts_by_run_id: dict[str, int] = {}
+        self._gateway_agent_lifecycle_snapshots_by_run_id: dict[str, dict[str, object]] = {}
+        self._gateway_agent_lifecycle_pending_errors_by_run_id: dict[
+            str, tuple[dict[str, object], float]
+        ] = {}
         self._recent_node_voice_transcripts: dict[str, tuple[str, int]] = {}
         self._recent_node_exec_finished_runs: dict[str, int] = {}
         self._apns_wake_nudge_at_by_node_id: dict[str, int] = {}
@@ -12552,16 +12558,24 @@ class GatewayNodeMethodService:
         run_id: str,
         timeout_ms: int,
     ) -> dict[str, object]:
+        resolved_run_id = run_id.strip()
+        lifecycle_snapshot = self._gateway_agent_lifecycle_terminal_snapshot(resolved_run_id)
+        if lifecycle_snapshot is not None:
+            return lifecycle_snapshot
         if self._database is None:
             raise GatewayNodeMethodError(
                 code="UNAVAILABLE",
                 message="agent.wait is unavailable until control chat run waiting is wired",
                 status_code=503,
             )
-        resolved_run_id = run_id.strip()
         deadline = time.monotonic() + (max(timeout_ms, 0) / 1000)
         slept = False
         while True:
+            lifecycle_snapshot = self._gateway_agent_lifecycle_terminal_snapshot(
+                resolved_run_id
+            )
+            if lifecycle_snapshot is not None:
+                return lifecycle_snapshot
             snapshot = await self._gateway_chat_terminal_snapshot(run_id=resolved_run_id)
             if snapshot is not None:
                 return snapshot
@@ -12574,6 +12588,7 @@ class GatewayNodeMethodService:
 
     async def handle_runtime_event(self, instance_id: int, event: dict[str, Any]) -> None:
         del instance_id
+        self._record_gateway_agent_lifecycle_event(event)
         progress_delta = _gateway_runtime_event_acp_progress_delta(event)
         if progress_delta is None:
             return
@@ -12583,6 +12598,59 @@ class GatewayNodeMethodService:
             progress_delta=progress_delta,
             now_ms=_timestamp_ms(None),
         )
+
+    def _record_gateway_agent_lifecycle_event(self, event: Mapping[str, object]) -> None:
+        details = _gateway_runtime_event_lifecycle_details(event)
+        if details is None:
+            return
+        run_id, phase, data = details
+        if phase == "start":
+            started_at = _gateway_runtime_event_millis(data.get("startedAt"))
+            self._gateway_agent_lifecycle_starts_by_run_id[run_id] = (
+                started_at if started_at is not None else _timestamp_ms(None)
+            )
+            self._gateway_agent_lifecycle_snapshots_by_run_id.pop(run_id, None)
+            self._gateway_agent_lifecycle_pending_errors_by_run_id.pop(run_id, None)
+            return
+        started_at = _gateway_runtime_event_millis(
+            data.get("startedAt")
+        ) or self._gateway_agent_lifecycle_starts_by_run_id.get(run_id)
+        ended_at = _gateway_runtime_event_millis(data.get("endedAt"))
+        snapshot: dict[str, object] = {
+            "runId": run_id,
+            "status": "error" if phase == "error" else "ok",
+        }
+        if bool(data.get("aborted")) and phase == "end":
+            snapshot["status"] = "timeout"
+        if started_at is not None:
+            snapshot["startedAt"] = started_at
+        if ended_at is not None:
+            snapshot["endedAt"] = ended_at
+        error = _string_or_none(data.get("error"))
+        if error is not None:
+            snapshot["error"] = error
+        self._gateway_agent_lifecycle_starts_by_run_id.pop(run_id, None)
+        if phase == "error":
+            self._gateway_agent_lifecycle_pending_errors_by_run_id[run_id] = (
+                snapshot,
+                time.monotonic() + _AGENT_WAIT_ERROR_RETRY_GRACE_SECONDS,
+            )
+            return
+        self._gateway_agent_lifecycle_pending_errors_by_run_id.pop(run_id, None)
+        self._gateway_agent_lifecycle_snapshots_by_run_id[run_id] = snapshot
+
+    def _gateway_agent_lifecycle_terminal_snapshot(
+        self,
+        run_id: str,
+    ) -> dict[str, object] | None:
+        pending = self._gateway_agent_lifecycle_pending_errors_by_run_id.get(run_id)
+        if pending is not None:
+            snapshot, due_at = pending
+            if time.monotonic() >= due_at:
+                self._gateway_agent_lifecycle_pending_errors_by_run_id.pop(run_id, None)
+                self._gateway_agent_lifecycle_snapshots_by_run_id[run_id] = snapshot
+        current_snapshot = self._gateway_agent_lifecycle_snapshots_by_run_id.get(run_id)
+        return dict(current_snapshot) if current_snapshot is not None else None
 
     async def _mark_acp_task_record_runtime_progress(
         self,
@@ -13791,6 +13859,54 @@ def _gateway_runtime_event_run_id(event: Mapping[str, object]) -> str | None:
                 value = _string_or_none(nested_turn.get(key))
                 if value is not None:
                     return value
+    return None
+
+
+def _gateway_runtime_event_container_run_id(
+    event: Mapping[str, object],
+    container: Mapping[str, object],
+) -> str | None:
+    for key in ("runId", "turnId", "activeTurnId"):
+        value = _string_or_none(container.get(key))
+        if value is not None:
+            return value
+    return _gateway_runtime_event_run_id(event)
+
+
+def _gateway_runtime_event_millis(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        return None
+    return max(0, math.floor(numeric_value))
+
+
+def _gateway_runtime_event_lifecycle_details(
+    event: Mapping[str, object],
+) -> tuple[str, Literal["start", "end", "error"], Mapping[str, object]] | None:
+    params = _gateway_runtime_event_params(event)
+    candidates: list[Mapping[str, object]] = [event, params]
+    nested_event = _mapping_or_none(params.get("event"))
+    if nested_event is not None:
+        candidates.append(nested_event)
+    item = _mapping_or_none(params.get("item"))
+    if item is not None:
+        candidates.append(item)
+    for container in candidates:
+        stream = _string_or_none(container.get("stream"))
+        if stream != "lifecycle":
+            continue
+        data = _mapping_or_none(container.get("data")) or container
+        phase = _string_or_none(data.get("phase")) or _string_or_none(
+            container.get("phase")
+        )
+        if phase not in {"start", "end", "error"}:
+            continue
+        run_id = _gateway_runtime_event_container_run_id(event, container)
+        if run_id is None:
+            continue
+        return run_id, cast("Literal['start', 'end', 'error']", phase), data
     return None
 
 

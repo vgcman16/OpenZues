@@ -21980,6 +21980,45 @@ async def test_agent_wait_zero_timeout_returns_without_sleeping(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_returns_cached_lifecycle_terminal_event(tmp_path) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-lifecycle-event.db")
+    await database.initialize()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+    )
+
+    await service.handle_runtime_event(
+        1,
+        {
+            "runId": "run-agent-wait-lifecycle-1",
+            "stream": "lifecycle",
+            "data": {"phase": "start", "startedAt": 123},
+        },
+    )
+    await service.handle_runtime_event(
+        1,
+        {
+            "runId": "run-agent-wait-lifecycle-1",
+            "stream": "lifecycle",
+            "data": {"phase": "end", "endedAt": 456},
+        },
+    )
+
+    payload = await service.call(
+        "agent.wait",
+        {"runId": "run-agent-wait-lifecycle-1", "timeoutMs": 0},
+    )
+
+    assert payload == {
+        "runId": "run-agent-wait-lifecycle-1",
+        "status": "ok",
+        "startedAt": 123,
+        "endedAt": 456,
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_ignores_stale_terminal_session_mission_for_tracked_run(
     tmp_path,
 ) -> None:

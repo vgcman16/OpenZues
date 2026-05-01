@@ -1677,6 +1677,14 @@ abort commands record `origin="stop-command"`, blank partials are ignored, and
 `chat.history` projects the stored abort metadata. The next bounded seam should
 move to `agent.wait` read-model fidelity or another source-backed
 session/runtime mismatch.
+Current queue-head adjustment: `agent.wait` now consumes cached lifecycle
+runtime events in addition to mission-backed terminal snapshots. Native
+runtime `lifecycle` `start` events record `startedAt`, terminal `end` events
+return OpenClaw-shaped `status`, `startedAt`, and `endedAt`, aborted end events
+map to `timeout`, and transient `error` events are held behind the same short
+retry grace before they can become terminal snapshots. The next bounded seam
+should move back to ACP client harness replay, sandboxed spawn media/workspace
+staging, or another source-backed session/runtime mismatch.
 
 ## How To Read This Queue
 
