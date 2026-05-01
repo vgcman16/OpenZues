@@ -498,6 +498,10 @@ Telegram direct message delivery now also carries OpenClaw-style
 saved delivery payloads, and native Bot API route sends, then calls
 `pinChatMessage` with `disable_notification=true` for the first delivered
 message while preserving the delivered send result when pinning fails.
+Telegram direct message delivery now also maps
+`channelData.telegram.buttons` to Bot API `reply_markup.inline_keyboard` for
+route-backed text sends and the first media send, filtering invalid button rows
+the same way OpenClaw's inline keyboard adapter does.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery

@@ -1507,6 +1507,42 @@ def _telegram_channel_data_should_pin(channel_data: object) -> bool:
     return isinstance(telegram_data, dict) and telegram_data.get("pin") is True
 
 
+def _telegram_inline_keyboard(channel_data: object) -> dict[str, object] | None:
+    if not isinstance(channel_data, dict):
+        return None
+    telegram_data = channel_data.get("telegram")
+    if not isinstance(telegram_data, dict):
+        return None
+    buttons = telegram_data.get("buttons")
+    if not isinstance(buttons, list):
+        return None
+    keyboard_rows: list[list[dict[str, object]]] = []
+    for row in buttons:
+        if not isinstance(row, list):
+            continue
+        keyboard_row: list[dict[str, object]] = []
+        for button in row:
+            if not isinstance(button, dict):
+                continue
+            text = str(button.get("text") or "").strip()
+            callback_data = str(button.get("callback_data") or "").strip()
+            if not text or not callback_data:
+                continue
+            keyboard_button: dict[str, object] = {
+                "text": text,
+                "callback_data": callback_data,
+            }
+            style = str(button.get("style") or "").strip()
+            if style:
+                keyboard_button["style"] = style
+            keyboard_row.append(keyboard_button)
+        if keyboard_row:
+            keyboard_rows.append(keyboard_row)
+    if not keyboard_rows:
+        return None
+    return {"inline_keyboard": keyboard_rows}
+
+
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_MAX_EMOJI_BYTES = 256 * 1024
 DISCORD_MAX_EVENT_COVER_BYTES = 8 * 1024 * 1024
@@ -16848,6 +16884,7 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
+        inline_keyboard = _telegram_inline_keyboard(event.get("channelData"))
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
@@ -16921,6 +16958,8 @@ class OpsMeshService:
                         media_payload["disable_content_type_detection"] = True
                     if index == 0 and text:
                         media_payload["caption"] = text[:1024]
+                    if index == 0 and inline_keyboard is not None:
+                        media_payload["reply_markup"] = inline_keyboard
                     media_result = self._post_json_webhook(
                         _telegram_api_endpoint(
                             str(route.get("target") or ""),
@@ -16952,6 +16991,8 @@ class OpsMeshService:
                     payload["disable_content_type_detection"] = True
                 if text:
                     payload["caption"] = text[:1024]
+                if inline_keyboard is not None:
+                    payload["reply_markup"] = inline_keyboard
                 result = self._post_json_webhook(
                     _telegram_api_endpoint(
                         str(route.get("target") or ""),
@@ -16962,6 +17003,8 @@ class OpsMeshService:
                 )
             else:
                 payload["text"] = text
+                if inline_keyboard is not None:
+                    payload["reply_markup"] = inline_keyboard
                 result = self._post_json_webhook(
                     _telegram_api_endpoint(
                         str(route.get("target") or ""),

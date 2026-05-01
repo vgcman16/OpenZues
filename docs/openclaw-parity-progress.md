@@ -6227,6 +6227,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_node_methods.py`.
+- Telegram direct sends now map OpenClaw's `channelData.telegram.buttons` to
+  Bot API `reply_markup.inline_keyboard`, filtering button rows down to entries
+  with `text` and `callback_data`, preserving optional `style`, attaching
+  buttons to text sends, and attaching them only to the first media send.
+- Verified the Telegram inline-buttons slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "forwards_telegram_buttons"` (`1 failed`
+  before implementation, missing `reply_markup`), then `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_buttons"` (`2 passed`), adjacent
+  Telegram send proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_native_route or telegram_native_options or telegram_topic or
+  telegram_media_group or telegram_buttons or telegram_pin"` (`12 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
