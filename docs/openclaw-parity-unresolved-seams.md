@@ -539,8 +539,10 @@ LINE native route-backed direct sends now also carry OpenClaw's carousel-style
 columns/actions for replay, emit Bot API carousel templates with the upstream
 10-column and 3-action-per-column boundaries, title/text truncation, optional
 thumbnail support, default image layout options, and URI/postback/message action
-mapping. Remaining LINE provider parity is account probe and richer
-action/rich-menu management breadth.
+mapping. LINE route-backed account probes now mirror OpenClaw's `probeLineBot`
+status hook by calling Bot API `/v2/bot/info` with the saved route token and
+returning LINE bot profile metadata in the per-account probe result. Remaining
+LINE provider parity is richer action/rich-menu management breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
 targets to room ids, preserve reply/thread relation metadata, split text at
@@ -1112,7 +1114,13 @@ calls the Zalo Bot API `getMe` method through the saved native route token and
 returns the upstream bot object in the per-account probe result. Remaining
 channel CLI parity is provider-specific credential probe breadth beyond
 Slack/Telegram/Discord/Matrix/Zalo and production provider-backed live resolve
-adapters.
+adapters. LINE route-backed account probes now mirror OpenClaw's `probeLineBot`
+status hook: `channels status --probe --json` calls Bot API `/v2/bot/info`
+through the saved native route token and returns `displayName`, `userId`,
+`basicId`, and `pictureUrl` bot metadata in the per-account probe result.
+Remaining channel CLI parity is provider-specific credential probe breadth
+beyond Slack/Telegram/Discord/Matrix/Zalo/LINE and production provider-backed
+live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account

@@ -5886,6 +5886,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   channels_status_json_accepts_probe_timeout_options"` (`7 passed`), plus
   `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- LINE route-backed channel account probes now mirror OpenClaw's `probeLineBot`
+  path: native LINE routes are included in the probeable provider set,
+  `channels status --probe --json` calls Bot API `/v2/bot/info` with the saved
+  route token, and the account probe result exposes `displayName`, `userId`,
+  `basicId`, and `pictureUrl` bot metadata.
+- Verified the LINE account-probe slice with `python -m pytest
+  tests\test_cli.py -q -k "route_backed_line_probe"` (`1 passed`) and adjacent
+  status-probe proof `python -m pytest tests\test_cli.py -q -k
+  "route_backed_slack_probe or route_backed_telegram_probe or
+  route_backed_discord_probe or route_backed_matrix_probe or
+  route_backed_zalo_probe or route_backed_line_probe or
+  whatsapp_no_hook_probe_non_degraded or channels_status_probe_timeout_options"`
+  (`7 passed`), plus `ruff check src\openzues\services\ops_mesh.py
+  tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - LINE route-backed direct sends now carry OpenClaw's `replyToken` send option
   through `GatewayOutboundRuntimeMessageRequest`, persist it on saved outbound
   delivery payloads for replay, and use Bot API `/v2/bot/message/reply` with

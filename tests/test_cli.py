@@ -922,6 +922,94 @@ def test_channels_status_json_uses_route_backed_zalo_probe(tmp_path, monkeypatch
     ]
 
 
+def test_channels_status_json_uses_route_backed_line_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI LINE Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="LINE Native Probe Route",
+            kind="line",
+            target="https://api.line.me/v2/bot/message",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "line",
+                "account_id": "line-bot",
+                "peer_kind": "direct",
+                "peer_id": "line:user:U1234567890abcdef1234567890abcdef",
+                "summary": "line bot direct U1234567890abcdef1234567890abcdef",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="line-channel-token",
+            vault_secret_id=None,
+        )
+    )
+    line_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        line_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {
+            "displayName": "OpenZues LINE",
+            "userId": "Ubot123",
+            "basicId": "@openzues",
+            "pictureUrl": "https://example.com/bot.png",
+        }
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["line"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "line",
+        "runtime": "native-provider-backed",
+        "bot": {
+            "displayName": "OpenZues LINE",
+            "userId": "Ubot123",
+            "basicId": "@openzues",
+            "pictureUrl": "https://example.com/bot.png",
+        },
+        "timeoutMs": 2500,
+    }
+    assert line_gets == [
+        (
+            "https://api.line.me/v2/bot/info",
+            "Authorization",
+            "Bearer line-channel-token",
+            2.5,
+        )
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

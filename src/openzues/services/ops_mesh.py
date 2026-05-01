@@ -162,6 +162,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
     "discord",
+    "line",
     "matrix",
     "zalo",
 }
@@ -2263,6 +2264,20 @@ def _line_reply_endpoint(target: str | None) -> str:
         endpoint = f"{stripped}/reply"
     if _normalized_http_webhook_url(endpoint) is None:
         raise RuntimeError("LINE route target must be an http(s) Bot API message URL.")
+    return endpoint
+
+
+def _line_bot_info_endpoint(target: str | None) -> str:
+    normalized = str(target or "").strip() or LINE_API_BASE_URL
+    stripped = normalized.rstrip("/")
+    for suffix in ("/message/push", "/message/reply", "/message"):
+        if stripped.endswith(suffix):
+            endpoint = f"{stripped[: -len(suffix)]}/info"
+            break
+    else:
+        endpoint = f"{stripped}/info"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("LINE route target must be an http(s) Bot API URL.")
     return endpoint
 
 
@@ -7826,6 +7841,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "line":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_line_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "matrix":
             try:
                 return await asyncio.to_thread(
@@ -8666,6 +8699,47 @@ class OpsMeshService:
         if device_id:
             payload["deviceId"] = device_id
         return payload
+
+    def _probe_line_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _line_bot_info_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_line_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("LINE API returned a non-JSON bot info response.")
+        display_name = str(result.get("displayName") or "").strip()
+        user_id = str(result.get("userId") or "").strip()
+        if not display_name and not user_id:
+            error = str(result.get("message") or result.get("error") or "Invalid LINE bot info.")
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "line",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        bot: dict[str, str] = {}
+        for key in ("displayName", "userId", "basicId", "pictureUrl"):
+            value = str(result.get(key) or "").strip()
+            if value:
+                bot[key] = value
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "line",
+            "runtime": "native-provider-backed",
+            "bot": bot,
+            "timeoutMs": timeout_ms,
+        }
 
     def _probe_zalo_provider_route(
         self,
