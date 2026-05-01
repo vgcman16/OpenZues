@@ -5156,6 +5156,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_bridge_command or acp_status_json_and_human"` (`34 passed`), `ruff check
   src\openzues\services\acp_session_mapper.py tests\test_acp_session_mapper.py`,
   and `mypy src\openzues\services\acp_session_mapper.py`.
+- Native ACP available commands now expose OpenClaw's base ACP slash-command
+  catalog (`help`, `commands`, `status`, context/model/runtime/session commands,
+  and `compact`) plus a fakeable extension hook for dock-style commands.
+- Verified the ACP available-command slice with `python -m pytest
+  tests\test_acp_commands.py -q` (`2 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`36 passed`), `ruff check
+  src\openzues\services\acp_commands.py tests\test_acp_commands.py`, and
+  `mypy src\openzues\services\acp_commands.py`.
 
 ## References
 
