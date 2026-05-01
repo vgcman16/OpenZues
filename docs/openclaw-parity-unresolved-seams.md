@@ -833,9 +833,12 @@ event mapping now covers OpenClaw's text/resource/resource-link extraction,
 resource-link control/delimiter escaping, prompt byte-limit accounting, image
 attachment projection, tool-title control escaping, tool-kind inference,
 tool-call content projection, and bounded file/media location extraction from
-tool args and text markers. Remaining ACP CLI parity is still the real bridge
+tool args and text markers. Native ACP session metadata mapping now covers
+OpenClaw's `sessionKey` / `session` / `key`, label, reset, require-existing,
+and `prefixCwd` aliases plus label/key resolution precedence and conditional
+reset dispatch. Remaining ACP CLI parity is still the real bridge
 client/server protocol runtime rather than the spawn preflight,
-permission-helper, and event-mapper contracts.
+permission-helper, event-mapper, and session-mapper contracts.
 `acp status [lookup]` now reads native ACP session metadata and linked
 OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
 thread id, runtime session id, label, task id, and run id. JSON output returns

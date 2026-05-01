@@ -5143,6 +5143,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_bridge_command or acp_status_json_and_human"` (`29 passed`), `ruff check
   src\openzues\services\acp_event_mapper.py tests\test_acp_event_mapper.py`,
   and `mypy src\openzues\services\acp_event_mapper.py`.
+- Native ACP session mapping now follows OpenClaw's `parseSessionMeta`,
+  `resolveSessionKey`, and `resetSessionIfNeeded` contracts for session key
+  aliases, label aliases, reset/require-existing/prefix-cwd booleans,
+  explicit-label precedence, meta-key precedence over default labels,
+  require-existing key lookups, and conditional `sessions.reset` dispatch.
+- Verified the ACP session-mapper slice with `python -m pytest
+  tests\test_acp_session_mapper.py -q` (`5 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_session_mapper or acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`34 passed`), `ruff check
+  src\openzues\services\acp_session_mapper.py tests\test_acp_session_mapper.py`,
+  and `mypy src\openzues\services\acp_session_mapper.py`.
 
 ## References
 
