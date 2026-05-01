@@ -8699,6 +8699,103 @@ def test_plugins_install_marketplace_json_persists_local_manifest_entry(
     assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
 
 
+def test_plugins_install_json_resolves_known_marketplace_shortcut(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": [],
+                    "entries": {},
+                    "load": {"paths": []},
+                },
+            }
+        )
+    )
+    marketplace_dir = tmp_path / "marketplace"
+    plugin_dir = marketplace_dir / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Claude Local",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.3.0",
+                        "source": {"type": "path", "path": "plugins/frontend-design"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    known_path = tmp_path / "home" / ".claude" / "plugins" / "known_marketplaces.json"
+    known_path.parent.mkdir(parents=True)
+    known_path.write_text(
+        json.dumps({"claude-local": {"installLocation": str(marketplace_dir)}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "openzues.cli._CLI_CLAUDE_KNOWN_MARKETPLACES_PATH",
+        known_path,
+        raising=False,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", "frontend-design@claude-local", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["pluginId"] == "frontend-design"
+    assert payload["install"]["source"] == "marketplace"
+    assert payload["install"]["marketplaceName"] == "Claude Local"
+    assert payload["install"]["marketplaceSource"] == "claude-local"
+    assert payload["install"]["marketplacePlugin"] == "frontend-design"
+    assert payload["install"]["installPath"] == str(plugin_dir.resolve())
+    assert payload["install"]["version"] == "0.3.0"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["frontend-design"]
+    assert stored["plugins"]["load"]["paths"] == [str(plugin_dir.resolve())]
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceSource"] == (
+        "claude-local"
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplacePlugin"] == (
+        "frontend-design"
+    )
+
+
 def test_plugins_uninstall_json_removes_native_install_metadata(
     tmp_path,
     monkeypatch,

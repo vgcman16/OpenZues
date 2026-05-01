@@ -11955,6 +11955,104 @@ async def _build_plugins_toggle_payload(
     }
 
 
+_CLI_CLAUDE_KNOWN_MARKETPLACES_PATH = (
+    Path("~") / ".claude" / "plugins" / "known_marketplaces.json"
+)
+
+
+def _read_cli_claude_known_marketplaces() -> dict[str, dict[str, object]]:
+    known_path = Path(_CLI_CLAUDE_KNOWN_MARKETPLACES_PATH).expanduser()
+    try:
+        parsed = json.loads(known_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, dict[str, object]] = {}
+    for name, value in parsed.items():
+        known_name = _optional_cli_string(name)
+        if known_name is None or not isinstance(value, dict):
+            continue
+        record: dict[str, object] = {}
+        install_location = _optional_cli_string(value.get("installLocation"))
+        if install_location is not None:
+            record["installLocation"] = install_location
+        if "source" in value:
+            record["source"] = value["source"]
+        result[known_name] = record
+    return result
+
+
+def _cli_known_marketplace_record(marketplace: str) -> dict[str, object] | None:
+    normalized = _optional_cli_string(marketplace)
+    if normalized is None:
+        return None
+    return _read_cli_claude_known_marketplaces().get(normalized)
+
+
+def _cli_marketplace_entry_source_to_input(source: object) -> str | None:
+    if isinstance(source, str):
+        return _optional_cli_string(source)
+    if not isinstance(source, dict):
+        return None
+    source_kind = _optional_cli_string(source.get("type")) or _optional_cli_string(
+        source.get("source")
+    )
+    if source_kind == "path":
+        return _optional_cli_string(source.get("path"))
+    if source_kind == "github":
+        repo = _optional_cli_string(source.get("repo")) or _optional_cli_string(
+            source.get("url")
+        )
+        ref = (
+            _optional_cli_string(source.get("ref"))
+            or _optional_cli_string(source.get("branch"))
+            or _optional_cli_string(source.get("tag"))
+        )
+        if repo is None:
+            return None
+        return f"{repo}#{ref}" if ref is not None else repo
+    if source_kind in {"git", "git-subdir"}:
+        url = _optional_cli_string(source.get("url")) or _optional_cli_string(
+            source.get("repo")
+        )
+        ref = (
+            _optional_cli_string(source.get("ref"))
+            or _optional_cli_string(source.get("branch"))
+            or _optional_cli_string(source.get("tag"))
+        )
+        if url is None:
+            return None
+        return f"{url}#{ref}" if ref is not None else url
+    if source_kind == "url":
+        return _optional_cli_string(source.get("url"))
+    return None
+
+
+def _cli_known_marketplace_source_input(marketplace: str) -> str | None:
+    record = _cli_known_marketplace_record(marketplace)
+    if record is None:
+        return None
+    install_location = _optional_cli_string(record.get("installLocation"))
+    if install_location is not None:
+        return install_location
+    return _cli_marketplace_entry_source_to_input(record.get("source"))
+
+
+def _resolve_cli_marketplace_install_shortcut(raw: str) -> tuple[str, str] | None:
+    trimmed = raw.strip()
+    at_index = trimmed.rfind("@")
+    if at_index <= 0 or at_index >= len(trimmed) - 1:
+        return None
+    plugin = trimmed[:at_index].strip()
+    marketplace = trimmed[at_index + 1 :].strip()
+    if not plugin or not marketplace or "/" in plugin:
+        return None
+    if _cli_known_marketplace_record(marketplace) is None:
+        return None
+    return plugin, marketplace
+
+
 def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
     manifest_path = _resolve_plugins_marketplace_manifest_path(source)
     try:
@@ -12008,6 +12106,11 @@ async def _build_plugins_marketplace_install_payload(
     force: bool,
 ) -> dict[str, object]:
     manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace)
+    marketplace_source = (
+        marketplace
+        if _cli_known_marketplace_record(marketplace) is not None
+        else str(manifest_path)
+    )
     marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
     plugins = marketplace_payload.get("plugins")
     plugin_rows = plugins if isinstance(plugins, list) else []
@@ -12035,7 +12138,7 @@ async def _build_plugins_marketplace_install_payload(
     result = services.gateway_config.record_marketplace_plugin_install(
         plugin_id=requested_id,
         install_path=str(install_path),
-        marketplace_source=str(manifest_path),
+        marketplace_source=marketplace_source,
         marketplace_plugin=requested_id,
         marketplace_name=_optional_cli_string(marketplace_payload.get("name")),
         version=_optional_cli_string(match.get("version")),
@@ -12049,7 +12152,8 @@ async def _build_plugins_marketplace_install_payload(
         "pluginId": result.get("pluginId") or requested_id,
         "source": "marketplace",
         "marketplace": {
-            "source": str(manifest_path),
+            "source": marketplace_source,
+            "manifestPath": str(manifest_path),
             "name": marketplace_payload.get("name"),
             "version": marketplace_payload.get("version"),
         },
@@ -12218,6 +12322,9 @@ def _resolve_plugins_marketplace_manifest_path(source: str) -> Path:
     normalized_source = _optional_cli_string(source)
     if normalized_source is None:
         raise ValueError("marketplace source is required")
+    known_source = _cli_known_marketplace_source_input(normalized_source)
+    if known_source is not None and known_source != normalized_source:
+        return _resolve_plugins_marketplace_manifest_path(known_source)
     if re.match(r"^(https?|ssh)://", normalized_source, flags=re.IGNORECASE):
         raise ValueError(f"unsupported marketplace source: {normalized_source}")
     source_path = Path(normalized_source).expanduser()
@@ -18730,7 +18837,13 @@ def plugins_install_command(
     json_output: bool = typer.Option(False, "--json", help="Emit install result as JSON."),
 ) -> None:
     del dangerously_force_unsafe_install
-    if marketplace is None:
+    resolved_plugin_id = plugin_id
+    resolved_marketplace = marketplace
+    if resolved_marketplace is None:
+        shortcut = _resolve_cli_marketplace_install_shortcut(plugin_id)
+        if shortcut is not None:
+            resolved_plugin_id, resolved_marketplace = shortcut
+    if resolved_marketplace is None:
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",
@@ -18747,8 +18860,8 @@ def plugins_install_command(
     async def _action(services: CliServices) -> dict[str, object]:
         return await _build_plugins_marketplace_install_payload(
             services,
-            plugin_id=plugin_id,
-            marketplace=marketplace,
+            plugin_id=resolved_plugin_id,
+            marketplace=resolved_marketplace,
             force=force,
         )
 

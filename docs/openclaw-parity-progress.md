@@ -7,7 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, and bundle MCP/LSP server projection slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, and known Claude marketplace shortcut slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~96% after closing the bundle metadata mini-queue and the known-local marketplace install shortcut; remote marketplace clone/download/update breadth still keeps plugin install parity short of complete.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -6926,6 +6927,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
   plugins_inspect_json_projects_record_runtime_surfaces"` (`6 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins install <plugin>@<known-marketplace>` now mirrors OpenClaw's Claude
+  known marketplace shortcut for local `installLocation` records. The native
+  CLI reads `~/.claude/plugins/known_marketplaces.json`, resolves the shortcut
+  into the existing marketplace install flow, persists the known marketplace
+  name as `marketplaceSource`, and keeps local update compatibility through the
+  same resolver.
+- Progress estimates were adjusted after this shortcut slice: CLI + operator
+  control plane parity moves from roughly 95% to 96%. Repo-wide parity remains
+  roughly 48% while remote marketplace clone/download/update behavior,
+  packaging/distribution, companion apps, TUI surfaces, and standalone ACP
+  bridge work remain large.
+- Verified the known marketplace shortcut slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_resolves_known_marketplace_shortcut
+  -q` (`1 failed` before implementation because `plugins install` still
+  required `--marketplace`), then the same command (`1 passed`), adjacent
+  marketplace/install/update proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_resolves_known_marketplace_shortcut or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_marketplace_list_json_reads_local_manifest or
+  plugins_update_json_refreshes_local_marketplace_install or
+  plugins_uninstall_json_removes_native_install_metadata"` (`5 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 
 ## References
