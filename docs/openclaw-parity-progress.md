@@ -5458,6 +5458,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_telegram_react_route"` (`9 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed reaction remove/list parity now uses OpenClaw's relation
+  history path: `message.action reactions` summarizes v1 relation chunks by key
+  and unique sender, while `message.action react remove=true` resolves the bot
+  through Matrix `whoami` and redacts only matching current-user reaction events.
+- Verified the Matrix reaction remove/list slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_reactions_list_route or
+  matrix_react_remove_route or matrix_react_route"` (`3 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_reactions_list_route or
+  message_action_dispatches_slack_reactions_list_route or
+  message_action_dispatches_discord_react_remove_route or
+  message_action_dispatches_slack_react_remove_route"` (`12 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

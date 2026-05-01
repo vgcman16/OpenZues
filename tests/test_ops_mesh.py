@@ -6606,6 +6606,306 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_react_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "chunk": [
+                {
+                    "event_id": "$r1",
+                    "sender": "@alice:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r2",
+                    "sender": "@bob:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r3",
+                    "sender": "@alice:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "eyes",
+                        }
+                    },
+                },
+            ]
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="reactions",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "limit": 2,
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-reactions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "reactions": [
+            {
+                "key": "ship-it",
+                "count": 2,
+                "users": ["@alice:matrix.example", "@bob:matrix.example"],
+            },
+            {
+                "key": "eyes",
+                "count": 1,
+                "users": ["@alice:matrix.example"],
+            },
+        ],
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v1/rooms/"
+                "%21ops%3Amatrix.example/relations/%24original/m.annotation/"
+                "m.reaction?dir=b&limit=2"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-react-remove"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/_matrix/client/v3/account/whoami"):
+            return {"user_id": "@bot:matrix.example"}
+        return {
+            "chunk": [
+                {
+                    "event_id": "$r1",
+                    "sender": "@bot:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r2",
+                    "sender": "@bot:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "eyes",
+                        }
+                    },
+                },
+                {
+                    "event_id": "$r3",
+                    "sender": "@other:matrix.example",
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.annotation",
+                            "event_id": "$original",
+                            "key": "ship-it",
+                        }
+                    },
+                },
+            ]
+        }
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$redaction"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="react",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$original",
+                "emoji": "ship-it",
+                "remove": True,
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-react-remove-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "removed": 1,
+    }
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v1/rooms/"
+                "%21ops%3Amatrix.example/relations/%24original/m.annotation/"
+                "m.reaction?dir=b&limit=200"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/redact/%24r1/"
+                "idem-matrix-react-remove-action-1"
+            ),
+            {},
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

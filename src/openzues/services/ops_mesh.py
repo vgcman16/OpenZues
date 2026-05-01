@@ -2333,6 +2333,25 @@ def _matrix_redact_endpoint(
     )
 
 
+def _matrix_whoami_endpoint(target: str | None) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/account/whoami"
+
+
+def _matrix_reaction_relations_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    message_id: str,
+    limit: int,
+) -> str:
+    base_url = _matrix_base_url(target)
+    query = urlencode({"dir": "b", "limit": max(1, limit)})
+    return (
+        f"{base_url}/_matrix/client/v1/rooms/{quote(room_id, safe='')}"
+        f"/relations/{quote(message_id, safe='')}/m.annotation/m.reaction?{query}"
+    )
+
+
 def _matrix_text_chunks(text: str, *, limit: int = 4000) -> list[str]:
     return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
 
@@ -2373,6 +2392,61 @@ def _matrix_message_id(result: object) -> str | None:
     if candidate is None:
         return None
     return str(candidate).strip() or None
+
+
+def _matrix_reaction_chunk(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        return []
+    chunk = result.get("chunk")
+    if not isinstance(chunk, list):
+        return []
+    return [event for event in chunk if isinstance(event, dict)]
+
+
+def _matrix_reaction_key(event: dict[str, object]) -> str | None:
+    content = event.get("content")
+    if not isinstance(content, dict):
+        return None
+    relates_to = content.get("m.relates_to")
+    if not isinstance(relates_to, dict):
+        return None
+    rel_type = relates_to.get("rel_type")
+    if isinstance(rel_type, str) and rel_type.strip() and rel_type != "m.annotation":
+        return None
+    key = relates_to.get("key")
+    if not isinstance(key, str):
+        return None
+    return key.strip() or None
+
+
+def _matrix_reaction_event_id(event: dict[str, object]) -> str | None:
+    event_id = event.get("event_id") or event.get("eventId")
+    if not isinstance(event_id, str):
+        return None
+    return event_id.strip() or None
+
+
+def _matrix_reaction_sender(event: dict[str, object]) -> str | None:
+    sender = event.get("sender")
+    if not isinstance(sender, str):
+        return None
+    return sender.strip() or None
+
+
+def _matrix_reaction_summaries(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    summaries: dict[str, dict[str, object]] = {}
+    for event in events:
+        key = _matrix_reaction_key(event)
+        if key is None:
+            continue
+        entry = summaries.setdefault(key, {"key": key, "count": 0, "users": []})
+        current_count = entry.get("count")
+        entry["count"] = (current_count if isinstance(current_count, int) else 0) + 1
+        sender = _matrix_reaction_sender(event)
+        users = entry["users"]
+        if sender and isinstance(users, list) and sender not in users:
+            users.append(sender)
+    return list(summaries.values())
 
 
 def _matrix_poll_fallback_text(question: str, options: list[str]) -> str:
@@ -7783,11 +7857,7 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if (
-            channel == "matrix"
-            and action == "react"
-            and _message_action_param_bool(request.params, "remove") is not True
-        ):
+        if channel == "matrix" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -7799,6 +7869,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_matrix_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action == "reactions":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action reactions."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_reactions_message_action,
                 route,
                 request,
                 secret_token,
@@ -8636,12 +8722,25 @@ class OpsMeshService:
         emoji = _message_action_param_string(
             request.params,
             "emoji",
-            required=True,
             allow_empty=True,
         )
         normalized_emoji = str(emoji or "").strip()
-        if not normalized_emoji:
-            raise RuntimeError("Matrix reaction requires an emoji.")
+        remove = _message_action_param_bool(request.params, "remove") is True
+        if remove and not normalized_emoji:
+            raise RuntimeError("Emoji is required to remove a Matrix reaction.")
+        if remove or not normalized_emoji:
+            removed = self._remove_own_matrix_reactions(
+                route,
+                room_id=room_id,
+                message_id=message_id,
+                secret_token=secret_token,
+                emoji=normalized_emoji if remove else None,
+                transaction_prefix=request.idempotency_key or uuid.uuid4().hex,
+            )
+            return {
+                "ok": True,
+                "removed": removed,
+            }
         payload: dict[str, object] = {
             "m.relates_to": {
                 "rel_type": "m.annotation",
@@ -8664,6 +8763,125 @@ class OpsMeshService:
             "ok": True,
             "added": normalized_emoji,
         }
+
+    def _dispatch_matrix_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix reactions requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix reactions requires roomId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix reaction requires a messageId.")
+        limit = max(1, _message_action_param_integer(request.params, "limit") or 100)
+        events = self._matrix_reaction_events(
+            route,
+            room_id=room_id,
+            message_id=message_id,
+            limit=limit,
+            secret_token=secret_token,
+        )
+        return {
+            "ok": True,
+            "reactions": _matrix_reaction_summaries(events),
+        }
+
+    def _matrix_reaction_events(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        message_id: str,
+        limit: int,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        result = self._get_json_provider_url(
+            _matrix_reaction_relations_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                message_id=message_id,
+                limit=limit,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        return _matrix_reaction_chunk(result)
+
+    def _matrix_self_user_id(
+        self,
+        route: dict[str, Any],
+        *,
+        secret_token: str | None,
+    ) -> str | None:
+        result = self._get_json_provider_url(
+            _matrix_whoami_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            return None
+        user_id = result.get("user_id") or result.get("userId")
+        if not isinstance(user_id, str):
+            return None
+        return user_id.strip() or None
+
+    def _remove_own_matrix_reactions(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        message_id: str,
+        secret_token: str | None,
+        emoji: str | None,
+        transaction_prefix: str,
+    ) -> int:
+        self_user_id = self._matrix_self_user_id(route, secret_token=secret_token)
+        if self_user_id is None:
+            return 0
+        target_emoji = str(emoji or "").strip() or None
+        events = self._matrix_reaction_events(
+            route,
+            room_id=room_id,
+            message_id=message_id,
+            limit=200,
+            secret_token=secret_token,
+        )
+        redaction_ids: list[str] = []
+        for event in events:
+            if _matrix_reaction_sender(event) != self_user_id:
+                continue
+            if target_emoji is not None and _matrix_reaction_key(event) != target_emoji:
+                continue
+            event_id = _matrix_reaction_event_id(event)
+            if event_id is not None:
+                redaction_ids.append(event_id)
+        for index, event_id in enumerate(redaction_ids, start=1):
+            self._put_json_provider(
+                _matrix_redact_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_id=event_id,
+                    transaction_id=f"{transaction_prefix}-{index}",
+                ),
+                {},
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        return len(redaction_ids)
 
     def _dispatch_whatsapp_react_message_action(
         self,
