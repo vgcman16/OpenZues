@@ -4859,6 +4859,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Accepted ACP spawns now register a native OpenClaw-shaped running task record
+  by persisting `taskRecord` and `taskDeliveryState` into the child session
+  metadata. The record preserves `runtime="acp"`, `sourceId` / `runId`,
+  requester/owner session keys, child session key, label, task text,
+  `status="running"`, `deliveryStatus`, notify policy, and event timestamps.
+  `openzues tasks --json` now projects those metadata-backed ACP records beside
+  existing native mission and blueprint task records.
+- Verified the ACP task-record registration slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_accepted_run_persists_openclaw_task_record
+  -q` (`1 passed`) and `python -m pytest
+  tests\test_cli.py::test_tasks_list_json_projects_acp_task_records_from_session_metadata
+  -q` (`1 passed`), adjacent ACP spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`19 passed`),
+  adjacent task CLI coverage `python -m pytest tests\test_cli.py -q -k
+  "tasks_list_json or tasks_show_json or tasks_audit_json or
+  tasks_maintenance_json"` (`5 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\cli.py
+  tests\test_gateway_node_methods.py tests\test_cli.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\cli.py`.
 
 ## References
 

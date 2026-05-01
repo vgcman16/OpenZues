@@ -19104,6 +19104,86 @@ async def test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_accepted_run_persists_openclaw_task_record(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-task-record.db")
+    await database.initialize()
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-task-record",
+                "runId": "run-acp-task-record-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-task-record",
+                "runtimeSessionId": "session-acp-task-record",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Track this ACP child as a background task.",
+            "runtime": "acp",
+            "agentId": "codex",
+            "label": "ACP tracker",
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="discord",
+            message_account_id="default",
+            message_to="channel:ops",
+        ),
+        now_ms=20_000,
+    )
+
+    child_session_key = str(spawn_payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    parent_session_key = str(metadata["parentSessionKey"])
+    assert metadata["taskRecord"] == {
+        "taskId": "acp:run-acp-task-record-1",
+        "runtime": "acp",
+        "sourceId": "run-acp-task-record-1",
+        "requesterSessionKey": parent_session_key,
+        "ownerKey": parent_session_key,
+        "scopeKind": "session",
+        "childSessionKey": child_session_key,
+        "agentId": "codex",
+        "runId": "run-acp-task-record-1",
+        "label": "ACP tracker",
+        "task": "Track this ACP child as a background task.",
+        "status": "running",
+        "deliveryStatus": "pending",
+        "notifyPolicy": "done_only",
+        "createdAt": 20_000,
+        "startedAt": 20_000,
+        "lastEventAt": 20_000,
+    }
+    assert metadata["taskDeliveryState"] == {
+        "taskId": "acp:run-acp-task-record-1",
+        "requesterOrigin": {
+            "channel": "discord",
+            "accountId": "default",
+            "to": "channel:ops",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     tmp_path,
 ) -> None:

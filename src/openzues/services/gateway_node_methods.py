@@ -7833,10 +7833,11 @@ class GatewayNodeMethodService:
                 requester_group_id = _string_or_none(resolved_requester.message_group_id)
                 if requester_group_id is not None:
                     acp_context["requesterGroupId"] = requester_group_id
+                label = _optional_session_label(payload.get("label"), label="label")
                 acp_result = await self._acp_spawn_service.spawn(
                     {
                         "task": task,
-                        "label": _optional_session_label(payload.get("label"), label="label"),
+                        "label": label,
                         "agentId": acp_agent_id,
                         "resumeSessionId": resume_session_id,
                         "cwd": acp_cwd,
@@ -7884,6 +7885,21 @@ class GatewayNodeMethodService:
                     "streamTo": effective_stream_to,
                     "streamLogPath": _string_or_none(acp_result.get("streamLogPath")),
                 }
+                acp_task_record = _sessions_spawn_acp_task_record(
+                    child_session_key=child_session_key,
+                    run_id=run_id,
+                    agent_id=acp_agent_id,
+                    requester_session_key=spawn_parent_session_key,
+                    label=label,
+                    task=task,
+                    timestamp_ms=timestamp_ms,
+                )
+                acp_metadata["taskRecord"] = acp_task_record
+                if requester_origin is not None:
+                    acp_metadata["taskDeliveryState"] = {
+                        "taskId": acp_task_record["taskId"],
+                        "requesterOrigin": dict(requester_origin),
+                    }
                 acp_metadata = {
                     key: metadata_value
                     for key, metadata_value in acp_metadata.items()
@@ -7933,7 +7949,6 @@ class GatewayNodeMethodService:
                         acp_metadata["lastAccountId"] = acp_thread_binding["accountId"]
                     if "threadId" in acp_thread_binding:
                         acp_metadata["lastThreadId"] = acp_thread_binding["threadId"]
-                label = _optional_session_label(payload.get("label"), label="label")
                 if label is not None:
                     acp_metadata["label"] = label
                 acp_metadata["agentId"] = acp_agent_id
@@ -13509,6 +13524,40 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_acp_task_record(
+    *,
+    child_session_key: str,
+    run_id: str,
+    agent_id: str,
+    requester_session_key: str,
+    label: str | None,
+    task: str,
+    timestamp_ms: int,
+) -> dict[str, object]:
+    delivery_status = "pending" if requester_session_key.strip() else "parent_missing"
+    record: dict[str, object] = {
+        "taskId": f"acp:{run_id}",
+        "runtime": "acp",
+        "sourceId": run_id,
+        "requesterSessionKey": requester_session_key,
+        "ownerKey": requester_session_key,
+        "scopeKind": "session",
+        "childSessionKey": child_session_key,
+        "agentId": agent_id,
+        "runId": run_id,
+        "task": task,
+        "status": "running",
+        "deliveryStatus": delivery_status,
+        "notifyPolicy": "done_only",
+        "createdAt": timestamp_ms,
+        "startedAt": timestamp_ms,
+        "lastEventAt": timestamp_ms,
+    }
+    if label is not None:
+        record["label"] = label
+    return record
 
 
 def _sessions_spawn_acp_should_implicitly_stream_to_parent(

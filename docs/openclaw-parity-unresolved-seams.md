@@ -356,6 +356,12 @@ current delivery route, no thread context, the spawn is not thread-bound, and
 the gateway heartbeat runtime is enabled; `set-heartbeats enabled=false` now
 suppresses implicit ACP parent streaming without changing explicit
 `streamTo="parent"` requests.
+Accepted ACP spawns now also register an OpenClaw-shaped running background task
+record in durable child-session metadata: the record carries `runtime="acp"`,
+`sourceId` / `runId`, owner/requester session keys, child session key, label,
+task text, `status="running"`, `deliveryStatus`, and timestamps. The native
+`tasks` CLI projection now reads those metadata-backed ACP records alongside
+mission and blueprint tasks.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

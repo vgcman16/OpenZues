@@ -4438,6 +4438,101 @@ def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
     assert calls == ["missions", "tasks"]
 
 
+def test_tasks_list_json_projects_acp_task_records_from_session_metadata(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            calls.append("missions")
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            calls.append("tasks")
+            return []
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            calls.append("metadata")
+            return [
+                {
+                    "session_key": "agent:codex:acp:thread-acp-task-record",
+                    "metadata": {
+                        "taskRecord": {
+                            "taskId": "acp:run-acp-task-record-1",
+                            "runtime": "acp",
+                            "sourceId": "run-acp-task-record-1",
+                            "requesterSessionKey": "agent:main:main",
+                            "ownerKey": "agent:main:main",
+                            "scopeKind": "session",
+                            "childSessionKey": "agent:codex:acp:thread-acp-task-record",
+                            "agentId": "codex",
+                            "runId": "run-acp-task-record-1",
+                            "label": "ACP tracker",
+                            "task": "Track this ACP child as a background task.",
+                            "status": "running",
+                            "deliveryStatus": "pending",
+                            "notifyPolicy": "done_only",
+                            "createdAt": 20_000,
+                            "startedAt": 20_000,
+                            "lastEventAt": 20_000,
+                        }
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "tasks",
+            "--json",
+            "--runtime",
+            "acp",
+            "--status",
+            "running",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtime"] == "acp"
+    assert payload["status"] == "running"
+    assert payload["count"] == 1
+    assert payload["tasks"][0] == {
+        "taskId": "acp:run-acp-task-record-1",
+        "runtime": "acp",
+        "sourceId": "run-acp-task-record-1",
+        "requesterSessionKey": "agent:main:main",
+        "ownerKey": "agent:main:main",
+        "scopeKind": "session",
+        "childSessionKey": "agent:codex:acp:thread-acp-task-record",
+        "agentId": "codex",
+        "runId": "run-acp-task-record-1",
+        "label": "ACP tracker",
+        "task": "Track this ACP child as a background task.",
+        "status": "running",
+        "deliveryStatus": "pending",
+        "notifyPolicy": "done_only",
+        "createdAt": 20_000,
+        "startedAt": 20_000,
+        "lastEventAt": 20_000,
+    }
+    assert calls == ["missions", "tasks", "metadata"]
+
+
 def test_tasks_show_json_resolves_session_key(monkeypatch) -> None:
     created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
     updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)

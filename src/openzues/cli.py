@@ -18385,6 +18385,14 @@ _OPENCLAW_TASK_STATUS_VALUES = (
 )
 _OPENCLAW_TASK_RUNTIME_VALUES = ("subagent", "acp", "cli", "cron")
 _OPENCLAW_TASK_NOTIFY_VALUES = ("done_only", "state_changes", "silent")
+_OPENCLAW_TASK_DELIVERY_VALUES = (
+    "pending",
+    "delivered",
+    "session_queued",
+    "failed",
+    "parent_missing",
+    "not_applicable",
+)
 _OPENCLAW_TASK_AUDIT_CODES = (
     "stale_queued",
     "stale_running",
@@ -18641,6 +18649,79 @@ def _openclaw_task_record_from_blueprint(blueprint: object) -> dict[str, object]
     return task
 
 
+def _openclaw_task_metadata_timestamp_ms(value: object) -> int | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    return _task_timestamp_ms(value)
+
+
+def _openclaw_task_record_from_session_metadata(
+    session_key: str,
+    metadata: Mapping[str, object],
+) -> dict[str, object] | None:
+    raw_record = metadata.get("taskRecord")
+    if not isinstance(raw_record, Mapping):
+        return None
+    task_id = _optional_cli_string(raw_record.get("taskId"))
+    runtime = _optional_cli_string(raw_record.get("runtime"))
+    requester_session_key = _optional_cli_string(raw_record.get("requesterSessionKey"))
+    owner_key = _optional_cli_string(raw_record.get("ownerKey"))
+    scope_kind = _optional_cli_string(raw_record.get("scopeKind"))
+    task_text = _optional_cli_string(raw_record.get("task"))
+    status = _optional_cli_string(raw_record.get("status"))
+    delivery_status = _optional_cli_string(raw_record.get("deliveryStatus"))
+    notify_policy = _optional_cli_string(raw_record.get("notifyPolicy"))
+    created_ms = _openclaw_task_metadata_timestamp_ms(raw_record.get("createdAt"))
+    if (
+        task_id is None
+        or runtime not in _OPENCLAW_TASK_RUNTIME_VALUES
+        or requester_session_key is None
+        or owner_key is None
+        or scope_kind not in {"session", "system"}
+        or task_text is None
+        or status not in _OPENCLAW_TASK_STATUS_VALUES
+        or delivery_status not in _OPENCLAW_TASK_DELIVERY_VALUES
+        or notify_policy not in _OPENCLAW_TASK_NOTIFY_VALUES
+        or created_ms is None
+    ):
+        return None
+    task: dict[str, object] = {
+        "taskId": task_id,
+        "runtime": runtime,
+        "requesterSessionKey": requester_session_key,
+        "ownerKey": owner_key,
+        "scopeKind": scope_kind,
+        "task": task_text,
+        "status": status,
+        "deliveryStatus": delivery_status,
+        "notifyPolicy": notify_policy,
+        "createdAt": created_ms,
+    }
+    for key in (
+        "taskKind",
+        "sourceId",
+        "childSessionKey",
+        "parentFlowId",
+        "parentTaskId",
+        "agentId",
+        "runId",
+        "label",
+        "error",
+        "progressSummary",
+        "terminalSummary",
+        "terminalOutcome",
+    ):
+        _openclaw_task_add_optional(task, key, _optional_cli_string(raw_record.get(key)))
+    child_session_key = _optional_cli_string(task.get("childSessionKey"))
+    if child_session_key is None:
+        task["childSessionKey"] = session_key
+    for key in ("startedAt", "endedAt", "lastEventAt", "cleanupAfter"):
+        timestamp_ms = _openclaw_task_metadata_timestamp_ms(raw_record.get(key))
+        if timestamp_ms is not None:
+            task[key] = timestamp_ms
+    return task
+
+
 async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for mission in await _native_mission_records(services):
@@ -18653,6 +18734,10 @@ async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[st
             records.append(record)
     metadata_by_key = await _gateway_session_metadata_by_key(services)
     if metadata_by_key:
+        for session_key, metadata in metadata_by_key.items():
+            record = _openclaw_task_record_from_session_metadata(session_key, metadata)
+            if record is not None:
+                records.append(record)
         for record in records:
             _apply_task_session_metadata(record, metadata_by_key)
     return records
