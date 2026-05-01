@@ -2617,6 +2617,50 @@ def test_sandbox_explain_json_projects_config_sandbox_tool_policy(monkeypatch) -
     assert "agents.defaults.sandbox.mode=off" in payload["fixIt"]
 
 
+def test_sandbox_explain_json_projects_read_only_agent_workspace_mount(
+    monkeypatch,
+) -> None:
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "workspaceAccess": "ro",
+                        }
+                    },
+                    "list": [{"id": "tavern"}],
+                }
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=None,
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "explain",
+            "--agent",
+            "tavern",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["sandbox"]["workspaceAccess"] == "ro"
+    assert payload["sandbox"]["agentWorkspaceMount"] == "/agent"
+
+
 def test_cron_status_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

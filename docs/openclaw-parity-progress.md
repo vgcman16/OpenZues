@@ -4944,6 +4944,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_message_uses_telegram_native_options"` (`5 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`.
+- Sandbox `explain` now includes OpenClaw's read-only agent workspace mount
+  hint: when the effective sandbox workspace access is `ro`, JSON and human
+  output expose `agentWorkspaceMount="/agent"` so callers can distinguish the
+  copied sandbox workspace from the mounted real agent workspace.
+- Verified the sandbox mount projection with `python -m pytest
+  tests\test_cli.py -q -k "read_only_agent_workspace_mount"` (`1 passed`),
+  adjacent sandbox CLI/doctor coverage `python -m pytest tests\test_cli.py -q
+  -k "sandbox_explain or sandbox_recreate or sandbox_inventory or
+  doctor_sandbox"` (`5 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 

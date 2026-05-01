@@ -10503,6 +10503,7 @@ def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> N
         )
         workspace_access = str(sandbox.get("workspaceAccess") or "").strip()
         workspace_root = str(sandbox.get("workspaceRoot") or "").strip()
+        agent_workspace_mount = str(sandbox.get("agentWorkspaceMount") or "").strip()
         if workspace_access or workspace_root:
             typer.echo(
                 "  workspaceAccess: "
@@ -10510,6 +10511,8 @@ def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> N
                 + " workspaceRoot: "
                 + (workspace_root or "(unknown)")
             )
+        if agent_workspace_mount:
+            typer.echo(f"  agentWorkspaceMount: {agent_workspace_mount}")
     fix_it = payload.get("fixIt")
     if isinstance(fix_it, list) and fix_it:
         typer.echo("")
@@ -10727,6 +10730,11 @@ async def _build_sandbox_explain_payload(
         else None
     )
     sandbox_policy = metadata.get("sandboxPolicy") if metadata is not None else None
+    metadata_workspace_access = (
+        _optional_cli_string(metadata.get("sandboxWorkspaceAccess"))
+        if metadata is not None
+        else None
+    )
     workspace_root = (
         _optional_cli_string(metadata.get("spawnedWorkspaceDir"))
         if metadata is not None
@@ -10771,6 +10779,8 @@ async def _build_sandbox_explain_payload(
             "sources": tool_policy["sources"],
         },
     }
+    if sandboxed and (metadata_workspace_access or config_workspace_access) == "ro":
+        sandbox["agentWorkspaceMount"] = "/agent"
     if metadata is not None:
         for key in ("runtime", "runtimeThreadId", "runtimeSessionId"):
             value = _optional_cli_string(metadata.get(key))

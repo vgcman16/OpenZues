@@ -211,7 +211,10 @@ The native sandbox adapter now preserves read-only Codex sandbox policy metadata
 when dispatched with `sandbox_mode="read-only"`; remaining staging work is
 limited to deeper OpenClaw provider filesystem staging. Explicit
 `workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
-while omitted/`"rw"` access keeps the writable workspace sandbox path.
+while omitted/`"rw"` access keeps the writable workspace sandbox path. Sandbox
+CLI explain JSON/human output now also mirrors OpenClaw's embedded sandbox
+info by projecting `agentWorkspaceMount="/agent"` for read-only agent workspace
+access.
 Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
