@@ -13427,6 +13427,8 @@ def _plugin_record_from_deck_item(
     setup = _plugin_manifest_setup(item.get("setup"))
     if setup:
         record["setup"] = setup
+    for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
+        record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
     if route_count:
         record["httpRoutes"] = route_count
@@ -13459,6 +13461,32 @@ def _plugin_manifest_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _plugin_manifest_string_list_record(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    for raw_key, raw_values in value.items():
+        normalized_key = _optional_cli_string(raw_key)
+        if normalized_key is None:
+            continue
+        values = _plugin_manifest_string_list(raw_values)
+        if values:
+            normalized[normalized_key] = values
+    return normalized
+
+
+def _plugin_manifest_string_record(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    for raw_key, raw_value in value.items():
+        normalized_key = _optional_cli_string(raw_key)
+        normalized_value = _optional_cli_string(raw_value)
+        if normalized_key is not None and normalized_value is not None:
+            normalized[normalized_key] = normalized_value
+    return normalized
 
 
 def _plugin_manifest_command_aliases(value: object) -> list[dict[str, object]]:
@@ -13548,6 +13576,116 @@ def _plugin_manifest_setup(value: object) -> dict[str, object]:
     if isinstance(requires_runtime, bool):
         setup["requiresRuntime"] = requires_runtime
     return setup
+
+
+def _plugin_manifest_provider_endpoints(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    endpoints: list[dict[str, object]] = []
+    for raw_endpoint in value:
+        if not isinstance(raw_endpoint, dict):
+            continue
+        endpoint_class = _optional_cli_string(raw_endpoint.get("endpointClass"))
+        if endpoint_class is None:
+            continue
+        hosts = [
+            host.lower()
+            for host in _plugin_manifest_string_list(raw_endpoint.get("hosts"))
+        ]
+        base_urls = _plugin_manifest_string_list(raw_endpoint.get("baseUrls"))
+        if not hosts and not base_urls:
+            continue
+        endpoint: dict[str, object] = {"endpointClass": endpoint_class}
+        if hosts:
+            endpoint["hosts"] = hosts
+        if base_urls:
+            endpoint["baseUrls"] = base_urls
+        endpoints.append(endpoint)
+    return endpoints
+
+
+def _plugin_manifest_provider_auth_choices(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    choices: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        provider = _optional_cli_string(entry.get("provider"))
+        method = _optional_cli_string(entry.get("method"))
+        choice_id = _optional_cli_string(entry.get("choiceId"))
+        if provider is None or method is None or choice_id is None:
+            continue
+        choice: dict[str, object] = {
+            "provider": provider,
+            "method": method,
+            "choiceId": choice_id,
+        }
+        for key in (
+            "choiceLabel",
+            "choiceHint",
+            "groupId",
+            "groupLabel",
+            "groupHint",
+            "optionKey",
+            "cliFlag",
+            "cliOption",
+            "cliDescription",
+        ):
+            text = _optional_cli_string(entry.get(key))
+            if text is not None:
+                choice[key] = text
+        assistant_priority = entry.get("assistantPriority")
+        if isinstance(assistant_priority, int | float) and not isinstance(
+            assistant_priority,
+            bool,
+        ):
+            choice["assistantPriority"] = assistant_priority
+        assistant_visibility = entry.get("assistantVisibility")
+        if assistant_visibility in {"visible", "manual-only"}:
+            choice["assistantVisibility"] = assistant_visibility
+        deprecated_choice_ids = _plugin_manifest_string_list(
+            entry.get("deprecatedChoiceIds")
+        )
+        if deprecated_choice_ids:
+            choice["deprecatedChoiceIds"] = deprecated_choice_ids
+        onboarding_scopes = [
+            scope
+            for scope in _plugin_manifest_string_list(entry.get("onboardingScopes"))
+            if scope in {"text-inference", "image-generation"}
+        ]
+        if onboarding_scopes:
+            choice["onboardingScopes"] = onboarding_scopes
+        choices.append(choice)
+    return choices
+
+
+def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    for key in ("providerAuthEnvVars", "channelEnvVars"):
+        value = _plugin_manifest_string_list_record(manifest.get(key))
+        if value:
+            metadata[key] = value
+    for key in ("syntheticAuthRefs", "nonSecretAuthMarkers"):
+        values = _plugin_manifest_string_list(manifest.get(key))
+        if values:
+            metadata[key] = values
+    provider_auth_aliases = _plugin_manifest_string_record(
+        manifest.get("providerAuthAliases")
+    )
+    if provider_auth_aliases:
+        metadata["providerAuthAliases"] = provider_auth_aliases
+    provider_endpoints = _plugin_manifest_provider_endpoints(
+        manifest.get("providerEndpoints")
+    )
+    if provider_endpoints:
+        metadata["providerEndpoints"] = provider_endpoints
+    provider_auth_choices = _plugin_manifest_provider_auth_choices(
+        manifest.get("providerAuthChoices")
+    )
+    if provider_auth_choices:
+        metadata["providerAuthChoices"] = provider_auth_choices
+    return metadata
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -13905,6 +14043,8 @@ def _plugin_record_from_openclaw_manifest(
     setup = _plugin_manifest_setup(manifest.get("setup"))
     if setup:
         record["setup"] = setup
+    for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
+        record[metadata_key] = metadata_value
     for key in (
         "commands",
         "cliCommands",

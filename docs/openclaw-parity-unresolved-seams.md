@@ -14,8 +14,8 @@ Current percentage rollup:
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
-  plugin runtime executor inventory, and manifest command/activation/setup metadata
-  slices.
+  plugin runtime executor inventory, and manifest command/activation/setup/auth
+  metadata slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1366,7 +1366,8 @@ code. Metadata-only records now also normalize manifest-owned
 `commandAliases` string/object entries, preserving `runtime-slash` kind and
 `cliCommand` hints for pre-runtime CLI diagnostics. They also preserve manifest
 `activation` and `setup` descriptors for pre-runtime activation planning and
-setup/onboarding inventory. `plugins inspect --json`
+setup/onboarding inventory, plus provider/channel auth env descriptors and
+provider auth choice metadata. `plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
 runtime executor specs mark discovered plugins as imported, switch the inspect
@@ -3409,6 +3410,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_cli.py::test_plugins_list_json_preserves_manifest_activation_and_setup
   -q`, adjacent `python -m pytest tests\test_cli.py -q -k
   "plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest auth/env metadata seam from OpenClaw
+  `manifest-registry.test.ts` / `manifest.ts`: metadata-only plugin discovery
+  now preserves normalized provider auth env vars, provider endpoint hints,
+  synthetic auth refs, non-secret auth markers, provider auth aliases, provider
+  auth choices, and channel env vars from `openclaw.plugin.json`. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
   plugins_list_json_preserves_manifest_command_aliases or
   plugins_list_json_discovers_openclaw_manifest_load_paths or
   plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or

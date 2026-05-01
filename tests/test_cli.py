@@ -6429,6 +6429,132 @@ def test_plugins_list_json_preserves_manifest_activation_and_setup(
     }
 
 
+def test_plugins_list_json_preserves_manifest_auth_and_env_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "enabledByDefault": True,
+                "providers": ["openai", "openai-codex"],
+                "configSchema": {"type": "object"},
+                "providerAuthEnvVars": {
+                    "openai": ["OPENAI_API_KEY", ""],
+                    "": ["IGNORED"],
+                },
+                "providerEndpoints": [
+                    {
+                        "endpointClass": "openai-public",
+                        "hosts": ["API.OPENAI.COM", ""],
+                        "baseUrls": ["https://api.openai.com/v1"],
+                    },
+                    {"endpointClass": "empty"},
+                ],
+                "syntheticAuthRefs": ["openai-cli", ""],
+                "nonSecretAuthMarkers": ["openai-cli"],
+                "providerAuthAliases": {
+                    "openai-codex": "openai",
+                    "ignored": "",
+                },
+                "providerAuthChoices": [
+                    {
+                        "provider": "openai",
+                        "method": "api-key",
+                        "choiceId": "openai-api-key",
+                        "choiceLabel": "OpenAI API key",
+                        "choiceHint": "Paste a key.",
+                        "assistantPriority": 10,
+                        "assistantVisibility": "visible",
+                        "deprecatedChoiceIds": ["openai-legacy", ""],
+                        "groupId": "openai",
+                        "groupLabel": "OpenAI",
+                        "groupHint": "OpenAI auth",
+                        "optionKey": "apiKey",
+                        "cliFlag": "--api-key",
+                        "cliOption": "api-key",
+                        "cliDescription": "Set an API key.",
+                        "onboardingScopes": ["text-inference", "invalid"],
+                    },
+                    {"provider": "", "method": "api-key", "choiceId": "ignored"},
+                ],
+                "channelEnvVars": {
+                    "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", ""],
+                    "": ["IGNORED"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["providerAuthEnvVars"] == {"openai": ["OPENAI_API_KEY"]}
+    assert plugin["providerEndpoints"] == [
+        {
+            "endpointClass": "openai-public",
+            "hosts": ["api.openai.com"],
+            "baseUrls": ["https://api.openai.com/v1"],
+        }
+    ]
+    assert plugin["syntheticAuthRefs"] == ["openai-cli"]
+    assert plugin["nonSecretAuthMarkers"] == ["openai-cli"]
+    assert plugin["providerAuthAliases"] == {"openai-codex": "openai"}
+    assert plugin["providerAuthChoices"] == [
+        {
+            "provider": "openai",
+            "method": "api-key",
+            "choiceId": "openai-api-key",
+            "choiceLabel": "OpenAI API key",
+            "choiceHint": "Paste a key.",
+            "assistantPriority": 10,
+            "assistantVisibility": "visible",
+            "deprecatedChoiceIds": ["openai-legacy"],
+            "groupId": "openai",
+            "groupLabel": "OpenAI",
+            "groupHint": "OpenAI auth",
+            "optionKey": "apiKey",
+            "cliFlag": "--api-key",
+            "cliOption": "api-key",
+            "cliDescription": "Set an API key.",
+            "onboardingScopes": ["text-inference"],
+        }
+    ]
+    assert plugin["channelEnvVars"] == {
+        "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]
+    }
+
+
 def test_plugins_list_json_projects_runtime_executor_inventory(
     tmp_path,
     monkeypatch,
