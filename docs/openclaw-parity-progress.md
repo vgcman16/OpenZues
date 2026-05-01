@@ -5442,6 +5442,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_slack_delete_route"` (`7 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed reaction-add parity now maps `message.action react`
+  through OpenClaw's `m.reaction` / `m.annotation` send shape, preserving route
+  token auth, idempotency-key transaction ids, and `{ok:true, added:<emoji>}`
+  action results.
+- Verified the Matrix reaction-add slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_react_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_react_route or
+  message_action_dispatches_slack_react_route or
+  message_action_dispatches_telegram_react_route"` (`9 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
