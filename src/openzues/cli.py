@@ -11982,6 +11982,12 @@ class _CliMarketplaceClone:
     cleanup: Callable[[], None]
 
 
+@dataclass(frozen=True)
+class _CliResolvedMarketplacePluginSource:
+    path: Path
+    cleanup: Callable[[], None] | None = None
+
+
 def _read_cli_claude_known_marketplaces() -> dict[str, dict[str, object]]:
     known_path = Path(_CLI_CLAUDE_KNOWN_MARKETPLACES_PATH).expanduser()
     try:
@@ -12464,17 +12470,22 @@ async def _build_plugins_marketplace_install_payload(
             raise ValueError(
                 f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
             )
-        install_path = _resolve_marketplace_plugin_install_path(
+        resolved_plugin_source = _resolve_cli_marketplace_plugin_source(
             manifest_path=manifest_path,
             source=match.get("source"),
             plugin_name=requested_id,
         )
-        if marketplace_ref.origin == "remote":
-            install_path = _copy_cli_remote_marketplace_plugin_install(
-                services=services,
-                plugin_id=requested_id,
-                source_path=install_path,
-            )
+        install_path = resolved_plugin_source.path
+        try:
+            if marketplace_ref.origin == "remote" or resolved_plugin_source.cleanup is not None:
+                install_path = _copy_cli_remote_marketplace_plugin_install(
+                    services=services,
+                    plugin_id=requested_id,
+                    source_path=install_path,
+                )
+        finally:
+            if resolved_plugin_source.cleanup is not None:
+                resolved_plugin_source.cleanup()
     finally:
         if marketplace_ref.cleanup is not None:
             marketplace_ref.cleanup()
@@ -12733,6 +12744,87 @@ def _resolve_marketplace_plugin_install_path(
     return resolved
 
 
+def _resolve_cli_cloned_plugin_subpath(
+    *,
+    root_dir: Path,
+    subpath: str,
+    plugin_name: str,
+) -> Path:
+    root = root_dir.resolve()
+    candidate = (root / subpath).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f'plugin "{plugin_name}" source escapes cloned plugin root: {subpath}'
+        ) from exc
+    if not candidate.exists():
+        raise ValueError(
+            f'plugin "{plugin_name}" source not found in cloned plugin root: {subpath}'
+        )
+    return candidate
+
+
+def _resolve_cli_marketplace_plugin_source(
+    *,
+    manifest_path: Path,
+    source: object,
+    plugin_name: str,
+) -> _CliResolvedMarketplacePluginSource:
+    if not isinstance(source, dict):
+        return _CliResolvedMarketplacePluginSource(
+            path=_resolve_marketplace_plugin_install_path(
+                manifest_path=manifest_path,
+                source=source,
+                plugin_name=plugin_name,
+            )
+        )
+    source_kind = (
+        _optional_cli_string(source.get("kind"))
+        or _optional_cli_string(source.get("type"))
+        or _optional_cli_string(source.get("source"))
+    )
+    if source_kind in (None, "path"):
+        return _CliResolvedMarketplacePluginSource(
+            path=_resolve_marketplace_plugin_install_path(
+                manifest_path=manifest_path,
+                source=source,
+                plugin_name=plugin_name,
+            )
+        )
+    if source_kind in {"github", "git", "git-subdir"}:
+        if source_kind == "github":
+            source_base = _optional_cli_string(source.get("repo")) or _optional_cli_string(
+                source.get("url")
+            )
+        else:
+            source_base = _optional_cli_string(source.get("url")) or _optional_cli_string(
+                source.get("repo")
+            )
+        if source_base is None:
+            raise ValueError(
+                f'unsupported marketplace source for plugin "{plugin_name}": {source_kind}'
+            )
+        ref = _optional_cli_string(source.get("ref"))
+        source_spec = f"{source_base}#{ref}" if ref is not None else source_base
+        cloned = _clone_cli_plugins_marketplace_source(source_spec)
+        subpath = _optional_cli_string(source.get("path"))
+        if source_kind == "git-subdir" and subpath is None:
+            cloned.cleanup()
+            raise ValueError(f'plugin "{plugin_name}" is missing a cloned source path')
+        try:
+            path = _resolve_cli_cloned_plugin_subpath(
+                root_dir=Path(cloned.root_dir),
+                subpath=subpath or ".",
+                plugin_name=plugin_name,
+            )
+        except Exception:
+            cloned.cleanup()
+            raise
+        return _CliResolvedMarketplacePluginSource(path=path, cleanup=cloned.cleanup)
+    raise ValueError(f'unsupported marketplace source for plugin "{plugin_name}": {source_kind}')
+
+
 def _resolve_marketplace_update(
     *,
     services: CliServices,
@@ -12763,11 +12855,12 @@ def _resolve_marketplace_update(
             raise ValueError(
                 f'plugin "{marketplace_plugin}" was not found in marketplace {manifest_path}'
             )
-        install_path = _resolve_marketplace_plugin_install_path(
+        resolved_plugin_source = _resolve_cli_marketplace_plugin_source(
             manifest_path=manifest_path,
             source=match.get("source"),
             plugin_name=marketplace_plugin,
         )
+        install_path = resolved_plugin_source.path
         current_version = _optional_cli_string(current_record.get("version"))
         next_version = _optional_cli_string(match.get("version"))
         same_version = (
@@ -12775,12 +12868,23 @@ def _resolve_marketplace_update(
             and next_version is not None
             and current_version == next_version
         )
-        if marketplace_ref.origin == "remote" and copy_remote and not same_version:
-            install_path = _copy_cli_remote_marketplace_plugin_install(
-                services=services,
-                plugin_id=plugin_id,
-                source_path=install_path,
-            )
+        try:
+            if (
+                copy_remote
+                and not same_version
+                and (
+                    marketplace_ref.origin == "remote"
+                    or resolved_plugin_source.cleanup is not None
+                )
+            ):
+                install_path = _copy_cli_remote_marketplace_plugin_install(
+                    services=services,
+                    plugin_id=plugin_id,
+                    source_path=install_path,
+                )
+        finally:
+            if resolved_plugin_source.cleanup is not None:
+                resolved_plugin_source.cleanup()
         return {
             "pluginId": plugin_id,
             "manifestPath": manifest_path,

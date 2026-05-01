@@ -8965,6 +8965,111 @@ def test_plugins_install_marketplace_json_persists_cloned_github_entry(
     )
 
 
+def test_plugins_install_marketplace_json_persists_github_entry_source(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": [],
+                    "entries": {},
+                    "load": {"paths": []},
+                },
+            }
+        )
+    )
+    marketplace_dir = tmp_path / "marketplace"
+    manifest_dir = marketplace_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "marketplace.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "Local Marketplace",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.5.0",
+                        "source": {
+                            "type": "github",
+                            "repo": "owner/plugin",
+                            "path": "packages/frontend-design",
+                            "ref": "main",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    plugin_repo_dir = tmp_path / "plugin-repo"
+    plugin_dir = plugin_repo_dir / "packages" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text("github plugin", encoding="utf-8")
+    cleanup_calls: list[str] = []
+
+    def fake_clone_marketplace_source(source: str) -> SimpleNamespace:
+        assert source == "owner/plugin#main"
+        return SimpleNamespace(
+            root_dir=plugin_repo_dir,
+            label="owner/plugin",
+            cleanup=lambda: cleanup_calls.append("cleanup"),
+        )
+
+    monkeypatch.setattr(
+        "openzues.cli._clone_cli_plugins_marketplace_source",
+        fake_clone_marketplace_source,
+        raising=False,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "plugins",
+            "install",
+            "frontend-design",
+            "--marketplace",
+            str(marketplace_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    install_path = Path(payload["install"]["installPath"])
+    assert install_path.is_dir()
+    assert install_path.is_relative_to(tmp_path / "plugins" / "marketplace")
+    assert (install_path / "plugin.json").read_text(encoding="utf-8") == (
+        "github plugin"
+    )
+    assert payload["install"]["marketplaceSource"] == str(manifest_path)
+    assert payload["install"]["marketplacePlugin"] == "frontend-design"
+    assert payload["install"]["version"] == "0.5.0"
+    assert cleanup_calls == ["cleanup"]
+
+
 def test_plugins_uninstall_json_removes_native_install_metadata(
     tmp_path,
     monkeypatch,
