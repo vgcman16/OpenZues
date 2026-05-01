@@ -7902,6 +7902,7 @@ class OpsMeshService:
             "list-pins",
             "member-info",
             "pin",
+            "poll",
             "read",
             "react",
             "reactions",
@@ -7992,6 +7993,13 @@ class OpsMeshService:
         if action == "send":
             return await asyncio.to_thread(
                 self._dispatch_slack_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if action == "poll":
+            return await asyncio.to_thread(
+                self._dispatch_slack_poll_message_action,
                 route,
                 request,
                 secret_token,
@@ -8667,6 +8675,94 @@ class OpsMeshService:
                 "channelId": _slack_channel_from_result(result, channel_id),
             },
         }
+
+    def _dispatch_slack_poll_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        if _slack_channel_id(target) is None:
+            raise RuntimeError("Slack poll requires to.")
+        question = (
+            _message_action_param_string(
+                request.params,
+                "pollQuestion",
+                required=True,
+            )
+            or ""
+        )
+        options = _message_action_param_string_array(
+            request.params,
+            "pollOption",
+            required=True,
+            label="pollOption",
+        )
+        options = _normalize_direct_channel_poll_options(options or [])
+        _validate_direct_channel_poll_shape(question, options)
+        _validate_direct_channel_poll_option_count("slack", options)
+        allow_multiselect = _message_action_param_bool(request.params, "pollMulti") is True
+        max_selections = len(options) if allow_multiselect else 1
+        explicit_max = _message_action_param_integer(request.params, "maxSelections")
+        if explicit_max is not None:
+            max_selections = explicit_max
+        _validate_direct_channel_poll_max_selections(options, max_selections)
+
+        event: dict[str, Any] = {
+            "to": target,
+            "question": question,
+            "options": options,
+            "maxSelections": max_selections,
+        }
+        duration_seconds = _message_action_param_integer(
+            request.params,
+            "durationSeconds",
+            "pollDurationSeconds",
+        )
+        duration_hours = _message_action_param_integer(
+            request.params,
+            "durationHours",
+            "pollDurationHours",
+        )
+        if duration_seconds is not None:
+            event["durationSeconds"] = duration_seconds
+        if duration_hours is not None:
+            event["durationHours"] = duration_hours
+        thread_id = _message_action_param_string(
+            request.params,
+            "threadId",
+        ) or _message_action_param_string(request.params, "replyTo")
+        if thread_id is not None:
+            event["threadId"] = thread_id
+        silent = _optional_bool_payload_value(request.params, "silent")
+        if silent is not None:
+            event["silent"] = silent
+        is_anonymous = _optional_bool_payload_value(request.params, "isAnonymous")
+        if is_anonymous is not None:
+            event["isAnonymous"] = is_anonymous
+
+        result = self._post_slack_provider_event(
+            route,
+            "gateway/poll",
+            event,
+            secret_token,
+        )
+        message_id = str(result.get("messageId") or "").strip()
+        if not message_id:
+            raise RuntimeError("Slack API response did not include a message timestamp.")
+        channel_id = str(result.get("channelId") or result.get("chatId") or "").strip()
+        response_result: dict[str, object] = {
+            "messageId": message_id,
+            "channelId": channel_id,
+        }
+        conversation_id = result.get("conversationId")
+        if conversation_id is not None:
+            response_result["conversationId"] = str(conversation_id)
+        poll_id = result.get("pollId")
+        if poll_id is not None:
+            response_result["pollId"] = str(poll_id)
+        return {"ok": True, "result": response_result}
 
     def _dispatch_slack_upload_file_message_action(
         self,
