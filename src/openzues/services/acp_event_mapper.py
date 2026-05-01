@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from collections.abc import Mapping, Sequence
+from urllib.parse import unquote, urlparse
 
 INLINE_CONTROL_ESCAPE_MAP = {
     "\0": "\\0",
@@ -13,10 +16,43 @@ INLINE_CONTROL_ESCAPE_MAP = {
     "\u2028": "\\u2028",
     "\u2029": "\\u2029",
 }
+TOOL_LOCATION_PATH_KEYS = (
+    "path",
+    "filePath",
+    "file_path",
+    "targetPath",
+    "target_path",
+    "targetFile",
+    "target_file",
+    "sourcePath",
+    "source_path",
+    "destinationPath",
+    "destination_path",
+    "oldPath",
+    "old_path",
+    "newPath",
+    "new_path",
+    "outputPath",
+    "output_path",
+    "inputPath",
+    "input_path",
+)
+TOOL_LOCATION_LINE_KEYS = ("line", "lineNumber", "line_number", "startLine", "start_line")
+TOOL_RESULT_PATH_MARKER_RE = re.compile(r"^(?:FILE|MEDIA):(.+)$", flags=re.MULTILINE)
+TOOL_LOCATION_MAX_DEPTH = 4
+TOOL_LOCATION_MAX_NODES = 100
 
 
 def _as_mapping(value: object) -> Mapping[str, object] | None:
     return value if isinstance(value, Mapping) else None
+
+
+def _has_non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _read_string_value(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def escape_inline_control_chars(value: str) -> str:
@@ -117,3 +153,189 @@ def format_tool_title(name: str | None, args: Mapping[str, object] | None) -> st
         for key, value in args.items()
     ]
     return escape_inline_control_chars(f"{base}: {', '.join(parts)}")
+
+
+def infer_tool_kind(name: str | None) -> str:
+    if not name:
+        return "other"
+    normalized = name.strip().lower()
+    if "read" in normalized:
+        return "read"
+    if "write" in normalized or "edit" in normalized:
+        return "edit"
+    if "delete" in normalized or "remove" in normalized:
+        return "delete"
+    if "move" in normalized or "rename" in normalized:
+        return "move"
+    if "search" in normalized or "find" in normalized:
+        return "search"
+    if "exec" in normalized or "run" in normalized or "bash" in normalized:
+        return "execute"
+    if "fetch" in normalized or "http" in normalized:
+        return "fetch"
+    return "other"
+
+
+def extract_tool_call_content(value: object) -> list[dict[str, object]] | None:
+    if _has_non_empty_string(value):
+        return [
+            {
+                "type": "content",
+                "content": {"type": "text", "text": value},
+            }
+        ]
+    record = _as_mapping(value)
+    if record is None:
+        return None
+    contents: list[dict[str, object]] = []
+    blocks = record.get("content")
+    if isinstance(blocks, list):
+        for block in blocks:
+            entry = _as_mapping(block)
+            text = entry.get("text") if entry is not None else None
+            if entry is not None and entry.get("type") == "text" and _has_non_empty_string(text):
+                contents.append(
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": text},
+                    }
+                )
+    if contents:
+        return contents
+    fallback_text = (
+        _read_string_value(record.get("text"))
+        or _read_string_value(record.get("message"))
+        or _read_string_value(record.get("error"))
+    )
+    if not _has_non_empty_string(fallback_text):
+        return None
+    return [
+        {
+            "type": "content",
+            "content": {"type": "text", "text": fallback_text},
+        }
+    ]
+
+
+def _normalize_tool_location_path(value: str) -> str | None:
+    trimmed = value.strip()
+    if (
+        not trimmed
+        or len(trimmed) > 4096
+        or "\0" in trimmed
+        or "\r" in trimmed
+        or "\n" in trimmed
+    ):
+        return None
+    if re.match(r"^https?://", trimmed, flags=re.IGNORECASE):
+        return None
+    if re.match(r"^file://", trimmed, flags=re.IGNORECASE):
+        try:
+            parsed = urlparse(trimmed)
+            path = unquote(parsed.path or "")
+            return path or None
+        except ValueError:
+            return None
+    return trimmed
+
+
+def _normalize_tool_location_line(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not math.isfinite(value):
+        return None
+    line = math.floor(value)
+    return line if line > 0 else None
+
+
+def _extract_tool_location_line(record: Mapping[str, object]) -> int | None:
+    for key in TOOL_LOCATION_LINE_KEYS:
+        line = _normalize_tool_location_line(record.get(key))
+        if line is not None:
+            return line
+    return None
+
+
+def _add_tool_location(
+    locations: dict[str, dict[str, object]],
+    raw_path: str,
+    line: int | None = None,
+) -> None:
+    path = _normalize_tool_location_path(raw_path)
+    if path is None:
+        return
+    for existing_key, existing in list(locations.items()):
+        if existing.get("path") != path:
+            continue
+        existing_line = existing.get("line")
+        if line is None or existing_line == line:
+            return
+        if existing_line is None:
+            del locations[existing_key]
+    location_key = f"{path}:{line or ''}"
+    if location_key in locations:
+        return
+    location: dict[str, object] = {"path": path}
+    if line is not None:
+        location["line"] = line
+    locations[location_key] = location
+
+
+def _collect_locations_from_text_markers(
+    text: str,
+    locations: dict[str, dict[str, object]],
+) -> None:
+    for match in TOOL_RESULT_PATH_MARKER_RE.finditer(text):
+        candidate = match.group(1).strip()
+        if candidate:
+            _add_tool_location(locations, candidate)
+
+
+def _collect_tool_locations(
+    value: object,
+    locations: dict[str, dict[str, object]],
+    state: dict[str, int],
+    depth: int,
+) -> None:
+    if state["visited"] >= TOOL_LOCATION_MAX_NODES or depth > TOOL_LOCATION_MAX_DEPTH:
+        return
+    state["visited"] += 1
+    if isinstance(value, str):
+        _collect_locations_from_text_markers(value, locations)
+        return
+    if value is None or isinstance(value, int | float | bool):
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_tool_locations(item, locations, state, depth + 1)
+            if state["visited"] >= TOOL_LOCATION_MAX_NODES:
+                return
+        return
+    record = _as_mapping(value)
+    if record is None:
+        return
+    line = _extract_tool_location_line(record)
+    for key in TOOL_LOCATION_PATH_KEYS:
+        raw_path = record.get(key)
+        if isinstance(raw_path, str):
+            _add_tool_location(locations, raw_path, line)
+    content = record.get("content")
+    if isinstance(content, list):
+        for block in content:
+            entry = _as_mapping(block)
+            text = entry.get("text") if entry is not None else None
+            if entry is not None and entry.get("type") == "text" and isinstance(text, str):
+                _collect_locations_from_text_markers(text, locations)
+    for key, nested in record.items():
+        if key == "content":
+            continue
+        _collect_tool_locations(nested, locations, state, depth + 1)
+        if state["visited"] >= TOOL_LOCATION_MAX_NODES:
+            return
+
+
+def extract_tool_call_locations(*values: object) -> list[dict[str, object]] | None:
+    locations: dict[str, dict[str, object]] = {}
+    for value in values:
+        _collect_tool_locations(value, locations, {"visited": 0}, 0)
+    return list(locations.values()) if locations else None

@@ -5131,6 +5131,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_bridge_command or acp_status_json_and_human"` (`25 passed`), `ruff check
   src\openzues\services\acp_event_mapper.py tests\test_acp_event_mapper.py`,
   and `mypy src\openzues\services\acp_event_mapper.py`.
+- ACP event mapping now also includes OpenClaw's tool-kind inference,
+  tool-call content extraction from strings/content blocks/fallback text, and
+  bounded file/media location extraction from tool args, file URLs, and
+  `FILE:` / `MEDIA:` text markers.
+- Verified the ACP tool-call mapper extension with `python -m pytest
+  tests\test_acp_event_mapper.py -q -k "tool_call or tool_kinds or location"`
+  (`4 passed`), adjacent ACP runtime proof `python -m pytest
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`29 passed`), `ruff check
+  src\openzues\services\acp_event_mapper.py tests\test_acp_event_mapper.py`,
+  and `mypy src\openzues\services\acp_event_mapper.py`.
 
 ## References
 
