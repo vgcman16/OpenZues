@@ -12979,6 +12979,13 @@ class GatewayNodeMethodService:
         next_metadata = dict(metadata)
         task_record_delivery_status: str | None = None
         completion_delivery = metadata.get("completionDelivery")
+        if not isinstance(completion_delivery, dict):
+            derived_completion_delivery = _completion_delivery_from_session_binding(
+                metadata.get("sessionBinding")
+            )
+            if derived_completion_delivery is not None:
+                completion_delivery = derived_completion_delivery
+                next_metadata["completionDelivery"] = derived_completion_delivery
         if (
             isinstance(completion_delivery, dict)
             and self._send_channel_message_service is not None
@@ -14051,6 +14058,55 @@ def _sessions_spawn_payload_has_active_subagent_binding(
             return True
     thread_binding = payload.get("threadBinding")
     return isinstance(thread_binding, Mapping)
+
+
+def _prefixed_or_channel_target(value: str, *, channel: str) -> str:
+    if channel == "matrix":
+        return value if value.lower().startswith("room:") else f"room:{value}"
+    if ":" in value:
+        return value
+    return f"channel:{value}"
+
+
+def _completion_delivery_from_session_binding(
+    raw_session_binding: object,
+) -> dict[str, object] | None:
+    if not isinstance(raw_session_binding, Mapping):
+        return None
+    status = _string_or_none(raw_session_binding.get("status"))
+    if status is not None and status != "active":
+        return None
+    conversation = _mapping_or_none(raw_session_binding.get("conversation"))
+    if conversation is None:
+        return None
+    channel = _string_or_none(conversation.get("channel"))
+    conversation_id = _string_or_none(conversation.get("conversationId"))
+    if channel is None or conversation_id is None:
+        return None
+    channel = channel.lower()
+    account_id = _string_or_none(conversation.get("accountId"))
+    parent_conversation_id = _string_or_none(conversation.get("parentConversationId"))
+    metadata = _mapping_or_none(raw_session_binding.get("metadata"))
+    metadata_thread_id = (
+        _string_or_none(metadata.get("threadId")) if metadata is not None else None
+    )
+    thread_id: str | None
+    if parent_conversation_id is not None:
+        to = _prefixed_or_channel_target(parent_conversation_id, channel=channel)
+        thread_id = metadata_thread_id or conversation_id
+    else:
+        to = _prefixed_or_channel_target(conversation_id, channel=channel)
+        thread_id = metadata_thread_id
+    delivery: dict[str, object] = {
+        "mode": "thread",
+        "channel": channel,
+        "to": to,
+    }
+    if account_id is not None:
+        delivery["accountId"] = account_id
+    if thread_id is not None:
+        delivery["threadId"] = thread_id
+    return delivery
 
 
 def _sessions_spawn_acp_heartbeat_config_for_agent(

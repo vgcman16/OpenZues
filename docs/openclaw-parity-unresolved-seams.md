@@ -356,6 +356,11 @@ event through a fakeable native lifecycle service after session mutation,
 including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;
 `sessions.delete emitLifecycleHooks=false` still skips only that hook while the
 delete/unbind path proceeds.
+Completion announcement delivery now also mirrors OpenClaw's bound-delivery
+router fallback for saved `sessionBinding` records: if a child session lacks
+`completionDelivery` but has an active binding record, `agent.wait` derives the
+provider route from the binding conversation, persists the derived completion
+route, and sends the completion message to the bound provider thread.
 Cross-agent thread-bound subagent spawns now also resolve the requester origin
 through OpenClaw-style route `bindings`: when the target agent has a configured
 route binding for the requester channel/peer, the binder context and initial

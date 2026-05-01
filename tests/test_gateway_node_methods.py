@@ -23323,6 +23323,127 @@ async def test_agent_wait_thread_bound_completion_uses_completion_delivery_route
 
 
 @pytest.mark.asyncio
+async def test_agent_wait_thread_bound_completion_falls_back_to_session_binding(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-agent-wait-session-binding-completion.db")
+    await database.initialize()
+    direct_sends: list[dict[str, object]] = []
+
+    async def fake_chat_send_service(**_kwargs: object) -> dict[str, object]:
+        return {"runId": "run-session-binding-completion-1", "status": "ok"}
+
+    async def fake_send_channel_message_service(**kwargs: object) -> dict[str, object]:
+        direct_sends.append(dict(kwargs))
+        return {
+            "ok": True,
+            "deliveryId": 84,
+            "messageId": "msg-session-binding-completion-1",
+        }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+        send_channel_message_service=fake_send_channel_message_service,
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {"task": "Complete and announce from a saved Matrix binding."},
+        now_ms=448,
+    )
+    child_session_key = str(spawn_payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    metadata = dict(metadata_row["metadata"])
+    metadata.pop("completionDelivery", None)
+    metadata["sessionBinding"] = {
+        "bindingId": "bot-alpha:!room:example.org:$child-thread-root",
+        "targetSessionKey": child_session_key,
+        "targetKind": "subagent",
+        "conversation": {
+            "channel": "matrix",
+            "accountId": "bot-alpha",
+            "conversationId": "$child-thread-root",
+            "parentConversationId": "!room:example.org",
+        },
+        "status": "active",
+        "boundAt": 448,
+        "metadata": {"lastActivityAt": 448},
+    }
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata=metadata,
+    )
+    mission_id = await database.create_mission(
+        name="Session Binding Completion Child",
+        objective="Finish and announce using the saved session binding.",
+        status="active",
+        instance_id=7,
+        project_id=None,
+        thread_id="thread-session-binding-completion",
+        session_key=child_session_key,
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning_effort=None,
+        collaboration_mode=None,
+        max_turns=None,
+        use_builtin_agents=False,
+        run_verification=False,
+        auto_commit=False,
+        pause_on_approval=True,
+        allow_auto_reflexes=True,
+        auto_recover=True,
+        auto_recover_limit=2,
+        reflex_cooldown_seconds=900,
+        allow_failover=True,
+    )
+    await database.update_mission(
+        mission_id,
+        status="completed",
+        in_progress=0,
+        phase="completed",
+        last_checkpoint="Matrix-bound child finished.",
+    )
+
+    wait_payload = await service.call(
+        "agent.wait",
+        {"runId": "run-session-binding-completion-1", "timeoutMs": 0},
+    )
+
+    assert wait_payload["status"] == "ok"
+    assert direct_sends == [
+        {
+            "channel": "matrix",
+            "to": "room:!room:example.org",
+            "message": f"Subagent {child_session_key} completed: Matrix-bound child finished.",
+            "account_id": "bot-alpha",
+            "thread_id": "$child-thread-root",
+            "session_key": child_session_key,
+            "idempotency_key": "subagent-completion:run-session-binding-completion-1",
+        }
+    ]
+    next_metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert next_metadata_row is not None
+    next_metadata = next_metadata_row["metadata"]
+    assert next_metadata["completionDelivery"] == {
+        "mode": "thread",
+        "channel": "matrix",
+        "to": "room:!room:example.org",
+        "accountId": "bot-alpha",
+        "threadId": "$child-thread-root",
+    }
+    assert next_metadata["completionDeliveryResult"] == {
+        "ok": True,
+        "deliveryId": 84,
+        "messageId": "msg-session-binding-completion-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_wait_skips_spawn_completion_announcement_when_not_expected(
     tmp_path,
 ) -> None:

@@ -5836,6 +5836,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\gateway_thread_binding.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_thread_binding.py`.
+- Completion announcement delivery now has the OpenClaw bound-delivery fallback
+  for saved session bindings: when a child session has an active
+  `sessionBinding` but no persisted `completionDelivery`, `agent.wait` derives a
+  provider delivery target from the binding conversation, persists that derived
+  route, and sends the completion announcement through the same provider channel
+  delivery owner.
+- Verified the session-binding completion fallback with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "completion_falls_back_to_session_binding"` (`1 passed`), adjacent completion
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "agent_wait_announces_spawn_completion or
+  thread_bound_completion_uses_completion_delivery_route or
+  completion_falls_back_to_session_binding or no_completion_announce or
+  completion_dedupe or marks_acp_task_record_succeeded"` (`4 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 
