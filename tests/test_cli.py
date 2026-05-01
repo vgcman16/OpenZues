@@ -6339,6 +6339,96 @@ def test_plugins_list_json_preserves_manifest_command_aliases(
     ]
 
 
+def test_plugins_list_json_preserves_manifest_activation_and_setup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "providers": ["openai"],
+                "configSchema": {"type": "object"},
+                "activation": {
+                    "onProviders": ["openai", ""],
+                    "onAgentHarnesses": ["codex"],
+                    "onCommands": ["models"],
+                    "onChannels": ["web"],
+                    "onRoutes": ["gateway-webhook"],
+                    "onCapabilities": ["provider", "tool", "unknown"],
+                },
+                "setup": {
+                    "providers": [
+                        {
+                            "id": "openai",
+                            "authMethods": ["api-key"],
+                            "envVars": ["OPENAI_API_KEY", ""],
+                        },
+                        {"id": ""},
+                    ],
+                    "cliBackends": ["openai-cli"],
+                    "configMigrations": ["legacy-openai-auth"],
+                    "requiresRuntime": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["source"] == str(manifest_path)
+    assert payload["plugins"][0]["activation"] == {
+        "onProviders": ["openai"],
+        "onAgentHarnesses": ["codex"],
+        "onCommands": ["models"],
+        "onChannels": ["web"],
+        "onRoutes": ["gateway-webhook"],
+        "onCapabilities": ["provider", "tool"],
+    }
+    assert payload["plugins"][0]["setup"] == {
+        "providers": [
+            {
+                "id": "openai",
+                "authMethods": ["api-key"],
+                "envVars": ["OPENAI_API_KEY"],
+            }
+        ],
+        "cliBackends": ["openai-cli"],
+        "configMigrations": ["legacy-openai-auth"],
+        "requiresRuntime": False,
+    }
+
+
 def test_plugins_list_json_projects_runtime_executor_inventory(
     tmp_path,
     monkeypatch,

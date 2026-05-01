@@ -13421,6 +13421,12 @@ def _plugin_record_from_deck_item(
     command_aliases = _plugin_manifest_command_aliases(item.get("commandAliases"))
     if command_aliases:
         record["commandAliases"] = command_aliases
+    activation = _plugin_manifest_activation(item.get("activation"))
+    if activation:
+        record["activation"] = activation
+    setup = _plugin_manifest_setup(item.get("setup"))
+    if setup:
+        record["setup"] = setup
     route_count = _plugin_record_http_route_count(item)
     if route_count:
         record["httpRoutes"] = route_count
@@ -13478,6 +13484,70 @@ def _plugin_manifest_command_aliases(value: object) -> list[dict[str, object]]:
             alias["cliCommand"] = cli_command
         aliases.append(alias)
     return aliases
+
+
+def _plugin_manifest_activation(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    activation: dict[str, object] = {}
+    for key in (
+        "onProviders",
+        "onAgentHarnesses",
+        "onCommands",
+        "onChannels",
+        "onRoutes",
+    ):
+        values = _plugin_manifest_string_list(value.get(key))
+        if values:
+            activation[key] = values
+    capabilities = [
+        capability
+        for capability in _plugin_manifest_string_list(value.get("onCapabilities"))
+        if capability in {"provider", "channel", "tool", "hook"}
+    ]
+    if capabilities:
+        activation["onCapabilities"] = capabilities
+    return activation
+
+
+def _plugin_manifest_setup_providers(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        provider_id = _optional_cli_string(entry.get("id"))
+        if provider_id is None:
+            continue
+        provider: dict[str, object] = {"id": provider_id}
+        auth_methods = _plugin_manifest_string_list(entry.get("authMethods"))
+        if auth_methods:
+            provider["authMethods"] = auth_methods
+        env_vars = _plugin_manifest_string_list(entry.get("envVars"))
+        if env_vars:
+            provider["envVars"] = env_vars
+        providers.append(provider)
+    return providers
+
+
+def _plugin_manifest_setup(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    setup: dict[str, object] = {}
+    providers = _plugin_manifest_setup_providers(value.get("providers"))
+    if providers:
+        setup["providers"] = providers
+    cli_backends = _plugin_manifest_string_list(value.get("cliBackends"))
+    if cli_backends:
+        setup["cliBackends"] = cli_backends
+    config_migrations = _plugin_manifest_string_list(value.get("configMigrations"))
+    if config_migrations:
+        setup["configMigrations"] = config_migrations
+    requires_runtime = value.get("requiresRuntime")
+    if isinstance(requires_runtime, bool):
+        setup["requiresRuntime"] = requires_runtime
+    return setup
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -13829,6 +13899,12 @@ def _plugin_record_from_openclaw_manifest(
     command_aliases = _plugin_manifest_command_aliases(manifest.get("commandAliases"))
     if command_aliases:
         record["commandAliases"] = command_aliases
+    activation = _plugin_manifest_activation(manifest.get("activation"))
+    if activation:
+        record["activation"] = activation
+    setup = _plugin_manifest_setup(manifest.get("setup"))
+    if setup:
+        record["setup"] = setup
     for key in (
         "commands",
         "cliCommands",
