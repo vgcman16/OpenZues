@@ -6830,6 +6830,151 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_delete_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_poll_vote_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-poll-vote"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "type": "m.poll.start",
+            "content": {
+                "m.poll.start": {
+                    "question": {"m.text": "Release snack?"},
+                    "max_selections": 2,
+                    "answers": [
+                        {"id": "berry", "m.text": "Berry"},
+                        {"id": "lime", "m.text": "Lime"},
+                    ],
+                }
+            },
+        }
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-vote-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="poll-vote",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "pollId": "$poll",
+                "optionIds": ["berry"],
+                "optionIndex": 2,
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-poll-vote-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "eventId": "$matrix-vote-1",
+            "roomId": "!ops:matrix.example",
+            "pollId": "$poll",
+            "answerIds": ["berry", "lime"],
+            "labels": ["Berry", "Lime"],
+            "maxSelections": 2,
+        },
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/event/%24poll"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/send/m.poll.response/idem-matrix-poll-vote-action"
+            ),
+            {
+                "m.poll.response": {"answers": ["berry", "lime"]},
+                "org.matrix.msc3381.poll.response": {"answers": ["berry", "lime"]},
+                "m.relates_to": {
+                    "rel_type": "m.reference",
+                    "event_id": "$poll",
+                },
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_matrix_react_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -3346,6 +3346,70 @@ def _matrix_poll_start_content(
     }
 
 
+def _matrix_text_content(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    for key in ("m.text", "org.matrix.msc1767.text", "body"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
+def _matrix_parse_poll_start_content(
+    content: object,
+) -> tuple[str, list[tuple[str, str]], int] | None:
+    if not isinstance(content, dict):
+        return None
+    poll = (
+        content.get("m.poll.start")
+        or content.get("org.matrix.msc3381.poll.start")
+        or content.get("m.poll")
+    )
+    if not isinstance(poll, dict):
+        return None
+    question = _matrix_text_content(poll.get("question"))
+    if not question:
+        return None
+    raw_answers = poll.get("answers")
+    if not isinstance(raw_answers, list):
+        return None
+    answers: list[tuple[str, str]] = []
+    for raw_answer in raw_answers:
+        if not isinstance(raw_answer, dict):
+            continue
+        answer_id = str(raw_answer.get("id") or "").strip()
+        answer_text = _matrix_text_content(raw_answer)
+        if answer_id and answer_text:
+            answers.append((answer_id, answer_text))
+    if not answers:
+        return None
+    raw_max_selections = poll.get("max_selections")
+    max_selections = (
+        int(raw_max_selections)
+        if isinstance(raw_max_selections, int | float)
+        and not isinstance(raw_max_selections, bool)
+        and math.isfinite(raw_max_selections)
+        else 1
+    )
+    return question, answers, max(1, min(max_selections, len(answers)))
+
+
+def _matrix_poll_response_content(
+    *,
+    poll_id: str,
+    answer_ids: list[str],
+) -> dict[str, object]:
+    return {
+        "m.poll.response": {"answers": answer_ids},
+        "org.matrix.msc3381.poll.response": {"answers": answer_ids},
+        "m.relates_to": {
+            "rel_type": "m.reference",
+            "event_id": poll_id,
+        },
+    }
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -8924,6 +8988,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "matrix" and action == "poll-vote":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action poll-vote."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_poll_vote_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "matrix" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -9913,6 +9993,130 @@ class OpsMeshService:
         return {
             "ok": True,
             "deleted": True,
+        }
+
+    def _dispatch_matrix_poll_vote_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix poll vote requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix poll vote requires roomId.")
+        poll_id = (
+            _message_action_param_string(request.params, "pollId")
+            or _message_action_param_string(request.params, "messageId", required=True)
+        )
+        if poll_id is None:
+            raise RuntimeError("Matrix poll vote requires pollId.")
+        poll_event = self._get_json_provider_url(
+            _matrix_event_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_id=poll_id,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(poll_event, dict):
+            raise RuntimeError("Matrix API returned a non-JSON poll event.")
+        event_type = str(poll_event.get("type") or "").strip()
+        if event_type not in {"m.poll.start", "org.matrix.msc3381.poll.start"}:
+            raise RuntimeError(f"Event {poll_id} is not a Matrix poll start event.")
+        parsed_poll = _matrix_parse_poll_start_content(poll_event.get("content"))
+        if parsed_poll is None:
+            raise RuntimeError("Matrix poll vote requires a valid poll start event.")
+        question, answers, max_selections = parsed_poll
+        selected_ids = _message_action_param_string_array(request.params, "optionIds") or []
+        option_id = _message_action_param_string(request.params, "optionId")
+        if option_id is not None:
+            selected_ids.append(option_id)
+        selected_indexes: list[int] = []
+        raw_option_indexes = request.params.get("optionIndexes")
+        if isinstance(raw_option_indexes, list):
+            for raw_index in raw_option_indexes:
+                if isinstance(raw_index, bool):
+                    raise RuntimeError("optionIndexes entries must be positive integers.")
+                if isinstance(raw_index, int):
+                    selected_indexes.append(raw_index)
+                elif isinstance(raw_index, str) and raw_index.strip():
+                    try:
+                        selected_indexes.append(int(raw_index.strip()))
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            "optionIndexes entries must be positive integers."
+                        ) from exc
+                else:
+                    raise RuntimeError("optionIndexes entries must be positive integers.")
+        elif raw_option_indexes is not None:
+            raise RuntimeError("optionIndexes must be an array.")
+        option_index = _message_action_param_positive_int(request.params, "optionIndex")
+        if option_index is not None:
+            selected_indexes.append(option_index)
+        answer_by_index = {index: answer_id for index, (answer_id, _text) in enumerate(answers, 1)}
+        for selected_index in selected_indexes:
+            if selected_index <= 0:
+                raise RuntimeError("option index must be a positive integer.")
+            answer_id = answer_by_index.get(selected_index)
+            if answer_id is None:
+                raise RuntimeError(
+                    "Matrix poll option index "
+                    f"{selected_index} is out of range for a poll with {len(answers)} options."
+                )
+            selected_ids.append(answer_id)
+        answer_ids = list(
+            dict.fromkeys(
+                answer_id.strip() for answer_id in selected_ids if answer_id.strip()
+            )
+        )
+        if not answer_ids:
+            raise RuntimeError("Matrix poll vote requires at least one poll option id or index.")
+        if len(answer_ids) > max_selections:
+            raise RuntimeError(
+                f"Matrix poll allows at most {max_selections} "
+                f"selection{'s' if max_selections != 1 else ''}."
+            )
+        answer_label_by_id = dict(answers)
+        labels: list[str] = []
+        for answer_id in answer_ids:
+            label = answer_label_by_id.get(answer_id)
+            if label is None:
+                raise RuntimeError(
+                    f'Matrix poll option id "{answer_id}" is not valid for poll {question}.'
+                )
+            labels.append(label)
+        result = self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.poll.response",
+                transaction_id=request.idempotency_key or uuid.uuid4().hex,
+            ),
+            _matrix_poll_response_content(poll_id=poll_id, answer_ids=answer_ids),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        event_id = _matrix_message_id(result)
+        if event_id is None:
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {
+            "ok": True,
+            "result": {
+                "eventId": event_id,
+                "roomId": room_id,
+                "pollId": poll_id,
+                "answerIds": answer_ids,
+                "labels": labels,
+                "maxSelections": max_selections,
+            },
         }
 
     def _dispatch_matrix_react_message_action(

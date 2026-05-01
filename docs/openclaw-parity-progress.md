@@ -6192,6 +6192,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py -q -k "telegram and message_action"` (`9 passed`
   each), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix `message.action poll-vote` now dispatches through the native Matrix
+  route path: it fetches the poll start event, resolves option ids and 1-based
+  option indexes against the poll definition, enforces `max_selections`, sends
+  `m.poll.response`, and returns OpenClaw-shaped answer metadata.
+- Verified the Matrix poll-vote action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_poll_vote_route"` (`1 passed`),
+  adjacent Matrix action proofs `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix"` (`14 passed`) and `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix and message_action"` (`15 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

@@ -3605,6 +3605,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the Matrix native `message.action poll-vote` seam from OpenClaw
+  `extensions/matrix/src/actions.ts` and
+  `extensions/matrix/src/matrix/actions/polls.ts`: route-backed Matrix message
+  actions now fetch the poll start event, resolve `optionId` / `optionIds` and
+  1-based `optionIndex` / `optionIndexes`, enforce poll `max_selections`, send
+  MSC3381 `m.poll.response` content, and return answer ids/labels. Verified
+  with `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_poll_vote_route"`, adjacent `python -m pytest tests\test_ops_mesh.py
+  -q -k "message_action_dispatches_matrix"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and
