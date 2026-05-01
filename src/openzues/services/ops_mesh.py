@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import logging
 import math
 import mimetypes
 import re
+import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -17,6 +19,8 @@ from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from openzues.database import Database, utcnow
 from openzues.schemas import (
@@ -2428,6 +2432,11 @@ def _matrix_media_upload_endpoint(
     normalized_filename = str(filename or "").strip()
     query = f"?{urlencode({'filename': normalized_filename})}" if normalized_filename else ""
     return f"{base_url}/_matrix/media/v3/upload{query}"
+
+
+def _matrix_unpadded_base64(data: bytes, *, urlsafe: bool = False) -> str:
+    encoder = base64.urlsafe_b64encode if urlsafe else base64.b64encode
+    return encoder(data).decode("ascii").rstrip("=")
 
 
 def _matrix_media_msgtype(content_type: str | None, filename: str | None) -> str:
@@ -15128,6 +15137,52 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
 
+    def _matrix_room_is_encrypted(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> bool:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_state_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.encryption",
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "404" in message or "Provider request failed" in message:
+                return False
+            raise
+        return isinstance(result, dict) and bool(result.get("algorithm") or result)
+
+    def _encrypt_matrix_media(self, media: bytes) -> tuple[bytes, dict[str, object]]:
+        key = secrets.token_bytes(32)
+        iv = secrets.token_bytes(16)
+        cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
+        encryptor = cipher.encryptor()
+        encrypted = encryptor.update(media) + encryptor.finalize()
+        file_payload: dict[str, object] = {
+            "key": {
+                "kty": "oct",
+                "key_ops": ["encrypt", "decrypt"],
+                "alg": "A256CTR",
+                "k": _matrix_unpadded_base64(key, urlsafe=True),
+                "ext": True,
+            },
+            "iv": _matrix_unpadded_base64(iv),
+            "hashes": {
+                "sha256": _matrix_unpadded_base64(hashlib.sha256(encrypted).digest()),
+            },
+            "v": "v2",
+        }
+        return encrypted, file_payload
+
     def _prepare_matrix_image_thumbnail(
         self,
         media: bytes,
@@ -15170,6 +15225,37 @@ class OpsMeshService:
             thumbnail_info["w"] = thumbnail_dimensions[0]
             thumbnail_info["h"] = thumbnail_dimensions[1]
         return thumbnail, "image/jpeg", thumbnail_filename, thumbnail_info
+
+    def _upload_matrix_media_maybe_encrypted(
+        self,
+        route: dict[str, Any],
+        media: bytes,
+        *,
+        content_type: str | None,
+        filename: str | None,
+        secret_token: str | None,
+        encrypted: bool,
+    ) -> tuple[str, dict[str, object] | None]:
+        if not encrypted:
+            return (
+                self._upload_matrix_media(
+                    route,
+                    media,
+                    content_type=content_type,
+                    filename=filename,
+                    secret_token=secret_token,
+                ),
+                None,
+            )
+        encrypted_media, file_payload = self._encrypt_matrix_media(media)
+        url = self._upload_matrix_media(
+            route,
+            encrypted_media,
+            content_type="application/octet-stream",
+            filename=filename,
+            secret_token=secret_token,
+        )
+        return url, {"url": url, **file_payload}
 
     def _upload_matrix_media(
         self,
@@ -16186,15 +16272,25 @@ class OpsMeshService:
         message_ids: list[str] = []
         uploaded_media_urls: list[str] = []
         text_chunks = chunks
+        room_encrypted = (
+            self._matrix_room_is_encrypted(
+                route,
+                room_id=room_id,
+                secret_token=secret_token,
+            )
+            if media_urls
+            else False
+        )
         for media_index, media_url in enumerate(media_urls, start=1):
             media, content_type, filename = self._download_matrix_media_url(media_url)
             filename = filename or _matrix_media_filename(media_url)
-            mxc_url = self._upload_matrix_media(
+            mxc_url, encrypted_file = self._upload_matrix_media_maybe_encrypted(
                 route,
                 media,
                 content_type=content_type,
                 filename=filename,
                 secret_token=secret_token,
+                encrypted=room_encrypted,
             )
             uploaded_media_urls.append(mxc_url)
             caption = text_chunks[0] if media_index == 1 and text_chunks else ""
@@ -16223,13 +16319,18 @@ class OpsMeshService:
                         thumbnail_filename,
                         thumbnail_info,
                     ) = thumbnail
-                    media_info["thumbnail_url"] = self._upload_matrix_media(
+                    thumbnail_url, thumbnail_file = self._upload_matrix_media_maybe_encrypted(
                         route,
                         thumbnail_media,
                         content_type=thumbnail_content_type,
                         filename=thumbnail_filename,
                         secret_token=secret_token,
+                        encrypted=room_encrypted,
                     )
+                    if thumbnail_file is not None:
+                        media_info["thumbnail_file"] = thumbnail_file
+                    else:
+                        media_info["thumbnail_url"] = thumbnail_url
                     media_info["thumbnail_info"] = thumbnail_info
             duration_ms = _matrix_media_duration_ms(media, content_type, filename)
             if duration_ms is not None:
@@ -16238,9 +16339,12 @@ class OpsMeshService:
                 "msgtype": _matrix_media_msgtype(content_type, filename),
                 "body": body,
                 "filename": filename,
-                "url": mxc_url,
                 "info": media_info,
             }
+            if encrypted_file is not None:
+                media_content["file"] = encrypted_file
+            else:
+                media_content["url"] = mxc_url
             if relation is not None:
                 media_content["m.relates_to"] = relation
             result = self._put_json_provider(

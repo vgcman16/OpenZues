@@ -559,8 +559,11 @@ primary media event.
 Matrix route-backed MP4/MOV-family video sends now parse native ISO-BMFF
 `mvhd` duration metadata into Matrix `info.duration`, matching OpenClaw's
 timed media-info contract for common video events.
-Remaining Matrix provider parity is encrypted media and non-WAV audio duration
-metadata.
+Matrix route-backed encrypted media sends now probe `m.room.encryption`,
+AES-CTR-encrypt outbound media and large-image thumbnails, upload encrypted
+bytes, omit unencrypted MXC `url` fields, and attach OpenClaw-shaped `file` /
+`info.thumbnail_file` payloads with encrypted-file metadata.
+Remaining Matrix provider parity is non-WAV audio duration metadata.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

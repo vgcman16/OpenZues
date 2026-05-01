@@ -5738,6 +5738,33 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
   (`23 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix route-backed encrypted media sends now mirror OpenClaw's `file` /
+  `thumbnail_file` branch: room media sends opportunistically probe
+  `m.room.encryption`, encrypt the main media and generated large-image
+  thumbnails with native AES-CTR encrypted-file metadata, upload encrypted bytes
+  as `application/octet-stream`, and omit top-level `url` /
+  `info.thumbnail_url` when encrypted file payloads are present.
+- Verified the Matrix encrypted-media slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_encrypted_image_uses_file_payloads or
+  matrix_large_image_uploads_thumbnail or matrix_native_route and media"` (`3
+  passed`), adjacent Matrix route/action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route or matrix_direct_room or
+  matrix_audio_includes_duration or matrix_video_includes_duration or
+  matrix_large_image_uploads_thumbnail or
+  matrix_encrypted_image_uses_file_payloads or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`24 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
