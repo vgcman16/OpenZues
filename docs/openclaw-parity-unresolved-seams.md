@@ -372,6 +372,11 @@ ACP in-flight runtime progress now also advances those metadata-backed task
 records before terminal wait: app-server text delta events are matched by ACP
 run id or runtime thread id, normalized into an appended `progressSummary`, and
 bump `lastEventAt` while the record remains `status="running"`.
+Metadata-backed ACP task cancellation now also follows OpenClaw's
+`tasks cancel` lifecycle: the native CLI resolves ACP task/run/session lookup
+tokens, calls the fakeable ACP runtime `cancel_session` hook with
+`reason="task-cancel"`, and marks the persisted task record
+`status="cancelled"` with terminal timing and `error="Cancelled by operator."`.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

@@ -18813,6 +18813,95 @@ def _mission_id_from_task_record(task: dict[str, object]) -> int | None:
         return None
 
 
+def _acp_runtime_id_from_session_key(session_key: str | None) -> str | None:
+    normalized = _optional_cli_string(session_key)
+    if normalized is None or ":acp:" not in normalized:
+        return None
+    runtime_id = normalized.rsplit(":acp:", 1)[-1].strip()
+    return runtime_id or None
+
+
+def _cli_acp_spawn_service(services: CliServices) -> object | None:
+    for container in (services, getattr(services, "gateway_node_methods", None)):
+        if container is None:
+            continue
+        for attribute in (
+            "acp_spawn_service",
+            "gateway_acp_spawn_service",
+            "_acp_spawn_service",
+        ):
+            service = getattr(container, attribute, None)
+            if service is not None:
+                return service
+    return None
+
+
+async def _cancel_openclaw_acp_task(
+    services: CliServices,
+    task: dict[str, object],
+    lookup: str,
+) -> str:
+    session_key = _optional_cli_string(task.get("childSessionKey"))
+    database = getattr(services, "database", None)
+    get_metadata = getattr(database, "get_gateway_session_metadata", None)
+    upsert_metadata = getattr(database, "upsert_gateway_session_metadata", None)
+    if session_key is None or not callable(get_metadata) or not callable(upsert_metadata):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    metadata_row = await get_metadata(session_key)
+    existing_metadata = (
+        metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+    )
+    if not isinstance(existing_metadata, dict):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    metadata = dict(existing_metadata)
+    raw_task_record = metadata.get("taskRecord")
+    if not isinstance(raw_task_record, Mapping):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    task_record = {
+        str(key): value
+        for key, value in raw_task_record.items()
+        if isinstance(key, str)
+    }
+    runtime_thread_id = (
+        _optional_cli_string(metadata.get("runtimeThreadId"))
+        or _optional_cli_string(metadata.get("runtimeSessionId"))
+        or _acp_runtime_id_from_session_key(session_key)
+    )
+    runtime_session_id = _optional_cli_string(metadata.get("runtimeSessionId")) or runtime_thread_id
+    acp_service = _cli_acp_spawn_service(services)
+    cancel_session = getattr(acp_service, "cancel_session", None)
+    if not callable(cancel_session):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    cancel_result = await cancel_session(
+        session_key=session_key,
+        runtime_thread_id=runtime_thread_id,
+        runtime_session_id=runtime_session_id,
+        reason="task-cancel",
+    )
+    if isinstance(cancel_result, dict):
+        status = _optional_cli_string(cancel_result.get("status"))
+        if status in {"error", "timeout"}:
+            detail = _optional_cli_string(cancel_result.get("error")) or _optional_cli_string(
+                cancel_result.get("reason")
+            )
+            raise ValueError(detail or f"Could not cancel task: {lookup}")
+    now_ms = int(time.time() * 1000)
+    task_record["status"] = "cancelled"
+    task_record["endedAt"] = now_ms
+    task_record["lastEventAt"] = now_ms
+    task_record["error"] = "Cancelled by operator."
+    task_record.pop("terminalOutcome", None)
+    metadata["taskRecord"] = task_record
+    await upsert_metadata(session_key=session_key, metadata=metadata)
+    run_id = _optional_cli_string(task_record.get("runId")) or _optional_cli_string(
+        task.get("runId")
+    )
+    run_text = f" run {run_id}" if run_id is not None else ""
+    task_id = _optional_cli_string(task_record.get("taskId")) or str(task.get("taskId"))
+    runtime = _optional_cli_string(task_record.get("runtime")) or str(task.get("runtime"))
+    return f"Cancelled {task_id} ({runtime}){run_text}."
+
+
 async def _cancel_openclaw_task(services: CliServices, lookup: str) -> str:
     task = await _resolve_openclaw_task(services, lookup)
     if task is None:
@@ -18820,6 +18909,8 @@ async def _cancel_openclaw_task(services: CliServices, lookup: str) -> str:
     status = _optional_cli_string(task.get("status"))
     if status not in {"queued", "running"}:
         raise ValueError(f"Could not cancel task: {lookup}")
+    if _optional_cli_string(task.get("runtime")) == "acp":
+        return await _cancel_openclaw_acp_task(services, task, lookup)
     mission_id = _mission_id_from_task_record(task)
     pause = getattr(getattr(services, "mission_service", None), "pause", None)
     if mission_id is None or not callable(pause):

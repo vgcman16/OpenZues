@@ -4916,6 +4916,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_manager.py -q -k "event or turn"` still exposes
   unrelated fake-client `sandbox_mode` failures in four existing `start_turn`
   tests.
+- Metadata-backed ACP tasks now cancel through the native `tasks cancel` CLI
+  path. The CLI resolves ACP task/run/session lookup tokens, calls the
+  fakeable ACP runtime `cancel_session` hook with `reason="task-cancel"`, and
+  patches the persisted task record to `status="cancelled"` with `endedAt`,
+  `lastEventAt`, and `error="Cancelled by operator."`.
+- Verified the ACP metadata task cancel slice with `python -m pytest
+  tests\test_cli.py -q -k "tasks_cancel_cancels_metadata_backed_acp_task"` (`1
+  passed`), adjacent CLI task coverage `python -m pytest tests\test_cli.py -q
+  -k "tasks_cancel or tasks_notify or
+  tasks_list_json_projects_acp_task_records_from_session_metadata or
+  tasks_show_json or tasks_audit_json or tasks_maintenance_json"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 

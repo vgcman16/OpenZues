@@ -4897,6 +4897,96 @@ def test_tasks_cancel_pauses_native_mission_task(monkeypatch) -> None:
     assert "Cancelled mission:17 (subagent) run thread-17." in result.stdout
 
 
+def test_tasks_cancel_cancels_metadata_backed_acp_task(monkeypatch) -> None:
+    cancel_calls: list[dict[str, object]] = []
+    child_session_key = "agent:codex:acp:thread-acp-cancel"
+    metadata: dict[str, object] = {
+        "runtime": "acp",
+        "runtimeThreadId": "thread-acp-cancel",
+        "runtimeSessionId": "session-acp-cancel",
+        "taskRecord": {
+            "taskId": "acp:run-acp-cancel-1",
+            "runtime": "acp",
+            "sourceId": "run-acp-cancel-1",
+            "requesterSessionKey": "agent:main:main",
+            "ownerKey": "agent:main:main",
+            "scopeKind": "session",
+            "childSessionKey": child_session_key,
+            "agentId": "codex",
+            "runId": "run-acp-cancel-1",
+            "task": "Cancel this ACP child.",
+            "status": "running",
+            "deliveryStatus": "pending",
+            "notifyPolicy": "done_only",
+            "createdAt": 20_000,
+            "startedAt": 20_000,
+            "lastEventAt": 20_000,
+        },
+    }
+    store = {"metadata": metadata}
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [{"session_key": child_session_key, "metadata": store["metadata"]}]
+
+        async def get_gateway_session_metadata(self, session_key: str) -> dict[str, object]:
+            assert session_key == child_session_key
+            return {"session_key": session_key, "metadata": store["metadata"]}
+
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            assert session_key == child_session_key
+            store["metadata"] = metadata
+
+    class FakeAcpSpawnService:
+        async def cancel_session(self, **kwargs: object) -> dict[str, object]:
+            cancel_calls.append(dict(kwargs))
+            return {"status": "ok", "cancelled": True}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+                acp_spawn_service=FakeAcpSpawnService(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "cancel", "run-acp-cancel-1"])
+
+    assert result.exit_code == 0, result.stdout
+    assert cancel_calls == [
+        {
+            "session_key": child_session_key,
+            "runtime_thread_id": "thread-acp-cancel",
+            "runtime_session_id": "session-acp-cancel",
+            "reason": "task-cancel",
+        }
+    ]
+    task_record = store["metadata"]["taskRecord"]
+    assert isinstance(task_record, dict)
+    assert task_record["status"] == "cancelled"
+    assert task_record["error"] == "Cancelled by operator."
+    assert task_record["endedAt"] >= 20_000
+    assert task_record["lastEventAt"] == task_record["endedAt"]
+    assert "Cancelled acp:run-acp-cancel-1 (acp) run run-acp-cancel-1." in result.stdout
+
+
 def test_tasks_notify_persists_native_session_notify_policy(monkeypatch) -> None:
     upserts: list[tuple[str, dict[str, object]]] = []
     created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
