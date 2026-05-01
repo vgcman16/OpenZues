@@ -6451,6 +6451,74 @@ def test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths(
     assert plugins["cursor-sample"]["skills"] == ["skills", ".cursor/commands"]
 
 
+def test_plugins_list_json_discovers_manifestless_claude_bundle_load_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "manifestless-claude"
+    (plugin_dir / "skills").mkdir(parents=True)
+    (plugin_dir / "commands").mkdir()
+    (plugin_dir / "settings.json").write_text(
+        json.dumps({"hideThinkingBlock": True}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"manifestless-claude": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"] == [
+        {
+            "id": "manifestless-claude",
+            "name": "manifestless-claude",
+            "status": "loaded",
+            "format": "bundle",
+            "source": str(plugin_dir),
+            "origin": "config",
+            "description": "",
+            "capabilities": [
+                "bundle:skills",
+                "bundle:commands",
+                "bundle:settings",
+            ],
+            "parityStatus": "metadata",
+            "rootDir": str(plugin_dir),
+            "manifestPath": str(plugin_dir / ".claude-plugin" / "plugin.json"),
+            "bundleFormat": "claude",
+            "bundleCapabilities": ["skills", "commands", "settings"],
+            "skills": ["skills", "commands"],
+            "hooks": [],
+            "settingsFiles": ["settings.json"],
+        }
+    ]
+
+
 def test_plugins_list_json_preserves_manifest_command_aliases(
     tmp_path,
     monkeypatch,

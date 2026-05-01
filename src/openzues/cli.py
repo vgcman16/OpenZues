@@ -13466,6 +13466,21 @@ _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS: dict[str, Path] = {
     "claude": Path(".claude-plugin") / "plugin.json",
     "cursor": Path(".cursor-plugin") / "plugin.json",
 }
+_OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES = (
+    "index.ts",
+    "index.js",
+    "index.mjs",
+    "index.cjs",
+)
+_OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS = (
+    "skills",
+    "commands",
+    "agents",
+    "hooks/hooks.json",
+    ".mcp.json",
+    ".lsp.json",
+    "settings.json",
+)
 _OPENCLAW_MIN_HOST_VERSION_FORMAT = (
     'openclaw.install.minHostVersion must use a semver floor in the form ">=x.y.z"'
 )
@@ -14339,7 +14354,22 @@ def _plugin_bundle_manifest_path_for_load_path(
         manifest_path = load_path / relative_path
         if manifest_path.is_file():
             return bundle_format, manifest_path, load_path
+    if _plugin_manifestless_claude_bundle_root(load_path):
+        return "claude", load_path / _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS["claude"], load_path
     return None
+
+
+def _plugin_manifestless_claude_bundle_root(load_path: Path) -> bool:
+    if not load_path.is_dir():
+        return False
+    if (load_path / _OPENCLAW_PLUGIN_MANIFEST_FILENAME).exists():
+        return False
+    if any(
+        (load_path / candidate).exists()
+        for candidate in _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES
+    ):
+        return False
+    return any((load_path / marker).exists() for marker in _OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS)
 
 
 def _plugin_bundle_path_list(value: object) -> list[str]:
@@ -14527,7 +14557,9 @@ def _plugin_bundle_manifest_record(
 ) -> dict[str, object] | None:
     manifest = _read_cli_json_object(manifest_path)
     if manifest is None:
-        return None
+        if bundle_format != "claude" or manifest_path.exists():
+            return None
+        manifest = {}
     interface_record = manifest.get("interface")
     interface_payload = interface_record if isinstance(interface_record, dict) else {}
     name = _optional_cli_string(manifest.get("name"))
