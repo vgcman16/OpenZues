@@ -20099,6 +20099,141 @@ async def test_sessions_spawn_thread_mode_uses_route_backed_thread_binder(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_thread_mode_creates_discord_child_thread_with_route_binder(
+    tmp_path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from openzues.schemas import ConversationTargetView, NotificationRouteView
+    from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
+
+    database = Database(tmp_path / "gateway-sessions-spawn-thread-discord-create.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "discord": {
+                        "threadBindings": {
+                            "enabled": True,
+                            "spawnSubagentSessions": True,
+                        },
+                    },
+                },
+            }
+        )
+    )
+    send_calls: list[dict[str, object]] = []
+    action_calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_chat_send_service(**kwargs: object) -> dict[str, object]:
+        send_calls.append(dict(kwargs))
+        return {"runId": "run-discord-thread-bound-child-1", "status": "ok"}
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        action_calls.append(request)
+        return {"ok": True, "thread": {"id": "thread-created-42"}}
+
+    async def list_routes() -> list[NotificationRouteView]:
+        now = datetime.now(UTC)
+        return [
+            NotificationRouteView(
+                id=1,
+                name="Discord route",
+                kind="discord",
+                target="native://route",
+                events=["gateway/send"],
+                conversation_target=ConversationTargetView(
+                    channel="discord",
+                    account_id="default",
+                    peer_kind="channel",
+                    peer_id="channel:parent-channel",
+                ),
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        sessions_service=GatewaySessionsService(database),
+        config_service=config_service,
+        chat_send_service=fake_chat_send_service,
+        subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
+            list_notification_route_views=list_routes,
+            message_action_dispatcher=fake_message_action_dispatcher,
+        ),
+    )
+
+    payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Stay in a provider-created Discord thread.",
+            "label": "Builder child",
+            "thread": True,
+        },
+        requester=GatewayNodeMethodRequester(
+            message_channel="discord",
+            message_to="channel:parent-channel",
+            message_account_id="default",
+        ),
+    )
+
+    child_session_key = str(payload["childSessionKey"])
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert payload["status"] == "accepted"
+    assert len(action_calls) == 1
+    action_request = action_calls[0]
+    assert action_request.channel == "discord"
+    assert action_request.action == "thread-create"
+    assert action_request.account_id == "default"
+    assert action_request.session_key == child_session_key
+    assert action_request.params == {
+        "channelId": "parent-channel",
+        "threadName": "Builder child",
+        "autoArchiveMinutes": 60,
+    }
+    assert send_calls[0]["channel"] == "discord"
+    assert send_calls[0]["to"] == "channel:parent-channel"
+    assert send_calls[0]["account_id"] == "default"
+    assert send_calls[0]["thread_id"] == "thread-created-42"
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["threadBinding"] == {
+        "channel": "discord",
+        "to": "channel:parent-channel",
+        "accountId": "default",
+        "threadId": "thread-created-42",
+    }
+    assert metadata["sessionBinding"]["conversation"] == {
+        "channel": "discord",
+        "accountId": "default",
+        "conversationId": "channel:thread-created-42",
+    }
+    assert metadata["sessionBinding"]["metadata"]["placement"] == "child"
+    assert metadata["sessionBinding"]["metadata"]["threadId"] == "thread-created-42"
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_thread_mode_uses_matrix_route_backed_thread_binder(
     tmp_path,
 ) -> None:

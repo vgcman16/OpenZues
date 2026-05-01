@@ -8264,7 +8264,11 @@ class GatewayNodeMethodService:
                 assert self._subagent_thread_binder is not None
                 raw_thread_binding = await self._subagent_thread_binder(
                     {"sessionKey": spawn_parent_session_key, "agentId": requester_agent_id},
-                    {"sessionKey": canonical_key, "agentId": target_agent_id},
+                    {
+                        "sessionKey": canonical_key,
+                        "agentId": target_agent_id,
+                        "label": label,
+                    },
                     dict(requester_origin or {}),
                 )
                 thread_binding, thread_binding_error = resolve_thread_binding_result(

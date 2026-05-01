@@ -2355,7 +2355,8 @@ def create_app(
             ),
             sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(active_manager),
             subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
-                list_notification_route_views=active_ops_mesh_service.list_notification_route_views
+                list_notification_route_views=active_ops_mesh_service.list_notification_route_views,
+                message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
             ),
             chat_send_service=submit_gateway_chat_message,
             chat_attachment_send_service=submit_gateway_chat_attachment_message,

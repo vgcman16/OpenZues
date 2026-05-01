@@ -339,8 +339,12 @@ from the preserved session entry.
 Matrix route-backed thread-bound subagent bindings now also persist
 OpenClaw's bundled `placement="child"` default in the `sessionBinding`
 metadata instead of treating Matrix as a current-conversation channel. Remaining
-thread-binding parity is deeper provider-native child-thread creation and
-provider-owned binding stores for ACP/session runtimes.
+Discord route-backed thread-bound subagent bindings now create a provider child
+thread through the native `message.action thread-create` adapter, keep delivery
+routed through the parent channel plus created thread id, and persist
+child-placement session binding metadata keyed to `channel:<createdThreadId>`.
+Remaining thread-binding parity is deeper provider-owned binding stores and
+provider child-thread creation breadth beyond the native Discord route path.
 Reset/delete lifecycle now also emits the OpenClaw-shaped `subagent_ended`
 event through a fakeable native lifecycle service after session mutation,
 including `sendFarewell=true`, `targetKind`, and `outcome=reset/deleted`;

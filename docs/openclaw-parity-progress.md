@@ -5790,6 +5790,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
   (`25 passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Discord route-backed thread-bound subagent spawns now mirror OpenClaw's
+  provider child-thread creation path: the production binder invokes the native
+  `message.action thread-create` adapter with a 60-minute auto-archive default,
+  delivers the initial child run to the parent route plus created thread id, and
+  persists child-placement session binding metadata for
+  `channel:<createdThreadId>`. App and CLI construction wire the binder to the
+  same OpsMesh message-action dispatcher used by provider actions.
+- Verified the Discord child-thread binding slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "creates_discord_child_thread_with_route_binder"` (`1 passed`), adjacent
+  thread-binding proof `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "thread_mode_preserves_no_hook_with_unresolved_registry or
+  thread_mode_uses_route_backed_thread_binder or
+  creates_discord_child_thread_with_route_binder or
+  thread_mode_uses_matrix_route_backed_thread_binder or
+  thread_mode_uses_target_agent_bound_account or
+  thread_mode_requires_spawn_policy_for_child_placement or
+  thread_mode_delivers_initial_child_run_to_bound_origin or
+  thread_bound_subagent_startup_failure_unbinds_prepared_binding"` (`9
+  passed`), `ruff check src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py
+  src\openzues\cli.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_thread_binding.py
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

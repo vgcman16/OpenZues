@@ -1121,7 +1121,8 @@ async def _build_services(app_settings: Settings) -> CliServices:
         ),
         sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
         subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
-            list_notification_route_views=ops_mesh.list_notification_route_views
+            list_notification_route_views=ops_mesh.list_notification_route_views,
+            message_action_dispatcher=ops_mesh.dispatch_message_action,
         ),
         chat_send_service=submit_gateway_chat_message,
         runtime_update_runner=run_runtime_update,

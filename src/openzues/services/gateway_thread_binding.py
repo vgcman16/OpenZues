@@ -5,6 +5,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 from openzues.schemas import NotificationRouteView
+from openzues.services.gateway_message_actions import (
+    GatewayMessageActionDispatcher,
+    GatewayMessageActionDispatchRequest,
+)
 from openzues.services.session_keys import DEFAULT_ACCOUNT_ID
 
 NO_THREAD_BINDING_HOOK_ERROR = (
@@ -15,7 +19,7 @@ SUPPORTED_THREAD_BINDING_CHANNELS = frozenset(
 )
 _CURRENT_BINDINGS_ID_PREFIX = "generic:"
 _CONVERSATION_KEY_SEPARATOR = "\u241f"
-_CHILD_SESSION_BINDING_PLACEMENT_CHANNELS = frozenset({"matrix"})
+_PROVIDER_CHILD_THREAD_CHANNELS = frozenset({"discord", "matrix"})
 _LINE_CONVERSATION_TARGET_PREFIXES = (
     "line:",
     "channel:",
@@ -88,6 +92,42 @@ def _session_binding_conversation_id(*, channel: str, target: str) -> str:
     return target
 
 
+def _thread_binding_display_name(*, agent_id: str | None, label: str | None) -> str:
+    base = label or agent_id or "agent"
+    return " ".join(base.split())[:100] or "agent"
+
+
+def _discord_channel_id(value: str | None) -> str | None:
+    text = _optional_string(value)
+    if text is None:
+        return None
+    for _ in range(3):
+        normalized = text.lower()
+        for prefix in ("discord:channel:", "channel:", "discord:"):
+            if normalized.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                break
+        else:
+            break
+    return text or None
+
+
+def _provider_thread_id(result: object) -> str | None:
+    if not isinstance(result, Mapping):
+        return None
+    for key in ("threadId", "id"):
+        value = _optional_string(result.get(key))
+        if value is not None:
+            return value
+    thread = result.get("thread")
+    if isinstance(thread, Mapping):
+        for key in ("id", "threadId"):
+            value = _optional_string(thread.get(key))
+            if value is not None:
+                return value
+    return None
+
+
 def _session_binding_record(
     *,
     child: dict[str, object],
@@ -105,9 +145,7 @@ def _session_binding_record(
         "accountId": account_id,
         "conversationId": conversation_id,
     }
-    placement = (
-        "child" if channel in _CHILD_SESSION_BINDING_PLACEMENT_CHANNELS else "current"
-    )
+    placement = "child" if channel in _PROVIDER_CHILD_THREAD_CHANNELS else "current"
     metadata: dict[str, object] = {
         "placement": placement,
         "lastActivityAt": bound_at,
@@ -170,8 +208,49 @@ class GatewaySubagentThreadBinderRegistry:
         self,
         *,
         list_notification_route_views: Callable[[], Awaitable[list[NotificationRouteView]]],
+        message_action_dispatcher: GatewayMessageActionDispatcher | None = None,
     ) -> None:
         self._list_notification_route_views = list_notification_route_views
+        self._message_action_dispatcher = message_action_dispatcher
+
+    async def _create_discord_child_thread(
+        self,
+        *,
+        parent_channel: str,
+        account_id: str,
+        child: dict[str, object],
+    ) -> str | None:
+        if self._message_action_dispatcher is None:
+            return None
+        channel_id = _discord_channel_id(parent_channel)
+        if channel_id is None:
+            return None
+        child_session_key = _optional_string(child.get("sessionKey"))
+        child_agent_id = _optional_string(child.get("agentId"))
+        label = _optional_string(child.get("label"))
+        result = await self._message_action_dispatcher(
+            GatewayMessageActionDispatchRequest(
+                channel="discord",
+                action="thread-create",
+                params={
+                    "channelId": channel_id,
+                    "threadName": _thread_binding_display_name(
+                        agent_id=child_agent_id,
+                        label=label,
+                    ),
+                    "autoArchiveMinutes": 60,
+                },
+                idempotency_key=(
+                    f"subagent-thread-create:{child_session_key}"
+                    if child_session_key is not None
+                    else "subagent-thread-create"
+                ),
+                account_id=account_id,
+                session_key=child_session_key,
+                agent_id=child_agent_id,
+            )
+        )
+        return _provider_thread_id(result)
 
     async def __call__(
         self,
@@ -210,6 +289,22 @@ class GatewaySubagentThreadBinderRegistry:
                 ),
             }
         thread_id = _optional_string(context.get("threadId"))
+        provider_created_thread_id: str | None = None
+        if channel == "discord" and thread_id is None:
+            provider_created_thread_id = await self._create_discord_child_thread(
+                parent_channel=resolved_to,
+                account_id=account_id,
+                child=child,
+            )
+            if provider_created_thread_id is None:
+                return {
+                    "status": "error",
+                    "error": (
+                        "Unable to create or bind a thread for this subagent session. "
+                        "Session mode is unavailable for this target."
+                    ),
+                }
+            thread_id = provider_created_thread_id
         binding: dict[str, object] = {
             "channel": channel,
             "accountId": account_id,
@@ -217,9 +312,14 @@ class GatewaySubagentThreadBinderRegistry:
         }
         if thread_id is not None:
             binding["threadId"] = thread_id
+        conversation_target = (
+            f"channel:{provider_created_thread_id}"
+            if provider_created_thread_id is not None
+            else resolved_to
+        )
         conversation_id = _session_binding_conversation_id(
             channel=channel,
-            target=resolved_to,
+            target=conversation_target,
         )
         session_binding = _session_binding_record(
             child=child,
@@ -234,6 +334,9 @@ class GatewaySubagentThreadBinderRegistry:
             **binding,
             "deliveryOrigin": dict(binding),
         }
+        if provider_created_thread_id is not None:
+            result["providerThreadCreated"] = True
+            result["providerThreadId"] = provider_created_thread_id
         if session_binding is not None:
             result["sessionBinding"] = session_binding
         return result
