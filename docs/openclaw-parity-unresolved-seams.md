@@ -838,9 +838,12 @@ OpenClaw's `sessionKey` / `session` / `key`, label, reset, require-existing,
 and `prefixCwd` aliases plus label/key resolution precedence and conditional
 reset dispatch. Native ACP available-command projection now carries OpenClaw's
 base slash-command catalog with a fakeable extension hook for dock-style
-commands. Remaining ACP CLI parity is still the real bridge client/server
-protocol runtime rather than the spawn preflight, permission-helper,
-event-mapper, session-mapper, and available-command contracts.
+commands. Native ACP session storage now mirrors OpenClaw's in-memory session
+creation/update/touch flow, active-run indexing, cancellation, idle reaping,
+and max-session backpressure. Remaining ACP CLI parity is still the real bridge
+client/server protocol runtime rather than the spawn preflight,
+permission-helper, event-mapper, session-mapper, available-command, and
+session-store contracts.
 `acp status [lookup]` now reads native ACP session metadata and linked
 OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
 thread id, runtime session id, label, task id, and run id. JSON output returns

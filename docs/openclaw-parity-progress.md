@@ -5168,6 +5168,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_status_json_and_human"` (`36 passed`), `ruff check
   src\openzues\services\acp_commands.py tests\test_acp_commands.py`, and
   `mypy src\openzues\services\acp_commands.py`.
+- Native ACP session storage now follows OpenClaw's in-memory store behavior:
+  create/update by session id, touch on reads, index active runs, clear or
+  cancel active runs, abort on cancel/removal, reap idle sessions, evict the
+  oldest idle session, and fail closed when all sessions are active at the
+  configured limit.
+- Verified the ACP session-store slice with `python -m pytest
+  tests\test_acp_session_store.py -q` (`5 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_session_store.py tests\test_acp_commands.py
+  tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`41 passed`), `ruff check
+  src\openzues\services\acp_session_store.py tests\test_acp_session_store.py`,
+  and `mypy src\openzues\services\acp_session_store.py`.
 
 ## References
 
