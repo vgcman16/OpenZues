@@ -3947,7 +3947,7 @@ async def test_ops_mesh_service_message_action_dispatches_slack_send_route(
 
 
 @pytest.mark.asyncio
-async def test_ops_mesh_service_message_action_dispatches_slack_poll_route(
+async def test_ops_mesh_service_message_action_rejects_slack_poll_like_openclaw(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-poll"
@@ -4021,33 +4021,8 @@ async def test_ops_mesh_service_message_action_dispatches_slack_poll_route(
         )
     )
 
-    assert result == {
-        "ok": True,
-        "result": {
-            "messageId": "1710000000.0020",
-            "channelId": "C123",
-            "conversationId": "C123",
-            "pollId": "1710000000.0020",
-        },
-    }
-    assert slack_posts == [
-        (
-            "https://slack.test/api/chat.postMessage",
-            {
-                "channel": "C123",
-                "text": (
-                    "Poll: Lunch?\n"
-                    "1. Pizza\n"
-                    "2. Sushi\n"
-                    "3. Soup\n\n"
-                    "Settings: maxSelections=3, durationHours=2, silent=true"
-                ),
-                "thread_ts": "1710000000.0010",
-            },
-            "Authorization",
-            "Bearer xoxb-action-token",
-        )
-    ]
+    assert result is None
+    assert slack_posts == []
 
 
 @pytest.mark.asyncio
@@ -4153,6 +4128,116 @@ async def test_ops_mesh_service_message_action_dispatches_telegram_send_document
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_send_buttons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-buttons"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Button Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 45,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="send",
+            params={
+                "to": "channel:-100123",
+                "message": "Approve deployment?",
+                "buttons": [
+                    [
+                        {
+                            "text": "Approve",
+                            "callback_data": "/approve deploy-1",
+                            "style": "success",
+                        }
+                    ],
+                ],
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-send-buttons-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "45",
+            "channelId": "-100123",
+        },
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Approve deployment?",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "Approve",
+                                "callback_data": "/approve deploy-1",
+                                "style": "success",
+                            }
+                        ],
+                    ],
+                },
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_telegram_poll_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4250,6 +4335,349 @@ async def test_ops_mesh_service_message_action_dispatches_telegram_poll_route(
                 "disable_notification": True,
                 "reply_to_message_id": "41",
                 "message_thread_id": "forum-42",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_delete_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-delete"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Delete Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="deleteMessage",
+            params={"chatId": "channel:-100123", "messageId": 42},
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-delete-action",
+        )
+    )
+
+    assert result == {"ok": True, "deleted": True}
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/deleteMessage",
+            {
+                "chat_id": "-100123",
+                "message_id": 42,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Edit Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 43,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="editMessage",
+            params={
+                "chatId": "channel:-100123",
+                "messageId": 43,
+                "content": "Edited from message.action.",
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-edit-action",
+        )
+    )
+
+    assert result == {"ok": True, "messageId": "43", "chatId": "-100123"}
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/editMessageText",
+            {
+                "chat_id": "-100123",
+                "message_id": 43,
+                "text": "Edited from message.action.",
+                "parse_mode": "HTML",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_topic_create_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-topic-create"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Topic Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_thread_id": 77,
+                "name": "Release Room",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="topic-create",
+            params={
+                "chatId": "telegram:group:-100123:topic:45",
+                "name": " Release Room ",
+                "iconColor": 0x6FB9F0,
+                "iconCustomEmojiId": " custom-emoji-1 ",
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-topic-create-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "topicId": 77,
+        "name": "Release Room",
+        "chatId": "-100123",
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/createForumTopic",
+            {
+                "chat_id": "-100123",
+                "name": "Release Room",
+                "icon_color": 0x6FB9F0,
+                "icon_custom_emoji_id": "custom-emoji-1",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_topic_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-topic-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Topic Edit Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="topic-edit",
+            params={
+                "chatId": "channel:-100123",
+                "threadId": 77,
+                "name": " New Release Room ",
+                "iconCustomEmojiId": " custom-emoji-2 ",
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-topic-edit-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "chatId": "-100123",
+        "messageThreadId": 77,
+        "name": "New Release Room",
+        "iconCustomEmojiId": "custom-emoji-2",
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/editForumTopic",
+            {
+                "chat_id": "-100123",
+                "message_thread_id": 77,
+                "name": "New Release Room",
+                "icon_custom_emoji_id": "custom-emoji-2",
             },
         )
     ]
@@ -5558,6 +5986,1530 @@ async def test_ops_mesh_service_message_action_rejects_whatsapp_cross_chat_conte
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_unsend_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-bluebubbles-unsend"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="imessage",
+            action="unsend",
+            params={"messageId": "msg-1", "partIndex": 2},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-unsend-action",
+        )
+    )
+
+    assert result == {"ok": True, "unsent": "msg-1"}
+    assert bluebubbles_requests == [
+        (
+            "POST",
+            "http://localhost:1234/api/v1/message/msg-1/unsend?password=bb-password",
+            {"partIndex": 2},
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-bluebubbles-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="edit",
+            params={
+                "messageId": "msg-2",
+                "message": "Edited body",
+                "partIndex": 1,
+                "backwardsCompatMessage": "Edited fallback",
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-edit-action",
+        )
+    )
+
+    assert result == {"ok": True, "edited": "msg-2"}
+    assert bluebubbles_requests == [
+        (
+            "POST",
+            "http://localhost:1234/api/v1/message/msg-2/edit?password=bb-password",
+            {
+                "editedMessage": "Edited body",
+                "backwardsCompatibilityMessage": "Edited fallback",
+                "partIndex": 1,
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-bluebubbles-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="imessage",
+            action="react",
+            params={
+                "chatGuid": "iMessage;-;+15551234567",
+                "messageId": "msg-3",
+                "emoji": "heart",
+                "partIndex": 3,
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "heart"}
+    assert bluebubbles_requests == [
+        (
+            "POST",
+            "http://localhost:1234/api/v1/message/react?password=bb-password",
+            {
+                "chatGuid": "iMessage;-;+15551234567",
+                "selectedMessageGuid": "msg-3",
+                "reaction": "love",
+                "partIndex": 3,
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_remove_reaction_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-remove-reaction"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="react",
+            params={
+                "chatGuid": "iMessage;-;+15551234567",
+                "messageId": "msg-4",
+                "emoji": "-love",
+                "remove": True,
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-remove-reaction-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": True}
+    assert bluebubbles_requests == [
+        (
+            "POST",
+            "http://localhost:1234/api/v1/message/react?password=bb-password",
+            {
+                "chatGuid": "iMessage;-;+15551234567",
+                "selectedMessageGuid": "msg-4",
+                "reaction": "-love",
+                "partIndex": 0,
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_reply_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-bluebubbles-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"data": {"guid": "reply-msg-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="imessage",
+            action="reply",
+            params={
+                "to": "chat_guid:iMessage;-;direct-chat",
+                "messageId": "msg-reply-to",
+                "message": "Reply body",
+                "partIndex": 2,
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-reply-action",
+        )
+    )
+
+    assert result == {"ok": True, "messageId": "reply-msg-1", "repliedTo": "msg-reply-to"}
+    assert len(bluebubbles_requests) == 1
+    method, target, payload, secret_header_name, secret_token = bluebubbles_requests[0]
+    assert method == "POST"
+    assert target == "http://localhost:1234/api/v1/message/text?password=bb-password"
+    assert secret_header_name is None
+    assert secret_token is None
+    assert isinstance(payload, dict)
+    temp_guid = payload.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert payload == {
+        "chatGuid": "iMessage;-;direct-chat",
+        "message": "Reply body",
+        "method": "private-api",
+        "selectedMessageGuid": "msg-reply-to",
+        "partIndex": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_send_with_effect_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-send-with-effect"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"data": {"messageId": "effect-msg-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="sendWithEffect",
+            params={
+                "target": "chat_guid:iMessage;-;effect-chat",
+                "text": "Boom",
+                "effect": "confetti",
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-effect-action",
+        )
+    )
+
+    assert result == {"ok": True, "messageId": "effect-msg-1", "effect": "confetti"}
+    assert len(bluebubbles_requests) == 1
+    method, target, payload, secret_header_name, secret_token = bluebubbles_requests[0]
+    assert method == "POST"
+    assert target == "http://localhost:1234/api/v1/message/text?password=bb-password"
+    assert secret_header_name is None
+    assert secret_token is None
+    assert isinstance(payload, dict)
+    temp_guid = payload.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert payload == {
+        "chatGuid": "iMessage;-;effect-chat",
+        "message": "Boom",
+        "method": "private-api",
+        "effectId": "com.apple.messages.effect.CKConfettiEffect",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_group_management_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-group-management"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "group",
+            "peer_id": "group-1",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    chat_guid = "iMessage;+;group-1"
+
+    rename_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="renameGroup",
+            params={"chatGuid": chat_guid, "displayName": "New group name"},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-rename-group-action",
+        )
+    )
+    add_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="addParticipant",
+            params={"chatGuid": chat_guid, "address": "+15550000001"},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-add-participant-action",
+        )
+    )
+    remove_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="removeParticipant",
+            params={"to": f"chat_guid:{chat_guid}", "participant": "+15550000001"},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-remove-participant-action",
+        )
+    )
+    leave_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="leaveGroup",
+            params={"chatGuid": chat_guid},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-leave-group-action",
+        )
+    )
+
+    assert rename_result == {
+        "ok": True,
+        "renamed": chat_guid,
+        "displayName": "New group name",
+    }
+    assert add_result == {"ok": True, "added": "+15550000001", "chatGuid": chat_guid}
+    assert remove_result == {
+        "ok": True,
+        "removed": "+15550000001",
+        "chatGuid": chat_guid,
+    }
+    assert leave_result == {"ok": True, "left": chat_guid}
+    encoded_chat_guid = "iMessage%3B%2B%3Bgroup-1"
+    assert bluebubbles_requests == [
+        (
+            "PUT",
+            f"http://localhost:1234/api/v1/chat/{encoded_chat_guid}?password=bb-password",
+            {"displayName": "New group name"},
+            None,
+            None,
+        ),
+        (
+            "POST",
+            (
+                "http://localhost:1234/api/v1/chat/"
+                f"{encoded_chat_guid}/participant?password=bb-password"
+            ),
+            {"address": "+15550000001"},
+            None,
+            None,
+        ),
+        (
+            "DELETE",
+            (
+                "http://localhost:1234/api/v1/chat/"
+                f"{encoded_chat_guid}/participant?password=bb-password"
+            ),
+            {"address": "+15550000001"},
+            None,
+            None,
+        ),
+        (
+            "POST",
+            (
+                "http://localhost:1234/api/v1/chat/"
+                f"{encoded_chat_guid}/leave?password=bb-password"
+            ),
+            None,
+            None,
+            None,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_upload_file_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-upload-file"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "group",
+            "peer_id": "group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "attachment-msg-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="upload-file",
+            params={
+                "to": "chat_guid:iMessage;+;group-1",
+                "buffer": "aGVsbG8=",
+                "filename": "doc.txt",
+                "contentType": "text/plain",
+                "caption": "Caption text",
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-upload-file-action",
+        )
+    )
+
+    assert result == {"ok": True, "messageId": "attachment-msg-1"}
+    assert len(multipart_requests) == 1
+    target, fields, files = multipart_requests[0]
+    assert target == "http://localhost:1234/api/v1/message/attachment?password=bb-password"
+    temp_guid = fields.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert fields == {
+        "chatGuid": "iMessage;+;group-1",
+        "name": "doc.txt",
+        "method": "private-api",
+        "message": "Caption text",
+        "text": "Caption text",
+        "caption": "Caption text",
+    }
+    assert files == [
+        {
+            "field": "attachment",
+            "filename": "doc.txt",
+            "contentType": "text/plain",
+            "content": b"hello",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_set_group_icon_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-set-group-icon"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "group",
+            "peer_id": "group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="imessage",
+            action="setGroupIcon",
+            params={
+                "chatGuid": "iMessage;+;group-1",
+                "buffer": "aWNvbg==",
+                "filename": "group.png",
+                "contentType": "image/png",
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-set-group-icon-action",
+        )
+    )
+
+    assert result == {"ok": True, "chatGuid": "iMessage;+;group-1", "iconSet": True}
+    assert multipart_requests == [
+        (
+            "http://localhost:1234/api/v1/chat/iMessage%3B%2B%3Bgroup-1/icon?password=bb-password",
+            {},
+            [
+                {
+                    "field": "icon",
+                    "filename": "group.png",
+                    "contentType": "image/png",
+                    "content": b"icon",
+                }
+            ],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-native-bluebubbles-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Send Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    bluebubbles_requests: list[tuple[str, str, object | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        bluebubbles_requests.append((method, target, payload))
+        return {"data": {"messageId": "bb-msg-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="bluebubbles",
+        to="chat_guid:iMessage;+;group-1",
+        message="Hello from native BlueBubbles.",
+        account_id="personal",
+        idempotency_key="idem-native-bluebubbles-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="bluebubbles",
+            account_id="personal",
+            peer_kind="channel",
+            peer_id="chat_guid:iMessage;+;group-1",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+    route = (await database.list_notification_routes())[0]
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-bluebubbles-send",
+        "channel": "bluebubbles",
+        "messageId": "bb-msg-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "bluebubbles",
+            "target": "chat_guid:iMessage;+;group-1",
+            "accountId": "personal",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "iMessage;+;group-1",
+        "channelId": "iMessage;+;group-1",
+        "conversationId": "iMessage;+;group-1",
+    }
+    assert len(bluebubbles_requests) == 1
+    method, target, payload = bluebubbles_requests[0]
+    assert method == "POST"
+    assert target == "http://localhost:1234/api/v1/message/text?password=bb-password"
+    assert isinstance(payload, dict)
+    temp_guid = payload.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert payload == {
+        "chatGuid": "iMessage;+;group-1",
+        "message": "Hello from native BlueBubbles.",
+        "method": "private-api",
+    }
+    assert delivery is not None
+    assert delivery["route_kind"] == "announce"
+    assert delivery["delivery_message_id"] == "bb-msg-1"
+    assert route["last_result"] == "Delivered gateway/send provider runtime"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-media-send"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Media Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+    text_requests: list[tuple[str, object | None]] = []
+
+    def fake_download_bluebubbles_media_url(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        account_id: str | None = None,
+        local_roots: list[str] | None = None,
+        max_bytes: int | None = None,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert media_url == "https://example.com/photo.png"
+        assert account_id == "personal"
+        assert local_roots == []
+        assert max_bytes is None
+        return b"image-bytes", "image/png", "photo.png"
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-media-1"}}
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, method, secret_header_name, secret_token, extra_headers, timeout_seconds
+        text_requests.append((target, payload))
+        return {"data": {"guid": "bb-caption-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_bluebubbles_media_url",
+        fake_download_bluebubbles_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="bluebubbles",
+        to="chat_guid:iMessage;+;group-1",
+        message="Photo caption",
+        media_urls=["https://example.com/photo.png"],
+        account_id="personal",
+        reply_to_id="reply-guid-1",
+        idempotency_key="idem-native-bluebubbles-media-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="bluebubbles",
+            account_id="personal",
+            peer_kind="channel",
+            peer_id="chat_guid:iMessage;+;group-1",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-bluebubbles-media-send",
+        "channel": "bluebubbles",
+        "messageId": "bb-media-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "bluebubbles",
+            "target": "chat_guid:iMessage;+;group-1",
+            "accountId": "personal",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "iMessage;+;group-1",
+        "channelId": "iMessage;+;group-1",
+        "conversationId": "iMessage;+;group-1",
+        "mediaIds": ["bb-media-1"],
+        "mediaUrls": ["https://example.com/photo.png"],
+        "messageIds": ["bb-media-1", "bb-caption-1"],
+    }
+    assert len(multipart_requests) == 1
+    target, fields, files = multipart_requests[0]
+    assert target == "http://localhost:1234/api/v1/message/attachment?password=bb-password"
+    temp_guid = fields.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert fields == {
+        "chatGuid": "iMessage;+;group-1",
+        "name": "photo.png",
+        "method": "private-api",
+        "selectedMessageGuid": "reply-guid-1",
+        "partIndex": "0",
+    }
+    assert files == [
+        {
+            "field": "attachment",
+            "filename": "photo.png",
+            "contentType": "image/png",
+            "content": b"image-bytes",
+        }
+    ]
+    assert len(text_requests) == 1
+    text_target, text_payload = text_requests[0]
+    assert text_target == "http://localhost:1234/api/v1/message/text?password=bb-password"
+    assert isinstance(text_payload, dict)
+    caption_temp_guid = text_payload.pop("tempGuid", None)
+    assert isinstance(caption_temp_guid, str) and caption_temp_guid
+    assert text_payload == {
+        "chatGuid": "iMessage;+;group-1",
+        "message": "Photo caption",
+        "method": "private-api",
+        "selectedMessageGuid": "reply-guid-1",
+        "partIndex": 0,
+    }
+    assert delivery is not None
+    assert delivery["delivery_message_id"] == "bb-media-1"
+    assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/photo.png"]
+    assert delivery["route_scope"]["provider_result"]["mediaIds"] == ["bb-media-1"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_rejects_bluebubbles_voice_non_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-voice-invalid"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Voice Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_download_bluebubbles_media_url(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        account_id: str | None = None,
+        local_roots: list[str] | None = None,
+        max_bytes: int | None = None,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert media_url == "https://example.com/not-audio.png"
+        assert account_id == "personal"
+        assert local_roots == []
+        assert max_bytes is None
+        return b"image-bytes", "image/png", "not-audio.png"
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-voice-should-not-send"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_bluebubbles_media_url",
+        fake_download_bluebubbles_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="voice messages require audio media"):
+        await service.send_direct_channel_message(
+            channel="bluebubbles",
+            to="chat_guid:iMessage;+;group-1",
+            message="",
+            media_urls=["https://example.com/not-audio.png"],
+            account_id="personal",
+            audio_as_voice=True,
+            idempotency_key="idem-native-bluebubbles-voice-invalid",
+        )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert multipart_requests == []
+    assert delivery is not None
+    assert delivery["delivery_state"] == "failed"
+    assert "voice messages require audio media" in str(delivery["last_error"])
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_bluebubbles_local_media_requires_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-local-media-no-roots"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    local_file = tmp_path / "upload.txt"
+    local_file.write_text("local upload", encoding="utf-8")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Local Media Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-local-should-not-send"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="mediaLocalRoots"):
+        await service.send_direct_channel_message(
+            channel="bluebubbles",
+            to="chat_guid:iMessage;+;group-1",
+            message="",
+            media_urls=[str(local_file)],
+            account_id="personal",
+            idempotency_key="idem-native-bluebubbles-local-media-no-roots",
+        )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert multipart_requests == []
+    assert delivery is not None
+    assert delivery["delivery_state"] == "failed"
+    assert "mediaLocalRoots" in str(delivery["last_error"])
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_bluebubbles_local_media_honors_media_max_mb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-media-max"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    local_file = tmp_path / "too-large.bin"
+    local_file.write_bytes(b"x" * ((1024 * 1024) + 1))
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Media Max Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "bluebubbles": {
+                    "mediaLocalRoots": [str(tmp_path)],
+                    "mediaMaxMb": 1,
+                }
+            }
+        }
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-max-should-not-send"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    with pytest.raises(ValueError, match="Media exceeds 1MB limit"):
+        await service.send_direct_channel_message(
+            channel="bluebubbles",
+            to="chat_guid:iMessage;+;group-1",
+            message="",
+            media_urls=[str(local_file)],
+            account_id="personal",
+            idempotency_key="idem-native-bluebubbles-media-max",
+        )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert multipart_requests == []
+    assert delivery is not None
+    assert delivery["delivery_state"] == "failed"
+    assert "Media exceeds 1MB limit" in str(delivery["last_error"])
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6512,6 +8464,151 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_delete_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_poll_vote_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-poll-vote"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "type": "m.poll.start",
+            "content": {
+                "m.poll.start": {
+                    "question": {"m.text": "Release snack?"},
+                    "max_selections": 2,
+                    "answers": [
+                        {"id": "berry", "m.text": "Berry"},
+                        {"id": "lime", "m.text": "Lime"},
+                    ],
+                }
+            },
+        }
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-vote-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="poll-vote",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "pollId": "$poll",
+                "optionIds": ["berry"],
+                "optionIndex": 2,
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-poll-vote-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "eventId": "$matrix-vote-1",
+            "roomId": "!ops:matrix.example",
+            "pollId": "$poll",
+            "answerIds": ["berry", "lime"],
+            "labels": ["Berry", "Lime"],
+            "maxSelections": 2,
+        },
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/event/%24poll"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+    assert matrix_puts == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/send/m.poll.response/idem-matrix-poll-vote-action"
+            ),
+            {
+                "m.poll.response": {"answers": ["berry", "lime"]},
+                "org.matrix.msc3381.poll.response": {"answers": ["berry", "lime"]},
+                "m.relates_to": {
+                    "rel_type": "m.reference",
+                    "event_id": "$poll",
+                },
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_matrix_react_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6912,6 +9009,8 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_react_remove_ro
     [
         ("pinMessage", ["$a"], ["$a", "$b"]),
         ("unpinMessage", ["$a", "$b", "$c"], ["$a", "$c"]),
+        ("pin", ["$a"], ["$a", "$b"]),
+        ("unpin", ["$a", "$b", "$c"], ["$a", "$c"]),
     ],
 )
 async def test_ops_mesh_service_message_action_dispatches_matrix_pin_mutation_route(
@@ -7034,10 +9133,12 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_pin_mutation_ro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["listPins", "list-pins"])
 async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route(
     monkeypatch: pytest.MonkeyPatch,
+    action: str,
 ) -> None:
-    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-list-pins"
+    tmp_path = Path.cwd() / f".tmp-pytest-local/ops-mesh-message-action-matrix-{action}"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
     database = Database(tmp_path / "ops.db")
@@ -7104,7 +9205,7 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route
     result = await service.dispatch_message_action(
         GatewayMessageActionDispatchRequest(
             channel="matrix",
-            action="listPins",
+            action=action,
             params={
                 "roomId": "room:!ops:matrix.example",
             },
@@ -7112,7 +9213,7 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route
             requester_sender_id="@alice:matrix.example",
             sender_is_owner=True,
             session_key="agent:main:matrix:channel:!ops:matrix.example",
-            idempotency_key="idem-matrix-list-pins-action",
+            idempotency_key=f"idem-matrix-{action}-action",
         )
     )
 
@@ -7252,6 +9353,119 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_read_messages_r
             sender_is_owner=True,
             session_key="agent:main:matrix:channel:!ops:matrix.example",
             idempotency_key="idem-matrix-read-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "messages": [
+            {
+                "eventId": "$msg",
+                "sender": "@alice:matrix.example",
+                "body": "hello history",
+                "msgtype": "m.text",
+                "timestamp": 456,
+            }
+        ],
+        "nextBatch": "batch-end",
+        "prevBatch": "batch-start",
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/messages?dir=b&limit=2&from=batch-before"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_read_alias_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-read-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "start": "batch-start",
+            "end": "batch-end",
+            "chunk": [
+                {
+                    "event_id": "$msg",
+                    "sender": "@alice:matrix.example",
+                    "type": "m.room.message",
+                    "origin_server_ts": 456,
+                    "content": {
+                        "msgtype": "m.text",
+                        "body": "hello history",
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="read",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "limit": 2,
+                "before": "batch-before",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-read-alias-action",
         )
     )
 
@@ -12361,6 +14575,381 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_pins_telegram_first_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-pin"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Pin Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        if target.endswith("/pinChatMessage"):
+            return {"ok": True, "result": True}
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 101,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Pin the first delivered message.",
+        account_id="telegram-bot",
+        channel_data={"telegram": {"pin": True}},
+        idempotency_key="idem-native-telegram-pin",
+    )
+
+    assert result["messageId"] == "101"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Pin the first delivered message.",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/pinChatMessage",
+            {
+                "chat_id": "-100123",
+                "message_id": 101,
+                "disable_notification": True,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_keeps_delivery_when_telegram_pin_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-pin-fails"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Pin Failure Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        if target.endswith("/pinChatMessage"):
+            raise RuntimeError("pin failed")
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 102,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Pin failures do not fail delivery.",
+        account_id="telegram-bot",
+        channel_data={"telegram": {"pin": True}},
+        idempotency_key="idem-native-telegram-pin-fails",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "102"
+    assert delivery is not None
+    assert delivery["delivery_state"] == "delivered"
+    assert delivery["delivery_message_id"] == "102"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Pin failures do not fail delivery.",
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/pinChatMessage",
+            {
+                "chat_id": "-100123",
+                "message_id": 102,
+                "disable_notification": True,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_forwards_telegram_buttons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-buttons"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Buttons Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 101,
+                "chat": {"id": -100123},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Approval required",
+        account_id="telegram-bot",
+        channel_data={
+            "telegram": {
+                "buttons": [
+                    [{"text": "Allow Once", "callback_data": "/approve abc allow-once"}],
+                ],
+            },
+        },
+        idempotency_key="idem-native-telegram-buttons",
+    )
+
+    assert result["messageId"] == "101"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Approval required",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "Allow Once",
+                                "callback_data": "/approve abc allow-once",
+                            }
+                        ],
+                    ],
+                },
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_attaches_telegram_buttons_to_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-telegram-media-buttons"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Media Buttons Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        message_id = 200 + len(telegram_posts)
+        return {
+            "ok": True,
+            "result": {
+                "message_id": message_id,
+                "chat": {"id": -100123},
+                "photo": [{"file_id": f"photo-{message_id}"}],
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="channel:-100123",
+        message="Approval image set",
+        media_urls=["https://example.com/one.png", "https://example.com/two.png"],
+        account_id="telegram-bot",
+        channel_data={
+            "telegram": {
+                "buttons": [
+                    [{"text": "Approve", "callback_data": "/approve abc"}],
+                ],
+            },
+        },
+        idempotency_key="idem-native-telegram-media-buttons",
+    )
+
+    assert result["messageId"] == "202"
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            {
+                "chat_id": "-100123",
+                "photo": "https://example.com/one.png",
+                "caption": (
+                    "Approval image set\n\n"
+                    "Media:\n"
+                    "1. https://example.com/one.png\n"
+                    "2. https://example.com/two.png"
+                ),
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": "Approve", "callback_data": "/approve abc"}],
+                    ],
+                },
+            },
+        ),
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            {
+                "chat_id": "-100123",
+                "photo": "https://example.com/two.png",
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_parses_telegram_topic_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -13534,6 +16123,185 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_line_video_medi
     assert delivery is not None
     assert delivery["event_payload"]["mediaKind"] == "video"
     assert delivery["event_payload"]["previewImageUrl"] == "https://example.com/preview.jpg"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_line_video_tracking_id_for_user_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-video-tracking"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Video Tracking Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Video brief.",
+        media_urls=["https://example.com/video.mp4"],
+        media_kind="video",
+        preview_image_url="https://example.com/preview.jpg",
+        tracking_id="track-user-1",
+        account_id="line-bot",
+        idempotency_key="idem-native-line-video-tracking",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "video",
+                        "originalContentUrl": "https://example.com/video.mp4",
+                        "previewImageUrl": "https://example.com/preview.jpg",
+                        "trackingId": "track-user-1",
+                    },
+                    {"type": "text", "text": "Video brief."},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["trackingId"] == "track-user-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_line_video_tracking_id_omitted_for_group_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-group-tracking"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:group:C1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Group Video Tracking Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Video brief.",
+        media_urls=["https://example.com/video.mp4"],
+        media_kind="video",
+        preview_image_url="https://example.com/preview.jpg",
+        tracking_id="track-group",
+        account_id="line-bot",
+        idempotency_key="idem-native-line-video-group-tracking",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "C1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "video",
+                        "originalContentUrl": "https://example.com/video.mp4",
+                        "previewImageUrl": "https://example.com/preview.jpg",
+                    },
+                    {"type": "text", "text": "Video brief."},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["trackingId"] == "track-group"
 
 
 @pytest.mark.asyncio

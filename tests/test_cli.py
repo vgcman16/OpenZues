@@ -15472,6 +15472,94 @@ def test_doctor_json_warns_when_gateway_mode_is_unset(monkeypatch) -> None:
     assert warning in payload["warnings"]
 
 
+def test_doctor_json_warns_when_gateway_runtime_node_is_too_old(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_resolve_doctor_gateway_system_node_info",
+        lambda: {
+            "path": r"C:\Program Files\nodejs\node.exe",
+            "version": "20.11.1",
+            "supported": False,
+        },
+        raising=False,
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+                "auth": {"token": "gateway-token"},
+                "serviceAudit": {
+                    "issues": [
+                        {
+                            "code": "gateway-runtime-bun",
+                            "message": "Gateway service still uses Bun.",
+                        }
+                    ]
+                },
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    gateway_runtime = payload["gatewayRuntime"]
+    assert gateway_runtime["status"] == "warning"
+    assert gateway_runtime["reason"] == "node_runtime_migration_requires_system_node"
+    assert gateway_runtime["needsNodeRuntimeMigration"] is True
+    assert gateway_runtime["systemNode"] == {
+        "path": r"C:\Program Files\nodejs\node.exe",
+        "version": "20.11.1",
+        "supported": False,
+    }
+    assert "below the required Node 22.14+" in gateway_runtime["warnings"][0]
+    assert any(
+        "below the required Node 22.14+" in str(warning)
+        for warning in payload["warnings"]
+    )
+
+
+def test_doctor_json_warns_when_gateway_runtime_node_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_resolve_doctor_gateway_system_node_info",
+        lambda: None,
+        raising=False,
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "gateway": {
+                "mode": "local",
+                "auth": {"token": "gateway-token"},
+                "serviceAudit": {
+                    "issues": [
+                        {
+                            "code": "gateway-runtime-node-version-manager",
+                            "message": "Gateway service uses a version-manager Node path.",
+                        }
+                    ]
+                },
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    gateway_runtime = payload["gatewayRuntime"]
+    assert gateway_runtime["status"] == "warning"
+    assert gateway_runtime["systemNode"] is None
+    assert gateway_runtime["warnings"] == [
+        (
+            "System Node 22 LTS (22.14+) or Node 24 not found. Install via "
+            "Homebrew/apt/choco and rerun doctor to migrate off Bun/version managers."
+        )
+    ]
+    assert gateway_runtime["warnings"][0] in payload["warnings"]
+
+
 def test_doctor_json_warns_when_claude_cli_model_is_configured_but_unavailable(
     monkeypatch,
 ) -> None:
@@ -20570,6 +20658,41 @@ def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -
     assert f"pid={os.getpid()} (alive)" in result.stdout
     assert "stale=no" in result.stdout
     assert lock_path.exists()
+
+
+def test_doctor_fix_removes_stale_session_lock_files(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(
+        tmp_path,
+        monkeypatch,
+        task_name="CLI Doctor Session Lock Repair",
+    )
+    data_dir = tmp_path / "data"
+    sessions_dir = data_dir / "agents" / "main" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    stale_lock = sessions_dir / "stale.jsonl.lock"
+    fresh_lock = sessions_dir / "fresh.jsonl.lock"
+    stale_lock.write_text(
+        json.dumps({"pid": -1, "createdAt": "2000-01-01T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    fresh_lock.write_text(
+        json.dumps({"pid": os.getpid(), "createdAt": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    session_locks = payload["session_locks"]
+    assert session_locks["staleCount"] == 1
+    assert session_locks["removedCount"] == 1
+    assert any(
+        lock["path"] == str(stale_lock) and lock["removed"] is True
+        for lock in session_locks["locks"]
+    )
+    assert not stale_lock.exists()
+    assert fresh_lock.exists()
 
 
 def test_hermes_profile_set_updates_saved_defaults(tmp_path, monkeypatch) -> None:

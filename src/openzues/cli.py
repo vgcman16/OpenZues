@@ -3440,23 +3440,44 @@ def _with_doctor_state_directory_health(
     return next_payload
 
 
-def _doctor_session_lock_payload(data_dir: Path) -> dict[str, object] | None:
+def _doctor_session_lock_payload(
+    data_dir: Path,
+    *,
+    should_repair: bool = False,
+) -> dict[str, object] | None:
     lock_paths = sorted((data_dir / "agents").glob("*/sessions/*.jsonl.lock"))
     if not lock_paths:
         return None
-    locks = [_doctor_session_lock_record(lock_path) for lock_path in lock_paths]
+    locks: list[dict[str, object]] = []
+    removed_count = 0
+    for lock_path in lock_paths:
+        lock = _doctor_session_lock_record(lock_path)
+        if should_repair and lock.get("stale") is True:
+            try:
+                lock_path.unlink(missing_ok=True)
+                lock["removed"] = True
+                removed_count += 1
+            except OSError as exc:
+                lock["removeError"] = str(exc)
+        locks.append(lock)
     stale_count = sum(1 for lock in locks if lock.get("stale") is True)
     lines = [
         f"- Found {len(locks)} session lock file{'s' if len(locks) != 1 else ''}.",
         *[_doctor_session_lock_line(lock) for lock in locks],
     ]
-    if stale_count:
+    if stale_count and not should_repair:
         lines.append(f"- {stale_count} lock file{'s are' if stale_count != 1 else ' is'} stale.")
-        lines.append("- Remove stale lock files only after confirming no writer owns them.")
+        lines.append('- Run "openzues doctor --fix" to remove stale lock files automatically.')
+    if should_repair and removed_count:
+        lines.append(
+            f"- Removed {removed_count} stale session lock "
+            f"file{'s' if removed_count != 1 else ''}."
+        )
     return {
         "summary": lines[0][2:],
         "count": len(locks),
         "staleCount": stale_count,
+        "removedCount": removed_count,
         "locks": locks,
         "lines": lines,
     }
@@ -3507,7 +3528,8 @@ def _doctor_session_lock_line(lock: dict[str, object]) -> str:
         if lock.get("stale") is True
         else "stale=no"
     )
-    return f"- {path} {pid_status} {age_status} {stale_status}"
+    removed_status = " [removed]" if lock.get("removed") is True else ""
+    return f"- {path} {pid_status} {age_status} {stale_status}{removed_status}"
 
 
 def _doctor_session_lock_pid(value: object) -> int | None:
@@ -3578,8 +3600,10 @@ def _doctor_session_lock_age_label(value: object) -> str:
 def _with_doctor_session_lock_health(
     payload: dict[str, object],
     data_dir: Path,
+    *,
+    should_repair: bool = False,
 ) -> dict[str, object]:
-    session_locks = _doctor_session_lock_payload(data_dir)
+    session_locks = _doctor_session_lock_payload(data_dir, should_repair=should_repair)
     if session_locks is None:
         return payload
     next_payload = dict(payload)
@@ -6095,6 +6119,147 @@ def _with_doctor_gateway_config_payload(
     warnings = [
         str(warning)
         for warning in _object_list(gateway_config.get("warnings"))
+    ]
+    return _with_doctor_added_warnings(next_payload, warnings)
+
+
+_GATEWAY_RUNTIME_NODE_MIGRATION_CODES = {
+    "gateway-runtime-bun",
+    "gateway-runtime-node-version-manager",
+}
+_GATEWAY_RUNTIME_MISSING_SYSTEM_NODE_WARNING = (
+    "System Node 22 LTS (22.14+) or Node 24 not found. Install via "
+    "Homebrew/apt/choco and rerun doctor to migrate off Bun/version managers."
+)
+
+
+def _doctor_node_version_tuple(version: str | None) -> tuple[int, int, int] | None:
+    if version is None:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _doctor_node_version_supported(version: str | None) -> bool:
+    parsed = _doctor_node_version_tuple(version)
+    if parsed is None:
+        return False
+    return parsed >= (22, 14, 0)
+
+
+def _resolve_doctor_gateway_system_node_info() -> dict[str, object] | None:
+    node_path = shutil.which("node")
+    if node_path is None:
+        return None
+    version: str | None = None
+    try:
+        completed = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        completed = None
+    if completed is not None and completed.returncode == 0:
+        version = _optional_cli_string(completed.stdout)
+    return {
+        "path": node_path,
+        "version": version.lstrip("v") if version is not None else None,
+        "supported": _doctor_node_version_supported(version),
+    }
+
+
+def _doctor_gateway_service_audit_issues(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    gateway = _dict_config(snapshot.get("gateway"))
+    containers = (
+        gateway.get("serviceAudit"),
+        snapshot.get("gatewayServiceAudit"),
+        snapshot.get("serviceAudit"),
+    )
+    issues: list[dict[str, object]] = []
+    for container in containers:
+        if isinstance(container, dict):
+            raw_issues = container.get("issues")
+        else:
+            raw_issues = container
+        if not isinstance(raw_issues, list):
+            continue
+        for issue in raw_issues:
+            if isinstance(issue, dict):
+                issues.append(dict(issue))
+    return issues
+
+
+def _doctor_gateway_needs_node_runtime_migration(issues: Sequence[object]) -> bool:
+    return any(
+        isinstance(issue, dict)
+        and _optional_cli_string(issue.get("code")) in _GATEWAY_RUNTIME_NODE_MIGRATION_CODES
+        for issue in issues
+    )
+
+
+def _doctor_gateway_system_node_warning(
+    system_node: dict[str, object] | None,
+) -> str | None:
+    if system_node is None or system_node.get("supported") is True:
+        return None
+    version = _optional_cli_string(system_node.get("version")) or "unknown"
+    path = _optional_cli_string(system_node.get("path")) or "unknown"
+    return (
+        f"System Node {version} at {path} is below the required Node 22.14+. "
+        "Install Node 24 (recommended) or Node 22 LTS from nodejs.org or Homebrew."
+    )
+
+
+def _build_doctor_gateway_runtime_payload(
+    config_service: object | None,
+) -> dict[str, object] | None:
+    snapshot = _doctor_config_snapshot(config_service)
+    issues = _doctor_gateway_service_audit_issues(snapshot)
+    if not _doctor_gateway_needs_node_runtime_migration(issues):
+        return None
+    system_node = _resolve_doctor_gateway_system_node_info()
+    if isinstance(system_node, dict) and system_node.get("supported") is True:
+        return None
+    warnings = [
+        warning
+        for warning in (
+            _doctor_gateway_system_node_warning(system_node),
+            _GATEWAY_RUNTIME_MISSING_SYSTEM_NODE_WARNING,
+        )
+        if warning is not None
+    ]
+    return {
+        "status": "warning",
+        "summary": "Gateway runtime needs a supported system Node before migration.",
+        "source": "openzues-native",
+        "openClawContribution": "doctor:gateway-runtime",
+        "reason": "node_runtime_migration_requires_system_node",
+        "needsNodeRuntimeMigration": True,
+        "systemNode": system_node,
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_gateway_runtime_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+) -> dict[str, object]:
+    gateway_runtime = _build_doctor_gateway_runtime_payload(config_service)
+    if gateway_runtime is None:
+        return payload
+    next_payload = dict(payload)
+    next_payload["gatewayRuntime"] = gateway_runtime
+    warnings = [
+        str(warning)
+        for warning in _object_list(gateway_runtime.get("warnings"))
     ]
     return _with_doctor_added_warnings(next_payload, warnings)
 
@@ -21819,6 +21984,10 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        payload = _with_doctor_gateway_runtime_payload(
+            payload,
+            services.gateway_config,
+        )
         payload = _with_doctor_claude_cli_payload(
             payload,
             services.gateway_config,
@@ -21859,7 +22028,11 @@ def doctor(
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
         if isinstance(data_dir, Path):
             payload = _with_doctor_state_directory_health(payload, data_dir)
-            payload = _with_doctor_session_lock_health(payload, data_dir)
+            payload = _with_doctor_session_lock_health(
+                payload,
+                data_dir,
+                should_repair=fix,
+            )
         payload = _with_doctor_legacy_cron_payload(
             payload,
             services.gateway_config,

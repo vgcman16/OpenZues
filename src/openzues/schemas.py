@@ -20,6 +20,7 @@ EconomyState = Literal["compounding", "balanced", "speculative", "leaking", "hib
 TaskStatus = Literal["idle", "due", "running", "attention", "completed", "disabled"]
 NotificationRouteKind = Literal[
     "webhook",
+    "bluebubbles",
     "slack",
     "telegram",
     "discord",
@@ -27,9 +28,11 @@ NotificationRouteKind = Literal[
     "zalo",
     "line",
     "matrix",
+    "imessage",
 ]
 NotificationRouteViewKind = Literal[
     "webhook",
+    "bluebubbles",
     "slack",
     "telegram",
     "discord",
@@ -37,6 +40,7 @@ NotificationRouteViewKind = Literal[
     "zalo",
     "line",
     "matrix",
+    "imessage",
     "session",
     "announce",
 ]

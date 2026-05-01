@@ -39,6 +39,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   saved_path_attachment_stages"` (`5 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Native configured ACP binding helpers now mirror OpenClaw's
+  `persistent-bindings.types.ts` and `persistent-bindings.lifecycle.ts`
+  key/record/parse/resolve/ensure contract: session keys use the
+  16-character SHA-256 hash of
+  `channel:accountId:conversationId`, config-sourced binding records persist
+  `targetKind="session"`, `boundAt=0`, conversation ids, and ACP metadata, and
+  stored records can be parsed back into normalized configured binding specs.
+  The fakeable native lifecycle adapter now keeps matching ready ACP sessions,
+  closes/reinitializes mismatched or errored sessions, and initializes runtime
+  sessions with the configured ACP harness agent override. Native reset-in-place
+  handling now clears metadata for configured ACP binding sessions so the next
+  turn can recreate them, keeps metadata for ordinary ACP binding sessions, and
+  treats configured bindings with no ACP metadata as already reset. The native
+  resolver now also materializes top-level `type="acp"` `bindings[]` config
+  entries into configured ACP binding specs/records, prefers exact accounts
+  over wildcard bindings, and resolves configured ACP session keys back to the
+  matching config-derived spec.
+- Verified the configured ACP binding helper slice with `python -m pytest
+  tests\test_acp_persistent_bindings.py -q` (`14 passed`), adjacent ACP spawn
+  proof `python -m pytest tests\test_acp_persistent_bindings.py
+  tests\test_gateway_acp_spawn.py -q` (`33 passed`), adjacent gateway ACP
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and
+  thread"` (`7 passed`), `ruff check
+  src\openzues\services\acp_persistent_bindings.py
+  tests\test_acp_persistent_bindings.py`, and `mypy
+  src\openzues\services\acp_persistent_bindings.py`.
 - Route-backed thread-bound spawn binding now includes LINE current-conversation
   routes. The shared binder accepts LINE notification route views, keeps the
   provider target for delivery, and stores normalized LINE conversation ids in
@@ -374,14 +400,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py`.
 - Top-level `doctor` now reports OpenClaw-style session lock health for
   `agents/*/sessions/*.jsonl.lock` files in human and JSON output, including
-  pid liveness, age labels, stale posture, and read-only guidance.
+  pid liveness, age labels, stale posture, read-only guidance, and `--fix`
+  removal of stale locks while preserving fresh locks.
 - Verified the doctor session-lock slice with `python -m pytest
-  tests\test_cli.py -q -k "doctor_human_output_reports_session_lock_files"` (`1
-  passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
-  "doctor_human_output_reports_session_lock_files or
-  doctor_json_warns_when_sandbox_enabled_without_docker or
-  doctor_and_update_status_json_include_hermes_sections"` (`3 passed`), `ruff
-  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+  tests\test_cli.py -q -k "doctor_human_output_reports_session_lock_files or
+  doctor_fix_removes_stale_session_lock_files"` (`2 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now reports the OpenClaw state-integrity warning
   for a missing configured state/data directory, including a structured
   `stateDirectory` payload and the CRITICAL warning text from
@@ -5099,21 +5123,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
-- Slack `message.action poll` now reaches the native route-backed poll runtime
-  instead of falling through unsupported. The action forwards OpenClaw-style
-  `to`, `pollQuestion`, `pollOption`, `pollMulti`, `pollDurationHours`,
-  `threadId`, and `silent` into `gateway/poll`, returning provider
-  `messageId`, `channelId`, `conversationId`, and `pollId` metadata.
-- Verified the Slack action-poll slice with `python -m pytest
-  tests\test_ops_mesh.py -q -k "slack_poll_route"` (`1 passed`), adjacent
-  route/provider coverage `python -m pytest tests\test_ops_mesh.py -q -k
-  "message_action_dispatches_slack_poll_route or
-  message_action_dispatches_slack_send_route or
-  send_direct_channel_poll_uses_slack_native_route or
-  message_action_dispatches_telegram_poll_route or
-  message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
-  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
-  src\openzues\services\ops_mesh.py`.
+- Slack `message.action poll` now matches OpenClaw's channel-actions contract:
+  Slack message actions return unsupported for `poll` and do not post through
+  the synthetic poll route, while the separate direct `gateway.poll` Slack
+  runtime remains available for route-backed direct polls.
+- Verified the Slack action-poll unsupported slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_rejects_slack_poll_like_openclaw
+  -q` (`1 passed`), adjacent Slack action coverage `python -m pytest
+  tests\test_ops_mesh.py -q -k "message_action_dispatches_slack or
+  rejects_slack_poll"` (`17 passed`), direct Slack poll coverage
+  `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_slack_native_route
+  -q` (`1 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - WhatsApp `message.action poll` now reaches the native Cloud API
   interactive-button poll runtime instead of falling through unsupported. The
   action forwards OpenClaw-style `to`, `pollQuestion`, `pollOption`, and
@@ -5125,7 +5147,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "message_action_dispatches_whatsapp_poll_route or
   message_action_dispatches_whatsapp_react_route or
   send_direct_channel_poll_uses_whatsapp_native_route or
-  message_action_dispatches_slack_poll_route or
+  message_action_rejects_slack_poll_like_openclaw or
   message_action_dispatches_telegram_poll_route or
   message_action_dispatches_discord_poll_route"` (`6 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
@@ -6012,6 +6034,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed video sends now also carry OpenClaw's `trackingId` option
+  through `GatewayOutboundRuntimeMessageRequest`, persist it on saved outbound
+  delivery payloads, and emit LINE video `trackingId` only for user chat IDs
+  while omitting it for group/room destinations.
+- Verified the LINE video tracking slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_line_video_tracking_id_for_user_target
+  tests\test_ops_mesh.py::test_ops_mesh_service_line_video_tracking_id_omitted_for_group_target
+  -q` (`2 passed`), adjacent LINE direct proofs `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_video or line_audio_duration or
+  line_native"` (`5 passed`) and `python -m pytest tests\test_ops_mesh.py -q
+  -k "direct_channel_message and line"` (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 - LINE route-backed direct sends now carry OpenClaw's explicit audio media
   options through the shared outbound runtime: `mediaKind="audio"` and
   `durationMs` persist on saved delivery payloads and the native LINE adapter
@@ -6121,6 +6158,315 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- Telegram `message.action delete` / `deleteMessage` now dispatches through
+  the native Bot API `deleteMessage` route with OpenClaw's chat-id aliases and
+  returns the upstream-shaped `{ ok: true, deleted: true }` envelope.
+- Verified the Telegram delete action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_delete_route"` (`1 passed`),
+  adjacent Telegram action proofs `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"` (`6 passed`
+  each), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action edit` / `editMessage` now dispatches through the
+  native Bot API `editMessageText` route with OpenClaw's chat/content aliases,
+  treats "message is not modified" as success, and returns the upstream-shaped
+  top-level `messageId` / `chatId` result.
+- Verified the Telegram edit action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_edit_route"` (`1 passed`), adjacent
+  Telegram action proofs `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"` (`7 passed`
+  each), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action topic-create` / `createForumTopic` and
+  `topic-edit` / `editForumTopic` now dispatch through the native Bot API forum
+  topic routes, including base-chat normalization for topic-qualified targets,
+  supported icon-color validation, custom icon emoji forwarding, and
+  OpenClaw-shaped topic result envelopes.
+- Verified the Telegram forum-topic action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_topic_create_route or
+  telegram_topic_edit_route"` (`2 passed`), adjacent Telegram action proofs
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"` (`9 passed`
+  each), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix `message.action poll-vote` now dispatches through the native Matrix
+  route path: it fetches the poll start event, resolves option ids and 1-based
+  option indexes against the poll definition, enforces `max_selections`, sends
+  `m.poll.response`, and returns OpenClaw-shaped answer metadata.
+- Verified the Matrix poll-vote action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_poll_vote_route"` (`1 passed`),
+  adjacent Matrix action proofs `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix"` (`14 passed`) and `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix and message_action"` (`15 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
+- Telegram direct sends now preserve OpenClaw's `channelData.telegram.pin`
+  through gateway `send`, `GatewayOutboundRuntimeMessageRequest`, OpsMesh saved
+  delivery payloads, and native Bot API route sends. The Telegram route-backed
+  sender pins the first delivered message via `pinChatMessage` with
+  `disable_notification=true`, and pin failures are logged as best-effort
+  follow-up failures without changing the original delivery to failed.
+- Verified the Telegram pin-on-delivery slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "pins_telegram_first_delivery or
+  keeps_delivery_when_telegram_pin_fails"` (`2 passed`), `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "send_preserves_provider_native_reply_thread_and_document_options"` (`1
+  passed`), adjacent send proofs `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_native_route or telegram_native_options or telegram_topic or
+  telegram_media_group or pins_telegram_first_delivery or
+  keeps_delivery_when_telegram_pin_fails"` (`11 passed`) and `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "send_preserves_provider_native_reply_thread_and_document_options
+  or send_endpoint or direct_channel or send_uses"` (`7 passed`), `ruff check
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py tests\test_ops_mesh.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py`.
+- Telegram direct sends now map OpenClaw's `channelData.telegram.buttons` to
+  Bot API `reply_markup.inline_keyboard`, filtering button rows down to entries
+  with `text` and `callback_data`, preserving optional `style`, attaching
+  buttons to text sends, and attaching them only to the first media send.
+- Verified the Telegram inline-buttons slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "forwards_telegram_buttons"` (`1 failed`
+  before implementation, missing `reply_markup`), then `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_buttons"` (`2 passed`), adjacent
+  Telegram send proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_native_route or telegram_native_options or telegram_topic or
+  telegram_media_group or telegram_buttons or telegram_pin"` (`12 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action send` now maps OpenClaw's action-level `buttons`
+  parameter to native Bot API `reply_markup.inline_keyboard`, preserving
+  callback data and optional styles while rejecting malformed rows/buttons,
+  callback data over 64 UTF-8 bytes, and unsupported styles before dispatch.
+- Verified the Telegram action-buttons slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_send_buttons"` (`1 failed` before
+  implementation, missing `reply_markup`), then `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_send_buttons"` (`1 passed`),
+  adjacent Telegram action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "telegram_send_buttons or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_telegram"` (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- `sessions.send` follow-ups to completed child subagent sessions now mirror
+  OpenClaw's `reactivateCompletedSubagentSession` path: a new started run
+  replaces the completed task record's `runId` / `sourceId`, clears terminal
+  fields, restores running lifecycle metadata, preserves the resolved timeout,
+  and publishes `sessions.changed` after subscribers can observe the running
+  child state.
+- Verified the completed-child follow-up reactivation slice with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_send_reactivates_completed_child_before_changed_event
+  -q` (`1 failed` before implementation, child metadata still `done` on
+  `run-old`), then the same command (`1 passed`), adjacent `sessions.send`
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k
+  "sessions_send_reactivates_completed_child or
+  sessions_send_started_ack_attaches_pending_message_seq or
+  sessions_send_publishes_openclaw_sessions_changed_gateway_event"` (`3
+  passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Top-level `doctor --json` now includes an OpenClaw-shaped
+  `doctor:gateway-runtime` contribution for service-audit rows that need Node
+  runtime migration. The native probe reports too-old system Node with the
+  upstream `below the required Node 22.14+` warning, reports missing system
+  Node with the upstream Node 22 LTS / Node 24 guidance, and promotes the
+  warning text into the top-level doctor warnings list.
+- Verified the gateway-runtime Node doctor slice with `python -m pytest
+  tests\test_cli.py -q -k "gateway_runtime_node"` (`2 failed` before
+  implementation, missing `gatewayRuntime`), then the same command (`2
+  passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
+  "gateway_runtime_node or gateway_mode_is_unset or
+  gateway_auth_missing_local_token or
+  doctor_and_update_status_json_include_hermes_sections"` (`5 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Matrix `message.action read` now matches OpenClaw's public Matrix action
+  adapter by routing to the existing native `readMessages` room-history
+  implementation with the same `roomId`, bounded `limit`, `before`, and
+  `after` handling.
+- Verified the Matrix read alias slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_matrix_read_alias_route
+  -q` (`1 failed` before implementation, `read` returned `None`), then the
+  same command (`1 passed`), adjacent Matrix read proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_read_alias_route or
+  matrix_read_messages_route or message_action_dispatches_matrix_read"` (`2
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix `message.action pin`, `unpin`, and `list-pins` now match OpenClaw's
+  public Matrix action adapter by routing to the existing native
+  `pinMessage`, `unpinMessage`, and `listPins` room pin-state implementations.
+- Verified the Matrix pin alias slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_pin_mutation_route or
+  matrix_list_pins_route"` (`3 failed` before implementation for `pin`,
+  `unpin`, and `list-pins`; internal names still passed), then the same command
+  (`6 passed`), adjacent Matrix alias proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_pin_mutation_route or
+  matrix_list_pins_route or matrix_read_alias_route"` (`7 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage `message.action unsend` now follows OpenClaw's
+  BlueBubbles action adapter by accepting the public `imessage` gateway
+  channel, resolving a route-backed `bluebubbles` provider account, and
+  sending `POST /api/v1/message/{messageId}/unsend` with `partIndex` through
+  OpenZues' native provider HTTP adapter.
+- Verified the BlueBubbles unsend slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_bluebubbles_unsend_route
+  -q` (`1 failed` before implementation, action returned `None`), then the
+  same command (`1 passed`), gateway channel proof `python -m pytest
+  tests\test_gateway_node_methods.py::test_message_action_dispatches_imessage_native_action_runtime
+  -q` (`1 failed` before implementation, unsupported `imessage` channel), then
+  the same command (`1 passed`), adjacent message-action proofs `python -m
+  pytest tests\test_ops_mesh.py -q -k "bluebubbles_unsend_route or
+  message_action_dispatches_zalo_send_route or
+  message_action_dispatches_matrix_read_alias_route"` (`3 passed`) and `python
+  -m pytest tests\test_gateway_node_methods.py -q -k "imessage_native_action
+  or message_action_dispatches_registered_native_action_runtime or
+  message_action_dispatches_zalo_send_runtime"` (`3 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py
+  tests\test_ops_mesh.py tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- BlueBubbles/iMessage `message.action edit` now follows OpenClaw's
+  BlueBubbles action adapter by routing `messageId` plus `text` / `newText` /
+  `message`, `partIndex`, and `backwardsCompatMessage` to
+  `POST /api/v1/message/{messageId}/edit`, preserving the OpenClaw-shaped
+  `{ ok: true, edited: rawMessageId }` result.
+- Verified the BlueBubbles edit slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_bluebubbles_edit_route
+  -q` (`1 failed` before implementation, action returned `None`), then the
+  same command (`1 passed`), adjacent message-action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_edit_route or
+  bluebubbles_unsend_route or message_action_dispatches_zalo_send_route or
+  message_action_dispatches_matrix_read_alias_route"` (`4 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage `message.action react` now follows OpenClaw's
+  BlueBubbles action adapter by routing `messageId`, `emoji`, `remove`,
+  `partIndex`, and direct `chatGuid` / `chat_guid` targets to
+  `POST /api/v1/message/react`, normalizing tapbacks to BlueBubbles reaction
+  names and preserving the OpenClaw-shaped add/remove results.
+- Verified the BlueBubbles reaction slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_react_route or
+  bluebubbles_remove_reaction_route"` (`2 failed` before implementation,
+  actions returned `None`), then the same command (`2 passed`), adjacent
+  message-action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bluebubbles_react_route or bluebubbles_remove_reaction_route or
+  bluebubbles_edit_route or bluebubbles_unsend_route"` (`4 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage `message.action reply` and `sendWithEffect` now follow
+  OpenClaw's BlueBubbles send adapter by routing reply text, `messageId`,
+  `partIndex`, target chat GUIDs, and short effect aliases through
+  `POST /api/v1/message/text`, using Private API method payloads, temp GUIDs,
+  and upstream-shaped `messageId`, `repliedTo`, and `effect` results.
+- Verified the BlueBubbles reply/effect slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_reply_route or
+  bluebubbles_send_with_effect_route"` (`2 failed` before implementation,
+  actions returned `None`), then the same command (`2 passed`), adjacent
+  message-action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bluebubbles_reply_route or bluebubbles_send_with_effect_route or
+  bluebubbles_react_route or bluebubbles_remove_reaction_route or
+  bluebubbles_edit_route or bluebubbles_unsend_route"` (`6 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage group-management actions now follow OpenClaw's
+  BlueBubbles chat adapter by routing `renameGroup`, `addParticipant`,
+  `removeParticipant`, and `leaveGroup` through the native route-backed
+  `/api/v1/chat/{chatGuid}` API with the upstream HTTP methods and result
+  fields.
+- Verified the BlueBubbles group-management slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_bluebubbles_group_management_routes
+  -q` (`1 failed` before implementation, action returned `None`), then the
+  same command (`1 passed`), adjacent message-action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_group_management_routes or
+  bluebubbles_reply_route or bluebubbles_send_with_effect_route or
+  bluebubbles_react_route or bluebubbles_remove_reaction_route or
+  bluebubbles_edit_route or bluebubbles_unsend_route"` (`7 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage media actions now follow OpenClaw's BlueBubbles
+  attachment and group-icon adapters by routing `upload-file`, legacy
+  `sendAttachment`, and `setGroupIcon` through multipart/form-data requests
+  with decoded base64 buffers, filenames, content types, captions, temp GUIDs,
+  and upstream-shaped message/icon results.
+- Verified the BlueBubbles media/icon slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_upload_file_route or
+  bluebubbles_set_group_icon_route"` (`2 failed` before implementation,
+  actions returned `None`), then the same command (`2 passed`), adjacent
+  BlueBubbles proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bluebubbles_"` (`9 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound text sends now participate in the shared
+  route-backed provider runtime: `kind="bluebubbles"` routes are selected for
+  `gateway.send`, direct `chat_guid` targets post to
+  `POST /api/v1/message/text`, and native message id/chat metadata returns
+  through `send_direct_channel_message` and saved outbound deliveries.
+- Verified the BlueBubbles outbound text-send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_route
+  -q` (`1 failed` before implementation, no provider route was subscribed),
+  then the same command (`1 passed`), adjacent BlueBubbles proof `python -m
+  pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`10 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound media sends now follow OpenClaw's channel
+  runtime by routing `gateway.send` media payloads through
+  `POST /api/v1/message/attachment`, downloading media through a fakeable
+  native helper, preserving reply threading fields, sending the leading
+  caption as a follow-up BlueBubbles text message, and returning attachment
+  ids, media ids, media URLs, and saved provider metadata.
+- Verified the BlueBubbles outbound media-send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_media_route
+  -q` (`1 failed` before implementation, media sends returned the caption
+  text id and skipped the attachment endpoint), then the same command (`1
+  passed`), adjacent BlueBubbles proof `python -m pytest tests\test_ops_mesh.py
+  -q -k "bluebubbles_"` (`11 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound voice media now follows OpenClaw's attachment
+  guard: `audioAsVoice=true` rejects non-audio media before upload, accepts
+  only MP3/CAF voice media, normalizes valid voice filenames/content types,
+  and keeps `isAudioMessage` scoped to valid native multipart sends.
+- Verified the BlueBubbles outbound voice-media hardening slice with `python
+  -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_rejects_bluebubbles_voice_non_audio
+  -q` (`1 failed` before implementation, PNG media uploaded with
+  `isAudioMessage`), then the same command (`1 passed`), adjacent BlueBubbles
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`12
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage local outbound media now follows OpenClaw's
+  `mediaLocalRoots` fail-closed policy: local paths and `file://` URLs are
+  rejected by default, remote-host `file://` values are rejected, configured
+  channel/account roots are read from the gateway config snapshot, and only
+  files under those roots are read before the native multipart send.
+- Verified the BlueBubbles local-media root slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_bluebubbles_local_media_requires_roots
+  -q` (`1 failed` before implementation, local files uploaded without
+  `mediaLocalRoots`), then the same command (`1 passed`), adjacent BlueBubbles
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`13
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound media now enforces OpenClaw's configured
+  media-size limits: account-level, channel-level, and
+  `agents.defaults.mediaMaxMb` values from the gateway config snapshot are
+  converted to byte ceilings and oversized local or remote media is rejected
+  before native multipart upload.
+- Verified the BlueBubbles media max-size slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_bluebubbles_local_media_honors_media_max_mb
+  -q` (`1 failed` before implementation, a 1MB+1 local file uploaded under a
+  1MB limit), then the same command (`1 passed`), adjacent BlueBubbles proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`14
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

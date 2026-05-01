@@ -11105,6 +11105,127 @@ async def test_sessions_send_started_ack_attaches_pending_message_seq() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_send_reactivates_completed_child_before_changed_event(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-send-reactivates-child.db")
+    await database.initialize()
+
+    class _RecordingBroadcastHub(BroadcastHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.published_events: list[dict[str, object]] = []
+
+        async def publish(self, event: dict[str, object]) -> None:
+            self.published_events.append(dict(event))
+            await super().publish(event)
+
+    hub = _RecordingBroadcastHub()
+    child_session_key = "agent:main:subagent:followup"
+    parent_session_key = "agent:main:main"
+    await database.upsert_gateway_session_metadata(
+        session_key=child_session_key,
+        metadata={
+            "runtime": "acp",
+            "parentSessionKey": parent_session_key,
+            "spawnedBy": parent_session_key,
+            "spawnMode": "run",
+            "cleanup": "keep",
+            "runTimeoutSeconds": 7,
+            "status": "done",
+            "startedAt": 2_000,
+            "endedAt": 3_000,
+            "runtimeMs": 1_000,
+            "taskRecord": {
+                "taskId": "acp:run-old",
+                "runtime": "acp",
+                "sourceId": "run-old",
+                "requesterSessionKey": parent_session_key,
+                "ownerKey": parent_session_key,
+                "scopeKind": "session",
+                "childSessionKey": child_session_key,
+                "agentId": "codex",
+                "runId": "run-old",
+                "task": "initial task",
+                "status": "succeeded",
+                "deliveryStatus": "session_queued",
+                "notifyPolicy": "done_only",
+                "createdAt": 1_000,
+                "startedAt": 2_000,
+                "endedAt": 3_000,
+                "lastEventAt": 3_000,
+                "terminalSummary": "finished",
+                "terminalOutcome": "succeeded",
+            },
+        },
+    )
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+    ) -> dict[str, object]:
+        del session_key, message, idempotency_key, thinking, deliver, timeout_ms
+        return {"runId": "run-new", "status": "started"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=hub,
+        sessions_service=GatewaySessionsService(database),
+        chat_send_service=fake_chat_send_service,
+    )
+
+    payload = await service.call(
+        "sessions.send",
+        {
+            "key": child_session_key,
+            "message": "follow-up",
+            "idempotencyKey": "run-new",
+        },
+        now_ms=4_000,
+    )
+
+    assert payload == {"runId": "run-new", "status": "started", "messageSeq": 1}
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    metadata = metadata_row["metadata"]
+    assert metadata["status"] == "running"
+    assert metadata["startedAt"] == 4_000
+    assert "endedAt" not in metadata
+    assert "runtimeMs" not in metadata
+    task_record = metadata["taskRecord"]
+    assert task_record["taskId"] == "acp:run-new"
+    assert task_record["sourceId"] == "run-new"
+    assert task_record["runId"] == "run-new"
+    assert task_record["status"] == "running"
+    assert task_record["runTimeoutSeconds"] == 7
+    assert task_record["createdAt"] == 4_000
+    assert task_record["startedAt"] == 4_000
+    assert task_record["lastEventAt"] == 4_000
+    assert "endedAt" not in task_record
+    assert "terminalSummary" not in task_record
+    assert "terminalOutcome" not in task_record
+
+    sessions_changed = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "sessions.changed"
+    ]
+    assert len(sessions_changed) == 1
+    changed_payload = sessions_changed[0]["payload"]
+    assert changed_payload["sessionKey"] == child_session_key
+    assert changed_payload["reason"] == "send"
+    assert changed_payload["status"] == "running"
+    assert changed_payload["startedAt"] == 4_000
+    assert "endedAt" not in changed_payload
+
+
+@pytest.mark.asyncio
 async def test_sessions_steer_without_interrupt_publishes_send_reason_gateway_event() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-sessions-steer-event-service"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -40862,6 +40983,51 @@ async def test_message_action_dispatches_registered_native_action_runtime() -> N
 
 
 @pytest.mark.asyncio
+async def test_message_action_dispatches_imessage_native_action_runtime() -> None:
+    calls: list[GatewayMessageActionDispatchRequest] = []
+
+    async def fake_message_action_dispatcher(
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        calls.append(request)
+        return {"ok": True, "unsent": "msg-1"}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        message_action_dispatcher=fake_message_action_dispatcher,
+    )
+
+    result = await service.call(
+        "message.action",
+        {
+            "channel": "imessage",
+            "action": "unsend",
+            "params": {"messageId": "msg-1"},
+            "accountId": "personal",
+            "requesterSenderId": "+15551234567",
+            "senderIsOwner": True,
+            "sessionKey": "agent:main:bluebubbles:direct:+15551234567",
+            "idempotencyKey": "idem-message-action-imessage-unsend",
+        },
+        requester=GatewayNodeMethodRequester(
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+        ),
+    )
+
+    assert result == {"ok": True, "unsent": "msg-1"}
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.channel == "imessage"
+    assert request.action == "unsend"
+    assert request.params == {"messageId": "msg-1"}
+    assert request.account_id == "personal"
+    assert request.requester_sender_id == "+15551234567"
+    assert request.sender_is_owner is True
+    assert request.session_key == "agent:main:bluebubbles:direct:+15551234567"
+    assert request.idempotency_key == "idem-message-action-imessage-unsend"
+
+
+@pytest.mark.asyncio
 async def test_message_action_dispatches_zalo_send_runtime() -> None:
     calls: list[GatewayMessageActionDispatchRequest] = []
 
@@ -41524,6 +41690,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
         reply_to_id: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
+        channel_data: dict[str, object] | None = None,
     ) -> dict[str, object]:
         calls.append(
             {
@@ -41538,6 +41705,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
                 "reply_to_id": reply_to_id,
                 "silent": silent,
                 "force_document": force_document,
+                "channel_data": channel_data,
             }
         )
         return {
@@ -41564,6 +41732,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
             "replyToMessageId": "message-99",
             "silent": True,
             "forceDocument": True,
+            "channelData": {"telegram": {"pin": True}},
             "idempotencyKey": "idem-send-provider-native-options",
         },
     )
@@ -41581,6 +41750,7 @@ async def test_send_preserves_provider_native_reply_thread_and_document_options(
             "reply_to_id": "message-99",
             "silent": True,
             "force_document": True,
+            "channel_data": {"telegram": {"pin": True}},
         }
     ]
     assert payload == {

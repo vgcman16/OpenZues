@@ -126,6 +126,7 @@ class GatewayOutboundRuntimeMessageRequest:
     media_kind: str | None = None
     preview_image_url: str | None = None
     duration_ms: int | None = None
+    tracking_id: str | None = None
     location: dict[str, object] | None = None
     quick_replies: tuple[str, ...] = ()
     flex_message: dict[str, object] | None = None
@@ -136,6 +137,7 @@ class GatewayOutboundRuntimeMessageRequest:
     reply_token: str | None = None
     silent: bool | None = None
     force_document: bool | None = None
+    channel_data: dict[str, object] | None = None
     account_id: str | None = None
     thread_id: str | None = None
     session_key: str | None = None
@@ -320,6 +322,7 @@ class GatewayOutboundRuntimeService:
         media_kind: str | None = None,
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
+        tracking_id: str | None = None,
         location: dict[str, object] | None = None,
         quick_replies: list[str] | tuple[str, ...] | None = None,
         flex_message: dict[str, object] | None = None,
@@ -330,6 +333,7 @@ class GatewayOutboundRuntimeService:
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
+        channel_data: dict[str, object] | None = None,
         account_id: str | None = None,
         thread_id: str | None = None,
         agent_id: str | None = None,
@@ -360,6 +364,7 @@ class GatewayOutboundRuntimeService:
                         media_kind=_normalize_optional_string(media_kind),
                         preview_image_url=_normalize_optional_string(preview_image_url),
                         duration_ms=duration_ms,
+                        tracking_id=_normalize_optional_string(tracking_id),
                         location=location,
                         quick_replies=normalized_quick_replies,
                         flex_message=flex_message,
@@ -370,6 +375,9 @@ class GatewayOutboundRuntimeService:
                         reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
+                        channel_data=(
+                            dict(channel_data) if channel_data is not None else None
+                        ),
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),
@@ -432,6 +440,7 @@ class GatewayOutboundRuntimeService:
                         media_kind=_normalize_optional_string(media_kind),
                         preview_image_url=_normalize_optional_string(preview_image_url),
                         duration_ms=duration_ms,
+                        tracking_id=_normalize_optional_string(tracking_id),
                         location=location,
                         quick_replies=normalized_quick_replies,
                         flex_message=flex_message,
@@ -442,6 +451,9 @@ class GatewayOutboundRuntimeService:
                         reply_token=_normalize_optional_string(reply_token),
                         silent=silent,
                         force_document=force_document,
+                        channel_data=(
+                            dict(channel_data) if channel_data is not None else None
+                        ),
                         account_id=_normalize_optional_string(account_id),
                         thread_id=_normalize_optional_string(thread_id),
                         session_key=_normalize_optional_string(session_key),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import io
 import json
@@ -149,7 +150,101 @@ SLACK_API_BASE_URL = "https://slack.com/api"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
+BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
+BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
+BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
+BLUEBUBBLES_MEDIA_MB = 1024 * 1024
+BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
+BLUEBUBBLES_REACTION_ALIASES = {
+    "heart": "love",
+    "love": "love",
+    "red_heart": "love",
+    "thumbs_up": "like",
+    "thumbsup": "like",
+    "thumbs-up": "like",
+    "like": "like",
+    "thumb": "like",
+    "ok": "like",
+    "thumbs_down": "dislike",
+    "thumbsdown": "dislike",
+    "thumbs-down": "dislike",
+    "dislike": "dislike",
+    "boo": "dislike",
+    "no": "dislike",
+    "haha": "laugh",
+    "lol": "laugh",
+    "lmao": "laugh",
+    "rofl": "laugh",
+    "xd": "laugh",
+    "laugh": "laugh",
+    "emphasis": "emphasize",
+    "emphasize": "emphasize",
+    "exclaim": "emphasize",
+    "!!": "emphasize",
+    "important": "emphasize",
+    "bang": "emphasize",
+    "question": "question",
+    "?": "question",
+    "ask": "question",
+    "loved": "love",
+    "liked": "like",
+    "disliked": "dislike",
+    "laughed": "laugh",
+    "emphasized": "emphasize",
+    "questioned": "question",
+    "fire": "love",
+    "wow": "emphasize",
+    "!": "emphasize",
+    "heart_eyes": "love",
+    "smile": "laugh",
+    "smiley": "laugh",
+    "happy": "laugh",
+    "joy": "laugh",
+}
+BLUEBUBBLES_REACTION_EMOJIS = {
+    "\u2764\ufe0f": "love",
+    "\u2764": "love",
+    "\u2665\ufe0f": "love",
+    "\u2665": "love",
+    "\U0001f60d": "love",
+    "\U0001f495": "love",
+    "\U0001f44d": "like",
+    "\U0001f44c": "like",
+    "\U0001f44e": "dislike",
+    "\U0001f645": "dislike",
+    "\U0001f602": "laugh",
+    "\U0001f923": "laugh",
+    "\U0001f606": "laugh",
+    "\U0001f601": "laugh",
+    "\U0001f639": "laugh",
+    "\u203c\ufe0f": "emphasize",
+    "\u203c": "emphasize",
+    "\u2757": "emphasize",
+    "\u2755": "emphasize",
+    "\u2753": "question",
+    "\u2754": "question",
+}
+BLUEBUBBLES_EFFECT_IDS = {
+    "slam": "com.apple.MobileSMS.expressivesend.impact",
+    "loud": "com.apple.MobileSMS.expressivesend.loud",
+    "gentle": "com.apple.MobileSMS.expressivesend.gentle",
+    "invisible": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "invisible-ink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "invisible ink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "invisibleink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "echo": "com.apple.messages.effect.CKEchoEffect",
+    "spotlight": "com.apple.messages.effect.CKSpotlightEffect",
+    "balloons": "com.apple.messages.effect.CKHappyBirthdayEffect",
+    "confetti": "com.apple.messages.effect.CKConfettiEffect",
+    "love": "com.apple.messages.effect.CKHeartEffect",
+    "heart": "com.apple.messages.effect.CKHeartEffect",
+    "hearts": "com.apple.messages.effect.CKHeartEffect",
+    "lasers": "com.apple.messages.effect.CKLasersEffect",
+    "fireworks": "com.apple.messages.effect.CKFireworksEffect",
+    "celebration": "com.apple.messages.effect.CKSparklesEffect",
+}
 NATIVE_PROVIDER_ROUTE_KINDS = {
+    "bluebubbles",
     "slack",
     "telegram",
     "discord",
@@ -793,6 +888,30 @@ def _http_error_message(prefix: str, exc: HTTPError) -> str:
     return f"{message}: {detail}" if detail else message
 
 
+def _canonical_native_provider_channel(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES:
+        return "bluebubbles"
+    return normalized
+
+
+def _bluebubbles_api_endpoint(
+    target: str | None,
+    path: str,
+    *,
+    password: str | None,
+) -> str:
+    normalized = str(target or "").strip()
+    if _normalized_http_webhook_url(normalized) is None:
+        raise RuntimeError("BlueBubbles route target must be an http(s) server URL.")
+    secret = str(password or "").strip()
+    if not secret:
+        raise RuntimeError("BlueBubbles route is missing a password secret.")
+    endpoint = f"{normalized.rstrip('/')}/{path.lstrip('/')}"
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{urlencode({'password': secret})}"
+
+
 def _slack_api_endpoint(target: str | None, method: str) -> str:
     normalized = str(target or "").strip() or SLACK_API_BASE_URL
     if normalized.rstrip("/").endswith(f"/{method}"):
@@ -829,6 +948,328 @@ def _slack_reaction_name(raw: str | None) -> str:
     if not normalized:
         raise RuntimeError("Emoji is required for Slack reactions")
     return normalized.strip(":")
+
+
+def _bluebubbles_reaction_name(raw: str | None, *, remove: bool = False) -> str:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError("BlueBubbles reaction requires an emoji or name.")
+    lowered = normalized.lower()
+    if lowered.startswith("-"):
+        lowered = lowered[1:].strip()
+    mapped = (
+        BLUEBUBBLES_REACTION_EMOJIS.get(normalized)
+        or BLUEBUBBLES_REACTION_EMOJIS.get(lowered)
+        or BLUEBUBBLES_REACTION_ALIASES.get(lowered, lowered)
+    )
+    if mapped not in BLUEBUBBLES_REACTION_TYPES:
+        mapped = "love"
+    return f"-{mapped}" if remove else mapped
+
+
+def _bluebubbles_chat_guid_value(raw: str | None) -> str | None:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    if lowered.startswith("bluebubbles:"):
+        normalized = normalized[len("bluebubbles:") :].strip()
+        lowered = normalized.lower()
+    for prefix in ("chat_guid:", "chatguid:", "guid:"):
+        if lowered.startswith(prefix):
+            value = normalized[len(prefix) :].strip()
+            return value or None
+    if re.match(r"^[^;]+;[+-];[^;]+$", normalized):
+        return normalized
+    return None
+
+
+def _bluebubbles_chat_guid_from_params(params: dict[str, Any]) -> str | None:
+    direct = _message_action_param_string(params, "chatGuid")
+    if direct is not None:
+        return _bluebubbles_chat_guid_value(direct) or direct
+    target = _message_action_param_string(params, "to")
+    resolved = _bluebubbles_chat_guid_value(target)
+    if resolved is not None:
+        return resolved
+    return None
+
+
+def _bluebubbles_message_text(params: dict[str, Any]) -> str | None:
+    return _message_action_param_string(params, "text") or _message_action_param_string(
+        params,
+        "message",
+    )
+
+
+def _bluebubbles_chat_guid_from_send_target(params: dict[str, Any]) -> str | None:
+    target = _message_action_param_string(params, "to") or _message_action_param_string(
+        params,
+        "target",
+    )
+    resolved = _bluebubbles_chat_guid_value(target)
+    if resolved is not None:
+        return resolved
+    return _bluebubbles_chat_guid_from_params(params)
+
+
+def _bluebubbles_effect_id(raw: str | None) -> str | None:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    mapped = BLUEBUBBLES_EFFECT_IDS.get(lowered)
+    if mapped:
+        return mapped
+    dashed = re.sub(r"[\s_]+", "-", lowered)
+    mapped = BLUEBUBBLES_EFFECT_IDS.get(dashed)
+    if mapped:
+        return mapped
+    compact = re.sub(r"[\s_-]+", "", lowered)
+    return BLUEBUBBLES_EFFECT_IDS.get(compact) or normalized
+
+
+def _bluebubbles_message_id_from_result(result: object) -> str:
+    if not isinstance(result, dict):
+        return "ok" if result in (None, "") else "unknown"
+    roots: list[dict[str, Any]] = [result]
+    for key in ("data", "result", "payload", "message"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            roots.append(value)
+    data = result.get("data")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        roots.append(data[0])
+    for root in roots:
+        for key in ("message_id", "messageId", "messageGuid", "message_guid", "guid", "id", "uuid"):
+            candidate = root.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                if math.isfinite(float(candidate)):
+                    return str(candidate)
+    return "unknown"
+
+
+def _bluebubbles_decode_base64_buffer(raw: str | None, *, action: str) -> bytes:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError(f"BlueBubbles {action} requires buffer.")
+    try:
+        decoded = base64.b64decode(normalized, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError(f"BlueBubbles {action} buffer must be base64.") from exc
+    if not decoded:
+        raise RuntimeError(f"BlueBubbles {action} requires a non-empty buffer.")
+    return decoded
+
+
+def _bluebubbles_safe_filename(raw: str | None, fallback: str) -> str:
+    normalized = str(raw or "").strip().replace("\\", "/")
+    filename = normalized.rsplit("/", 1)[-1].strip() if normalized else ""
+    safe = re.sub(r'[\r\n"\\]', "_", filename or fallback).strip()
+    return safe or fallback
+
+
+def _bluebubbles_filename_with_extension(
+    filename: str,
+    extension: str,
+    fallback_base: str,
+) -> str:
+    current_extension = Path(filename).suffix
+    if current_extension.lower() == extension:
+        return filename
+    base = filename[: -len(current_extension)] if current_extension else filename
+    return f"{base or fallback_base}{extension}"
+
+
+def _bluebubbles_voice_media_info(
+    filename: str,
+    content_type: str | None,
+) -> tuple[str, str]:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    is_mp3 = extension == ".mp3" or normalized_type in BLUEBUBBLES_AUDIO_MIME_MP3
+    is_caf = extension == ".caf" or normalized_type in BLUEBUBBLES_AUDIO_MIME_CAF
+    is_audio = is_mp3 or is_caf or normalized_type.startswith("audio/")
+    if not is_audio:
+        raise RuntimeError("BlueBubbles voice messages require audio media (mp3 or caf).")
+    fallback_name = "Audio Message"
+    if is_mp3:
+        return (
+            _bluebubbles_filename_with_extension(filename, ".mp3", fallback_name),
+            content_type or "audio/mpeg",
+        )
+    if is_caf:
+        return (
+            _bluebubbles_filename_with_extension(filename, ".caf", fallback_name),
+            content_type or "audio/x-caf",
+        )
+    raise RuntimeError(
+        "BlueBubbles voice messages require mp3 or caf audio (convert before sending)."
+    )
+
+
+def _bluebubbles_channel_config(snapshot: dict[str, Any]) -> dict[str, Any]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return {}
+    for channel_id in ("bluebubbles", "imessage"):
+        channel_config = channels.get(channel_id)
+        if isinstance(channel_config, dict):
+            return channel_config
+    return {}
+
+
+def _bluebubbles_account_config(
+    channel_config: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, Any]:
+    accounts = channel_config.get("accounts")
+    if not isinstance(accounts, dict):
+        return {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = accounts.get(normalized_account_id)
+    return account_config if isinstance(account_config, dict) else {}
+
+
+def _bluebubbles_media_local_roots(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> list[str]:
+    channel_config = _bluebubbles_channel_config(snapshot)
+    account_config = _bluebubbles_account_config(channel_config, account_id)
+    raw_account_roots = account_config.get("mediaLocalRoots")
+    if isinstance(raw_account_roots, list):
+        return [str(entry).strip() for entry in raw_account_roots if str(entry).strip()]
+    raw_channel_roots = channel_config.get("mediaLocalRoots")
+    if isinstance(raw_channel_roots, list):
+        return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
+    return []
+
+
+def _bluebubbles_positive_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)) or float(value) <= 0:
+        return None
+    return float(value)
+
+
+def _bluebubbles_media_max_bytes(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> int | None:
+    channel_config = _bluebubbles_channel_config(snapshot)
+    account_config = _bluebubbles_account_config(channel_config, account_id)
+    for value in (
+        account_config.get("mediaMaxMb"),
+        channel_config.get("mediaMaxMb"),
+        (((snapshot.get("agents") or {}).get("defaults") or {}).get("mediaMaxMb"))
+        if isinstance(snapshot.get("agents"), dict)
+        else None,
+    ):
+        max_mb = _bluebubbles_positive_number(value)
+        if max_mb is not None:
+            return int(max_mb * BLUEBUBBLES_MEDIA_MB)
+    return None
+
+
+def _bluebubbles_assert_media_within_limit(
+    size_bytes: int,
+    *,
+    max_bytes: int | None,
+) -> None:
+    if max_bytes is None or max_bytes <= 0 or size_bytes <= max_bytes:
+        return
+    max_label = f"{max_bytes / BLUEBUBBLES_MEDIA_MB:.0f}"
+    size_label = f"{size_bytes / BLUEBUBBLES_MEDIA_MB:.2f}"
+    raise RuntimeError(f"Media exceeds {max_label}MB limit (got {size_label}MB)")
+
+
+def _bluebubbles_file_url_path(raw: str, *, config_root: bool = False) -> Path:
+    parsed = urlparse(raw)
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        label = " in mediaLocalRoots" if config_root else ""
+        raise RuntimeError(f"Invalid file:// URL{label}: {raw}")
+    local_value = unquote(parsed.path)
+    if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+        local_value = local_value[1:]
+    return Path(local_value).expanduser()
+
+
+def _bluebubbles_local_media_source_path(source: str) -> Path | None:
+    parsed = urlparse(source)
+    if parsed.scheme == "file":
+        return _bluebubbles_file_url_path(source)
+    if parsed.scheme and not re.fullmatch(r"[A-Za-z]", parsed.scheme):
+        return None
+    return Path(source).expanduser()
+
+
+def _bluebubbles_configured_local_root(raw: str) -> Path:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError("Empty mediaLocalRoots entry is not allowed")
+    if normalized.lower().startswith("file://"):
+        root = _bluebubbles_file_url_path(normalized, config_root=True)
+    else:
+        root = Path(normalized).expanduser()
+    if not root.is_absolute():
+        raise RuntimeError(f"mediaLocalRoots entries must be absolute paths: {raw}")
+    return root.resolve(strict=False)
+
+
+def _bluebubbles_path_inside_root(candidate: Path, root: Path) -> bool:
+    candidate_value = str(candidate)
+    root_value = str(root)
+    if candidate_value == root_value:
+        return False
+    root_prefix = root_value.rstrip("\\/") + "\\"
+    alt_root_prefix = root_value.rstrip("\\/") + "/"
+    if candidate_value.startswith(root_prefix) or candidate_value.startswith(alt_root_prefix):
+        return True
+    candidate_lower = candidate_value.lower()
+    root_lower = root_value.lower().rstrip("\\/")
+    return candidate_lower.startswith(root_lower + "\\") or candidate_lower.startswith(
+        root_lower + "/"
+    )
+
+
+def _bluebubbles_allowed_local_media_path(
+    local_path: Path,
+    *,
+    source: str,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path:
+    if not local_roots:
+        suffix = (
+            f" or channels.bluebubbles.accounts.{account_id}.mediaLocalRoots"
+            if account_id
+            else ""
+        )
+        raise RuntimeError(
+            "Local BlueBubbles media paths are disabled by default. "
+            f"Set channels.bluebubbles.mediaLocalRoots{suffix} to explicitly "
+            "allow local file directories."
+        )
+    candidate = local_path.expanduser().resolve(strict=False)
+    for root_entry in local_roots:
+        root = _bluebubbles_configured_local_root(root_entry)
+        if not _bluebubbles_path_inside_root(candidate, root):
+            continue
+        if not local_path.is_file():
+            raise RuntimeError(f"Media path does not exist: {source}")
+        resolved_candidate = local_path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True) if root.exists() else root
+        if _bluebubbles_path_inside_root(resolved_candidate, resolved_root):
+            return resolved_candidate
+    raise RuntimeError(
+        f"Local media path is not under any configured mediaLocalRoots entry: {source}"
+    )
 
 
 def _message_action_param_string(
@@ -1363,6 +1804,16 @@ def _telegram_api_endpoint(target: str | None, token: str, method: str) -> str:
     return endpoint
 
 
+_TELEGRAM_FORUM_TOPIC_ICON_COLORS = {
+    0x6FB9F0,
+    0xFFD67E,
+    0xCB86DB,
+    0x8EEE98,
+    0xFF93B2,
+    0xFB6F5F,
+}
+
+
 def _strip_telegram_target_prefixes(target: str | None) -> str:
     normalized = str(target or "").strip()
     while ":" in normalized:
@@ -1432,6 +1883,17 @@ def _telegram_message_id(result: object) -> str | None:
     return str(candidate).strip() or None
 
 
+def _telegram_first_delivered_message_id(result: object) -> int | str | None:
+    payload = _telegram_result_payload(result)
+    candidate = payload.get("message_id")
+    if candidate is None or isinstance(candidate, bool):
+        return None
+    if isinstance(candidate, int):
+        return candidate
+    normalized = str(candidate).strip()
+    return normalized or None
+
+
 def _telegram_chat_from_result(result: object, fallback: str) -> str:
     payload = _telegram_result_payload(result)
     chat = payload.get("chat")
@@ -1477,6 +1939,99 @@ def _telegram_media_ids(result: object) -> list[str]:
                 media_ids.append(file_id)
                 break
     return media_ids
+
+
+def _telegram_channel_data_should_pin(channel_data: object) -> bool:
+    if not isinstance(channel_data, dict):
+        return False
+    telegram_data = channel_data.get("telegram")
+    return isinstance(telegram_data, dict) and telegram_data.get("pin") is True
+
+
+def _telegram_inline_keyboard(channel_data: object) -> dict[str, object] | None:
+    if not isinstance(channel_data, dict):
+        return None
+    telegram_data = channel_data.get("telegram")
+    if not isinstance(telegram_data, dict):
+        return None
+    buttons = telegram_data.get("buttons")
+    if not isinstance(buttons, list):
+        return None
+    keyboard_rows: list[list[dict[str, object]]] = []
+    for row in buttons:
+        if not isinstance(row, list):
+            continue
+        keyboard_row: list[dict[str, object]] = []
+        for button in row:
+            if not isinstance(button, dict):
+                continue
+            text = str(button.get("text") or "").strip()
+            callback_data = str(button.get("callback_data") or "").strip()
+            if not text or not callback_data:
+                continue
+            keyboard_button: dict[str, object] = {
+                "text": text,
+                "callback_data": callback_data,
+            }
+            style = str(button.get("style") or "").strip()
+            if style:
+                keyboard_button["style"] = style
+            keyboard_row.append(keyboard_button)
+        if keyboard_row:
+            keyboard_rows.append(keyboard_row)
+    if not keyboard_rows:
+        return None
+    return {"inline_keyboard": keyboard_rows}
+
+
+_TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64
+_TELEGRAM_BUTTON_STYLES = {"danger", "success", "primary"}
+
+
+def _telegram_action_channel_data(params: dict[str, Any]) -> dict[str, object] | None:
+    raw_buttons = params.get("buttons")
+    if raw_buttons is None:
+        return None
+    if not isinstance(raw_buttons, list):
+        raise RuntimeError("buttons must be an array of button rows")
+    rows: list[list[dict[str, object]]] = []
+    for row_index, row in enumerate(raw_buttons):
+        if not isinstance(row, list):
+            raise RuntimeError(f"buttons[{row_index}] must be an array")
+        button_row: list[dict[str, object]] = []
+        for button_index, button in enumerate(row):
+            if not isinstance(button, dict):
+                raise RuntimeError(f"buttons[{row_index}][{button_index}] must be an object")
+            text = str(button.get("text") or "").strip()
+            callback_data = str(button.get("callback_data") or "").strip()
+            if not text or not callback_data:
+                raise RuntimeError(
+                    f"buttons[{row_index}][{button_index}] requires text and callback_data"
+                )
+            if len(callback_data.encode("utf-8")) > _TELEGRAM_CALLBACK_DATA_MAX_BYTES:
+                raise RuntimeError(
+                    f"buttons[{row_index}][{button_index}] callback_data too long "
+                    f"(max {_TELEGRAM_CALLBACK_DATA_MAX_BYTES} bytes)"
+                )
+            raw_style = button.get("style")
+            style = str(raw_style).strip().lower() if isinstance(raw_style, str) else None
+            if raw_style is not None and not isinstance(raw_style, str):
+                raise RuntimeError(f"buttons[{row_index}][{button_index}] style must be string")
+            if style and style not in _TELEGRAM_BUTTON_STYLES:
+                raise RuntimeError(
+                    f"buttons[{row_index}][{button_index}] style must be one of "
+                    f"{', '.join(sorted(_TELEGRAM_BUTTON_STYLES))}"
+                )
+            normalized_button: dict[str, object] = {
+                "text": text,
+                "callback_data": callback_data,
+            }
+            if style:
+                normalized_button["style"] = style
+            button_row.append(normalized_button)
+        if button_row:
+            rows.append(button_row)
+    return {"telegram": {"buttons": rows}} if rows else None
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -2297,6 +2852,10 @@ def _line_chat_id(target: str | None) -> str | None:
             normalized = normalized[len(prefix) :].strip()
             break
     return normalized or None
+
+
+def _line_chat_id_is_user(chat_id: str | None) -> bool:
+    return str(chat_id or "").strip().upper().startswith("U")
 
 
 def _line_validate_media_url(media_url: str) -> None:
@@ -3329,6 +3888,70 @@ def _matrix_poll_start_content(
         },
         "m.text": fallback_text,
         "org.matrix.msc1767.text": fallback_text,
+    }
+
+
+def _matrix_text_content(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    for key in ("m.text", "org.matrix.msc1767.text", "body"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
+def _matrix_parse_poll_start_content(
+    content: object,
+) -> tuple[str, list[tuple[str, str]], int] | None:
+    if not isinstance(content, dict):
+        return None
+    poll = (
+        content.get("m.poll.start")
+        or content.get("org.matrix.msc3381.poll.start")
+        or content.get("m.poll")
+    )
+    if not isinstance(poll, dict):
+        return None
+    question = _matrix_text_content(poll.get("question"))
+    if not question:
+        return None
+    raw_answers = poll.get("answers")
+    if not isinstance(raw_answers, list):
+        return None
+    answers: list[tuple[str, str]] = []
+    for raw_answer in raw_answers:
+        if not isinstance(raw_answer, dict):
+            continue
+        answer_id = str(raw_answer.get("id") or "").strip()
+        answer_text = _matrix_text_content(raw_answer)
+        if answer_id and answer_text:
+            answers.append((answer_id, answer_text))
+    if not answers:
+        return None
+    raw_max_selections = poll.get("max_selections")
+    max_selections = (
+        int(raw_max_selections)
+        if isinstance(raw_max_selections, int | float)
+        and not isinstance(raw_max_selections, bool)
+        and math.isfinite(raw_max_selections)
+        else 1
+    )
+    return question, answers, max(1, min(max_selections, len(answers)))
+
+
+def _matrix_poll_response_content(
+    *,
+    poll_id: str,
+    answer_ids: list[str],
+) -> dict[str, object]:
+    return {
+        "m.poll.response": {"answers": answer_ids},
+        "org.matrix.msc3381.poll.response": {"answers": answer_ids},
+        "m.relates_to": {
+            "rel_type": "m.reference",
+            "event_id": poll_id,
+        },
     }
 
 
@@ -6147,6 +6770,15 @@ class OpsMeshService:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
 
+    def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        return snapshot if isinstance(snapshot, dict) else {}
+
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
         projects = {int(project["id"]): project for project in await self.database.list_projects()}
         tasks: list[TaskBlueprintView] = []
@@ -6503,6 +7135,7 @@ class OpsMeshService:
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    tracking_id=str(payload.get("trackingId") or "").strip() or None,
                     location=_normalize_line_location_payload(payload.get("location")),
                     quick_replies=tuple(
                         _normalize_line_quick_replies(payload.get("quickReplies"))
@@ -7758,6 +8391,47 @@ class OpsMeshService:
                 return route
         return None
 
+    async def _bluebubbles_route_for_channel_account(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_channel = _canonical_native_provider_channel(channel)
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        if normalized_channel != "bluebubbles":
+            return None
+        for route in await self.database.list_notification_routes():
+            if not bool(route.get("enabled")):
+                continue
+            route_kind = _canonical_native_provider_channel(
+                str(route.get("kind") or "").strip()
+            )
+            if route_kind != "bluebubbles":
+                continue
+            route_target = _normalize_conversation_target(route.get("conversation_target"))
+            if route_target is None:
+                if normalized_account_id == DEFAULT_ACCOUNT_ID:
+                    return route
+                continue
+            route_channel = _canonical_native_provider_channel(
+                str(route_target.get("channel") or "").strip()
+            )
+            if route_channel != "bluebubbles":
+                continue
+            route_account_id = (
+                normalize_optional_account_id(
+                    str(route_target.get("account_id") or "").strip()
+                )
+                or DEFAULT_ACCOUNT_ID
+            )
+            if route_account_id == normalized_account_id:
+                return route
+        return None
+
     async def probe_channel_account(
         self,
         *,
@@ -8865,6 +9539,8 @@ class OpsMeshService:
             return self._post_line_provider_event
         if route_kind == "matrix":
             return self._post_matrix_provider_event
+        if route_kind == "bluebubbles":
+            return self._post_bluebubbles_provider_event
         return self._post_webhook
 
     async def dispatch_message_action(
@@ -8873,6 +9549,105 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
+        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {
+            "addParticipant",
+            "edit",
+            "leaveGroup",
+            "react",
+            "removeParticipant",
+            "renameGroup",
+            "reply",
+            "sendAttachment",
+            "sendWithEffect",
+            "setGroupIcon",
+            "unsend",
+            "upload-file",
+        }:
+            route = await self._bluebubbles_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native BlueBubbles route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            if action == "edit":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "react":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_react_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "reply":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_reply_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "renameGroup":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_rename_group_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "addParticipant":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_add_participant_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "removeParticipant":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_remove_participant_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "leaveGroup":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_leave_group_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "setGroupIcon":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_set_group_icon_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action in {"sendAttachment", "upload-file"}:
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_upload_file_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "sendWithEffect":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_send_with_effect_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            return await asyncio.to_thread(
+                self._dispatch_bluebubbles_unsend_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
         if channel == "matrix" and action in {"send", "sendMessage"}:
@@ -8909,6 +9684,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "matrix" and action == "poll-vote":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action poll-vote."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_poll_vote_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "matrix" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -8941,7 +9732,7 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "matrix" and action in {"pinMessage", "unpinMessage"}:
+        if channel == "matrix" and action in {"pin", "pinMessage", "unpin", "unpinMessage"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -8957,14 +9748,14 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "matrix" and action == "listPins":
+        if channel == "matrix" and action in {"list-pins", "listPins"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Matrix route is configured for message.action listPins."
+                    f"No native Matrix route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
@@ -8973,14 +9764,14 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "matrix" and action == "readMessages":
+        if channel == "matrix" and action in {"read", "readMessages"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Matrix route is configured for message.action readMessages."
+                    f"No native Matrix route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
@@ -9097,6 +9888,70 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_telegram_react_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "telegram" and action in {"delete", "deleteMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "telegram" and action in {"edit", "editMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "telegram" and action in {"createForumTopic", "topic-create"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_create_forum_topic_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "telegram" and action in {"editForumTopic", "topic-edit"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_edit_forum_topic_action,
                 route,
                 request,
                 secret_token,
@@ -9472,7 +10327,6 @@ class OpsMeshService:
             "list-pins",
             "member-info",
             "pin",
-            "poll",
             "read",
             "react",
             "reactions",
@@ -9567,13 +10421,6 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if action == "poll":
-            return await asyncio.to_thread(
-                self._dispatch_slack_poll_message_action,
-                route,
-                request,
-                secret_token,
-            )
         if action == "upload-file":
             return await asyncio.to_thread(
                 self._dispatch_slack_upload_file_message_action,
@@ -9587,6 +10434,574 @@ class OpsMeshService:
             request,
             secret_token,
         )
+
+    def _dispatch_bluebubbles_unsend_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles unsend requires messageId.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        payload = {"partIndex": part_index if part_index is not None else 0}
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            f"/api/v1/message/{quote(message_id, safe='')}/unsend",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "unsent": message_id}
+
+    def _dispatch_bluebubbles_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles edit requires messageId.")
+        new_text = (
+            _message_action_param_string(request.params, "text")
+            or _message_action_param_string(request.params, "newText")
+            or _message_action_param_string(request.params, "message")
+        )
+        if new_text is None:
+            raise RuntimeError("BlueBubbles edit requires text.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        backwards_compat_message = _message_action_param_string(
+            request.params,
+            "backwardsCompatMessage",
+        )
+        payload: dict[str, object] = {
+            "editedMessage": new_text,
+            "backwardsCompatibilityMessage": (
+                backwards_compat_message
+                if backwards_compat_message is not None
+                else f"Edited to: {new_text}"
+            ),
+            "partIndex": part_index if part_index is not None else 0,
+        }
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            f"/api/v1/message/{quote(message_id, safe='')}/edit",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "edited": message_id}
+
+    def _dispatch_bluebubbles_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles react requires messageId.")
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+        )
+        if emoji is None:
+            raise RuntimeError("BlueBubbles react requires emoji.")
+        remove = bool(_message_action_param_bool(request.params, "remove"))
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles react requires chatGuid or chat_guid to.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "selectedMessageGuid": message_id,
+            "reaction": _bluebubbles_reaction_name(emoji, remove=remove),
+            "partIndex": part_index if part_index is not None else 0,
+        }
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            "/api/v1/message/react",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        if remove:
+            return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
+
+    def _dispatch_bluebubbles_reply_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles reply requires messageId.")
+        message = _bluebubbles_message_text(request.params)
+        if message is None:
+            raise RuntimeError("BlueBubbles reply requires text or message.")
+        chat_guid = _bluebubbles_chat_guid_from_send_target(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles reply requires to or target chat_guid.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "tempGuid": str(uuid.uuid4()),
+            "message": message,
+            "method": "private-api",
+            "selectedMessageGuid": message_id,
+            "partIndex": part_index if part_index is not None else 0,
+        }
+        result = self._post_bluebubbles_text_message(route, secret_token, payload)
+        return {
+            "ok": True,
+            "messageId": _bluebubbles_message_id_from_result(result),
+            "repliedTo": message_id,
+        }
+
+    def _dispatch_bluebubbles_send_with_effect_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message = _bluebubbles_message_text(request.params)
+        if message is None:
+            raise RuntimeError("BlueBubbles sendWithEffect requires text or message.")
+        raw_effect = _message_action_param_string(
+            request.params,
+            "effectId",
+        ) or _message_action_param_string(request.params, "effect")
+        effect_id = _bluebubbles_effect_id(raw_effect)
+        if raw_effect is None or effect_id is None:
+            raise RuntimeError("BlueBubbles sendWithEffect requires effectId or effect.")
+        chat_guid = _bluebubbles_chat_guid_from_send_target(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles sendWithEffect requires to or target chat_guid.")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "tempGuid": str(uuid.uuid4()),
+            "message": message,
+            "method": "private-api",
+            "effectId": effect_id,
+        }
+        result = self._post_bluebubbles_text_message(route, secret_token, payload)
+        return {
+            "ok": True,
+            "messageId": _bluebubbles_message_id_from_result(result),
+            "effect": raw_effect,
+        }
+
+    def _post_bluebubbles_text_message(
+        self,
+        route: dict[str, Any],
+        secret_token: str | None,
+        payload: dict[str, object],
+    ) -> object:
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            "/api/v1/message/text",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return result
+
+    def _dispatch_bluebubbles_rename_group_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles renameGroup requires chatGuid.")
+        display_name = _message_action_param_string(
+            request.params,
+            "displayName",
+        ) or _message_action_param_string(request.params, "name")
+        if display_name is None:
+            raise RuntimeError("BlueBubbles renameGroup requires displayName or name.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            method="PUT",
+            payload={"displayName": display_name},
+        )
+        return {"ok": True, "renamed": chat_guid, "displayName": display_name}
+
+    def _dispatch_bluebubbles_add_participant_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles addParticipant requires chatGuid.")
+        address = _message_action_param_string(
+            request.params,
+            "address",
+        ) or _message_action_param_string(request.params, "participant")
+        if address is None:
+            raise RuntimeError("BlueBubbles addParticipant requires address or participant.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            suffix="/participant",
+            method="POST",
+            payload={"address": address},
+        )
+        return {"ok": True, "added": address, "chatGuid": chat_guid}
+
+    def _dispatch_bluebubbles_remove_participant_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles removeParticipant requires chatGuid.")
+        address = _message_action_param_string(
+            request.params,
+            "address",
+        ) or _message_action_param_string(request.params, "participant")
+        if address is None:
+            raise RuntimeError("BlueBubbles removeParticipant requires address or participant.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            suffix="/participant",
+            method="DELETE",
+            payload={"address": address},
+        )
+        return {"ok": True, "removed": address, "chatGuid": chat_guid}
+
+    def _dispatch_bluebubbles_leave_group_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles leaveGroup requires chatGuid.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            suffix="/leave",
+            method="POST",
+            payload=None,
+        )
+        return {"ok": True, "left": chat_guid}
+
+    def _post_bluebubbles_chat_json(
+        self,
+        route: dict[str, Any],
+        secret_token: str | None,
+        chat_guid: str,
+        *,
+        suffix: str = "",
+        method: str,
+        payload: dict[str, object] | None,
+    ) -> object:
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            f"/api/v1/chat/{quote(chat_guid, safe='')}{suffix}",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method=method,
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return result
+
+    def _post_bluebubbles_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("BlueBubbles native provider route only supports sends.")
+        message = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not message and not media_urls:
+            raise RuntimeError("BlueBubbles native provider send requires message text or media.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        fallback_target = str((conversation_target or {}).get("peer_id") or "").strip()
+        raw_target = str(event.get("to") or fallback_target).strip()
+        chat_guid = _bluebubbles_chat_guid_value(raw_target)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles native provider send requires a chat_guid target.")
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        account_id = (
+            normalize_optional_account_id(event.get("accountId"))
+            or normalize_optional_account_id((conversation_target or {}).get("account_id"))
+            or DEFAULT_ACCOUNT_ID
+        )
+        config_snapshot = self._bluebubbles_config_snapshot()
+        if media_urls:
+            endpoint = _bluebubbles_api_endpoint(
+                str(route.get("target") or ""),
+                "/api/v1/message/attachment",
+                password=secret_token,
+            )
+            media_ids: list[str] = []
+            message_ids: list[str] = []
+            as_voice = _optional_bool_payload_value(event, "audioAsVoice") is True
+            for index, media_url in enumerate(media_urls):
+                media_bytes, content_type, filename = self._download_bluebubbles_media_url(
+                    media_url,
+                    account_id=account_id,
+                    local_roots=_bluebubbles_media_local_roots(
+                        config_snapshot,
+                        account_id=account_id,
+                    ),
+                    max_bytes=_bluebubbles_media_max_bytes(
+                        config_snapshot,
+                        account_id=account_id,
+                    ),
+                )
+                safe_filename = _bluebubbles_safe_filename(filename, "attachment")
+                resolved_content_type = content_type or "application/octet-stream"
+                if as_voice:
+                    safe_filename, resolved_content_type = _bluebubbles_voice_media_info(
+                        safe_filename,
+                        content_type,
+                    )
+                fields: dict[str, str] = {
+                    "chatGuid": chat_guid,
+                    "name": safe_filename,
+                    "tempGuid": f"temp-{uuid.uuid4().hex}",
+                    "method": "private-api",
+                }
+                if reply_to_id:
+                    fields["selectedMessageGuid"] = reply_to_id
+                    fields["partIndex"] = "0"
+                if as_voice:
+                    fields["isAudioMessage"] = "true"
+                result = self._request_bluebubbles_multipart_provider_url(
+                    endpoint,
+                    fields=fields,
+                    files=[
+                        {
+                            "field": "attachment",
+                            "filename": safe_filename,
+                            "contentType": resolved_content_type,
+                            "content": media_bytes,
+                        }
+                    ],
+                )
+                if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+                    raise RuntimeError(str(result.get("error")))
+                message_id = _bluebubbles_message_id_from_result(result)
+                media_ids.append(message_id)
+                message_ids.append(message_id)
+                if index == 0 and message:
+                    caption_payload: dict[str, object] = {
+                        "chatGuid": chat_guid,
+                        "tempGuid": str(uuid.uuid4()),
+                        "message": message,
+                        "method": "private-api",
+                    }
+                    if reply_to_id:
+                        caption_payload["selectedMessageGuid"] = reply_to_id
+                        caption_payload["partIndex"] = 0
+                    caption_result = self._post_bluebubbles_text_message(
+                        route,
+                        secret_token,
+                        caption_payload,
+                    )
+                    message_ids.append(_bluebubbles_message_id_from_result(caption_result))
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": media_ids[0],
+                "chatId": chat_guid,
+                "channelId": chat_guid,
+                "conversationId": chat_guid,
+                "mediaIds": media_ids,
+                "mediaUrls": media_urls,
+                "messageIds": message_ids,
+            }
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "tempGuid": str(uuid.uuid4()),
+            "message": message,
+            "method": "private-api",
+        }
+        if reply_to_id:
+            payload["selectedMessageGuid"] = reply_to_id
+            payload["partIndex"] = 0
+        result = self._post_bluebubbles_text_message(route, secret_token, payload)
+        message_id = _bluebubbles_message_id_from_result(result)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": chat_guid,
+            "channelId": chat_guid,
+            "conversationId": chat_guid,
+        }
+
+    def _dispatch_bluebubbles_upload_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        to = _message_action_param_string(request.params, "to", required=True)
+        if to is None:
+            raise RuntimeError("BlueBubbles upload-file requires to.")
+        chat_guid = _bluebubbles_chat_guid_value(to)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles upload-file requires a chat_guid target.")
+        filename = _bluebubbles_safe_filename(
+            _message_action_param_string(request.params, "filename", required=True),
+            "attachment",
+        )
+        content_type = (
+            _message_action_param_string(request.params, "contentType")
+            or _message_action_param_string(request.params, "mimeType")
+            or "application/octet-stream"
+        )
+        caption = _message_action_param_string(request.params, "caption") or (
+            _message_action_param_string(request.params, "message")
+        )
+        media_bytes = _bluebubbles_decode_base64_buffer(
+            _message_action_param_string(request.params, "buffer", required=True),
+            action="upload-file",
+        )
+        fields: dict[str, str] = {
+            "chatGuid": chat_guid,
+            "name": filename,
+            "tempGuid": f"temp-{uuid.uuid4().hex}",
+            "method": "private-api",
+        }
+        if _message_action_param_bool(request.params, "asVoice"):
+            fields["isAudioMessage"] = "true"
+        if caption:
+            fields["message"] = caption
+            fields["text"] = caption
+            fields["caption"] = caption
+        result = self._request_bluebubbles_multipart_provider_url(
+            _bluebubbles_api_endpoint(
+                str(route.get("target") or ""),
+                "/api/v1/message/attachment",
+                password=secret_token,
+            ),
+            fields=fields,
+            files=[
+                {
+                    "field": "attachment",
+                    "filename": filename,
+                    "contentType": content_type,
+                    "content": media_bytes,
+                }
+            ],
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "messageId": _bluebubbles_message_id_from_result(result)}
+
+    def _dispatch_bluebubbles_set_group_icon_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles setGroupIcon requires chatGuid.")
+        filename = _bluebubbles_safe_filename(
+            _message_action_param_string(request.params, "filename")
+            or _message_action_param_string(request.params, "name"),
+            "icon.png",
+        )
+        content_type = (
+            _message_action_param_string(request.params, "contentType")
+            or _message_action_param_string(request.params, "mimeType")
+            or "application/octet-stream"
+        )
+        icon_bytes = _bluebubbles_decode_base64_buffer(
+            _message_action_param_string(request.params, "buffer", required=True),
+            action="setGroupIcon",
+        )
+        result = self._request_bluebubbles_multipart_provider_url(
+            _bluebubbles_api_endpoint(
+                str(route.get("target") or ""),
+                f"/api/v1/chat/{quote(chat_guid, safe='')}/icon",
+                password=secret_token,
+            ),
+            fields={},
+            files=[
+                {
+                    "field": "icon",
+                    "filename": filename,
+                    "contentType": content_type,
+                    "content": icon_bytes,
+                }
+            ],
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "chatGuid": chat_guid, "iconSet": True}
 
     async def _dispatch_zalo_send_message_action(
         self,
@@ -9844,6 +11259,130 @@ class OpsMeshService:
             "deleted": True,
         }
 
+    def _dispatch_matrix_poll_vote_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix poll vote requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix poll vote requires roomId.")
+        poll_id = (
+            _message_action_param_string(request.params, "pollId")
+            or _message_action_param_string(request.params, "messageId", required=True)
+        )
+        if poll_id is None:
+            raise RuntimeError("Matrix poll vote requires pollId.")
+        poll_event = self._get_json_provider_url(
+            _matrix_event_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_id=poll_id,
+            ),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(poll_event, dict):
+            raise RuntimeError("Matrix API returned a non-JSON poll event.")
+        event_type = str(poll_event.get("type") or "").strip()
+        if event_type not in {"m.poll.start", "org.matrix.msc3381.poll.start"}:
+            raise RuntimeError(f"Event {poll_id} is not a Matrix poll start event.")
+        parsed_poll = _matrix_parse_poll_start_content(poll_event.get("content"))
+        if parsed_poll is None:
+            raise RuntimeError("Matrix poll vote requires a valid poll start event.")
+        question, answers, max_selections = parsed_poll
+        selected_ids = _message_action_param_string_array(request.params, "optionIds") or []
+        option_id = _message_action_param_string(request.params, "optionId")
+        if option_id is not None:
+            selected_ids.append(option_id)
+        selected_indexes: list[int] = []
+        raw_option_indexes = request.params.get("optionIndexes")
+        if isinstance(raw_option_indexes, list):
+            for raw_index in raw_option_indexes:
+                if isinstance(raw_index, bool):
+                    raise RuntimeError("optionIndexes entries must be positive integers.")
+                if isinstance(raw_index, int):
+                    selected_indexes.append(raw_index)
+                elif isinstance(raw_index, str) and raw_index.strip():
+                    try:
+                        selected_indexes.append(int(raw_index.strip()))
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            "optionIndexes entries must be positive integers."
+                        ) from exc
+                else:
+                    raise RuntimeError("optionIndexes entries must be positive integers.")
+        elif raw_option_indexes is not None:
+            raise RuntimeError("optionIndexes must be an array.")
+        option_index = _message_action_param_positive_int(request.params, "optionIndex")
+        if option_index is not None:
+            selected_indexes.append(option_index)
+        answer_by_index = {index: answer_id for index, (answer_id, _text) in enumerate(answers, 1)}
+        for selected_index in selected_indexes:
+            if selected_index <= 0:
+                raise RuntimeError("option index must be a positive integer.")
+            answer_id = answer_by_index.get(selected_index)
+            if answer_id is None:
+                raise RuntimeError(
+                    "Matrix poll option index "
+                    f"{selected_index} is out of range for a poll with {len(answers)} options."
+                )
+            selected_ids.append(answer_id)
+        answer_ids = list(
+            dict.fromkeys(
+                answer_id.strip() for answer_id in selected_ids if answer_id.strip()
+            )
+        )
+        if not answer_ids:
+            raise RuntimeError("Matrix poll vote requires at least one poll option id or index.")
+        if len(answer_ids) > max_selections:
+            raise RuntimeError(
+                f"Matrix poll allows at most {max_selections} "
+                f"selection{'s' if max_selections != 1 else ''}."
+            )
+        answer_label_by_id = dict(answers)
+        labels: list[str] = []
+        for answer_id in answer_ids:
+            label = answer_label_by_id.get(answer_id)
+            if label is None:
+                raise RuntimeError(
+                    f'Matrix poll option id "{answer_id}" is not valid for poll {question}.'
+                )
+            labels.append(label)
+        result = self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.poll.response",
+                transaction_id=request.idempotency_key or uuid.uuid4().hex,
+            ),
+            _matrix_poll_response_content(poll_id=poll_id, answer_ids=answer_ids),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        event_id = _matrix_message_id(result)
+        if event_id is None:
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {
+            "ok": True,
+            "result": {
+                "eventId": event_id,
+                "roomId": room_id,
+                "pollId": poll_id,
+                "answerIds": answer_ids,
+                "labels": labels,
+                "maxSelections": max_selections,
+            },
+        }
+
     def _dispatch_matrix_react_message_action(
         self,
         route: dict[str, Any],
@@ -10050,7 +11589,7 @@ class OpsMeshService:
             room_id=room_id,
             secret_token=secret_token,
         )
-        if request.action == "pinMessage":
+        if request.action in {"pin", "pinMessage"}:
             next_pinned = pinned if message_id in pinned else [*pinned, message_id]
         else:
             next_pinned = [event_id for event_id in pinned if event_id != message_id]
@@ -11727,6 +13266,9 @@ class OpsMeshService:
             force_document = _optional_bool_payload_value(request.params, "asDocument")
         if force_document is not None:
             event["forceDocument"] = force_document
+        channel_data = _telegram_action_channel_data(request.params)
+        if channel_data is not None:
+            event["channelData"] = channel_data
         result = self._post_telegram_provider_event(
             route,
             "gateway/send",
@@ -11906,6 +13448,222 @@ class OpsMeshService:
         if remove or not emoji:
             return {"ok": True, "removed": True}
         return {"ok": True, "added": emoji}
+
+    def _dispatch_telegram_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram deleteMessage requires chatId.")
+        message_id = _message_action_param_positive_int(
+            request.params,
+            "messageId",
+            "message_id",
+        )
+        if message_id is None:
+            raise RuntimeError("Telegram deleteMessage requires messageId.")
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "deleteMessage",
+            ),
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            raise RuntimeError(f"Telegram API returned {error}.")
+        return {"ok": True, "deleted": True}
+
+    def _dispatch_telegram_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram editMessage requires chatId.")
+        message_id = _message_action_param_positive_int(
+            request.params,
+            "messageId",
+            "message_id",
+        )
+        if message_id is None:
+            raise RuntimeError("Telegram editMessage requires messageId.")
+        content = _message_action_param_string(
+            request.params,
+            "content",
+        ) or _message_action_param_string(request.params, "message", required=True)
+        if content is None:
+            raise RuntimeError("Telegram editMessage requires message.")
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "editMessageText",
+            ),
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": content,
+                "parse_mode": "HTML",
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            if "message is not modified" in error.lower():
+                return {"ok": True, "messageId": str(message_id), "chatId": chat_id}
+            raise RuntimeError(f"Telegram API returned {error}.")
+        return {
+            "ok": True,
+            "messageId": _telegram_message_id(result) or str(message_id),
+            "chatId": _telegram_chat_from_result(result, chat_id),
+        }
+
+    def _dispatch_telegram_create_forum_topic_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram createForumTopic requires chatId.")
+        name = _message_action_param_string(request.params, "name", required=True)
+        if name is None:
+            raise RuntimeError("Forum topic name is required.")
+        if len(name) > 128:
+            raise RuntimeError("Forum topic name must be 128 characters or fewer.")
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "name": name,
+        }
+        icon_color = _message_action_param_integer(request.params, "iconColor")
+        if icon_color is not None:
+            if icon_color not in _TELEGRAM_FORUM_TOPIC_ICON_COLORS:
+                raise RuntimeError(
+                    "iconColor must be one of Telegram's supported forum topic colors."
+                )
+            payload["icon_color"] = icon_color
+        icon_custom_emoji_id = _message_action_param_string(
+            request.params,
+            "iconCustomEmojiId",
+        )
+        if icon_custom_emoji_id is not None:
+            payload["icon_custom_emoji_id"] = icon_custom_emoji_id
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "createForumTopic",
+            ),
+            payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            raise RuntimeError(f"Telegram API returned {error}.")
+        result_payload = _telegram_result_payload(result)
+        topic_id = result_payload.get("message_thread_id")
+        if topic_id is None:
+            raise RuntimeError("Telegram API response did not include a topic id.")
+        return {
+            "ok": True,
+            "topicId": topic_id,
+            "name": str(result_payload.get("name") or name),
+            "chatId": chat_id,
+        }
+
+    def _dispatch_telegram_edit_forum_topic_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram editForumTopic requires chatId.")
+        message_thread_id = _message_action_param_positive_int(
+            request.params,
+            "messageThreadId",
+            "threadId",
+        )
+        if message_thread_id is None:
+            raise RuntimeError("messageThreadId or threadId is required.")
+        name = _message_action_param_string(request.params, "name")
+        if name is not None and len(name) > 128:
+            raise RuntimeError("Telegram forum topic name must be 128 characters or fewer.")
+        icon_custom_emoji_id = _message_action_param_string(
+            request.params,
+            "iconCustomEmojiId",
+        )
+        if name is None and icon_custom_emoji_id is None:
+            raise RuntimeError(
+                "Telegram forum topic update requires a name or iconCustomEmojiId."
+            )
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "message_thread_id": message_thread_id,
+        }
+        if name is not None:
+            payload["name"] = name
+        if icon_custom_emoji_id is not None:
+            payload["icon_custom_emoji_id"] = icon_custom_emoji_id
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "editForumTopic",
+            ),
+            payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            raise RuntimeError(f"Telegram API returned {error}.")
+        response: dict[str, object] = {
+            "ok": True,
+            "chatId": chat_id,
+            "messageThreadId": message_thread_id,
+        }
+        if name is not None:
+            response["name"] = name
+        if icon_custom_emoji_id is not None:
+            response["iconCustomEmojiId"] = icon_custom_emoji_id
+        return response
 
     def _dispatch_discord_set_presence_message_action(
         self,
@@ -13861,6 +15619,8 @@ class OpsMeshService:
             payload["previewImageUrl"] = request.preview_image_url
         if request.duration_ms is not None:
             payload["durationMs"] = request.duration_ms
+        if request.tracking_id is not None:
+            payload["trackingId"] = request.tracking_id
         if request.location is not None:
             payload["location"] = dict(request.location)
         if request.quick_replies:
@@ -13881,6 +15641,8 @@ class OpsMeshService:
             payload["silent"] = request.silent
         if request.force_document is not None:
             payload["forceDocument"] = request.force_document
+        if request.channel_data is not None:
+            payload["channelData"] = dict(request.channel_data)
         if request.account_id is not None:
             payload["accountId"] = request.account_id
         if request.thread_id is not None:
@@ -14214,7 +15976,8 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower() in {"whatsapp", "zalo", "line", "matrix"}
+                    resolved_target.channel.lower()
+                    in {"whatsapp", "zalo", "line", "matrix", "bluebubbles"}
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()
@@ -14228,6 +15991,7 @@ class OpsMeshService:
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    tracking_id=str(payload.get("trackingId") or "").strip() or None,
                     location=_normalize_line_location_payload(payload.get("location")),
                     quick_replies=tuple(
                         _normalize_line_quick_replies(payload.get("quickReplies"))
@@ -14244,6 +16008,11 @@ class OpsMeshService:
                     reply_token=str(payload.get("replyToken") or "").strip() or None,
                     silent=_optional_bool_payload_value(payload, "silent"),
                     force_document=_optional_bool_payload_value(payload, "forceDocument"),
+                    channel_data=(
+                        dict(cast(dict[str, object], payload["channelData"]))
+                        if isinstance(payload.get("channelData"), dict)
+                        else None
+                    ),
                     account_id=resolved_target.account_id,
                     thread_id=normalized_thread_id,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
@@ -14321,6 +16090,7 @@ class OpsMeshService:
         media_kind: str | None = None,
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
+        tracking_id: str | None = None,
         location: dict[str, object] | None = None,
         quick_replies: list[str] | tuple[str, ...] | None = None,
         flex_message: dict[str, object] | None = None,
@@ -14331,6 +16101,7 @@ class OpsMeshService:
         reply_token: str | None = None,
         silent: bool | None = None,
         force_document: bool | None = None,
+        channel_data: dict[str, object] | None = None,
         account_id: str | None = None,
         agent_id: str | None = None,
         thread_id: str | int | None = None,
@@ -14389,6 +16160,9 @@ class OpsMeshService:
                 payload["previewImageUrl"] = normalized_preview_image_url
             if duration_ms is not None:
                 payload["durationMs"] = duration_ms
+            normalized_tracking_id = str(tracking_id or "").strip() or None
+            if normalized_tracking_id is not None:
+                payload["trackingId"] = normalized_tracking_id
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
             if audio_as_voice is not None:
@@ -14414,6 +16188,8 @@ class OpsMeshService:
             payload["silent"] = silent
         if force_document is not None:
             payload["forceDocument"] = force_document
+        if channel_data is not None:
+            payload["channelData"] = dict(channel_data)
         if account_id is not None:
             payload["accountId"] = account_id
         if agent_id is not None:
@@ -15563,6 +17339,64 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_bluebubbles_multipart_provider_url(
+        self,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object | None:
+        boundary = f"----BlueBubblesFormBoundary{uuid.uuid4().hex}"
+        body = bytearray()
+        for name, value in fields.items():
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("ascii")
+            )
+            body.extend(str(value).encode("utf-8"))
+            body.extend(b"\r\n")
+        for file_part in files:
+            field = str(file_part.get("field") or "file")
+            filename = _bluebubbles_safe_filename(
+                str(file_part.get("filename") or ""),
+                "upload",
+            )
+            content_type = str(file_part.get("contentType") or "application/octet-stream")
+            content = file_part.get("content")
+            if not isinstance(content, bytes):
+                raise RuntimeError("BlueBubbles multipart content must be bytes.")
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            disposition = (
+                f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            )
+            body.extend(disposition.encode("utf-8"))
+            body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("ascii"))
+            body.extend(content)
+            body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            target,
+            data=bytes(body),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _request_discord_message_upload(
         self,
         *,
@@ -15854,6 +17688,67 @@ class OpsMeshService:
                     raise RuntimeError(f"Media URL returned HTTP {response.status}")
                 content_type = response.headers.get("Content-Type")
                 return response.read(), content_type, filename
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _download_bluebubbles_media_url(
+        self,
+        media_url: str,
+        *,
+        account_id: str | None = None,
+        local_roots: list[str] | None = None,
+        max_bytes: int | None = None,
+    ) -> tuple[bytes, str | None, str | None]:
+        parsed = urlparse(media_url)
+        filename = _bluebubbles_safe_filename(
+            unquote(Path(parsed.path).name) if parsed.path else "",
+            "attachment",
+        )
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                media_bytes = local_path.read_bytes()
+                _bluebubbles_assert_media_within_limit(
+                    len(media_bytes),
+                    max_bytes=max_bytes,
+                )
+                return media_bytes, content_type, local_path.name
+        local_source_path = _bluebubbles_local_media_source_path(media_url)
+        if local_source_path is not None:
+            allowed_path = _bluebubbles_allowed_local_media_path(
+                local_source_path,
+                source=media_url,
+                local_roots=local_roots or [],
+                account_id=account_id,
+            )
+            content_type = mimetypes.guess_type(str(allowed_path))[0]
+            media_bytes = allowed_path.read_bytes()
+            _bluebubbles_assert_media_within_limit(
+                len(media_bytes),
+                max_bytes=max_bytes,
+            )
+            return media_bytes, content_type, allowed_path.name
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                content_type = response.headers.get("Content-Type")
+                if not content_type:
+                    content_type = mimetypes.guess_type(filename)[0]
+                read_size = max_bytes + 1 if max_bytes is not None and max_bytes > 0 else -1
+                media_bytes = response.read(read_size)
+                _bluebubbles_assert_media_within_limit(
+                    len(media_bytes),
+                    max_bytes=max_bytes,
+                )
+                return media_bytes, content_type, filename
         except HTTPError as exc:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:
@@ -16322,6 +18217,7 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
+        inline_keyboard = _telegram_inline_keyboard(event.get("channelData"))
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
@@ -16395,6 +18291,8 @@ class OpsMeshService:
                         media_payload["disable_content_type_detection"] = True
                     if index == 0 and text:
                         media_payload["caption"] = text[:1024]
+                    if index == 0 and inline_keyboard is not None:
+                        media_payload["reply_markup"] = inline_keyboard
                     media_result = self._post_json_webhook(
                         _telegram_api_endpoint(
                             str(route.get("target") or ""),
@@ -16426,6 +18324,8 @@ class OpsMeshService:
                     payload["disable_content_type_detection"] = True
                 if text:
                     payload["caption"] = text[:1024]
+                if inline_keyboard is not None:
+                    payload["reply_markup"] = inline_keyboard
                 result = self._post_json_webhook(
                     _telegram_api_endpoint(
                         str(route.get("target") or ""),
@@ -16436,6 +18336,8 @@ class OpsMeshService:
                 )
             else:
                 payload["text"] = text
+                if inline_keyboard is not None:
+                    payload["reply_markup"] = inline_keyboard
                 result = self._post_json_webhook(
                     _telegram_api_endpoint(
                         str(route.get("target") or ""),
@@ -16453,6 +18355,39 @@ class OpsMeshService:
         if message_id is None:
             raise RuntimeError("Telegram API response did not include a message id.")
         delivered_chat = _telegram_chat_from_result(result, chat_id)
+        first_delivered_message_id = _telegram_first_delivered_message_id(result)
+        if (
+            event_type == "gateway/send"
+            and _telegram_channel_data_should_pin(event.get("channelData"))
+            and first_delivered_message_id is not None
+        ):
+            try:
+                pin_result = self._post_json_webhook(
+                    _telegram_api_endpoint(
+                        str(route.get("target") or ""),
+                        token,
+                        "pinChatMessage",
+                    ),
+                    {
+                        "chat_id": chat_id,
+                        "message_id": first_delivered_message_id,
+                        "disable_notification": True,
+                    },
+                )
+                if isinstance(pin_result, dict) and pin_result.get("ok") is False:
+                    logger.debug(
+                        "Telegram pinChatMessage returned an error for chat=%s message=%s: %s",
+                        chat_id,
+                        first_delivered_message_id,
+                        pin_result.get("description") or pin_result.get("error_code"),
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "Telegram pinChatMessage failed for chat=%s message=%s: %s",
+                    chat_id,
+                    first_delivered_message_id,
+                    exc,
+                )
         native_result: dict[str, object] = {
             "runtime": "native-provider-backed",
             "messageId": message_id,
@@ -16917,6 +18852,7 @@ class OpsMeshService:
         media_kind = str(event.get("mediaKind") or "").strip().lower()
         preview_image_url = str(event.get("previewImageUrl") or "").strip()
         duration_ms = _optional_int_payload_value(event, "durationMs")
+        tracking_id = str(event.get("trackingId") or "").strip()
         location = _normalize_line_location_payload(event.get("location"))
         quick_reply = _line_quick_reply_payload(
             _normalize_line_quick_replies(event.get("quickReplies"))
@@ -16944,13 +18880,14 @@ class OpsMeshService:
                         "LINE video messages require previewImageUrl to reference an image URL."
                     )
                 _line_validate_media_url(preview_image_url)
-                messages.append(
-                    {
-                        "type": "video",
-                        "originalContentUrl": media_url,
-                        "previewImageUrl": preview_image_url,
-                    }
-                )
+                video_message: dict[str, object] = {
+                    "type": "video",
+                    "originalContentUrl": media_url,
+                    "previewImageUrl": preview_image_url,
+                }
+                if tracking_id and _line_chat_id_is_user(chat_id):
+                    video_message["trackingId"] = tracking_id
+                messages.append(video_message)
             elif media_kind == "audio":
                 messages.append(
                     {

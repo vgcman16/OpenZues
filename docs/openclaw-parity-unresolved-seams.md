@@ -91,11 +91,25 @@ delivery resolver does, and Discord child-placement delivery now targets
 RuntimeManager-backed ACP thread-binding records now also include OpenClaw-style
 thread intro metadata, including `threadName`, optional `label`, and the
 runtime cwd line when `cwd` is present.
-Remaining ACP binding parity is real provider-native child-thread
-creation/store breadth, unbind lifecycle breadth, and the
-standalone ACP bridge server/client runtime. Native ACP prompt request assembly
-now also mirrors OpenClaw's translator contract for cwd prefixing, home
-redaction with Windows separator preservation, prompt attachments,
+Native configured ACP binding helpers now also mirror OpenClaw's
+`persistent-bindings.types.ts` and `persistent-bindings.lifecycle.ts`
+key/record/parse/resolve/ensure contract: configured ACP session keys use the
+SHA-256 `channel:accountId:conversationId` hash suffix, generated binding
+records carry `targetKind="session"`, `boundAt=0`, config source metadata,
+conversation ids, and the runtime ACP session target key, stored records parse
+back into normalized configured binding specs, and the fakeable native ensure
+adapter keeps matching ready ACP sessions while closing/reinitializing stale,
+mismatched, or errored runtime sessions. Native reset-in-place handling now
+clears configured ACP binding metadata for recreation on the next turn while
+keeping ordinary ACP binding reset behavior close-only. The native resolver now
+also materializes top-level `type="acp"` `bindings[]` entries into configured
+ACP specs/records, prefers exact accounts over wildcard bindings, and maps
+configured ACP session keys back to matching config-derived specs.
+Remaining ACP binding parity is real provider-native child-thread creation/store
+breadth, unbind lifecycle breadth, and the standalone ACP bridge server/client
+runtime. Native
+ACP prompt request assembly now also mirrors OpenClaw's translator contract for
+cwd prefixing, home redaction with Windows separator preservation, prompt attachments,
 `_meta` thinking/deliver/timeout send options, and system provenance
 metadata/receipt construction. Native `AcpGatewayAgent` now covers
 OpenClaw-shaped `initialize`, `newSession`, `loadSession`, `prompt`, and
@@ -479,6 +493,15 @@ silent, and topic-thread options.
 Telegram poll delivery now also carries OpenClaw-style reply context through
 gateway `poll`, the shared outbound runtime, direct route sends, replay, CLI
 `routes poll --reply-to`, and native Bot API `reply_to_message_id` payloads.
+Telegram direct message delivery now also carries OpenClaw-style
+`channelData.telegram.pin` through gateway `send`, the shared outbound runtime,
+saved delivery payloads, and native Bot API route sends, then calls
+`pinChatMessage` with `disable_notification=true` for the first delivered
+message while preserving the delivered send result when pinning fails.
+Telegram direct message delivery now also maps
+`channelData.telegram.buttons` to Bot API `reply_markup.inline_keyboard` for
+route-backed text sends and the first media send, filtering invalid button rows
+the same way OpenClaw's inline keyboard adapter does.
 WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 `context.message_id` and switch URL media sends to `type="document"` /
 `document.link` when `forceDocument=true`, while retaining saved delivery
@@ -512,15 +535,18 @@ send the prepared message batch to Bot API `/v2/bot/message/reply`, returning
 LINE native route-backed direct sends now also carry OpenClaw's
 `mediaKind="video"` and `previewImageUrl` options through the shared outbound
 runtime and emit LINE video message payloads with `originalContentUrl` /
-`previewImageUrl` instead of default image payloads. LINE native route-backed
-direct sends now also carry OpenClaw's `mediaKind="audio"` and `durationMs`
-options through the shared outbound runtime and emit LINE audio message payloads
-with the requested duration. LINE native route-backed direct sends now also
-carry OpenClaw's structured `location` payload through the shared outbound
-runtime and emit LINE location messages with title/address truncation and
-latitude/longitude preservation. LINE native route-backed direct sends now also
-carry OpenClaw's `quickReplies` list through the shared outbound runtime and
-attach LINE `quickReply` action items to the final outgoing message, enforcing
+`previewImageUrl` instead of default image payloads. LINE route-backed video
+sends now also carry OpenClaw's `trackingId` option through the shared outbound
+runtime and persist it for replay, while emitting LINE video `trackingId` only
+for user chat ids and omitting it for group/room destinations. LINE native
+route-backed direct sends now also carry OpenClaw's `mediaKind="audio"` and
+`durationMs` options through the shared outbound runtime and emit LINE audio
+message payloads with the requested duration. LINE native route-backed direct
+sends now also carry OpenClaw's structured `location` payload through the
+shared outbound runtime and emit LINE location messages with title/address
+truncation and latitude/longitude preservation. LINE native route-backed direct
+sends now also carry OpenClaw's `quickReplies` list through the shared outbound
+runtime and attach LINE `quickReply` action items to the final outgoing message, enforcing
 the upstream 13-item and 20-character label boundaries. LINE native
 route-backed direct sends now also carry OpenClaw's `flexMessage` payload
 through the shared outbound runtime, emit Bot API Flex messages with `altText`
@@ -573,10 +599,14 @@ current-user reaction events are redacted for remove/clear requests.
 Matrix `message.action pinMessage`, `unpinMessage`, and `listPins` now use
 OpenClaw's `m.room.pinned_events` state behavior: current pins are read from room
 state, pin/unpin writes the updated state, and listPins returns pinned ids plus
-summaries for resolvable pinned message events.
+summaries for resolvable pinned message events. Matrix `message.action pin`,
+`unpin`, and `list-pins` now also follow OpenClaw's public action aliases and
+route to those same native pin state implementations.
 Matrix `message.action readMessages` now uses OpenClaw's room history endpoint
 shape with `dir`, bounded `limit`, `before`/`after` tokens, redaction filtering,
 message summaries, and `nextBatch` / `prevBatch` cursor projection.
+Matrix `message.action read` now also follows OpenClaw's public action adapter
+alias and routes to the same native `readMessages` history implementation.
 Matrix `message.action memberInfo` and `channelInfo` now map to OpenClaw's
 profile, room-state, and joined-member probe shapes, including display/avatar
 profile projection, room name/topic/canonical alias reads, and member counts.
@@ -644,10 +674,9 @@ token, and returns saved local media path metadata.
 Slack `send` now dispatches through the native Slack route as OpenClaw's generic
 action entrypoint, including `threadId` / `replyTo` routing, blocks validation,
 and the same external upload helper for media sends.
-Slack `message.action poll` now also dispatches through the native route-backed
-poll owner, preserving OpenClaw's `pollQuestion`, `pollOption`, `pollMulti`,
-`pollDurationHours`, `threadId`, and `silent` fields while returning provider
-`messageId`, `channelId`, `conversationId`, and `pollId` metadata.
+Slack `message.action poll` now matches OpenClaw's channel-actions contract by
+returning unsupported before native route dispatch, while direct `gateway.poll`
+Slack delivery remains route-backed through the shared outbound runtime.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
@@ -656,7 +685,10 @@ reaction-array remove shape and soft missing-message-id result. Telegram
 `message.action send` now also dispatches through the native Bot API route,
 including OpenClaw's `asDocument` alias for forced document sends plus
 reply/thread/silent/media forwarding and provider `messageId` / `mediaIds`
-projection. Telegram `message.action poll` now also dispatches through the
+projection. Telegram `message.action send` also maps OpenClaw-style action
+`buttons` to Bot API `reply_markup.inline_keyboard` with strict row, button,
+callback-data byte length, and style validation before dispatch. Telegram
+`message.action poll` now also dispatches through the
 native Bot API poll route, preserving OpenClaw's `pollQuestion`,
 `pollOption`, `pollMulti`, `replyTo`, `threadId`, and `silent` fields while
 returning provider `messageId`, `channelId`, `conversationId`, and `pollId`
@@ -902,9 +934,17 @@ Sandbox doctor preflight for `agents.defaults.sandbox.mode`: when mode is
 `non-main` or `all`, the effective backend defaults to Docker, and `docker
 version` is unavailable, the Hermes doctor payload carries the same actionable
 Sandbox warning text while preserving the existing warning surface. The
-top-level human/JSON doctor view now also reports OpenClaw-style session lock
+top-level doctor view now also includes a native `doctor:gateway-runtime`
+contribution for OpenClaw service-audit rows that still require migration to a
+stable system Node runtime. It reports too-old system Node versions with the
+upstream `Node 22.14+` warning, reports missing system Node with the upstream
+Node 22 LTS / Node 24 install guidance, and promotes those warnings into the
+top-level doctor warning list.
+The top-level human/JSON doctor view now also reports OpenClaw-style session lock
 health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
-liveness, age, stale posture, and read-only guidance without removing files.
+liveness, age, stale posture, read-only guidance, and `doctor --fix`
+stale-lock removal with `removedCount` / per-lock `removed` metadata while
+preserving fresh locks.
 The same state-integrity doctor surface now reports a structured
 `stateDirectory` payload and CRITICAL warning when the configured OpenZues data
 directory is missing, mirroring OpenClaw's missing-state-directory doctor
@@ -1398,6 +1438,14 @@ consumed instead of leaking synthesized run ids in memory.
 Current queue-head adjustment: historical exact `agent.wait` calls no longer
 evict a different current run tracked for the same session; exact-run recovery
 only takes session tracker ownership when no other run is active there.
+
+Current queue-head adjustment: `sessions.send` follow-ups to completed child
+subagent sessions now mirror OpenClaw's completed-subagent reactivation path.
+When the follow-up runtime returns a real `status="started"` run id, OpenZues
+updates the child session task record from the previous completed run to the
+new run, clears terminal fields, restores running lifecycle metadata, preserves
+the resolved run timeout, and publishes `sessions.changed` only after the
+running state is durable.
 
 Current queue-head adjustment: `sessions.spawn` active-child-cap pruning now
 observes terminal tracked child runs without consuming the `agent.wait`
@@ -3551,6 +3599,152 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   telegram_media_group or invalid_telegram_durations"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the Telegram native `message.action delete` / `deleteMessage` seam
+  from OpenClaw `extensions/telegram/src/action-runtime.ts`: route-backed
+  Telegram message actions now call Bot API `deleteMessage` with normalized
+  `chatId` / `channelId` / `to` targets and return `{ ok: true, deleted:
+  true }`. Verified with `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_delete_route"`, adjacent `python -m pytest tests\test_ops_mesh.py
+  -q -k "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the Telegram native `message.action edit` / `editMessage` seam from
+  OpenClaw `extensions/telegram/src/action-runtime.ts` and
+  `extensions/telegram/src/send.ts`: route-backed Telegram message actions now
+  call Bot API `editMessageText` with normalized `chatId` / `channelId` / `to`
+  targets, `content` / `message` aliases, HTML parse mode, and an
+  OpenClaw-shaped top-level `messageId` / `chatId` result. Verified with
+  `python -m pytest tests\test_ops_mesh.py -q -k "telegram_edit_route"`,
+  adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the Telegram native `message.action topic-create` /
+  `createForumTopic` and `topic-edit` / `editForumTopic` seams from OpenClaw
+  `extensions/telegram/src/action-runtime.ts` and
+  `extensions/telegram/src/send.ts`: route-backed Telegram message actions now
+  call Bot API `createForumTopic` / `editForumTopic`, normalize topic-qualified
+  targets to the base supergroup chat id, validate supported topic icon colors,
+  forward custom icon emoji ids, and return OpenClaw-shaped topic result
+  envelopes. Verified with `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_topic_create_route or telegram_topic_edit_route"`, adjacent
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the Matrix native `message.action poll-vote` seam from OpenClaw
+  `extensions/matrix/src/actions.ts` and
+  `extensions/matrix/src/matrix/actions/polls.ts`: route-backed Matrix message
+  actions now fetch the poll start event, resolve `optionId` / `optionIds` and
+  1-based `optionIndex` / `optionIndexes`, enforce poll `max_selections`, send
+  MSC3381 `m.poll.response` content, and return answer ids/labels. Verified
+  with `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_poll_vote_route"`, adjacent `python -m pytest tests\test_ops_mesh.py
+  -q -k "message_action_dispatches_matrix"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the BlueBubbles/iMessage native `message.action unsend` seam from
+  OpenClaw `src/channels/plugins/bluebubbles-actions.ts`,
+  `src/infra/outbound/message-action-spec.ts`,
+  `extensions/bluebubbles/src/actions.ts`, and
+  `extensions/bluebubbles/src/chat.ts`: gateway `message.action` now accepts
+  the public `imessage` channel, OpsMesh resolves a route-backed
+  `bluebubbles` provider route by account, and the native provider HTTP
+  adapter sends `POST /api/v1/message/{messageId}/unsend` with `partIndex`.
+  Verified with the focused OpsMesh and gateway tests, adjacent message-action
+  selections, `ruff check` on touched source/tests, and `mypy` on touched
+  source modules.
+- Closed the BlueBubbles/iMessage native `message.action edit` seam from
+  OpenClaw `extensions/bluebubbles/src/actions.ts` and
+  `extensions/bluebubbles/src/chat.ts`: route-backed BlueBubbles actions now
+  accept `messageId` plus `text` / `newText` / `message`, forward
+  `partIndex` and `backwardsCompatMessage`, call
+  `POST /api/v1/message/{messageId}/edit`, and preserve the OpenClaw-shaped
+  `{ ok: true, edited: rawMessageId }` result. Verified with focused and
+  adjacent OpsMesh message-action proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage native `message.action react` seam from
+  OpenClaw `extensions/bluebubbles/src/actions.ts`,
+  `extensions/bluebubbles/src/reactions.ts`, and
+  `extensions/bluebubbles/src/client.ts`: route-backed BlueBubbles actions now
+  accept `messageId`, `emoji`, `remove`, `partIndex`, and direct `chatGuid` /
+  `chat_guid` targets, normalize tapbacks to BlueBubbles reaction names, call
+  `POST /api/v1/message/react`, and preserve OpenClaw-shaped add/remove
+  results. Verified with focused and adjacent OpsMesh action proofs, `ruff
+  check`, and `mypy`.
+- Closed the BlueBubbles/iMessage native `message.action reply` and
+  `sendWithEffect` seams from OpenClaw
+  `extensions/bluebubbles/src/actions.ts` and
+  `extensions/bluebubbles/src/send.ts`: route-backed BlueBubbles actions now
+  send `POST /api/v1/message/text` with Private API method, temp GUIDs, reply
+  `selectedMessageGuid` / `partIndex`, effect-id alias mapping, and
+  upstream-shaped `messageId`, `repliedTo`, and `effect` results. Verified with
+  focused and adjacent OpsMesh action proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage group-management action seams
+  `renameGroup`, `addParticipant`, `removeParticipant`, and `leaveGroup` from
+  OpenClaw `extensions/bluebubbles/src/actions.ts` and
+  `extensions/bluebubbles/src/chat.ts`: route-backed BlueBubbles actions now
+  route direct `chatGuid` / `chat_guid` targets, display names, participant
+  addresses, HTTP methods, and upstream-shaped results through the native
+  BlueBubbles adapter. Verified with focused and adjacent OpsMesh action
+  proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage media action seams `setGroupIcon`,
+  `sendAttachment`, and `upload-file` from OpenClaw
+  `extensions/bluebubbles/src/actions.ts`,
+  `extensions/bluebubbles/src/chat.ts`, and
+  `extensions/bluebubbles/src/attachments.ts`: route-backed BlueBubbles actions
+  now decode base64 buffers, preserve filenames/content types/captions, send
+  multipart/form-data payloads for attachments and group icons, and return
+  upstream-shaped message/icon results. Verified with focused and adjacent
+  OpsMesh action proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage route-backed outbound text send seam from
+  OpenClaw `extensions/bluebubbles/src/channel.ts`,
+  `extensions/bluebubbles/src/send.ts`, and
+  `src/infra/outbound/outbound-send-service.ts`: `kind="bluebubbles"`
+  notification routes now participate in the shared outbound runtime send path,
+  direct `chat_guid` targets route to `POST /api/v1/message/text`, and native
+  message id/provider metadata propagates through direct send responses and
+  saved outbound deliveries. Verified with focused and adjacent OpsMesh proofs,
+  `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage route-backed outbound media send seam from
+  OpenClaw `extensions/bluebubbles/src/channel.ts`,
+  `extensions/bluebubbles/src/media-send.ts`, and
+  `extensions/bluebubbles/src/attachments.ts`: `gateway.send` media payloads
+  now download through a fakeable native helper, post multipart attachments to
+  `/api/v1/message/attachment`, deliver the leading caption as a follow-up
+  BlueBubbles text message, preserve reply threading metadata, and return
+  native attachment ids, media ids, media URLs, and saved delivery metadata.
+  Verified with focused and adjacent OpsMesh proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage outbound voice-media hardening seam from
+  OpenClaw `extensions/bluebubbles/src/media-send.ts` and
+  `extensions/bluebubbles/src/attachments.ts`: `audioAsVoice=true` now
+  rejects non-audio media before upload, only allows MP3/CAF voice media, and
+  normalizes valid voice filenames/content types before setting
+  `isAudioMessage` on the native multipart request. Verified with focused and
+  adjacent OpsMesh proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage outbound local-media root hardening seam from
+  OpenClaw `extensions/bluebubbles/src/media-send.ts`: native BlueBubbles
+  local file sends now read `channels.bluebubbles.mediaLocalRoots` and
+  account-scoped `mediaLocalRoots` from the gateway config snapshot, reject
+  local paths by default, reject remote-host `file://` paths, and only read
+  files under configured roots. Verified with focused and adjacent OpsMesh
+  proofs, `ruff check`, and `mypy`.
+- Closed the BlueBubbles/iMessage outbound media size hardening seam from
+  OpenClaw `extensions/bluebubbles/src/media-send.ts` and
+  `src/channels/plugins/media-limits.ts`: native BlueBubbles media downloads
+  now resolve account, channel, and `agents.defaults.mediaMaxMb` limits from
+  the gateway config snapshot and reject oversized local or remote media before
+  multipart upload. Verified with focused and adjacent OpsMesh proofs, `ruff
+  check`, and `mypy`.
+- Next repo-wide queue head: provider-native replay/direct-announce delivery
+  consistency remains open. Source anchors are
+  `src/infra/outbound/deliver.ts`, `src/infra/outbound/outbound-send-service.ts`,
+  and route-backed provider adapters; OpenZues must keep saved delivery
+  replay, direct announce, and session delivery metadata aligned for native
+  provider transports after the BlueBubbles breadth work.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and
