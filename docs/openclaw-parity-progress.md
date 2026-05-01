@@ -2240,6 +2240,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_sessions.py` and `mypy
   src\openzues\services\gateway_sessions.py`: clean after the live
   `deliveryContext` event seam.
+- Session snapshots, mutation `sessions.changed`, live `session.message`, and
+  message-phase `sessions.changed` events now surface persisted lifecycle
+  metadata (`status`, `startedAt`, `endedAt`, `runtimeMs`, and
+  `abortedLastRun`) in the same event snapshot path OpenClaw uses for session
+  run state.
+- `python -m pytest tests\test_gateway_sessions.py::test_session_snapshot_and_events_surface_lifecycle_status_metadata -q`:
+  1 passed after adding native lifecycle metadata projection.
+- `python -m pytest tests\test_gateway_sessions.py -q -k "lifecycle_status_metadata or message_payloads_surface_spawn_and_route_metadata or route_metadata_preserves_string_thread_ids or changed_event_payload_surfaces_session_setting_route_metadata or build_snapshot_surfaces_delivery_context_from_route_metadata or changed_event_payload_surfaces_transcript_usage_metadata"`:
+  6 passed after rechecking adjacent snapshot/event fields.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "session_message or sessions_changed or message_event or changed_event"`:
+  3 passed after rechecking gateway-method event publication, with `ruff check
+  src\openzues\services\gateway_sessions.py tests\test_gateway_sessions.py`
+  and `mypy src\openzues\services\gateway_sessions.py` clean.
 - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_supports_cursor_pagination"`: 1 passed after adding cursor pagination metadata and string `nextCursor` round-trip support to `sessions.get`.
 - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_get"`: 5 passed after rechecking legacy flat responses and API coverage.
 - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the `sessions.get` cursor seam.

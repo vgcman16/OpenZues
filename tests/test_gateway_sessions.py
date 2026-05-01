@@ -515,6 +515,68 @@ async def test_build_snapshot_surfaces_delivery_context_from_route_metadata(
 
 
 @pytest.mark.asyncio
+async def test_session_snapshot_and_events_surface_lifecycle_status_metadata(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions.db")
+    await database.initialize()
+
+    session_key = "agent:main:dashboard:lifecycle"
+    await database.upsert_gateway_session_metadata(
+        session_key=session_key,
+        metadata={
+            "status": "killed",
+            "startedAt": 1_700_000_000_100,
+            "endedAt": 1_700_000_000_900,
+            "runtimeMs": 800,
+            "abortedLastRun": True,
+        },
+    )
+    message_row_id = await database.append_control_chat_message(
+        role="assistant",
+        content="Lifecycle metadata snapshot",
+        mission_id=None,
+        session_key=session_key,
+    )
+    message_row = await database.get_control_chat_message(message_row_id)
+    assert message_row is not None
+
+    sessions_service = GatewaySessionsService(database)
+    snapshot_payload = await sessions_service.build_session_payload_for_key(
+        session_key=session_key,
+        now_ms=1_700_000_001_000,
+    )
+    changed_payload = await sessions_service.build_changed_event_payload(
+        session_key=session_key,
+        reason="reactivated",
+        now_ms=1_700_000_001_000,
+    )
+    message_payload = await sessions_service.build_message_event_payload(
+        message_row=message_row,
+        now_ms=1_700_000_001_000,
+    )
+    message_changed_payload = await sessions_service.build_message_changed_event_payload(
+        message_row=message_row,
+        now_ms=1_700_000_001_000,
+    )
+
+    expected = {
+        "status": "killed",
+        "startedAt": 1_700_000_000_100,
+        "endedAt": 1_700_000_000_900,
+        "runtimeMs": 800,
+        "abortedLastRun": True,
+    }
+    assert snapshot_payload is not None
+    assert {key: snapshot_payload.get(key) for key in expected} == expected
+    assert {key: changed_payload.get(key) for key in expected} == expected
+    assert message_payload is not None
+    assert {key: message_payload.get(key) for key in expected} == expected
+    assert message_changed_payload is not None
+    assert {key: message_changed_payload.get(key) for key in expected} == expected
+
+
+@pytest.mark.asyncio
 async def test_route_metadata_preserves_string_thread_ids(
     tmp_path: Path,
 ) -> None:

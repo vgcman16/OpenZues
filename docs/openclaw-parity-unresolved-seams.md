@@ -1716,6 +1716,13 @@ existing flattened last-route fields. The next bounded seam should stay with
 source-backed session event replay/finality shape or the next concrete
 `sessions.*` lifecycle metadata mismatch.
 
+Current queue-head adjustment: session snapshots, mutation `sessions.changed`,
+live `session.message`, and message-phase `sessions.changed` events now surface
+OpenClaw lifecycle metadata from persisted native session metadata: `status`,
+`startedAt`, `endedAt`, `runtimeMs`, and `abortedLastRun`. The next bounded
+session seam should stay with source-backed event replay/finality behavior,
+direct history SSE edges, or another concrete `sessions.*` lifecycle mismatch.
+
 Current queue-head adjustment: `sessions.get` now supports cursor pagination
 when the visible transcript spans multiple pages, preserving the legacy
 `messages` field while adding `items`, `hasMore`, `nextCursor`, and raw

@@ -29,6 +29,7 @@ _DERIVED_TITLE_ELLIPSIS = "\u2026"
 _SESSION_LABEL_MAX_LENGTH = 512
 _SESSION_LIST_MESSAGE_LIMIT_MAX = 20
 _SESSION_MESSAGE_ASSISTANT_SKIP_TEXTS = {"NO_REPLY", "ANNOUNCE_SKIP", "REPLY_SKIP"}
+_SESSION_RUN_STATUS_VALUES = {"running", "done", "failed", "killed", "timeout"}
 _OPENCLAW_SESSION_LIST_KINDS = {
     "main",
     "group",
@@ -362,6 +363,13 @@ class GatewaySessionsService:
         delivery_context = _delivery_context_or_none(session_payload.get("deliveryContext"))
         if delivery_context is not None:
             payload["deliveryContext"] = delivery_context
+        status = _session_run_status_or_none(session_payload.get("status"))
+        if status is not None:
+            payload["status"] = status
+        for field in ("startedAt", "endedAt", "runtimeMs"):
+            lifecycle_value = _session_lifecycle_int_or_none(session_payload.get(field))
+            if lifecycle_value is not None:
+                payload[field] = lifecycle_value
         total_tokens_fresh = _bool_or_none(session_payload.get("totalTokensFresh"))
         if total_tokens_fresh is not None:
             payload["totalTokensFresh"] = total_tokens_fresh
@@ -695,6 +703,16 @@ class GatewaySessionsService:
         fast_mode = _bool_or_none(metadata.get("fastMode"))
         if fast_mode is not None:
             payload["fastMode"] = fast_mode
+        session_status = _session_run_status_or_none(metadata.get("status"))
+        if session_status is not None:
+            payload["status"] = session_status
+        for field in ("startedAt", "endedAt", "runtimeMs"):
+            lifecycle_value = _session_lifecycle_int_or_none(metadata.get(field))
+            if lifecycle_value is not None:
+                payload[field] = lifecycle_value
+        aborted_last_run = _bool_or_none(metadata.get("abortedLastRun"))
+        if aborted_last_run is not None:
+            payload["abortedLastRun"] = aborted_last_run
         forked_from_parent = _bool_or_none(metadata.get("forkedFromParent"))
         if forked_from_parent is not None:
             payload["forkedFromParent"] = forked_from_parent
@@ -1572,6 +1590,22 @@ def _int_or_none(value: object) -> int | None:
     return None
 
 
+def _session_lifecycle_int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    number = _int_or_none(value)
+    if number is None or number < 0:
+        return None
+    return number
+
+
+def _session_run_status_or_none(value: object) -> str | None:
+    status = _string_or_none(value)
+    if status in _SESSION_RUN_STATUS_VALUES:
+        return status
+    return None
+
+
 def _route_thread_id_or_none(value: object) -> int | str | None:
     if isinstance(value, bool):
         return None
@@ -1797,6 +1831,10 @@ def _apply_session_event_metadata(
         "lastAccountId",
         "lastThreadId",
         "deliveryContext",
+        "status",
+        "startedAt",
+        "endedAt",
+        "runtimeMs",
     ):
         if field in session_payload:
             payload[field] = session_payload[field]
