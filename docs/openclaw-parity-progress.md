@@ -40,15 +40,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
 - Native configured ACP binding helpers now mirror OpenClaw's
-  `persistent-bindings.types.ts` key/record contract: session keys use the
-  16-character SHA-256 hash of `channel:accountId:conversationId`, and
-  config-sourced binding records persist `targetKind="session"`, `boundAt=0`,
-  conversation ids, and ACP metadata including mode, agent ids, backend, cwd,
-  and label.
+  `persistent-bindings.types.ts` key/record/parse/resolve contract: session
+  keys use the 16-character SHA-256 hash of
+  `channel:accountId:conversationId`, config-sourced binding records persist
+  `targetKind="session"`, `boundAt=0`, conversation ids, and ACP metadata, and
+  stored records can be parsed back into normalized configured binding specs.
 - Verified the configured ACP binding helper slice with `python -m pytest
-  tests\test_acp_persistent_bindings.py -q` (`2 passed`), adjacent ACP spawn
+  tests\test_acp_persistent_bindings.py -q` (`5 passed`), adjacent ACP spawn
   proof `python -m pytest tests\test_acp_persistent_bindings.py
-  tests\test_gateway_acp_spawn.py -q` (`21 passed`), adjacent gateway ACP
+  tests\test_gateway_acp_spawn.py -q` (`24 passed`), adjacent gateway ACP
   proof `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and
   thread"` (`7 passed`), `ruff check
   src\openzues\services\acp_persistent_bindings.py
