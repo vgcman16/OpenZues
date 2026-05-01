@@ -156,6 +156,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- Matrix `message.action send` now maps through the native provider route,
+  preserving OpenClaw's `send` / `sendMessage` action aliases, `message` /
+  `content` text aliases, reply/thread metadata, guarded media aliases, and
+  idempotency key as the Matrix transaction id.
+- Verified the Matrix action-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_send_route"` (`1 passed`), adjacent
+  action/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_send_route or
+  message_action_dispatches_zalo_send_route or
+  message_action_dispatches_zalo_send_media_route or matrix_native_route or
+  message_action_dispatches_discord_send_route or
+  message_action_dispatches_slack_send_route or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_whatsapp_send_document_reply"` (`9 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 - Native `routes send` / `routes poll` now accept OpenClaw-compatible outbound
   CLI aliases: `routes send --media` maps to the same native media list as
   `--media-url`, and both send/poll accept `--thread-id` alongside

@@ -501,9 +501,13 @@ Matrix's 4000-character event boundary, and persist `messageId`, `roomId`,
 Matrix native route-backed polls now also emit OpenClaw's `m.poll.start`
 payload with disclosed/undisclosed selection kind, answer ids, fallback text,
 thread relation metadata, and persisted `messageId` / `pollId` metadata.
+Matrix `message.action send` / `sendMessage` now maps through the same native
+route-backed send owner, including `content` / `message`, `replyTo`,
+`threadId`, media aliases as guarded inputs, and action idempotency as the
+Matrix transaction id when present.
 Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, profile/actions, account probes, and
-read/reaction/edit/delete/pin action breadth.
+direct-room resolution, profile/account probes, and read/reaction/edit/delete/pin
+action breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

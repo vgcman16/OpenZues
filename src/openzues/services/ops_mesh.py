@@ -7735,6 +7735,8 @@ class OpsMeshService:
         action = request.action.strip()
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
+        if channel == "matrix" and action in {"send", "sendMessage"}:
+            return await self._dispatch_matrix_send_message_action(request)
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -8342,6 +8344,88 @@ class OpsMeshService:
         if not message_id:
             raise RuntimeError("Zalo API response did not include a message id.")
         return {"ok": True, "to": target, "messageId": message_id}
+
+    async def _dispatch_matrix_send_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        if target is None:
+            raise RuntimeError("Matrix send requires to.")
+        media_url = (
+            _message_action_param_raw_string(request.params, "mediaUrl")
+            or _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "filePath")
+            or _message_action_param_raw_string(request.params, "path")
+        )
+        message = _message_action_param_string(
+            request.params,
+            "message",
+            allow_empty=True,
+        )
+        if message is None:
+            message = _message_action_param_string(
+                request.params,
+                "content",
+                required=media_url is None,
+                allow_empty=True,
+            )
+        message = message or ""
+        conversation_target = _normalize_conversation_target(
+            ConversationTargetView(
+                channel="matrix",
+                account_id=request.account_id,
+                peer_kind=_provider_peer_kind_from_target(target),
+                peer_id=target,
+            )
+        )
+        if conversation_target is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "gateway outbound provider route is missing a conversation target"
+            )
+        payload: dict[str, Any] = {
+            "channel": "matrix",
+            "to": target,
+            "message": message,
+        }
+        if media_url is not None:
+            payload["mediaUrl"] = media_url
+        reply_to_id = (
+            _message_action_param_string(request.params, "replyToId")
+            or _message_action_param_string(request.params, "replyTo")
+        )
+        if reply_to_id is not None:
+            payload["replyToId"] = reply_to_id
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            payload["threadId"] = thread_id
+        audio_as_voice = _message_action_param_bool(
+            request.params,
+            "audioAsVoice",
+        )
+        if audio_as_voice is None:
+            audio_as_voice = _message_action_param_bool(request.params, "asVoice")
+        if audio_as_voice is not None:
+            payload["audioAsVoice"] = audio_as_voice
+        if request.account_id is not None:
+            payload["accountId"] = request.account_id
+        if request.session_key is not None:
+            payload["sessionKey"] = request.session_key
+        if request.agent_id is not None:
+            payload["agentId"] = request.agent_id
+        if request.idempotency_key is not None:
+            payload["idempotencyKey"] = request.idempotency_key
+        result = await self._post_provider_route_event(
+            event_type="gateway/send",
+            conversation_target=conversation_target,
+            payload=payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Matrix API returned a non-JSON response.")
+        provider_result = _serialize_gateway_response_provider_result(result)
+        if not provider_result.get("messageId"):
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {"ok": True, "result": provider_result}
 
     def _dispatch_whatsapp_react_message_action(
         self,
