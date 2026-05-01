@@ -13436,6 +13436,9 @@ def _plugin_record_from_deck_item(
     model_support = _plugin_manifest_model_support(item.get("modelSupport"))
     if model_support:
         record["modelSupport"] = model_support
+    config_contracts = _plugin_manifest_config_contracts(item.get("configContracts"))
+    if config_contracts:
+        record["configContracts"] = config_contracts
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
         record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
@@ -13754,6 +13757,75 @@ def _plugin_manifest_model_support(value: object) -> dict[str, object]:
     if model_patterns:
         model_support["modelPatterns"] = model_patterns
     return model_support
+
+
+def _plugin_manifest_config_literal(value: object) -> bool:
+    return value is None or isinstance(value, str | int | float | bool)
+
+
+def _plugin_manifest_dangerous_config_flags(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    flags: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        path = _optional_cli_string(entry.get("path"))
+        if path is None or "equals" not in entry:
+            continue
+        equals = entry.get("equals")
+        if not _plugin_manifest_config_literal(equals):
+            continue
+        flags.append({"path": path, "equals": equals})
+    return flags
+
+
+def _plugin_manifest_secret_input_paths(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    paths: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        path = _optional_cli_string(entry.get("path"))
+        if path is None:
+            continue
+        secret_input: dict[str, object] = {"path": path}
+        if entry.get("expected") == "string":
+            secret_input["expected"] = "string"
+        paths.append(secret_input)
+    return paths
+
+
+def _plugin_manifest_config_contracts(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    contracts: dict[str, object] = {}
+    migration_paths = _plugin_manifest_string_list(
+        value.get("compatibilityMigrationPaths")
+    )
+    if migration_paths:
+        contracts["compatibilityMigrationPaths"] = migration_paths
+    runtime_paths = _plugin_manifest_string_list(value.get("compatibilityRuntimePaths"))
+    if runtime_paths:
+        contracts["compatibilityRuntimePaths"] = runtime_paths
+    dangerous_flags = _plugin_manifest_dangerous_config_flags(
+        value.get("dangerousFlags")
+    )
+    if dangerous_flags:
+        contracts["dangerousFlags"] = dangerous_flags
+    raw_secret_inputs = value.get("secretInputs")
+    if isinstance(raw_secret_inputs, dict):
+        secret_input_paths = _plugin_manifest_secret_input_paths(
+            raw_secret_inputs.get("paths")
+        )
+        if secret_input_paths:
+            secret_inputs: dict[str, object] = {"paths": secret_input_paths}
+            bundled_default_enabled = raw_secret_inputs.get("bundledDefaultEnabled")
+            if isinstance(bundled_default_enabled, bool):
+                secret_inputs["bundledDefaultEnabled"] = bundled_default_enabled
+            contracts["secretInputs"] = secret_inputs
+    return contracts
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -14120,6 +14192,9 @@ def _plugin_record_from_openclaw_manifest(
     model_support = _plugin_manifest_model_support(manifest.get("modelSupport"))
     if model_support:
         record["modelSupport"] = model_support
+    config_contracts = _plugin_manifest_config_contracts(manifest.get("configContracts"))
+    if config_contracts:
+        record["configContracts"] = config_contracts
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
         record[metadata_key] = metadata_value
     for key in (
