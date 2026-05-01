@@ -6160,6 +6160,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- Telegram `message.action delete` / `deleteMessage` now dispatches through
+  the native Bot API `deleteMessage` route with OpenClaw's chat-id aliases and
+  returns the upstream-shaped `{ ok: true, deleted: true }` envelope.
+- Verified the Telegram delete action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_delete_route"` (`1 passed`),
+  adjacent Telegram action proofs `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"` (`6 passed`
+  each), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

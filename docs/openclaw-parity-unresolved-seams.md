@@ -3567,6 +3567,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   telegram_media_group or invalid_telegram_durations"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Closed the Telegram native `message.action delete` / `deleteMessage` seam
+  from OpenClaw `extensions/telegram/src/action-runtime.ts`: route-backed
+  Telegram message actions now call Bot API `deleteMessage` with normalized
+  `chatId` / `channelId` / `to` targets and return `{ ok: true, deleted:
+  true }`. Verified with `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_delete_route"`, adjacent `python -m pytest tests\test_ops_mesh.py
+  -q -k "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Remaining Telegram message-action
+  parity is `edit` / `editMessage`, `topic-create` / `createForumTopic`, and
+  `topic-edit` / `editForumTopic` payload/result breadth.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and
