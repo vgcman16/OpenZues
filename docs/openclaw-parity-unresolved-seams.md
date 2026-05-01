@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-30
+Updated: 2026-05-01
 
 Current percentage rollup:
 
@@ -211,7 +211,10 @@ The native sandbox adapter now preserves read-only Codex sandbox policy metadata
 when dispatched with `sandbox_mode="read-only"`; remaining staging work is
 limited to deeper OpenClaw provider filesystem staging. Explicit
 `workspaceAccess="ro"` and `"none"` now map to native read-only sandbox turns,
-while omitted/`"rw"` access keeps the writable workspace sandbox path.
+while omitted/`"rw"` access keeps the writable workspace sandbox path. Sandbox
+CLI explain JSON/human output now also mirrors OpenClaw's embedded sandbox
+info by projecting `agentWorkspaceMount="/agent"` for read-only agent workspace
+access.
 Sandboxed `sessions.spawn` calls that omit `cwd` now stage inline attachments
 inside the resolved child sandbox workspace from `workspaceRoot`, persist that
 workspace as `spawnedWorkspaceDir`, pass it into the sandbox runtime dispatch,
@@ -343,6 +346,40 @@ forum-topic conversations whether the requester supplies a topic-qualified
 `to` target or a group plus `threadId`; persisted `sessionBinding`
 conversation ids use OpenClaw's `chatId:topic:threadId` shape without a
 self-parent conversation record.
+ACP `streamTo="parent"` spawns now also run a native parent-stream relay path:
+the RuntimeManager-backed service resolves a child stream log path, registers a
+provisional relay before dispatch, restarts the relay if the final Codex turn id
+differs from the provisional run id, notifies the accepted relay, and returns
+`streamLogPath` for gateway metadata persistence. App and CLI construction wire
+the file-backed relay into the ACP spawn service.
+Run-mode ACP spawns from canonical subagent requester sessions now also enable
+parent streaming implicitly when heartbeat delivery is session-local
+(`target="last"` with no explicit heartbeat route), the requester has a usable
+current delivery route, no thread context, the spawn is not thread-bound, and
+the gateway heartbeat runtime is enabled; `set-heartbeats enabled=false` now
+suppresses implicit ACP parent streaming without changing explicit
+`streamTo="parent"` requests.
+Accepted ACP spawns now also register an OpenClaw-shaped running background task
+record in durable child-session metadata: the record carries `runtime="acp"`,
+`sourceId` / `runId`, owner/requester session keys, child session key, label,
+task text, `status="running"`, `deliveryStatus`, and timestamps. The native
+`tasks` CLI projection now reads those metadata-backed ACP records alongside
+mission and blueprint tasks.
+ACP terminal waits now also update those metadata-backed task records when a
+tracked child run reaches a terminal mission snapshot: successful runs become
+`status="succeeded"` with `terminalSummary`, `terminalOutcome="succeeded"`,
+`endedAt`, `lastEventAt`, and session-queued delivery status; provider
+completion delivery can subsequently mark the task delivery as `delivered` or
+`failed`.
+ACP in-flight runtime progress now also advances those metadata-backed task
+records before terminal wait: app-server text delta events are matched by ACP
+run id or runtime thread id, normalized into an appended `progressSummary`, and
+bump `lastEventAt` while the record remains `status="running"`.
+Metadata-backed ACP task cancellation now also follows OpenClaw's
+`tasks cancel` lifecycle: the native CLI resolves ACP task/run/session lookup
+tokens, calls the fakeable ACP runtime `cancel_session` hook with
+`reason="task-cancel"`, and marks the persisted task record
+`status="cancelled"` with terminal timing and `error="Cancelled by operator."`.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.
@@ -402,7 +439,14 @@ WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
-saved delivery metadata path.
+saved delivery metadata path. WhatsApp `message.action send` now also dispatches
+through the native Cloud API route, preserving OpenClaw's `media` / `mediaUrl`,
+`replyTo`, `gifPlayback`, `forceDocument` / `asDocument`, and media-list
+action params while returning provider message/media metadata. WhatsApp
+`message.action poll` now dispatches through the native interactive-button poll
+route, preserving OpenClaw's `pollQuestion`, `pollOption`, and `pollMulti`
+action params while returning provider `messageId`, `channelId`,
+`conversationId`, and `pollId` metadata.
 Zalo native route-backed direct text sends now use OpenClaw's Bot API
 `/bot{token}/sendMessage` shape and 2000-character split behavior, with native
 provider result metadata persisted through the direct-send delivery path.
@@ -438,11 +482,23 @@ token, and returns saved local media path metadata.
 Slack `send` now dispatches through the native Slack route as OpenClaw's generic
 action entrypoint, including `threadId` / `replyTo` routing, blocks validation,
 and the same external upload helper for media sends.
+Slack `message.action poll` now also dispatches through the native route-backed
+poll owner, preserving OpenClaw's `pollQuestion`, `pollOption`, `pollMulti`,
+`pollDurationHours`, `threadId`, and `silent` fields while returning provider
+`messageId`, `channelId`, `conversationId`, and `pollId` metadata.
 Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
 dispatch via Bot API `setMessageReaction`, including the upstream empty
-reaction-array remove shape and soft missing-message-id result.
+reaction-array remove shape and soft missing-message-id result. Telegram
+`message.action send` now also dispatches through the native Bot API route,
+including OpenClaw's `asDocument` alias for forced document sends plus
+reply/thread/silent/media forwarding and provider `messageId` / `mediaIds`
+projection. Telegram `message.action poll` now also dispatches through the
+native Bot API poll route, preserving OpenClaw's `pollQuestion`,
+`pollOption`, `pollMulti`, `replyTo`, `threadId`, and `silent` fields while
+returning provider `messageId`, `channelId`, `conversationId`, and `pollId`
+metadata.
 Discord route-backed action parity now includes `react` add dispatch via REST
 own-reaction `PUT` using the saved bot token and OpenClaw-style encoded emoji
 identifier, plus explicit `remove=true` through the matching own-reaction

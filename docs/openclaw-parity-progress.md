@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Updated: 2026-04-30.
+- Updated: 2026-05-01.
 - Estimated repo-wide parity: ~45% overall, with a reasonable band of ~40-50%.
 - Estimated active gateway/session/tool-contract family parity: ~97% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
@@ -4808,6 +4808,215 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -k "message_action_dispatches_discord"` (`49 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- ACP `streamTo="parent"` now has a native RuntimeManager parent-stream relay
+  path: the service resolves a child JSONL stream log, starts a provisional
+  parent relay before dispatch, restarts it when the returned Codex turn id
+  differs from the provisional run id, notifies the accepted relay, and surfaces
+  `streamLogPath` through the gateway metadata path. App and CLI construction
+  now wire the file-backed relay under the OpenZues data dir.
+- Verified the ACP parent-stream relay seam with `python -m pytest
+  tests/test_gateway_acp_spawn.py::test_runtime_manager_acp_spawn_stream_to_parent_runs_parent_stream_relay
+  -q` (`1 passed`), adjacent ACP spawn coverage `python -m pytest
+  tests/test_gateway_acp_spawn.py -q` (`19 passed`),
+  `tests/test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_tracks_child_run`
+  (`1 passed`), `tests/test_cli.py::test_sessions_spawn_json_calls_gateway_method_owner`
+  (`1 passed`), `ruff check src\openzues\services\gateway_acp_spawn.py
+  src\openzues\app.py src\openzues\cli.py tests\test_gateway_acp_spawn.py`,
+  and `mypy src\openzues\services\gateway_acp_spawn.py src\openzues\app.py
+  src\openzues\cli.py`.
+- ACP run-mode spawns from canonical subagent requester sessions now mirror the
+  upstream implicit parent-stream rule: when heartbeat delivery is
+  session-local (`target="last"` with no explicit heartbeat route), the
+  requester has a usable current delivery route, and the request is not
+  thread-bound or already carrying thread context, the gateway passes
+  `streamTo="parent"` into the ACP runtime and persists the returned stream log.
+- Verified the implicit ACP parent-stream seam with `python -m pytest
+  tests/test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent
+  -q` (`1 passed`), adjacent explicit-stream coverage `python -m pytest
+  tests/test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent
+  tests/test_gateway_node_methods.py::test_sessions_spawn_acp_stream_to_parent_tracks_child_run
+  -q` (`2 passed`), ACP spawn gateway coverage `python -m pytest
+  tests/test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`17 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- ACP implicit parent streaming now also honors OpenClaw's runtime heartbeat
+  toggle: after `set-heartbeats enabled=false`, canonical subagent requester
+  ACP run spawns no longer receive implicit `streamTo="parent"` and do not
+  persist `streamTo` / `streamLogPath` metadata, while explicit stream
+  requests keep their existing behavior.
+- Verified the runtime-disabled heartbeat ACP stream gate with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_heartbeats_disabled
+  -q` (`1 passed`), adjacent heartbeat/implicit-stream coverage `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_heartbeats_disabled
+  tests\test_gateway_node_methods.py::test_set_heartbeats_returns_ok_payload_when_runtime_is_wired
+  -q` (`3 passed`), ACP spawn gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp or
+  set_heartbeats"` (`19 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Accepted ACP spawns now register a native OpenClaw-shaped running task record
+  by persisting `taskRecord` and `taskDeliveryState` into the child session
+  metadata. The record preserves `runtime="acp"`, `sourceId` / `runId`,
+  requester/owner session keys, child session key, label, task text,
+  `status="running"`, `deliveryStatus`, notify policy, and event timestamps.
+  `openzues tasks --json` now projects those metadata-backed ACP records beside
+  existing native mission and blueprint task records.
+- Verified the ACP task-record registration slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_accepted_run_persists_openclaw_task_record
+  -q` (`1 passed`) and `python -m pytest
+  tests\test_cli.py::test_tasks_list_json_projects_acp_task_records_from_session_metadata
+  -q` (`1 passed`), adjacent ACP spawn coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp"` (`19 passed`),
+  adjacent task CLI coverage `python -m pytest tests\test_cli.py -q -k
+  "tasks_list_json or tasks_show_json or tasks_audit_json or
+  tasks_maintenance_json"` (`5 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\cli.py
+  tests\test_gateway_node_methods.py tests\test_cli.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py src\openzues\cli.py`.
+- ACP terminal waits now update the metadata-backed OpenClaw task record for
+  tracked child ACP runs: completed runs become `succeeded`, receive
+  `terminalSummary`, `terminalOutcome="succeeded"`, `endedAt`, `lastEventAt`,
+  and `deliveryStatus="session_queued"` when the completion is queued back to
+  the parent session. Provider completion delivery can further promote the same
+  record to `delivered` or `failed`.
+- Verified the ACP terminal task-record lifecycle slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_agent_wait_marks_acp_task_record_succeeded_on_completed_run
+  -q` (`1 passed`), adjacent wait/completion coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "agent_wait_marks_acp_task_record or
+  agent_wait_announces_spawn_completion_to_parent_session or
+  agent_wait_thread_bound_completion_uses_completion_delivery_route or
+  agent_wait_returns_failed_terminal_snapshot_for_tracked_run"` (`4 passed`),
+  adjacent ACP/wait coverage `python -m pytest tests\test_gateway_node_methods.py
+  -q -k "sessions_spawn_acp or agent_wait"` (`38 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- ACP in-flight runtime progress now updates the same metadata-backed
+  OpenClaw task record before terminal wait. The app-wired gateway runtime
+  event listener matches ACP app-server text deltas by run id or runtime thread
+  id, appends normalized output into `progressSummary`, and advances
+  `lastEventAt` while preserving `status="running"`.
+- Verified the ACP runtime progress task-record slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "runtime_progress_appends_task_record_summary"` (`1 passed`), adjacent ACP
+  spawn/wait coverage `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "sessions_spawn_acp or agent_wait"` (`39 passed`), runtime event-handler
+  neighborhood `python -m pytest tests\test_manager.py -q -k
+  "compact_event_payload or handle_event"` (`11 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py` plus `mypy
+  src\openzues\app.py`. A broader exploratory manager filter
+  `python -m pytest tests\test_manager.py -q -k "event or turn"` still exposes
+  unrelated fake-client `sandbox_mode` failures in four existing `start_turn`
+  tests.
+- Metadata-backed ACP tasks now cancel through the native `tasks cancel` CLI
+  path. The CLI resolves ACP task/run/session lookup tokens, calls the
+  fakeable ACP runtime `cancel_session` hook with `reason="task-cancel"`, and
+  patches the persisted task record to `status="cancelled"` with `endedAt`,
+  `lastEventAt`, and `error="Cancelled by operator."`.
+- Verified the ACP metadata task cancel slice with `python -m pytest
+  tests\test_cli.py -q -k "tasks_cancel_cancels_metadata_backed_acp_task"` (`1
+  passed`), adjacent CLI task coverage `python -m pytest tests\test_cli.py -q
+  -k "tasks_cancel or tasks_notify or
+  tasks_list_json_projects_acp_task_records_from_session_metadata or
+  tasks_show_json or tasks_audit_json or tasks_maintenance_json"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Telegram `message.action send` now reaches the native route-backed Bot API
+  runtime instead of falling through unsupported. The action forwards
+  OpenClaw-style `to`, `message`, `media`, `replyTo`, `threadId`, `silent`, and
+  `asDocument` (as `forceDocument`) into `gateway/send`, returning provider
+  `messageId`, `channelId`, and `mediaIds` metadata.
+- Verified the Telegram action-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_send_document_alias"` (`1 passed`),
+  adjacent route/provider coverage `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_slack_send_route or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_telegram_react_route or
+  message_action_dispatches_discord_send_route or
+  send_direct_channel_message_uses_telegram_native_options"` (`5 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action poll` now reaches the native route-backed Bot API
+  runtime instead of falling through unsupported. The action forwards
+  OpenClaw-style `to`, `pollQuestion`, `pollOption`, `pollMulti`, `replyTo`,
+  `threadId`, and `silent` into `gateway/poll`, returning provider
+  `messageId`, `channelId`, `conversationId`, and `pollId` metadata.
+- Verified the Telegram action-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_poll_route"` (`1 passed`),
+  adjacent route/provider coverage `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_telegram_poll_route or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_telegram_react_route or
+  send_direct_channel_poll_uses_telegram_native_route or
+  message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Slack `message.action poll` now reaches the native route-backed poll runtime
+  instead of falling through unsupported. The action forwards OpenClaw-style
+  `to`, `pollQuestion`, `pollOption`, `pollMulti`, `pollDurationHours`,
+  `threadId`, and `silent` into `gateway/poll`, returning provider
+  `messageId`, `channelId`, `conversationId`, and `pollId` metadata.
+- Verified the Slack action-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "slack_poll_route"` (`1 passed`), adjacent
+  route/provider coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_slack_poll_route or
+  message_action_dispatches_slack_send_route or
+  send_direct_channel_poll_uses_slack_native_route or
+  message_action_dispatches_telegram_poll_route or
+  message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- WhatsApp `message.action poll` now reaches the native Cloud API
+  interactive-button poll runtime instead of falling through unsupported. The
+  action forwards OpenClaw-style `to`, `pollQuestion`, `pollOption`, and
+  `pollMulti` into `gateway/poll`, returning provider `messageId`,
+  `channelId`, `conversationId`, and `pollId` metadata.
+- Verified the WhatsApp action-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "whatsapp_poll_route"` (`1 passed`), adjacent
+  route/provider coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_whatsapp_poll_route or
+  message_action_dispatches_whatsapp_react_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  message_action_dispatches_slack_poll_route or
+  message_action_dispatches_telegram_poll_route or
+  message_action_dispatches_discord_poll_route"` (`6 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- WhatsApp `message.action send` now reaches the native Cloud API send runtime
+  instead of falling through unsupported. The action forwards OpenClaw-style
+  `to`, `message`, `media` / `mediaUrl`, `replyTo`, `gifPlayback`,
+  `audioAsVoice`, and `forceDocument` / `asDocument` into `gateway/send`,
+  returning provider `messageId`, `channelId`, `mediaIds`, and `mediaUrls`
+  metadata.
+- Verified the WhatsApp action-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "whatsapp_send_document_reply"` (`1 passed`),
+  adjacent route/provider coverage `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_whatsapp_send_document_reply or
+  message_action_dispatches_whatsapp_poll_route or
+  message_action_dispatches_whatsapp_react_route or
+  send_direct_channel_message_preserves_whatsapp_reply_document or
+  send_direct_channel_message_uses_whatsapp_gif_video_payload or
+  send_direct_channel_message_uses_whatsapp_native_route"` (`6 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
+- Sandbox `explain` now includes OpenClaw's read-only agent workspace mount
+  hint: when the effective sandbox workspace access is `ro`, JSON and human
+  output expose `agentWorkspaceMount="/agent"` so callers can distinguish the
+  copied sandbox workspace from the mounted real agent workspace.
+- Verified the sandbox mount projection with `python -m pytest
+  tests\test_cli.py -q -k "read_only_agent_workspace_mount"` (`1 passed`),
+  adjacent sandbox CLI/doctor coverage `python -m pytest tests\test_cli.py -q
+  -k "sandbox_explain or sandbox_recreate or sandbox_inventory or
+  doctor_sandbox"` (`5 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 

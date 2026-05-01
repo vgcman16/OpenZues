@@ -58,7 +58,10 @@ from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
-from openzues.services.gateway_acp_spawn import RuntimeManagerAcpSpawnService
+from openzues.services.gateway_acp_spawn import (
+    FileAcpParentStreamRelay,
+    RuntimeManagerAcpSpawnService,
+)
 from openzues.services.gateway_agents import GatewayAgentsService
 from openzues.services.gateway_bootstrap import GatewayBootstrapService
 from openzues.services.gateway_capability import GatewayCapabilityService
@@ -1109,7 +1112,10 @@ async def _build_services(app_settings: Settings) -> CliServices:
         send_channel_message_service=ops_mesh.send_direct_channel_message,
         send_channel_poll_service=ops_mesh.send_direct_channel_poll,
         message_action_dispatcher=ops_mesh.dispatch_message_action,
-        acp_spawn_service=RuntimeManagerAcpSpawnService(manager),
+        acp_spawn_service=RuntimeManagerAcpSpawnService(
+            manager,
+            parent_stream_relay=FileAcpParentStreamRelay(app_settings.data_dir),
+        ),
         sandbox_chat_send_service=RuntimeManagerSandboxChatSendService(manager),
         subagent_thread_binder=GatewaySubagentThreadBinderRegistry(
             list_notification_route_views=ops_mesh.list_notification_route_views
@@ -10497,6 +10503,7 @@ def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> N
         )
         workspace_access = str(sandbox.get("workspaceAccess") or "").strip()
         workspace_root = str(sandbox.get("workspaceRoot") or "").strip()
+        agent_workspace_mount = str(sandbox.get("agentWorkspaceMount") or "").strip()
         if workspace_access or workspace_root:
             typer.echo(
                 "  workspaceAccess: "
@@ -10504,6 +10511,8 @@ def _emit_sandbox_explain(payload: dict[str, object], *, json_output: bool) -> N
                 + " workspaceRoot: "
                 + (workspace_root or "(unknown)")
             )
+        if agent_workspace_mount:
+            typer.echo(f"  agentWorkspaceMount: {agent_workspace_mount}")
     fix_it = payload.get("fixIt")
     if isinstance(fix_it, list) and fix_it:
         typer.echo("")
@@ -10721,6 +10730,11 @@ async def _build_sandbox_explain_payload(
         else None
     )
     sandbox_policy = metadata.get("sandboxPolicy") if metadata is not None else None
+    metadata_workspace_access = (
+        _optional_cli_string(metadata.get("sandboxWorkspaceAccess"))
+        if metadata is not None
+        else None
+    )
     workspace_root = (
         _optional_cli_string(metadata.get("spawnedWorkspaceDir"))
         if metadata is not None
@@ -10765,6 +10779,8 @@ async def _build_sandbox_explain_payload(
             "sources": tool_policy["sources"],
         },
     }
+    if sandboxed and (metadata_workspace_access or config_workspace_access) == "ro":
+        sandbox["agentWorkspaceMount"] = "/agent"
     if metadata is not None:
         for key in ("runtime", "runtimeThreadId", "runtimeSessionId"):
             value = _optional_cli_string(metadata.get(key))
@@ -18379,6 +18395,14 @@ _OPENCLAW_TASK_STATUS_VALUES = (
 )
 _OPENCLAW_TASK_RUNTIME_VALUES = ("subagent", "acp", "cli", "cron")
 _OPENCLAW_TASK_NOTIFY_VALUES = ("done_only", "state_changes", "silent")
+_OPENCLAW_TASK_DELIVERY_VALUES = (
+    "pending",
+    "delivered",
+    "session_queued",
+    "failed",
+    "parent_missing",
+    "not_applicable",
+)
 _OPENCLAW_TASK_AUDIT_CODES = (
     "stale_queued",
     "stale_running",
@@ -18635,6 +18659,79 @@ def _openclaw_task_record_from_blueprint(blueprint: object) -> dict[str, object]
     return task
 
 
+def _openclaw_task_metadata_timestamp_ms(value: object) -> int | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    return _task_timestamp_ms(value)
+
+
+def _openclaw_task_record_from_session_metadata(
+    session_key: str,
+    metadata: Mapping[str, object],
+) -> dict[str, object] | None:
+    raw_record = metadata.get("taskRecord")
+    if not isinstance(raw_record, Mapping):
+        return None
+    task_id = _optional_cli_string(raw_record.get("taskId"))
+    runtime = _optional_cli_string(raw_record.get("runtime"))
+    requester_session_key = _optional_cli_string(raw_record.get("requesterSessionKey"))
+    owner_key = _optional_cli_string(raw_record.get("ownerKey"))
+    scope_kind = _optional_cli_string(raw_record.get("scopeKind"))
+    task_text = _optional_cli_string(raw_record.get("task"))
+    status = _optional_cli_string(raw_record.get("status"))
+    delivery_status = _optional_cli_string(raw_record.get("deliveryStatus"))
+    notify_policy = _optional_cli_string(raw_record.get("notifyPolicy"))
+    created_ms = _openclaw_task_metadata_timestamp_ms(raw_record.get("createdAt"))
+    if (
+        task_id is None
+        or runtime not in _OPENCLAW_TASK_RUNTIME_VALUES
+        or requester_session_key is None
+        or owner_key is None
+        or scope_kind not in {"session", "system"}
+        or task_text is None
+        or status not in _OPENCLAW_TASK_STATUS_VALUES
+        or delivery_status not in _OPENCLAW_TASK_DELIVERY_VALUES
+        or notify_policy not in _OPENCLAW_TASK_NOTIFY_VALUES
+        or created_ms is None
+    ):
+        return None
+    task: dict[str, object] = {
+        "taskId": task_id,
+        "runtime": runtime,
+        "requesterSessionKey": requester_session_key,
+        "ownerKey": owner_key,
+        "scopeKind": scope_kind,
+        "task": task_text,
+        "status": status,
+        "deliveryStatus": delivery_status,
+        "notifyPolicy": notify_policy,
+        "createdAt": created_ms,
+    }
+    for key in (
+        "taskKind",
+        "sourceId",
+        "childSessionKey",
+        "parentFlowId",
+        "parentTaskId",
+        "agentId",
+        "runId",
+        "label",
+        "error",
+        "progressSummary",
+        "terminalSummary",
+        "terminalOutcome",
+    ):
+        _openclaw_task_add_optional(task, key, _optional_cli_string(raw_record.get(key)))
+    child_session_key = _optional_cli_string(task.get("childSessionKey"))
+    if child_session_key is None:
+        task["childSessionKey"] = session_key
+    for key in ("startedAt", "endedAt", "lastEventAt", "cleanupAfter"):
+        timestamp_ms = _openclaw_task_metadata_timestamp_ms(raw_record.get(key))
+        if timestamp_ms is not None:
+            task[key] = timestamp_ms
+    return task
+
+
 async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for mission in await _native_mission_records(services):
@@ -18647,6 +18744,10 @@ async def _list_openclaw_background_tasks(services: CliServices) -> list[dict[st
             records.append(record)
     metadata_by_key = await _gateway_session_metadata_by_key(services)
     if metadata_by_key:
+        for session_key, metadata in metadata_by_key.items():
+            record = _openclaw_task_record_from_session_metadata(session_key, metadata)
+            if record is not None:
+                records.append(record)
         for record in records:
             _apply_task_session_metadata(record, metadata_by_key)
     return records
@@ -18722,6 +18823,95 @@ def _mission_id_from_task_record(task: dict[str, object]) -> int | None:
         return None
 
 
+def _acp_runtime_id_from_session_key(session_key: str | None) -> str | None:
+    normalized = _optional_cli_string(session_key)
+    if normalized is None or ":acp:" not in normalized:
+        return None
+    runtime_id = normalized.rsplit(":acp:", 1)[-1].strip()
+    return runtime_id or None
+
+
+def _cli_acp_spawn_service(services: CliServices) -> object | None:
+    for container in (services, getattr(services, "gateway_node_methods", None)):
+        if container is None:
+            continue
+        for attribute in (
+            "acp_spawn_service",
+            "gateway_acp_spawn_service",
+            "_acp_spawn_service",
+        ):
+            service = getattr(container, attribute, None)
+            if service is not None:
+                return service
+    return None
+
+
+async def _cancel_openclaw_acp_task(
+    services: CliServices,
+    task: dict[str, object],
+    lookup: str,
+) -> str:
+    session_key = _optional_cli_string(task.get("childSessionKey"))
+    database = getattr(services, "database", None)
+    get_metadata = getattr(database, "get_gateway_session_metadata", None)
+    upsert_metadata = getattr(database, "upsert_gateway_session_metadata", None)
+    if session_key is None or not callable(get_metadata) or not callable(upsert_metadata):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    metadata_row = await get_metadata(session_key)
+    existing_metadata = (
+        metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+    )
+    if not isinstance(existing_metadata, dict):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    metadata = dict(existing_metadata)
+    raw_task_record = metadata.get("taskRecord")
+    if not isinstance(raw_task_record, Mapping):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    task_record = {
+        str(key): value
+        for key, value in raw_task_record.items()
+        if isinstance(key, str)
+    }
+    runtime_thread_id = (
+        _optional_cli_string(metadata.get("runtimeThreadId"))
+        or _optional_cli_string(metadata.get("runtimeSessionId"))
+        or _acp_runtime_id_from_session_key(session_key)
+    )
+    runtime_session_id = _optional_cli_string(metadata.get("runtimeSessionId")) or runtime_thread_id
+    acp_service = _cli_acp_spawn_service(services)
+    cancel_session = getattr(acp_service, "cancel_session", None)
+    if not callable(cancel_session):
+        raise ValueError(f"Could not cancel task: {lookup}")
+    cancel_result = await cancel_session(
+        session_key=session_key,
+        runtime_thread_id=runtime_thread_id,
+        runtime_session_id=runtime_session_id,
+        reason="task-cancel",
+    )
+    if isinstance(cancel_result, dict):
+        status = _optional_cli_string(cancel_result.get("status"))
+        if status in {"error", "timeout"}:
+            detail = _optional_cli_string(cancel_result.get("error")) or _optional_cli_string(
+                cancel_result.get("reason")
+            )
+            raise ValueError(detail or f"Could not cancel task: {lookup}")
+    now_ms = int(time.time() * 1000)
+    task_record["status"] = "cancelled"
+    task_record["endedAt"] = now_ms
+    task_record["lastEventAt"] = now_ms
+    task_record["error"] = "Cancelled by operator."
+    task_record.pop("terminalOutcome", None)
+    metadata["taskRecord"] = task_record
+    await upsert_metadata(session_key=session_key, metadata=metadata)
+    run_id = _optional_cli_string(task_record.get("runId")) or _optional_cli_string(
+        task.get("runId")
+    )
+    run_text = f" run {run_id}" if run_id is not None else ""
+    task_id = _optional_cli_string(task_record.get("taskId")) or str(task.get("taskId"))
+    runtime = _optional_cli_string(task_record.get("runtime")) or str(task.get("runtime"))
+    return f"Cancelled {task_id} ({runtime}){run_text}."
+
+
 async def _cancel_openclaw_task(services: CliServices, lookup: str) -> str:
     task = await _resolve_openclaw_task(services, lookup)
     if task is None:
@@ -18729,6 +18919,8 @@ async def _cancel_openclaw_task(services: CliServices, lookup: str) -> str:
     status = _optional_cli_string(task.get("status"))
     if status not in {"queued", "running"}:
         raise ValueError(f"Could not cancel task: {lookup}")
+    if _optional_cli_string(task.get("runtime")) == "acp":
+        return await _cancel_openclaw_acp_task(services, task, lookup)
     mission_id = _mission_id_from_task_record(task)
     pause = getattr(getattr(services, "mission_service", None), "pause", None)
     if mission_id is None or not callable(pause):

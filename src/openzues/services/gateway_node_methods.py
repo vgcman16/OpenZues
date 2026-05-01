@@ -225,6 +225,7 @@ _ACP_SANDBOXED_REQUESTER_ERROR = (
     'Sandboxed sessions cannot spawn ACP sessions because runtime="acp" runs on the host. '
     'Use runtime="subagent" from sandboxed sessions.'
 )
+_ACP_BACKGROUND_TASK_PROGRESS_MAX_LENGTH = 240
 _GATEWAY_TOOLS_INVOKE_DEFAULT_DENY = {
     "exec",
     "spawn",
@@ -1533,6 +1534,7 @@ class GatewayNodeMethodService:
         self._voicewake_service = voicewake_service
         self._wake_service = wake_service
         self._set_heartbeats_enabled = set_heartbeats_enabled
+        self._heartbeats_runtime_enabled = True
         self._sync = sync
         self._wake_node = wake_node
         self._probe_secret = probe_secret
@@ -7769,6 +7771,18 @@ class GatewayNodeMethodService:
                     requester_agent_id=requester_agent_id,
                     target_agent_id=acp_agent_id,
                 )
+                effective_stream_to = stream_to
+                if _sessions_spawn_acp_should_implicitly_stream_to_parent(
+                    self._config_service,
+                    parent_session_key=spawn_parent_session_key,
+                    requester_origin=requester_origin,
+                    spawn_parent_payload=spawn_parent_payload,
+                    tracked_mode=tracked_mode,
+                    thread_requested=thread,
+                    explicit_stream_to=stream_to,
+                    heartbeats_runtime_enabled=self._heartbeats_runtime_enabled,
+                ):
+                    effective_stream_to = "parent"
                 explicit_cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
                 acp_cwd, acp_cwd_error = await _sessions_spawn_resolve_acp_runtime_cwd(
                     self._agents_service,
@@ -7820,17 +7834,18 @@ class GatewayNodeMethodService:
                 requester_group_id = _string_or_none(resolved_requester.message_group_id)
                 if requester_group_id is not None:
                     acp_context["requesterGroupId"] = requester_group_id
+                label = _optional_session_label(payload.get("label"), label="label")
                 acp_result = await self._acp_spawn_service.spawn(
                     {
                         "task": task,
-                        "label": _optional_session_label(payload.get("label"), label="label"),
+                        "label": label,
                         "agentId": acp_agent_id,
                         "resumeSessionId": resume_session_id,
                         "cwd": acp_cwd,
                         "mode": mode,
                         "thread": thread,
                         "sandbox": sandbox,
-                        "streamTo": stream_to,
+                        "streamTo": effective_stream_to,
                         "runTimeoutSeconds": run_timeout_seconds,
                     },
                     acp_context,
@@ -7868,9 +7883,24 @@ class GatewayNodeMethodService:
                     "runTimeoutSeconds": run_timeout_seconds,
                     "runtimeThreadId": _string_or_none(acp_result.get("runtimeThreadId")),
                     "runtimeSessionId": _string_or_none(acp_result.get("runtimeSessionId")),
-                    "streamTo": stream_to,
+                    "streamTo": effective_stream_to,
                     "streamLogPath": _string_or_none(acp_result.get("streamLogPath")),
                 }
+                acp_task_record = _sessions_spawn_acp_task_record(
+                    child_session_key=child_session_key,
+                    run_id=run_id,
+                    agent_id=acp_agent_id,
+                    requester_session_key=spawn_parent_session_key,
+                    label=label,
+                    task=task,
+                    timestamp_ms=timestamp_ms,
+                )
+                acp_metadata["taskRecord"] = acp_task_record
+                if requester_origin is not None:
+                    acp_metadata["taskDeliveryState"] = {
+                        "taskId": acp_task_record["taskId"],
+                        "requesterOrigin": dict(requester_origin),
+                    }
                 acp_metadata = {
                     key: metadata_value
                     for key, metadata_value in acp_metadata.items()
@@ -7920,7 +7950,6 @@ class GatewayNodeMethodService:
                         acp_metadata["lastAccountId"] = acp_thread_binding["accountId"]
                     if "threadId" in acp_thread_binding:
                         acp_metadata["lastThreadId"] = acp_thread_binding["threadId"]
-                label = _optional_session_label(payload.get("label"), label="label")
                 if label is not None:
                     acp_metadata["label"] = label
                 acp_metadata["agentId"] = acp_agent_id
@@ -9858,7 +9887,9 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return {"ok": True, "enabled": await self._set_heartbeats_enabled(enabled_value)}
+            enabled_result = await self._set_heartbeats_enabled(enabled_value)
+            self._heartbeats_runtime_enabled = enabled_result
+            return {"ok": True, "enabled": enabled_result}
 
         if resolved_method == "voicewake.set":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("triggers",))
@@ -12541,6 +12572,83 @@ class GatewayNodeMethodService:
             await self._sleep(sleep_seconds)
             slept = True
 
+    async def handle_runtime_event(self, instance_id: int, event: dict[str, Any]) -> None:
+        del instance_id
+        progress_delta = _gateway_runtime_event_acp_progress_delta(event)
+        if progress_delta is None:
+            return
+        await self._mark_acp_task_record_runtime_progress(
+            run_id=_gateway_runtime_event_run_id(event),
+            runtime_thread_id=_gateway_runtime_event_thread_id(event),
+            progress_delta=progress_delta,
+            now_ms=_timestamp_ms(None),
+        )
+
+    async def _mark_acp_task_record_runtime_progress(
+        self,
+        *,
+        run_id: str | None,
+        runtime_thread_id: str | None,
+        progress_delta: str,
+        now_ms: int,
+    ) -> None:
+        if self._database is None or (run_id is None and runtime_thread_id is None):
+            return
+        for row in await self._database.list_gateway_session_metadata_rows():
+            metadata = row.get("metadata") if isinstance(row, dict) else None
+            if not isinstance(metadata, dict) or metadata.get("runtime") != "acp":
+                continue
+            raw_task_record = metadata.get("taskRecord")
+            if not isinstance(raw_task_record, Mapping):
+                continue
+            task_record = {
+                str(key): value
+                for key, value in raw_task_record.items()
+                if isinstance(key, str)
+            }
+            record_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+                task_record.get("sourceId")
+            )
+            record_thread_ids = {
+                candidate
+                for candidate in (
+                    _string_or_none(metadata.get("runtimeThreadId")),
+                    _string_or_none(metadata.get("runtimeSessionId")),
+                )
+                if candidate is not None
+            }
+            run_matches = run_id is not None and record_run_id == run_id
+            thread_matches = (
+                runtime_thread_id is not None and runtime_thread_id in record_thread_ids
+            )
+            if not (run_matches or thread_matches):
+                continue
+            if run_id is not None and record_run_id is not None and record_run_id != run_id:
+                continue
+            current_status = _string_or_none(task_record.get("status"))
+            if current_status not in {None, "queued", "running"}:
+                continue
+            next_progress = _append_acp_task_progress_summary(
+                _string_or_none(task_record.get("progressSummary")) or "",
+                progress_delta,
+            )
+            if next_progress is None:
+                continue
+            task_record["status"] = "running"
+            task_record["progressSummary"] = next_progress
+            task_record["lastEventAt"] = now_ms
+            next_metadata = dict(metadata)
+            next_metadata["taskRecord"] = task_record
+            session_key = _string_or_none(row.get("session_key")) or _string_or_none(
+                task_record.get("childSessionKey")
+            )
+            if session_key is None:
+                continue
+            await self._database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata=next_metadata,
+            )
+
     async def _gateway_chat_terminal_snapshot(
         self,
         *,
@@ -12648,6 +12756,13 @@ class GatewayNodeMethodService:
         if status == "failed" and error is not None and error.strip():
             payload["error"] = error.strip()
         if tracked_run is not None and consume_lifecycle:
+            await self._mark_gateway_chat_task_record_terminal(
+                session_key=tracked_run.session_key,
+                run_id=run_id,
+                mission=mission,
+                status=status,
+                now_ms=terminal_ended_at_ms,
+            )
             await self._announce_gateway_chat_run_terminal_completion(
                 session_key=tracked_run.session_key,
                 run_id=run_id,
@@ -12661,6 +12776,94 @@ class GatewayNodeMethodService:
             )
             self._forget_gateway_chat_run(tracked_run.session_key)
         return payload
+
+    async def _mark_gateway_chat_task_record_terminal(
+        self,
+        *,
+        session_key: str,
+        run_id: str,
+        mission: dict[str, Any],
+        status: str,
+        now_ms: int,
+    ) -> None:
+        if self._database is None:
+            return
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return
+        raw_task_record = metadata.get("taskRecord")
+        if not isinstance(raw_task_record, Mapping):
+            return
+        task_record = {
+            str(key): value
+            for key, value in raw_task_record.items()
+            if isinstance(key, str)
+        }
+        record_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+            task_record.get("sourceId")
+        )
+        if record_run_id != run_id:
+            return
+        terminal_status = "succeeded" if status == "completed" else "failed"
+        task_record["status"] = terminal_status
+        task_record["endedAt"] = now_ms
+        task_record["lastEventAt"] = now_ms
+        task_record["deliveryStatus"] = _gateway_chat_task_record_terminal_delivery_status(
+            metadata
+        )
+        if terminal_status == "succeeded":
+            summary = _string_or_none(mission.get("last_checkpoint"))
+            if summary is not None:
+                task_record["terminalSummary"] = summary
+            task_record["terminalOutcome"] = "succeeded"
+            task_record.pop("error", None)
+        else:
+            error = _string_or_none(mission.get("last_error"))
+            if error is not None:
+                task_record["error"] = error
+                task_record["terminalSummary"] = error
+            task_record.pop("terminalOutcome", None)
+        next_metadata = dict(metadata)
+        next_metadata["taskRecord"] = task_record
+        await self._database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata=next_metadata,
+        )
+
+    async def _set_gateway_chat_task_record_delivery_status(
+        self,
+        *,
+        session_key: str,
+        run_id: str,
+        delivery_status: str,
+    ) -> None:
+        if self._database is None:
+            return
+        metadata_row = await self._database.get_gateway_session_metadata(session_key)
+        metadata = metadata_row.get("metadata") if isinstance(metadata_row, dict) else None
+        if not isinstance(metadata, dict):
+            return
+        raw_task_record = metadata.get("taskRecord")
+        if not isinstance(raw_task_record, Mapping):
+            return
+        task_record = {
+            str(key): value
+            for key, value in raw_task_record.items()
+            if isinstance(key, str)
+        }
+        record_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+            task_record.get("sourceId")
+        )
+        if record_run_id != run_id:
+            return
+        task_record["deliveryStatus"] = delivery_status
+        next_metadata = dict(metadata)
+        next_metadata["taskRecord"] = task_record
+        await self._database.upsert_gateway_session_metadata(
+            session_key=session_key,
+            metadata=next_metadata,
+        )
 
     async def _announce_gateway_chat_run_terminal_completion(
         self,
@@ -12702,6 +12905,7 @@ class GatewayNodeMethodService:
             session_key=parent_session_key,
         )
         next_metadata = dict(metadata)
+        task_record_delivery_status: str | None = None
         completion_delivery = metadata.get("completionDelivery")
         if (
             isinstance(completion_delivery, dict)
@@ -12731,6 +12935,7 @@ class GatewayNodeMethodService:
                     next_metadata["completionDeliveryError"] = (
                         str(exc).strip() or type(exc).__name__
                     )
+                    task_record_delivery_status = "failed"
                 else:
                     if isinstance(completion_delivery_result, dict):
                         next_metadata["completionDeliveryResult"] = (
@@ -12738,12 +12943,19 @@ class GatewayNodeMethodService:
                                 dict(completion_delivery_result)
                             )
                         )
+                    task_record_delivery_status = "delivered"
         next_metadata["completionAnnouncedRunId"] = run_id
         next_metadata["completionAnnouncedAtMs"] = now_ms
         await self._database.upsert_gateway_session_metadata(
             session_key=session_key,
             metadata=next_metadata,
         )
+        if task_record_delivery_status is not None:
+            await self._set_gateway_chat_task_record_delivery_status(
+                session_key=session_key,
+                run_id=run_id,
+                delivery_status=task_record_delivery_status,
+            )
         message_row = await self._database.get_control_chat_message(message_id)
         if message_row is not None:
             await self._publish_session_message_events(
@@ -13494,6 +13706,342 @@ def _sessions_spawn_acp_agent_policy_error(
     if not allowed_agents or normalize_agent_id(agent_id) in allowed_agents:
         return None
     return f'ACP agent "{normalize_agent_id(agent_id)}" is not allowed by policy.'
+
+
+def _sessions_spawn_acp_task_record(
+    *,
+    child_session_key: str,
+    run_id: str,
+    agent_id: str,
+    requester_session_key: str,
+    label: str | None,
+    task: str,
+    timestamp_ms: int,
+) -> dict[str, object]:
+    delivery_status = "pending" if requester_session_key.strip() else "parent_missing"
+    record: dict[str, object] = {
+        "taskId": f"acp:{run_id}",
+        "runtime": "acp",
+        "sourceId": run_id,
+        "requesterSessionKey": requester_session_key,
+        "ownerKey": requester_session_key,
+        "scopeKind": "session",
+        "childSessionKey": child_session_key,
+        "agentId": agent_id,
+        "runId": run_id,
+        "task": task,
+        "status": "running",
+        "deliveryStatus": delivery_status,
+        "notifyPolicy": "done_only",
+        "createdAt": timestamp_ms,
+        "startedAt": timestamp_ms,
+        "lastEventAt": timestamp_ms,
+    }
+    if label is not None:
+        record["label"] = label
+    return record
+
+
+def _gateway_runtime_event_params(event: Mapping[str, object]) -> Mapping[str, object]:
+    params = event.get("params")
+    return params if isinstance(params, Mapping) else {}
+
+
+def _gateway_runtime_event_thread_id(event: Mapping[str, object]) -> str | None:
+    params = _gateway_runtime_event_params(event)
+    for container in (event, params):
+        thread_id = _string_or_none(container.get("threadId"))
+        if thread_id is not None:
+            return thread_id
+    thread = _mapping_or_none(params.get("thread"))
+    if thread is not None:
+        return _string_or_none(thread.get("id"))
+    item = _mapping_or_none(params.get("item"))
+    if item is not None:
+        thread_id = _string_or_none(item.get("threadId"))
+        if thread_id is not None:
+            return thread_id
+        nested_thread = _mapping_or_none(item.get("thread"))
+        if nested_thread is not None:
+            return _string_or_none(nested_thread.get("id"))
+    return None
+
+
+def _gateway_runtime_event_run_id(event: Mapping[str, object]) -> str | None:
+    params = _gateway_runtime_event_params(event)
+    for key in ("turnId", "activeTurnId", "runId"):
+        value = _string_or_none(params.get(key))
+        if value is not None:
+            return value
+    turn = _mapping_or_none(params.get("turn"))
+    if turn is not None:
+        for key in ("id", "turnId", "runId"):
+            value = _string_or_none(turn.get(key))
+            if value is not None:
+                return value
+    item = _mapping_or_none(params.get("item"))
+    if item is not None:
+        for key in ("turnId", "activeTurnId", "runId"):
+            value = _string_or_none(item.get(key))
+            if value is not None:
+                return value
+        nested_turn = _mapping_or_none(item.get("turn"))
+        if nested_turn is not None:
+            for key in ("id", "turnId", "runId"):
+                value = _string_or_none(nested_turn.get(key))
+                if value is not None:
+                    return value
+    return None
+
+
+def _gateway_runtime_event_acp_progress_delta(
+    event: Mapping[str, object],
+) -> str | None:
+    method = _string_or_none(event.get("method"))
+    if method is None:
+        return None
+    params = _gateway_runtime_event_params(event)
+    event_type = _string_or_none(params.get("type"))
+    lower_method = method.lower()
+    is_delta_event = (
+        lower_method.endswith("/delta")
+        or lower_method.endswith("outputdelta")
+        or event_type == "text_delta"
+    )
+    nested_event = _mapping_or_none(params.get("event"))
+    if not is_delta_event and nested_event is not None:
+        nested_type = _string_or_none(nested_event.get("type"))
+        is_delta_event = nested_type == "text_delta"
+    if not is_delta_event:
+        return None
+    for container in (params, nested_event):
+        if container is None:
+            continue
+        stream = _string_or_none(container.get("stream"))
+        if stream == "thought":
+            return None
+        for key in ("delta", "text"):
+            value = _normalize_acp_task_progress_chunk(container.get(key))
+            if value is not None:
+                return value
+        delta = _mapping_or_none(container.get("delta"))
+        if delta is not None:
+            for key in ("text", "delta"):
+                value = _normalize_acp_task_progress_chunk(delta.get(key))
+                if value is not None:
+                    return value
+    return None
+
+
+def _normalize_acp_task_progress_chunk(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return normalized or None
+
+
+def _append_acp_task_progress_summary(current: str, chunk: str) -> str | None:
+    normalized_chunk = _normalize_acp_task_progress_chunk(chunk)
+    if normalized_chunk is None:
+        return _normalize_acp_task_progress_chunk(current)
+    normalized_current = _normalize_acp_task_progress_chunk(current)
+    combined = (
+        f"{normalized_current} {normalized_chunk}"
+        if normalized_current is not None
+        else normalized_chunk
+    )
+    if len(combined) <= _ACP_BACKGROUND_TASK_PROGRESS_MAX_LENGTH:
+        return combined
+    return f"{combined[: _ACP_BACKGROUND_TASK_PROGRESS_MAX_LENGTH - 3]}..."
+
+
+def _sessions_spawn_acp_should_implicitly_stream_to_parent(
+    config_service: GatewayConfigService | None,
+    *,
+    parent_session_key: str,
+    requester_origin: Mapping[str, str] | None,
+    spawn_parent_payload: Mapping[str, object] | None,
+    tracked_mode: Literal["run", "session"],
+    thread_requested: bool,
+    explicit_stream_to: str | None,
+    heartbeats_runtime_enabled: bool,
+) -> bool:
+    if (
+        explicit_stream_to is not None
+        or tracked_mode != "run"
+        or thread_requested
+        or config_service is None
+        or not heartbeats_runtime_enabled
+    ):
+        return False
+    parsed_parent = parse_agent_session_key(parent_session_key)
+    if parsed_parent is None or not parsed_parent.rest.startswith("subagent:"):
+        return False
+    if requester_origin is None:
+        return False
+    if _string_or_none(requester_origin.get("threadId")) is not None:
+        return False
+    channel = _string_or_none(requester_origin.get("channel"))
+    to = _string_or_none(requester_origin.get("to"))
+    if channel is None or to is None:
+        return False
+    if _sessions_spawn_payload_has_active_subagent_binding(spawn_parent_payload):
+        return False
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return False
+    session_config = _mapping_or_none(snapshot.get("session"))
+    if (
+        session_config is not None
+        and _string_or_none(session_config.get("scope")) == "global"
+    ):
+        return False
+    requester_agent_id = normalize_agent_id(parsed_parent.agent_id)
+    heartbeat = _sessions_spawn_acp_heartbeat_config_for_agent(
+        snapshot,
+        agent_id=requester_agent_id,
+    )
+    if not _sessions_spawn_acp_heartbeat_enabled_for_agent(
+        snapshot,
+        agent_id=requester_agent_id,
+        heartbeat=heartbeat,
+    ):
+        return False
+    if heartbeat is None or _string_or_none(heartbeat.get("target")) != "last":
+        return False
+    if (
+        _string_or_none(heartbeat.get("to")) is not None
+        or _string_or_none(heartbeat.get("accountId")) is not None
+    ):
+        return False
+    return True
+
+
+def _sessions_spawn_payload_has_active_subagent_binding(
+    payload: Mapping[str, object] | None,
+) -> bool:
+    if payload is None:
+        return False
+    session_binding = payload.get("sessionBinding")
+    if isinstance(session_binding, Mapping):
+        status = _string_or_none(session_binding.get("status"))
+        target_kind = _string_or_none(session_binding.get("targetKind"))
+        if target_kind == "subagent" and status != "ended":
+            return True
+    thread_binding = payload.get("threadBinding")
+    return isinstance(thread_binding, Mapping)
+
+
+def _sessions_spawn_acp_heartbeat_config_for_agent(
+    snapshot: Mapping[str, object],
+    *,
+    agent_id: str,
+) -> dict[str, object] | None:
+    merged: dict[str, object] = {}
+    for agents_config in _sessions_spawn_agent_roots_from_snapshot(snapshot):
+        defaults = _mapping_or_none(agents_config.get("defaults"))
+        default_heartbeat = (
+            _mapping_or_none(defaults.get("heartbeat")) if defaults is not None else None
+        )
+        if default_heartbeat is not None:
+            merged.update(default_heartbeat)
+        agent_config = _sessions_spawn_agent_config_from_root(
+            dict(agents_config),
+            agent_id=agent_id,
+        )
+        agent_heartbeat = (
+            _mapping_or_none(agent_config.get("heartbeat"))
+            if agent_config is not None
+            else None
+        )
+        if agent_heartbeat is not None:
+            merged.update(agent_heartbeat)
+    return merged or None
+
+
+def _sessions_spawn_acp_heartbeat_enabled_for_agent(
+    snapshot: Mapping[str, object],
+    *,
+    agent_id: str,
+    heartbeat: Mapping[str, object] | None,
+) -> bool:
+    roots = _sessions_spawn_agent_roots_from_snapshot(snapshot)
+    explicit_heartbeat_agents: set[str] = set()
+    for agents_config in roots:
+        raw_list = agents_config.get("list")
+        if not isinstance(raw_list, list):
+            continue
+        for raw_agent in raw_list:
+            if not isinstance(raw_agent, Mapping) or not isinstance(
+                raw_agent.get("heartbeat"),
+                Mapping,
+            ):
+                continue
+            candidate_id = _string_or_none(raw_agent.get("id"))
+            if candidate_id is not None:
+                explicit_heartbeat_agents.add(normalize_agent_id(candidate_id))
+    if explicit_heartbeat_agents:
+        if normalize_agent_id(agent_id) not in explicit_heartbeat_agents:
+            return False
+    elif normalize_agent_id(agent_id) != _sessions_spawn_default_agent_id_from_snapshot(snapshot):
+        return False
+    if heartbeat is None:
+        return False
+    if "every" not in heartbeat:
+        return True
+    return _sessions_spawn_acp_heartbeat_every_is_positive(heartbeat.get("every"))
+
+
+def _sessions_spawn_acp_heartbeat_every_is_positive(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return math.isfinite(float(value)) and float(value) > 0
+    text = _string_or_none(value)
+    if text is None:
+        return False
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?", text.lower())
+    if match is None:
+        return False
+    amount = float(match.group(1))
+    return math.isfinite(amount) and amount > 0
+
+
+def _sessions_spawn_default_agent_id_from_snapshot(
+    snapshot: Mapping[str, object],
+) -> str:
+    for agents_config in _sessions_spawn_agent_roots_from_snapshot(snapshot):
+        raw_list = agents_config.get("list")
+        if not isinstance(raw_list, list):
+            continue
+        candidates = [agent for agent in raw_list if isinstance(agent, Mapping)]
+        if not candidates:
+            continue
+        for raw_agent in candidates:
+            if raw_agent.get("default") is True:
+                agent_id = _string_or_none(raw_agent.get("id"))
+                if agent_id is not None:
+                    return normalize_agent_id(agent_id)
+        agent_id = _string_or_none(candidates[0].get("id"))
+        if agent_id is not None:
+            return normalize_agent_id(agent_id)
+    return DEFAULT_AGENT_ID
+
+
+def _sessions_spawn_agent_roots_from_snapshot(
+    snapshot: Mapping[str, object],
+) -> tuple[dict[str, Any], ...]:
+    roots: list[dict[str, Any]] = []
+    gateway_config = snapshot.get("gateway")
+    if isinstance(gateway_config, dict):
+        gateway_agents = gateway_config.get("agents")
+        if isinstance(gateway_agents, dict):
+            roots.append(gateway_agents)
+    top_level_agents = snapshot.get("agents")
+    if isinstance(top_level_agents, dict):
+        roots.append(top_level_agents)
+    return tuple(roots)
 
 
 def _sessions_spawn_thread_policy_error(
@@ -16915,6 +17463,17 @@ def _sanitize_gateway_chat_send_message_input(message: str) -> str:
         if code in {9, 10, 13} or (code >= 32 and code != 127):
             sanitized.append(char)
     return _strip_trailing_untrusted_context_metadata("".join(sanitized))
+
+
+def _gateway_chat_task_record_terminal_delivery_status(
+    metadata: Mapping[str, object],
+) -> str:
+    parent_session_key = _string_or_none(metadata.get("parentSessionKey")) or _string_or_none(
+        metadata.get("spawnedBy")
+    )
+    if parent_session_key is None:
+        return "parent_missing"
+    return "session_queued"
 
 
 def _sanitize_gateway_chat_result_payload(payload: dict[str, object]) -> dict[str, object]:

@@ -3946,6 +3946,315 @@ async def test_ops_mesh_service_message_action_dispatches_slack_send_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_slack_poll_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-slack-poll"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Poll Action Provider",
+        kind="slack",
+        target="https://slack.test/api",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-action-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        slack_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "ok": True,
+            "channel": "C123",
+            "message": {"ts": "1710000000.0020", "channel": "C123"},
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="slack",
+            action="poll",
+            params={
+                "to": "channel:C123",
+                "pollQuestion": "Lunch?",
+                "pollOption": ["Pizza", "Sushi", "Soup"],
+                "pollMulti": True,
+                "pollDurationHours": 2,
+                "threadId": "1710000000.0010",
+                "silent": True,
+            },
+            account_id="workspace-bot",
+            requester_sender_id="U123",
+            sender_is_owner=True,
+            session_key="agent:main:slack:channel:C123",
+            idempotency_key="idem-slack-poll-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "1710000000.0020",
+            "channelId": "C123",
+            "conversationId": "C123",
+            "pollId": "1710000000.0020",
+        },
+    }
+    assert slack_posts == [
+        (
+            "https://slack.test/api/chat.postMessage",
+            {
+                "channel": "C123",
+                "text": (
+                    "Poll: Lunch?\n"
+                    "1. Pizza\n"
+                    "2. Sushi\n"
+                    "3. Soup\n\n"
+                    "Settings: maxSelections=3, durationHours=2, silent=true"
+                ),
+                "thread_ts": "1710000000.0010",
+            },
+            "Authorization",
+            "Bearer xoxb-action-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_send_document_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 44,
+                "chat": {"id": -100123},
+                "document": {"file_id": "telegram-document-44"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="send",
+            params={
+                "to": "channel:-100123",
+                "message": "Ship Telegram send action parity.",
+                "media": "https://example.com/report.pdf",
+                "replyTo": "41",
+                "threadId": "forum-42",
+                "silent": True,
+                "asDocument": True,
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "44",
+            "channelId": "-100123",
+            "mediaIds": ["telegram-document-44"],
+        },
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendDocument",
+            {
+                "chat_id": "-100123",
+                "message_thread_id": "forum-42",
+                "reply_to_message_id": "41",
+                "disable_notification": True,
+                "document": "https://example.com/report.pdf",
+                "disable_content_type_detection": True,
+                "caption": "Ship Telegram send action parity.",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_telegram_poll_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-telegram-poll"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Telegram Native Poll Action Provider",
+        kind="telegram",
+        target="https://api.telegram.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="123456:telegram-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "telegram",
+            "account_id": "telegram-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:-100123",
+        },
+    )
+    telegram_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        telegram_posts.append((target, payload))
+        return {
+            "ok": True,
+            "result": {
+                "message_id": 45,
+                "chat": {"id": -100123},
+                "poll": {"id": "poll-action-telegram-1"},
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="telegram",
+            action="poll",
+            params={
+                "to": "channel:-100123",
+                "pollQuestion": "Ship Telegram action poll parity?",
+                "pollOption": [" Yes ", "No"],
+                "pollMulti": True,
+                "replyTo": "41",
+                "threadId": "forum-42",
+                "silent": True,
+            },
+            account_id="telegram-bot",
+            requester_sender_id="12345",
+            sender_is_owner=True,
+            session_key="agent:main:telegram:channel:-100123",
+            idempotency_key="idem-telegram-poll-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "45",
+            "channelId": "-100123",
+            "conversationId": "-100123",
+            "pollId": "poll-action-telegram-1",
+        },
+    }
+    assert telegram_posts == [
+        (
+            "https://api.telegram.org/bot123456:telegram-token/sendPoll",
+            {
+                "chat_id": "-100123",
+                "question": "Ship Telegram action poll parity?",
+                "options": ["Yes", "No"],
+                "allows_multiple_answers": True,
+                "disable_notification": True,
+                "reply_to_message_id": "41",
+                "message_thread_id": "forum-42",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_slack_react_remove_own_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4751,6 +5060,220 @@ async def test_ops_mesh_service_message_action_dispatches_whatsapp_react_route(
                 "reaction": {
                     "message_id": "wamid.source.1",
                     "emoji": "\u2705",
+                },
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_whatsapp_poll_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-whatsapp-poll"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Poll Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789/messages",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="Bearer wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": "wamid.action.poll.1"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="whatsapp",
+            action="poll",
+            params={
+                "to": "direct:+15551234567",
+                "pollQuestion": "Ship WhatsApp action poll parity?",
+                "pollOption": ["Yes", "No", "Later", "Ignored"],
+            },
+            account_id="wa-business",
+            requester_sender_id="15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:whatsapp:direct:+15551234567",
+            idempotency_key="idem-whatsapp-poll-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "wamid.action.poll.1",
+            "channelId": "15551234567",
+            "conversationId": "15551234567",
+            "pollId": "wamid.action.poll.1",
+        },
+    }
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+15551234567",
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": "Ship WhatsApp action poll parity?"},
+                    "action": {
+                        "buttons": [
+                            {
+                                "type": "reply",
+                                "reply": {"id": "option-1", "title": "Yes"},
+                            },
+                            {
+                                "type": "reply",
+                                "reply": {"id": "option-2", "title": "No"},
+                            },
+                            {
+                                "type": "reply",
+                                "reply": {"id": "option-3", "title": "Later"},
+                            },
+                        ],
+                    },
+                },
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_whatsapp_send_document_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-whatsapp-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Send Action Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789/messages",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="Bearer wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": "wamid.action.doc.1"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="whatsapp",
+            action="send",
+            params={
+                "to": "direct:+15551234567",
+                "message": "Ship WhatsApp action document reply.",
+                "media": "https://example.com/report.pdf",
+                "replyTo": "wamid.reply.42",
+                "asDocument": True,
+            },
+            account_id="wa-business",
+            requester_sender_id="15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:whatsapp:direct:+15551234567",
+            idempotency_key="idem-whatsapp-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "result": {
+            "messageId": "wamid.action.doc.1",
+            "channelId": "15551234567",
+            "mediaUrls": ["https://example.com/report.pdf"],
+        },
+    }
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+15551234567",
+                "context": {"message_id": "wamid.reply.42"},
+                "type": "document",
+                "document": {
+                    "link": "https://example.com/report.pdf",
+                    "caption": "Ship WhatsApp action document reply.",
                 },
             },
             "Authorization",

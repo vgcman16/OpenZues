@@ -2617,6 +2617,50 @@ def test_sandbox_explain_json_projects_config_sandbox_tool_policy(monkeypatch) -
     assert "agents.defaults.sandbox.mode=off" in payload["fixIt"]
 
 
+def test_sandbox_explain_json_projects_read_only_agent_workspace_mount(
+    monkeypatch,
+) -> None:
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "workspaceAccess": "ro",
+                        }
+                    },
+                    "list": [{"id": "tavern"}],
+                }
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=None,
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "sandbox",
+            "explain",
+            "--agent",
+            "tavern",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["sandbox"]["workspaceAccess"] == "ro"
+    assert payload["sandbox"]["agentWorkspaceMount"] == "/agent"
+
+
 def test_cron_status_json_calls_gateway_method_owner(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -4438,6 +4482,101 @@ def test_tasks_list_json_filters_native_background_tasks(monkeypatch) -> None:
     assert calls == ["missions", "tasks"]
 
 
+def test_tasks_list_json_projects_acp_task_records_from_session_metadata(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            calls.append("missions")
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            calls.append("tasks")
+            return []
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            calls.append("metadata")
+            return [
+                {
+                    "session_key": "agent:codex:acp:thread-acp-task-record",
+                    "metadata": {
+                        "taskRecord": {
+                            "taskId": "acp:run-acp-task-record-1",
+                            "runtime": "acp",
+                            "sourceId": "run-acp-task-record-1",
+                            "requesterSessionKey": "agent:main:main",
+                            "ownerKey": "agent:main:main",
+                            "scopeKind": "session",
+                            "childSessionKey": "agent:codex:acp:thread-acp-task-record",
+                            "agentId": "codex",
+                            "runId": "run-acp-task-record-1",
+                            "label": "ACP tracker",
+                            "task": "Track this ACP child as a background task.",
+                            "status": "running",
+                            "deliveryStatus": "pending",
+                            "notifyPolicy": "done_only",
+                            "createdAt": 20_000,
+                            "startedAt": 20_000,
+                            "lastEventAt": 20_000,
+                        }
+                    },
+                }
+            ]
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+                database=FakeDatabase(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "tasks",
+            "--json",
+            "--runtime",
+            "acp",
+            "--status",
+            "running",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtime"] == "acp"
+    assert payload["status"] == "running"
+    assert payload["count"] == 1
+    assert payload["tasks"][0] == {
+        "taskId": "acp:run-acp-task-record-1",
+        "runtime": "acp",
+        "sourceId": "run-acp-task-record-1",
+        "requesterSessionKey": "agent:main:main",
+        "ownerKey": "agent:main:main",
+        "scopeKind": "session",
+        "childSessionKey": "agent:codex:acp:thread-acp-task-record",
+        "agentId": "codex",
+        "runId": "run-acp-task-record-1",
+        "label": "ACP tracker",
+        "task": "Track this ACP child as a background task.",
+        "status": "running",
+        "deliveryStatus": "pending",
+        "notifyPolicy": "done_only",
+        "createdAt": 20_000,
+        "startedAt": 20_000,
+        "lastEventAt": 20_000,
+    }
+    assert calls == ["missions", "tasks", "metadata"]
+
+
 def test_tasks_show_json_resolves_session_key(monkeypatch) -> None:
     created_at = datetime(2026, 4, 29, 14, 30, tzinfo=UTC)
     updated_at = datetime(2026, 4, 29, 14, 45, tzinfo=UTC)
@@ -4800,6 +4939,96 @@ def test_tasks_cancel_pauses_native_mission_task(monkeypatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert paused == [17]
     assert "Cancelled mission:17 (subagent) run thread-17." in result.stdout
+
+
+def test_tasks_cancel_cancels_metadata_backed_acp_task(monkeypatch) -> None:
+    cancel_calls: list[dict[str, object]] = []
+    child_session_key = "agent:codex:acp:thread-acp-cancel"
+    metadata: dict[str, object] = {
+        "runtime": "acp",
+        "runtimeThreadId": "thread-acp-cancel",
+        "runtimeSessionId": "session-acp-cancel",
+        "taskRecord": {
+            "taskId": "acp:run-acp-cancel-1",
+            "runtime": "acp",
+            "sourceId": "run-acp-cancel-1",
+            "requesterSessionKey": "agent:main:main",
+            "ownerKey": "agent:main:main",
+            "scopeKind": "session",
+            "childSessionKey": child_session_key,
+            "agentId": "codex",
+            "runId": "run-acp-cancel-1",
+            "task": "Cancel this ACP child.",
+            "status": "running",
+            "deliveryStatus": "pending",
+            "notifyPolicy": "done_only",
+            "createdAt": 20_000,
+            "startedAt": 20_000,
+            "lastEventAt": 20_000,
+        },
+    }
+    store = {"metadata": metadata}
+
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeDatabase:
+        async def list_gateway_session_metadata_rows(self) -> list[dict[str, object]]:
+            return [{"session_key": child_session_key, "metadata": store["metadata"]}]
+
+        async def get_gateway_session_metadata(self, session_key: str) -> dict[str, object]:
+            assert session_key == child_session_key
+            return {"session_key": session_key, "metadata": store["metadata"]}
+
+        async def upsert_gateway_session_metadata(
+            self,
+            *,
+            session_key: str,
+            metadata: dict[str, object],
+        ) -> None:
+            assert session_key == child_session_key
+            store["metadata"] = metadata
+
+    class FakeAcpSpawnService:
+        async def cancel_session(self, **kwargs: object) -> dict[str, object]:
+            cancel_calls.append(dict(kwargs))
+            return {"status": "ok", "cancelled": True}
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                database=FakeDatabase(),
+                mission_service=FakeMissionService(),
+                ops_mesh=FakeOpsMesh(),
+                acp_spawn_service=FakeAcpSpawnService(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["tasks", "cancel", "run-acp-cancel-1"])
+
+    assert result.exit_code == 0, result.stdout
+    assert cancel_calls == [
+        {
+            "session_key": child_session_key,
+            "runtime_thread_id": "thread-acp-cancel",
+            "runtime_session_id": "session-acp-cancel",
+            "reason": "task-cancel",
+        }
+    ]
+    task_record = store["metadata"]["taskRecord"]
+    assert isinstance(task_record, dict)
+    assert task_record["status"] == "cancelled"
+    assert task_record["error"] == "Cancelled by operator."
+    assert task_record["endedAt"] >= 20_000
+    assert task_record["lastEventAt"] == task_record["endedAt"]
+    assert "Cancelled acp:run-acp-cancel-1 (acp) run run-acp-cancel-1." in result.stdout
 
 
 def test_tasks_notify_persists_native_session_notify_policy(monkeypatch) -> None:
