@@ -534,9 +534,11 @@ Matrix route-backed media sends now upload outbound media to the Matrix media
 repository, send unencrypted `m.image` / `m.video` / `m.audio` / `m.file`
 content with MXC URLs, caption text, relation metadata, mimetype/size info, and
 persisted media delivery metadata.
+Matrix route-backed sends and polls now resolve `#room:server` aliases through
+the Matrix directory endpoint before sending, matching OpenClaw's alias
+resolution behavior for native room targets.
 Remaining Matrix provider parity is encrypted media/thumbnail/duration metadata,
-alias and direct-room resolution, and self-profile update/config persistence
-breadth.
+direct-user room discovery, and self-profile update/config persistence breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

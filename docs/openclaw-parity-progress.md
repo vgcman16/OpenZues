@@ -5564,6 +5564,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_channel_info_route"` (`15 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed alias resolution now calls the Matrix directory endpoint
+  for `#room:server` targets before native send/poll delivery, so provider
+  results and room send endpoints use the resolved room id instead of the alias.
+- Verified the Matrix alias-resolution slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route and alias"` (`1 passed`),
+  adjacent Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "matrix_native_route or message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`16 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

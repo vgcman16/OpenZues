@@ -2341,6 +2341,10 @@ def _matrix_profile_endpoint(target: str | None, *, user_id: str) -> str:
     return f"{_matrix_base_url(target)}/_matrix/client/v3/profile/{quote(user_id, safe='')}"
 
 
+def _matrix_directory_room_endpoint(target: str | None, *, alias: str) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/directory/room/{quote(alias, safe='')}"
+
+
 def _matrix_state_endpoint(
     target: str | None,
     *,
@@ -9363,6 +9367,30 @@ class OpsMeshService:
             return len(joined)
         return None
 
+    def _resolve_matrix_route_room_id(
+        self,
+        route: dict[str, Any],
+        raw_target: str,
+        *,
+        secret_token: str | None,
+    ) -> str | None:
+        room_id = _matrix_room_id(raw_target)
+        if room_id is None:
+            return None
+        if not room_id.startswith("#"):
+            return room_id
+        result = self._get_json_provider_url(
+            _matrix_directory_room_endpoint(str(route.get("target") or ""), alias=room_id),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            return None
+        resolved_room_id = result.get("room_id") or result.get("roomId")
+        if not isinstance(resolved_room_id, str):
+            return None
+        return resolved_room_id.strip() or None
+
     def _matrix_action_room_id(
         self,
         request: GatewayMessageActionDispatchRequest,
@@ -15539,8 +15567,10 @@ class OpsMeshService:
         if event_type != "gateway/send":
             raise RuntimeError("Matrix native provider route only supports sends and polls.")
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
-        room_id = _matrix_room_id(
-            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        room_id = self._resolve_matrix_route_room_id(
+            route,
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or ""),
+            secret_token=secret_token,
         )
         if room_id is None:
             raise RuntimeError("Matrix route is missing a room target.")
@@ -15659,8 +15689,10 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
-        room_id = _matrix_room_id(
-            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        room_id = self._resolve_matrix_route_room_id(
+            route,
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or ""),
+            secret_token=secret_token,
         )
         if room_id is None:
             raise RuntimeError("Matrix route is missing a room target.")
