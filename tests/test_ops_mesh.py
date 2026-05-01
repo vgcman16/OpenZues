@@ -13912,6 +13912,117 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_line_flex_messa
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_line_confirm_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-line-template"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    line_target = "line:user:U1234567890abcdef1234567890abcdef"
+    await database.create_notification_route(
+        name="LINE Native Template Provider",
+        kind="line",
+        target="https://api.line.me/v2/bot/message",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="line-channel-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "line",
+            "account_id": "line-bot",
+            "peer_kind": "channel",
+            "peer_id": line_target,
+        },
+    )
+    line_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        line_posts.append((target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    template_text = "Proceed? " + ("x" * 300)
+    alt_text = "Confirm alt " + ("y" * 500)
+    template_message = {
+        "type": "confirm",
+        "text": template_text,
+        "confirmLabel": "Approve this request now",
+        "confirmData": "https://example.com/approve",
+        "cancelLabel": "No thanks",
+        "cancelData": "action=reject",
+        "altText": alt_text,
+    }
+
+    await service.send_direct_channel_message(
+        channel="line",
+        to=line_target,
+        message="Choose one:",
+        template_message=template_message,
+        account_id="line-bot",
+        idempotency_key="idem-native-line-template-confirm",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert line_posts == [
+        (
+            "https://api.line.me/v2/bot/message/push",
+            {
+                "to": "U1234567890abcdef1234567890abcdef",
+                "messages": [
+                    {
+                        "type": "template",
+                        "altText": alt_text[:400],
+                        "template": {
+                            "type": "confirm",
+                            "text": template_text[:240],
+                            "actions": [
+                                {
+                                    "type": "uri",
+                                    "label": "Approve this request",
+                                    "uri": "https://example.com/approve",
+                                },
+                                {
+                                    "type": "postback",
+                                    "label": "No thanks",
+                                    "data": "action=reject",
+                                    "displayText": "No thanks",
+                                },
+                            ],
+                        },
+                    },
+                    {"type": "text", "text": "Choose one:"},
+                ],
+            },
+            "Authorization",
+            "Bearer line-channel-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["templateMessage"] == template_message
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_matrix_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

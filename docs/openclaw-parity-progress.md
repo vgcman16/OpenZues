@@ -5971,6 +5971,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- LINE route-backed direct sends now carry OpenClaw's confirm
+  `templateMessage` through the shared outbound runtime, keep the payload
+  replayable, map confirm/cancel data to URI, postback, or message actions, and
+  emit Bot API confirm templates before companion text sends while enforcing
+  OpenClaw/LINE truncation boundaries.
+- Verified the LINE confirm-template slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "line_confirm_template"` (`1 passed`),
+  adjacent outbound runtime proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "line_native_route or line_reply_token or line_video_media_kind or
+  line_audio_duration or line_location or line_quick_replies or
+  line_flex_message or line_confirm_template or preserves_provider_native_options
+  or shared_outbound_runtime_owner or prefers_provider_runtime"` (`12 passed`),
+  `ruff check src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 
 ## References
 

@@ -2367,6 +2367,83 @@ def _normalize_line_flex_message_payload(value: object) -> dict[str, object] | N
     }
 
 
+def _normalize_line_template_message_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RuntimeError("LINE templateMessage must be an object.")
+    template_type = str(value.get("type") or "").strip().lower()
+    if template_type != "confirm":
+        raise RuntimeError("LINE templateMessage currently supports confirm templates.")
+    required_keys = ("text", "confirmLabel", "confirmData", "cancelLabel", "cancelData")
+    missing = [
+        key
+        for key in required_keys
+        if not str(value.get(key) or "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "LINE confirm template requires " + ", ".join(missing) + "."
+        )
+    normalized: dict[str, object] = {
+        "type": "confirm",
+        "text": str(value["text"]),
+        "confirmLabel": str(value["confirmLabel"]),
+        "confirmData": str(value["confirmData"]),
+        "cancelLabel": str(value["cancelLabel"]),
+        "cancelData": str(value["cancelData"]),
+    }
+    alt_text = str(value.get("altText") or "")
+    if alt_text:
+        normalized["altText"] = alt_text
+    return normalized
+
+
+def _line_template_action(label: str, data: str) -> dict[str, object]:
+    if data.startswith("http"):
+        return {
+            "type": "uri",
+            "label": label[:20],
+            "uri": data,
+        }
+    if "=" in data:
+        return {
+            "type": "postback",
+            "label": label[:20],
+            "data": data[:300],
+            "displayText": label[:300],
+        }
+    return {
+        "type": "message",
+        "label": label[:20],
+        "text": data,
+    }
+
+
+def _line_template_message_payload(template_message: dict[str, object]) -> dict[str, object]:
+    template_type = str(template_message.get("type") or "").strip().lower()
+    if template_type != "confirm":
+        raise RuntimeError("LINE templateMessage currently supports confirm templates.")
+    text = str(template_message["text"])
+    alt_text = str(template_message.get("altText") or text)
+    confirm_label = str(template_message["confirmLabel"])
+    confirm_data = str(template_message["confirmData"])
+    cancel_label = str(template_message["cancelLabel"])
+    cancel_data = str(template_message["cancelData"])
+    return {
+        "type": "template",
+        "altText": alt_text[:400],
+        "template": {
+            "type": "confirm",
+            "text": text[:240],
+            "actions": [
+                _line_template_action(confirm_label, confirm_data),
+                _line_template_action(cancel_label, cancel_data),
+            ],
+        },
+    }
+
+
 def _matrix_bearer_token(secret_token: str | None) -> str:
     token = str(secret_token or "").strip()
     if not token:
@@ -6243,6 +6320,9 @@ class OpsMeshService:
                     ),
                     flex_message=_normalize_line_flex_message_payload(
                         payload.get("flexMessage")
+                    ),
+                    template_message=_normalize_line_template_message_payload(
+                        payload.get("templateMessage")
                     ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
@@ -13539,6 +13619,8 @@ class OpsMeshService:
             payload["quickReplies"] = list(request.quick_replies)
         if request.flex_message is not None:
             payload["flexMessage"] = dict(request.flex_message)
+        if request.template_message is not None:
+            payload["templateMessage"] = dict(request.template_message)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
@@ -13905,6 +13987,9 @@ class OpsMeshService:
                     flex_message=_normalize_line_flex_message_payload(
                         payload.get("flexMessage")
                     ),
+                    template_message=_normalize_line_template_message_payload(
+                        payload.get("templateMessage")
+                    ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13991,6 +14076,7 @@ class OpsMeshService:
         location: dict[str, object] | None = None,
         quick_replies: list[str] | tuple[str, ...] | None = None,
         flex_message: dict[str, object] | None = None,
+        template_message: dict[str, object] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -14024,13 +14110,19 @@ class OpsMeshService:
         normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
         normalized_location = _normalize_line_location_payload(location)
         normalized_flex_message = _normalize_line_flex_message_payload(flex_message)
+        normalized_template_message = _normalize_line_template_message_payload(
+            template_message
+        )
         if (
             not message.strip()
             and not normalized_media_urls
             and normalized_location is None
             and normalized_flex_message is None
+            and normalized_template_message is None
         ):
-            raise ValueError("send requires text, media, location, or flex message")
+            raise ValueError(
+                "send requires text, media, location, flex message, or template message"
+            )
         payload: dict[str, Any] = {
             "message": message,
             "channel": conversation_target.channel,
@@ -14062,6 +14154,8 @@ class OpsMeshService:
             payload["quickReplies"] = normalized_quick_replies
         if normalized_flex_message is not None:
             payload["flexMessage"] = normalized_flex_message
+        if normalized_template_message is not None:
+            payload["templateMessage"] = normalized_template_message
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
@@ -16580,6 +16674,9 @@ class OpsMeshService:
             _normalize_line_quick_replies(event.get("quickReplies"))
         )
         flex_message = _normalize_line_flex_message_payload(event.get("flexMessage"))
+        template_message = _normalize_line_template_message_payload(
+            event.get("templateMessage")
+        )
         messages: list[dict[str, object]] = []
         if flex_message is not None:
             messages.append(
@@ -16589,6 +16686,8 @@ class OpsMeshService:
                     "contents": flex_message["contents"],
                 }
             )
+        if template_message is not None:
+            messages.append(_line_template_message_payload(template_message))
         for media_url in media_urls:
             _line_validate_media_url(media_url)
             if media_kind == "video":
