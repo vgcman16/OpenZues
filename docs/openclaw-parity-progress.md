@@ -560,6 +560,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_manifest_load_paths or
   bootstrap_file_exceeds_limits or doctor_json_warns"` (`33 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `doctor --json` now carries the upstream `doctor:workspace-status` TaskFlow
+  recovery hint path. Native task-blueprint-backed flows are scanned for broken
+  blocked flows with missing `blockedTaskId` links and running managed flows
+  without linked tasks/wait state, then exposed through
+  `workspaceStatus.taskFlowRecovery` and top-level warnings with the OpenClaw
+  `openclaw tasks flow show <flow-id>` / `cancel <flow-id>` guidance.
+- Verified the workspace-status TaskFlow recovery slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_adds_task_flow_recovery_hints_for_broken_blocked_flows
+  -q` (`1 passed`), adjacent doctor/task-flow proof `python -m pytest
+  tests\test_cli.py -q -k "workspace_status_plugin_counts or
+  task_flow_recovery_hints or tasks_flow_list_json_projects_task_blueprint_flows
+  or tasks_flow_show_json_resolves_task_blueprint_flow or
+  tasks_flow_cancel_disables_task_blueprint_and_pauses_linked_missions or
+  doctor_json_warns"` (`44 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now includes OpenClaw's
   `doctor:device-pairing` gateway-backed pending request warning. It calls
   `device.pair.list` through the native gateway method owner, summarizes

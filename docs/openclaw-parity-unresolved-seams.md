@@ -951,7 +951,13 @@ mutating workspace files.
 Top-level doctor output now includes the first OpenClaw
 `doctor:workspace-status` native read model: manifest-backed plugin registry
 records are summarized into loaded/imported/disabled/error/bundle counts, with
-skill and TaskFlow recovery hints left as follow-on workspace-status seams.
+the upstream TaskFlow recovery hint path now backed by OpenZues' native
+task-blueprint flow projection. Broken blocked flows with missing linked tasks
+and running managed flows without tasks/wait state are surfaced in
+`workspaceStatus.taskFlowRecovery` and promoted into top-level doctor warnings
+with the OpenClaw inspect/cancel command guidance. Remaining
+workspace-status parity is the deeper skill eligibility/runtime requirement
+surface.
 Top-level doctor output now includes the first OpenClaw
 `doctor:device-pairing` gateway-backed warning: pending requests returned by
 `device.pair.list` are surfaced with sanitized device labels, request counts,

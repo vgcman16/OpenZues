@@ -15107,6 +15107,8 @@ def _invoke_doctor_json_with_config_snapshot(
     settings: object | None = None,
     args: list[str] | None = None,
     gateway_node_methods: object | None = None,
+    mission_service: object | None = None,
+    ops_mesh: object | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -15135,6 +15137,8 @@ def _invoke_doctor_json_with_config_snapshot(
                 hermes_platform=FakeHermesPlatform(),
                 gateway_config=FakeGatewayConfig(),
                 gateway_node_methods=gateway_node_methods,
+                mission_service=mission_service,
+                ops_mesh=ops_mesh,
             )
         )
 
@@ -15667,6 +15671,57 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
             }
         ],
     }
+
+
+def test_doctor_json_adds_task_flow_recovery_hints_for_broken_blocked_flows(
+    monkeypatch,
+) -> None:
+    class FakeMissionService:
+        async def list_views(self) -> list[SimpleNamespace]:
+            return []
+
+    class FakeOpsMesh:
+        async def list_task_blueprint_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=123,
+                    name="Broken TaskFlow",
+                    objective_template="Investigate PR batch",
+                    summary="Investigate PR batch",
+                    schedule_kind="manual",
+                    cadence_minutes=None,
+                    enabled=True,
+                    last_status="blocked",
+                    blockedTaskId="task-missing",
+                    last_result_summary=None,
+                    last_launched_at=None,
+                    created_at=datetime(2026, 4, 29, 14, 30, tzinfo=UTC),
+                    updated_at=datetime(2026, 4, 29, 14, 45, tzinfo=UTC),
+                )
+            ]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {},
+        mission_service=FakeMissionService(),
+        ops_mesh=FakeOpsMesh(),
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    workspace_status = payload["workspaceStatus"]
+    recovery = workspace_status["taskFlowRecovery"]
+    expected_finding = (
+        "task-blueprint:123: blocked TaskFlow points at missing task task-missing; "
+        "inspect before retrying."
+    )
+    assert recovery["status"] == "warning"
+    assert recovery["findings"] == [expected_finding]
+    warning = workspace_status["warnings"][0]
+    assert "task-blueprint:123" in warning
+    assert "openclaw tasks flow show <flow-id>" in warning
+    assert "openclaw tasks flow cancel <flow-id>" in warning
+    assert warning in payload["warnings"]
 
 
 def test_doctor_json_warns_about_pending_device_pairing_from_gateway(

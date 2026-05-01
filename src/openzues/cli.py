@@ -6965,18 +6965,86 @@ def _doctor_workspace_plugin_summary(
     }
 
 
+def _doctor_task_flow_recovery_findings(
+    task_flows: Sequence[Mapping[str, object]],
+) -> list[str]:
+    findings: list[str] = []
+    for flow in task_flows:
+        flow_id = _optional_cli_string(flow.get("flowId"))
+        if flow_id is None:
+            continue
+        raw_tasks = flow.get("tasks")
+        tasks = [
+            cast("Mapping[str, object]", task)
+            for task in raw_tasks
+            if isinstance(task, Mapping)
+        ] if isinstance(raw_tasks, list) else []
+        status = _optional_cli_string(flow.get("status"))
+        if (
+            _optional_cli_string(flow.get("syncMode")) == "managed"
+            and status == "running"
+            and not tasks
+            and flow.get("waitJson") is None
+        ):
+            findings.append(
+                f"{flow_id}: running managed TaskFlow has no linked tasks or wait state; "
+                "inspect or cancel it manually."
+            )
+        blocked_task_id = _optional_cli_string(flow.get("blockedTaskId"))
+        if (
+            status == "blocked"
+            and blocked_task_id is not None
+            and not any(task.get("taskId") == blocked_task_id for task in tasks)
+        ):
+            findings.append(
+                f"{flow_id}: blocked TaskFlow points at missing task {blocked_task_id}; "
+                "inspect before retrying."
+            )
+    return findings
+
+
+def _doctor_task_flow_recovery_payload(
+    task_flows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    findings = _doctor_task_flow_recovery_findings(task_flows)
+    inspect_command = "openclaw tasks flow show <flow-id>"
+    cancel_command = "openclaw tasks flow cancel <flow-id>"
+    warnings: list[str] = []
+    if findings:
+        lines = [
+            *findings[:5],
+            f"...and {len(findings) - 5} more." if len(findings) > 5 else None,
+            f"Inspect: {inspect_command}",
+            f"Cancel: {cancel_command}",
+        ]
+        warnings.append("\n".join(line for line in lines if line is not None))
+    return {
+        "status": "warning" if findings else "ok",
+        "findings": findings,
+        "inspectCommand": inspect_command,
+        "cancelCommand": cancel_command,
+        "warnings": warnings,
+    }
+
+
 def _build_doctor_workspace_status_payload(
     config_service: object | None,
+    *,
+    task_flows: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     snapshot = _doctor_config_snapshot(config_service)
     records = _plugin_records_from_config_snapshot(snapshot)
     plugin_summary = _doctor_workspace_plugin_summary(records)
     errors = _doctor_int_record_value(plugin_summary, "errors")
+    task_flow_recovery = _doctor_task_flow_recovery_payload(task_flows or ())
+    warnings = [str(warning) for warning in _object_list(task_flow_recovery.get("warnings"))]
     return {
-        "status": "warning" if errors else "ok",
+        "status": "warning" if errors or warnings else "ok",
         "summary": (
             "Workspace plugin status has errors."
             if errors
+            else "Workspace TaskFlow recovery has warnings."
+            if warnings
             else "Workspace plugin status is available."
         ),
         "source": "openzues-native",
@@ -6992,17 +7060,27 @@ def _build_doctor_workspace_status_payload(
             "blockedByAllowlist": 0,
         },
         "plugins": plugin_summary,
-        "warnings": [],
+        "taskFlowRecovery": task_flow_recovery,
+        "warnings": warnings,
     }
 
 
 def _with_doctor_workspace_status_payload(
     payload: dict[str, object],
     config_service: object | None,
+    *,
+    task_flows: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     next_payload = dict(payload)
-    next_payload["workspaceStatus"] = _build_doctor_workspace_status_payload(config_service)
-    return next_payload
+    workspace_status = _build_doctor_workspace_status_payload(
+        config_service,
+        task_flows=task_flows,
+    )
+    next_payload["workspaceStatus"] = workspace_status
+    return _with_doctor_added_warnings(
+        next_payload,
+        [str(warning) for warning in _object_list(workspace_status.get("warnings"))],
+    )
 
 
 def _build_doctor_provider_overrides_payload(
@@ -19862,6 +19940,16 @@ def _openclaw_task_flow_record_from_blueprint(
     current_step = _openclaw_flow_current_step(blueprint, linked_tasks)
     if current_step is not None:
         flow["currentStep"] = current_step
+    blocked_task_id = _optional_cli_string(
+        _record_value(blueprint, "blockedTaskId")
+    ) or _optional_cli_string(_record_value(blueprint, "blocked_task_id"))
+    if blocked_task_id is not None:
+        flow["blockedTaskId"] = blocked_task_id
+    wait_json = _record_value(blueprint, "waitJson")
+    if wait_json is None:
+        wait_json = _record_value(blueprint, "wait_json")
+    if wait_json is not None:
+        flow["waitJson"] = wait_json
     if status in {"succeeded", "failed", "cancelled", "lost"}:
         flow["endedAt"] = updated_ms
     return {
@@ -21756,9 +21844,11 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        task_flows = await _list_openclaw_task_flows(services)
         payload = _with_doctor_workspace_status_payload(
             payload,
             services.gateway_config,
+            task_flows=task_flows,
         )
         data_dir = getattr(services.settings, "data_dir", None)
         payload = _with_doctor_provider_override_warnings(
