@@ -2453,6 +2453,55 @@ def _matrix_media_filename(media_url: str, fallback: str = "file") -> str:
     return name[:120] if name else fallback
 
 
+def _matrix_image_dimensions(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> tuple[int, int] | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_png = normalized_content_type == "image/png" or normalized_filename.endswith(".png")
+    if is_png and media.startswith(b"\x89PNG\r\n\x1a\n") and len(media) >= 24:
+        width = int.from_bytes(media[16:20], "big")
+        height = int.from_bytes(media[20:24], "big")
+        if width > 0 and height > 0:
+            return width, height
+    is_gif = normalized_content_type == "image/gif" or normalized_filename.endswith(".gif")
+    if is_gif and media[:6] in {b"GIF87a", b"GIF89a"} and len(media) >= 10:
+        width = int.from_bytes(media[6:8], "little")
+        height = int.from_bytes(media[8:10], "little")
+        if width > 0 and height > 0:
+            return width, height
+    is_jpeg = normalized_content_type in {
+        "image/jpeg",
+        "image/jpg",
+    } or normalized_filename.endswith((".jpg", ".jpeg"))
+    if not is_jpeg or not media.startswith(b"\xff\xd8"):
+        return None
+    index = 2
+    while index + 9 < len(media):
+        if media[index] != 0xFF:
+            index += 1
+            continue
+        marker = media[index + 1]
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            height = int.from_bytes(media[index + 5 : index + 7], "big")
+            width = int.from_bytes(media[index + 7 : index + 9], "big")
+            if width > 0 and height > 0:
+                return width, height
+            return None
+        if marker in {0xD8, 0xD9}:
+            index += 2
+            continue
+        if index + 4 > len(media):
+            return None
+        segment_length = int.from_bytes(media[index + 2 : index + 4], "big")
+        if segment_length < 2:
+            return None
+        index += 2 + segment_length
+    return None
+
+
 def _is_matrix_mxc_uri(value: str | None) -> bool:
     return str(value or "").strip().lower().startswith("mxc://")
 
@@ -16000,17 +16049,22 @@ class OpsMeshService:
             if media_index == 1 and text_chunks:
                 text_chunks = text_chunks[1:]
             body = caption or filename or "(file)"
+            media_info: dict[str, object] = {
+                "size": len(media),
+            }
+            if content_type:
+                media_info["mimetype"] = content_type
+            dimensions = _matrix_image_dimensions(media, content_type, filename)
+            if dimensions is not None:
+                media_info["w"] = dimensions[0]
+                media_info["h"] = dimensions[1]
             media_content: dict[str, object] = {
                 "msgtype": _matrix_media_msgtype(content_type, filename),
                 "body": body,
                 "filename": filename,
                 "url": mxc_url,
-                "info": {
-                    "size": len(media),
-                },
+                "info": media_info,
             }
-            if content_type:
-                cast(dict[str, object], media_content["info"])["mimetype"] = content_type
             if relation is not None:
                 media_content["m.relates_to"] = relation
             result = self._put_json_provider(

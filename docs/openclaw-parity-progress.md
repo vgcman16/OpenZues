@@ -5649,6 +5649,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_config.py src\openzues\app.py src\openzues\cli.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_config.py`.
+- Matrix route-backed image media sends now add OpenClaw-style dimensional media
+  metadata: native PNG/GIF/JPEG header parsing populates `info.w` / `info.h`
+  alongside `size` and `mimetype` before sending the Matrix `m.room.message`
+  media event.
+- Verified the Matrix image-info slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route and media"` (`1 passed`),
+  adjacent Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "matrix_native_route or matrix_direct_room or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or matrix_set_profile"`
+  (`20 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

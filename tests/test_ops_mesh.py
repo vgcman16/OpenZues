@@ -13537,6 +13537,13 @@ async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_rou
     )
     matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
     matrix_uploads: list[tuple[str, bytes, str | None, str | None]] = []
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\r"
+        b"IHDR"
+        b"\x00\x00\x00\x02"
+        b"\x00\x00\x00\x03"
+    )
 
     def fake_download_matrix_media_url(
         self: OpsMeshService,
@@ -13544,7 +13551,7 @@ async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_rou
     ) -> tuple[bytes, str | None, str | None]:
         del self
         assert download_url == media_url
-        return (b"pngdata", "image/png", "photo.png")
+        return (png_bytes, "image/png", "photo.png")
 
     def fake_upload_matrix_media(
         self: OpsMeshService,
@@ -13624,7 +13631,7 @@ async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_rou
     assert matrix_uploads == [
         (
             "https://matrix.example.org",
-            b"pngdata",
+            png_bytes,
             "image/png",
             "matrix-access-token",
         )
@@ -13645,7 +13652,9 @@ async def test_ops_mesh_service_send_direct_channel_media_uses_matrix_native_rou
         "url": "mxc://matrix.example.org/uploaded-photo",
         "info": {
             "mimetype": "image/png",
-            "size": 7,
+            "size": len(png_bytes),
+            "w": 2,
+            "h": 3,
         },
         "m.relates_to": {
             "m.in_reply_to": {"event_id": "$reply"},
