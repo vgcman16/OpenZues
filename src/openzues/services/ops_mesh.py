@@ -2298,6 +2298,30 @@ def _line_text_chunks(text: str, *, limit: int = 5000) -> list[str]:
     return _fixed_text_chunks(text.strip(), limit=limit) if text.strip() else []
 
 
+def _normalize_line_location_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RuntimeError("LINE location must be an object.")
+    title = str(value.get("title") or "").strip()
+    address = str(value.get("address") or "").strip()
+    try:
+        latitude = float(value.get("latitude"))  # type: ignore[arg-type]
+        longitude = float(value.get("longitude"))  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "LINE location requires numeric latitude and longitude."
+        ) from exc
+    if not title or not address:
+        raise RuntimeError("LINE location requires title and address.")
+    return {
+        "title": title,
+        "address": address,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+
+
 def _matrix_bearer_token(secret_token: str | None) -> str:
     token = str(secret_token or "").strip()
     if not token:
@@ -6072,7 +6096,7 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
-        if not replay_message:
+        if not replay_message and not isinstance(payload.get("location"), dict):
             error = f"Saved {route_kind} delivery is missing its replay message."
             await self.database.update_outbound_delivery(
                 delivery_id,
@@ -6083,6 +6107,7 @@ class OpsMeshService:
                 last_error=error,
             )
             return False, error
+        replay_message_text = replay_message or ""
         try:
             if event_type == "gateway/poll":
                 raw_options = payload.get("options")
@@ -6093,7 +6118,7 @@ class OpsMeshService:
                 )
                 runtime_result = await runtime.deliver_poll(
                     session_key=runtime_session_key,
-                    message=replay_message,
+                    message=replay_message_text,
                     channel=str(
                         payload.get("channel")
                         or (conversation_target or {}).get("channel")
@@ -6144,7 +6169,7 @@ class OpsMeshService:
                 )
                 runtime_result = await runtime.deliver_message(
                     session_key=runtime_session_key,
-                    message=replay_message,
+                    message=replay_message_text,
                     channel=str(
                         payload.get("channel")
                         or (conversation_target or {}).get("channel")
@@ -6167,6 +6192,7 @@ class OpsMeshService:
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    location=_normalize_line_location_payload(payload.get("location")),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -6196,7 +6222,7 @@ class OpsMeshService:
             else:
                 runtime_result = await runtime.deliver_message(
                     session_key=runtime_session_key,
-                    message=replay_message,
+                    message=replay_message_text,
                 )
         except (GatewayOutboundRuntimeUnavailableError, Exception) as exc:
             error = str(exc)[:240]
@@ -13456,6 +13482,8 @@ class OpsMeshService:
             payload["previewImageUrl"] = request.preview_image_url
         if request.duration_ms is not None:
             payload["durationMs"] = request.duration_ms
+        if request.location is not None:
+            payload["location"] = dict(request.location)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
@@ -13815,6 +13843,7 @@ class OpsMeshService:
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
                     duration_ms=_optional_int_payload_value(payload, "durationMs"),
+                    location=_normalize_line_location_payload(payload.get("location")),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13898,6 +13927,7 @@ class OpsMeshService:
         media_kind: str | None = None,
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
+        location: dict[str, object] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -13929,8 +13959,9 @@ class OpsMeshService:
         if conversation_target is None:
             raise ValueError("send requires an explicit channel target")
         normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
-        if not message.strip() and not normalized_media_urls:
-            raise ValueError("send requires text or media")
+        normalized_location = _normalize_line_location_payload(location)
+        if not message.strip() and not normalized_media_urls and normalized_location is None:
+            raise ValueError("send requires text, media, or location")
         payload: dict[str, Any] = {
             "message": message,
             "channel": conversation_target.channel,
@@ -13955,6 +13986,8 @@ class OpsMeshService:
                 payload["audioAsVoice"] = audio_as_voice
             if not message.strip():
                 payload["summary"] = _summarize_direct_channel_media(normalized_media_urls)
+        if normalized_location is not None:
+            payload["location"] = normalized_location
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
@@ -16468,6 +16501,7 @@ class OpsMeshService:
         media_kind = str(event.get("mediaKind") or "").strip().lower()
         preview_image_url = str(event.get("previewImageUrl") or "").strip()
         duration_ms = _optional_int_payload_value(event, "durationMs")
+        location = _normalize_line_location_payload(event.get("location"))
         messages: list[dict[str, object]] = []
         for media_url in media_urls:
             _line_validate_media_url(media_url)
@@ -16500,6 +16534,16 @@ class OpsMeshService:
                         "previewImageUrl": preview_image_url or media_url,
                     }
                 )
+        if location is not None:
+            messages.append(
+                {
+                    "type": "location",
+                    "title": str(location["title"])[:100],
+                    "address": str(location["address"])[:100],
+                    "latitude": location["latitude"],
+                    "longitude": location["longitude"],
+                }
+            )
         messages.extend(
             {"type": "text", "text": chunk}
             for chunk in _line_text_chunks(text)

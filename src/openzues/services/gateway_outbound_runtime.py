@@ -126,6 +126,7 @@ class GatewayOutboundRuntimeMessageRequest:
     media_kind: str | None = None
     preview_image_url: str | None = None
     duration_ms: int | None = None
+    location: dict[str, object] | None = None
     gif_playback: bool | None = None
     audio_as_voice: bool | None = None
     reply_to_id: str | None = None
@@ -316,6 +317,7 @@ class GatewayOutboundRuntimeService:
         media_kind: str | None = None,
         preview_image_url: str | None = None,
         duration_ms: int | None = None,
+        location: dict[str, object] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -351,6 +353,7 @@ class GatewayOutboundRuntimeService:
                         media_kind=_normalize_optional_string(media_kind),
                         preview_image_url=_normalize_optional_string(preview_image_url),
                         duration_ms=duration_ms,
+                        location=location,
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
@@ -419,6 +422,7 @@ class GatewayOutboundRuntimeService:
                         media_kind=_normalize_optional_string(media_kind),
                         preview_image_url=_normalize_optional_string(preview_image_url),
                         duration_ms=duration_ms,
+                        location=location,
                         gif_playback=gif_playback,
                         audio_as_voice=audio_as_voice,
                         reply_to_id=_normalize_optional_string(reply_to_id),
