@@ -13433,6 +13433,9 @@ def _plugin_record_from_deck_item(
     channel_configs = _plugin_manifest_channel_configs(item.get("channelConfigs"))
     if channel_configs:
         record["channelConfigs"] = channel_configs
+    model_support = _plugin_manifest_model_support(item.get("modelSupport"))
+    if model_support:
+        record["modelSupport"] = model_support
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
         record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
@@ -13738,6 +13741,19 @@ def _plugin_manifest_channel_configs(value: object) -> dict[str, object]:
             config["preferOver"] = prefer_over
         configs[channel_id] = config
     return configs
+
+
+def _plugin_manifest_model_support(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    model_support: dict[str, object] = {}
+    model_prefixes = _plugin_manifest_string_list(value.get("modelPrefixes"))
+    if model_prefixes:
+        model_support["modelPrefixes"] = model_prefixes
+    model_patterns = _plugin_manifest_string_list(value.get("modelPatterns"))
+    if model_patterns:
+        model_support["modelPatterns"] = model_patterns
+    return model_support
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -14101,6 +14117,9 @@ def _plugin_record_from_openclaw_manifest(
     channel_configs = _plugin_manifest_channel_configs(manifest.get("channelConfigs"))
     if channel_configs:
         record["channelConfigs"] = channel_configs
+    model_support = _plugin_manifest_model_support(manifest.get("modelSupport"))
+    if model_support:
+        record["modelSupport"] = model_support
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
         record[metadata_key] = metadata_value
     for key in (
