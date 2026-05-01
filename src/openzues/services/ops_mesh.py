@@ -241,6 +241,7 @@ BLUEBUBBLES_EFFECT_IDS = {
     "celebration": "com.apple.messages.effect.CKSparklesEffect",
 }
 NATIVE_PROVIDER_ROUTE_KINDS = {
+    "bluebubbles",
     "slack",
     "telegram",
     "discord",
@@ -9325,6 +9326,8 @@ class OpsMeshService:
             return self._post_line_provider_event
         if route_kind == "matrix":
             return self._post_matrix_provider_event
+        if route_kind == "bluebubbles":
+            return self._post_bluebubbles_provider_event
         return self._post_webhook
 
     async def dispatch_message_action(
@@ -10547,6 +10550,44 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
             raise RuntimeError(str(result.get("error")))
         return result
+
+    def _post_bluebubbles_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("BlueBubbles native provider route only supports sends.")
+        message = str(event.get("message") or "").strip()
+        if not message:
+            raise RuntimeError("BlueBubbles native provider send requires message text.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        fallback_target = str((conversation_target or {}).get("peer_id") or "").strip()
+        raw_target = str(event.get("to") or fallback_target).strip()
+        chat_guid = _bluebubbles_chat_guid_value(raw_target)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles native provider send requires a chat_guid target.")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "tempGuid": str(uuid.uuid4()),
+            "message": message,
+            "method": "private-api",
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            payload["selectedMessageGuid"] = reply_to_id
+            payload["partIndex"] = 0
+        result = self._post_bluebubbles_text_message(route, secret_token, payload)
+        message_id = _bluebubbles_message_id_from_result(result)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": chat_guid,
+            "channelId": chat_guid,
+            "conversationId": chat_guid,
+        }
 
     def _dispatch_bluebubbles_upload_file_message_action(
         self,

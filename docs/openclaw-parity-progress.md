@@ -6405,6 +6405,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "bluebubbles_"` (`9 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound text sends now participate in the shared
+  route-backed provider runtime: `kind="bluebubbles"` routes are selected for
+  `gateway.send`, direct `chat_guid` targets post to
+  `POST /api/v1/message/text`, and native message id/chat metadata returns
+  through `send_direct_channel_message` and saved outbound deliveries.
+- Verified the BlueBubbles outbound text-send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_route
+  -q` (`1 failed` before implementation, no provider route was subscribed),
+  then the same command (`1 passed`), adjacent BlueBubbles proof `python -m
+  pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`10 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

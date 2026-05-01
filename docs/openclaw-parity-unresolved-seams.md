@@ -3700,14 +3700,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   multipart/form-data payloads for attachments and group icons, and return
   upstream-shaped message/icon results. Verified with focused and adjacent
   OpsMesh action proofs, `ruff check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage route-backed outbound
-  send remains open. Source anchors are
-  `extensions/bluebubbles/src/channel.ts`,
+- Closed the BlueBubbles/iMessage route-backed outbound text send seam from
+  OpenClaw `extensions/bluebubbles/src/channel.ts`,
   `extensions/bluebubbles/src/send.ts`, and
-  `src/infra/outbound/outbound-send-service.ts`; OpenZues must bind
-  `kind="bluebubbles"` notification routes into the shared outbound runtime
-  send path, route direct `chat_guid` targets to `POST /api/v1/message/text`,
-  and preserve native message id/provider metadata.
+  `src/infra/outbound/outbound-send-service.ts`: `kind="bluebubbles"`
+  notification routes now participate in the shared outbound runtime send path,
+  direct `chat_guid` targets route to `POST /api/v1/message/text`, and native
+  message id/provider metadata propagates through direct send responses and
+  saved outbound deliveries. Verified with focused and adjacent OpsMesh proofs,
+  `ruff check`, and `mypy`.
+- Next provider-native queue head: BlueBubbles/iMessage outbound media send
+  remains open. Source anchors are
+  `extensions/bluebubbles/src/channel.ts` and
+  `extensions/bluebubbles/src/attachments.ts`; OpenZues must route
+  `gateway.send` media payloads through the native BlueBubbles attachment
+  endpoint, preserving captions, media metadata, and native message ids.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

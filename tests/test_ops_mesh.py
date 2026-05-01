@@ -6933,6 +6933,124 @@ async def test_ops_mesh_service_message_action_dispatches_bluebubbles_set_group_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-native-bluebubbles-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Send Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    bluebubbles_requests: list[tuple[str, str, object | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        bluebubbles_requests.append((method, target, payload))
+        return {"data": {"messageId": "bb-msg-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="bluebubbles",
+        to="chat_guid:iMessage;+;group-1",
+        message="Hello from native BlueBubbles.",
+        account_id="personal",
+        idempotency_key="idem-native-bluebubbles-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="bluebubbles",
+            account_id="personal",
+            peer_kind="channel",
+            peer_id="chat_guid:iMessage;+;group-1",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+    route = (await database.list_notification_routes())[0]
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-bluebubbles-send",
+        "channel": "bluebubbles",
+        "messageId": "bb-msg-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "bluebubbles",
+            "target": "chat_guid:iMessage;+;group-1",
+            "accountId": "personal",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "iMessage;+;group-1",
+        "channelId": "iMessage;+;group-1",
+        "conversationId": "iMessage;+;group-1",
+    }
+    assert len(bluebubbles_requests) == 1
+    method, target, payload = bluebubbles_requests[0]
+    assert method == "POST"
+    assert target == "http://localhost:1234/api/v1/message/text?password=bb-password"
+    assert isinstance(payload, dict)
+    temp_guid = payload.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert payload == {
+        "chatGuid": "iMessage;+;group-1",
+        "message": "Hello from native BlueBubbles.",
+        "method": "private-api",
+    }
+    assert delivery is not None
+    assert delivery["route_kind"] == "announce"
+    assert delivery["delivery_message_id"] == "bb-msg-1"
+    assert route["last_result"] == "Delivered gateway/send provider runtime"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
