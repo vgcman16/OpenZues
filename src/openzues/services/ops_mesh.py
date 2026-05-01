@@ -9122,16 +9122,23 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
-        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action == "unsend":
+        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {"edit", "unsend"}:
             route = await self._bluebubbles_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native BlueBubbles route is configured for message.action unsend."
+                    f"No native BlueBubbles route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
+            if action == "edit":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             return await asyncio.to_thread(
                 self._dispatch_bluebubbles_unsend_message_action,
                 route,
@@ -9953,6 +9960,54 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
             raise RuntimeError(str(result.get("error")))
         return {"ok": True, "unsent": message_id}
+
+    def _dispatch_bluebubbles_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles edit requires messageId.")
+        new_text = (
+            _message_action_param_string(request.params, "text")
+            or _message_action_param_string(request.params, "newText")
+            or _message_action_param_string(request.params, "message")
+        )
+        if new_text is None:
+            raise RuntimeError("BlueBubbles edit requires text.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        backwards_compat_message = _message_action_param_string(
+            request.params,
+            "backwardsCompatMessage",
+        )
+        payload: dict[str, object] = {
+            "editedMessage": new_text,
+            "backwardsCompatibilityMessage": (
+                backwards_compat_message
+                if backwards_compat_message is not None
+                else f"Edited to: {new_text}"
+            ),
+            "partIndex": part_index if part_index is not None else 0,
+        }
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            f"/api/v1/message/{quote(message_id, safe='')}/edit",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "edited": message_id}
 
     async def _dispatch_zalo_send_message_action(
         self,

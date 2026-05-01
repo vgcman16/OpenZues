@@ -6334,6 +6334,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_node_methods.py src\openzues\schemas.py`.
+- BlueBubbles/iMessage `message.action edit` now follows OpenClaw's
+  BlueBubbles action adapter by routing `messageId` plus `text` / `newText` /
+  `message`, `partIndex`, and `backwardsCompatMessage` to
+  `POST /api/v1/message/{messageId}/edit`, preserving the OpenClaw-shaped
+  `{ ok: true, edited: rawMessageId }` result.
+- Verified the BlueBubbles edit slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_bluebubbles_edit_route
+  -q` (`1 failed` before implementation, action returned `None`), then the
+  same command (`1 passed`), adjacent message-action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_edit_route or
+  bluebubbles_unsend_route or message_action_dispatches_zalo_send_route or
+  message_action_dispatches_matrix_read_alias_route"` (`4 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
