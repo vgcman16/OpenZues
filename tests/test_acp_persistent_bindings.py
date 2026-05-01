@@ -5,6 +5,7 @@ from openzues.services.acp_persistent_bindings import (
     build_configured_acp_session_key,
     ensure_configured_acp_binding_session,
     parse_configured_acp_session_key,
+    reset_acp_session_in_place,
     resolve_configured_acp_binding_spec_from_record,
     to_configured_acp_binding_record,
 )
@@ -247,3 +248,94 @@ async def test_ensure_configured_acp_binding_session_uses_acp_agent_override() -
             "backend_id": "acpx",
         }
     ]
+
+
+async def test_reset_acp_session_in_place_clears_configured_binding_metadata() -> None:
+    spec = ConfiguredAcpBindingSpec(
+        channel="discord",
+        account_id="default",
+        conversation_id="1478836151241412759",
+        agent_id="claude",
+        mode="persistent",
+    )
+    session_key = build_configured_acp_session_key(spec)
+    manager = FakeConfiguredAcpSessionManager()
+
+    result = await reset_acp_session_in_place(
+        session_key=session_key,
+        reason="reset",
+        manager=manager,
+        acp_meta={"agent": "claude", "mode": "persistent", "backend": "acpx"},
+        configured_binding_spec=spec,
+    )
+
+    assert result == {"ok": True}
+    assert manager.close_calls == [
+        {
+            "session_key": session_key,
+            "reason": "reset-in-place-reset",
+            "discard_persistent_state": True,
+            "clear_meta": True,
+            "allow_backend_unavailable": True,
+            "require_acp_session": False,
+        }
+    ]
+    assert manager.initialize_calls == []
+
+
+async def test_reset_acp_session_in_place_keeps_metadata_for_non_configured_session() -> None:
+    session_key = "agent:claude:acp:binding:demo-binding:default:9373ab192b2317f4"
+    manager = FakeConfiguredAcpSessionManager()
+
+    result = await reset_acp_session_in_place(
+        session_key=session_key,
+        reason="reset",
+        manager=manager,
+        acp_meta={"agent": "claude", "mode": "persistent", "backend": "acpx"},
+    )
+
+    assert result == {"ok": True}
+    assert manager.close_calls == [
+        {
+            "session_key": session_key,
+            "reason": "reset-in-place-reset",
+            "discard_persistent_state": True,
+            "clear_meta": False,
+            "allow_backend_unavailable": True,
+            "require_acp_session": False,
+        }
+    ]
+
+
+async def test_reset_acp_session_in_place_treats_configured_missing_meta_as_reset() -> None:
+    spec = ConfiguredAcpBindingSpec(
+        channel="discord",
+        account_id="default",
+        conversation_id="1478836151241412759",
+        agent_id="claude",
+        mode="persistent",
+    )
+    manager = FakeConfiguredAcpSessionManager()
+
+    result = await reset_acp_session_in_place(
+        session_key=build_configured_acp_session_key(spec),
+        reason="new",
+        manager=manager,
+        configured_binding_spec=spec,
+    )
+
+    assert result == {"ok": True}
+    assert manager.close_calls == []
+
+
+async def test_reset_acp_session_in_place_skips_blank_session_key() -> None:
+    manager = FakeConfiguredAcpSessionManager()
+
+    result = await reset_acp_session_in_place(
+        session_key=" ",
+        reason="reset",
+        manager=manager,
+    )
+
+    assert result == {"ok": False, "skipped": True}
+    assert manager.close_calls == []

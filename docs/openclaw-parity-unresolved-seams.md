@@ -99,10 +99,12 @@ records carry `targetKind="session"`, `boundAt=0`, config source metadata,
 conversation ids, and the runtime ACP session target key, stored records parse
 back into normalized configured binding specs, and the fakeable native ensure
 adapter keeps matching ready ACP sessions while closing/reinitializing stale,
-mismatched, or errored runtime sessions.
-Remaining ACP binding parity is in-place configured binding reset, real
-provider-native child-thread creation/store breadth, unbind lifecycle breadth,
-and the standalone ACP bridge server/client runtime. Native
+mismatched, or errored runtime sessions. Native reset-in-place handling now
+clears configured ACP binding metadata for recreation on the next turn while
+keeping ordinary ACP binding reset behavior close-only.
+Remaining ACP binding parity is real provider-native child-thread creation/store
+breadth, unbind lifecycle breadth, and the standalone ACP bridge server/client
+runtime. Native
 ACP prompt request assembly now also mirrors OpenClaw's translator contract for
 cwd prefixing, home redaction with Windows separator preservation, prompt attachments,
 `_meta` thinking/deliver/timeout send options, and system provenance

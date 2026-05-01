@@ -12,6 +12,7 @@ from openzues.services.session_keys import (
 )
 
 AcpRuntimeSessionMode = Literal["persistent", "oneshot"]
+AcpResetReason = Literal["new", "reset"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,3 +245,38 @@ async def ensure_configured_acp_binding_session(
         return {"ok": True, "sessionKey": session_key}
     except Exception as exc:
         return {"ok": False, "sessionKey": session_key, "error": str(exc)}
+
+
+async def reset_acp_session_in_place(
+    *,
+    session_key: str,
+    reason: AcpResetReason,
+    manager: ConfiguredAcpSessionManager,
+    acp_meta: Mapping[str, object] | None = None,
+    configured_binding_spec: ConfiguredAcpBindingSpec | None = None,
+    clear_meta: bool | None = None,
+) -> dict[str, object]:
+    normalized_session_key = session_key.strip()
+    if not normalized_session_key:
+        return {"ok": False, "skipped": True}
+
+    should_clear_meta = (
+        clear_meta if clear_meta is not None else configured_binding_spec is not None
+    )
+    if acp_meta is None:
+        if should_clear_meta:
+            return {"ok": True}
+        return {"ok": False, "skipped": True}
+
+    try:
+        await manager.close_session(
+            session_key=normalized_session_key,
+            reason=f"{reason}-in-place-reset",
+            discard_persistent_state=True,
+            clear_meta=should_clear_meta,
+            allow_backend_unavailable=True,
+            require_acp_session=False,
+        )
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
