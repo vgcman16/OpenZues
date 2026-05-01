@@ -13430,6 +13430,9 @@ def _plugin_record_from_deck_item(
     qa_runners = _plugin_manifest_qa_runners(item.get("qaRunners"))
     if qa_runners:
         record["qaRunners"] = qa_runners
+    channel_configs = _plugin_manifest_channel_configs(item.get("channelConfigs"))
+    if channel_configs:
+        record["channelConfigs"] = channel_configs
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
         record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
@@ -13707,6 +13710,34 @@ def _plugin_manifest_qa_runners(value: object) -> list[dict[str, object]]:
             runner["description"] = description
         runners.append(runner)
     return runners
+
+
+def _plugin_manifest_channel_configs(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    configs: dict[str, object] = {}
+    for raw_channel_id, raw_config in value.items():
+        channel_id = _optional_cli_string(raw_channel_id)
+        if channel_id is None or not isinstance(raw_config, dict):
+            continue
+        schema = raw_config.get("schema")
+        if not isinstance(schema, dict):
+            continue
+        config: dict[str, object] = {"schema": dict(schema)}
+        ui_hints = raw_config.get("uiHints")
+        if isinstance(ui_hints, dict):
+            config["uiHints"] = dict(ui_hints)
+        label = _optional_cli_string(raw_config.get("label"))
+        if label is not None:
+            config["label"] = label
+        description = _optional_cli_string(raw_config.get("description"))
+        if description is not None:
+            config["description"] = description
+        prefer_over = _plugin_manifest_string_list(raw_config.get("preferOver"))
+        if prefer_over:
+            config["preferOver"] = prefer_over
+        configs[channel_id] = config
+    return configs
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -14067,6 +14098,9 @@ def _plugin_record_from_openclaw_manifest(
     qa_runners = _plugin_manifest_qa_runners(manifest.get("qaRunners"))
     if qa_runners:
         record["qaRunners"] = qa_runners
+    channel_configs = _plugin_manifest_channel_configs(manifest.get("channelConfigs"))
+    if channel_configs:
+        record["channelConfigs"] = channel_configs
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
         record[metadata_key] = metadata_value
     for key in (
