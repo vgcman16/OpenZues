@@ -3739,12 +3739,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   the gateway config snapshot and reject oversized local or remote media before
   multipart upload. Verified with focused and adjacent OpsMesh proofs, `ruff
   check`, and `mypy`.
-- Next repo-wide queue head: provider-native replay/direct-announce delivery
-  consistency remains open. Source anchors are
-  `src/infra/outbound/deliver.ts`, `src/infra/outbound/outbound-send-service.ts`,
-  and route-backed provider adapters; OpenZues must keep saved delivery
-  replay, direct announce, and session delivery metadata aligned for native
-  provider transports after the BlueBubbles breadth work.
+- Closed the provider-native replay caption consistency seam from OpenClaw
+  `src/infra/outbound/deliver.ts` and
+  `src/infra/outbound/outbound-send-service.ts`: saved native provider media
+  replays now pass the original payload caption to BlueBubbles/LINE/Matrix/
+  WhatsApp/Zalo-style media adapters instead of the formatted fallback text
+  that includes the `Media:` inventory, while generic provider/session replay
+  keeps the formatted fallback. Verified with focused and adjacent OpsMesh
+  replay/provider proofs, `ruff check`, and `mypy`.
+- Next repo-wide queue head: direct-announce provider metadata consistency
+  remains open. Source anchors are `src/infra/outbound/deliver.ts`,
+  `src/infra/outbound/outbound-send-service.ts`, and OpenZues'
+  ad-hoc announce delivery owner; OpenZues must keep direct announce delivery
+  responses, saved route scopes, provider result fields, and replay behavior
+  aligned for native provider transports.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

@@ -23889,6 +23889,113 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_
 
 
 @pytest.mark.asyncio
+async def test_replay_outbound_deliveries_replays_native_media_with_original_caption(
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-native-media-caption"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_key = (
+        "launch:mode:workspace_affinity:channel:bluebubbles:account:personal:"
+        "peer:chat_guid:iMessage;+;group-1"
+    )
+    conversation_target = {
+        "channel": "bluebubbles",
+        "account_id": "personal",
+        "peer_kind": "channel",
+        "peer_id": "chat_guid:iMessage;+;group-1",
+        "summary": "bluebubbles account personal channel iMessage;+;group-1",
+    }
+    delivery_id = await database.create_outbound_delivery(
+        route_id=None,
+        route_name="Gateway send to Replay Native BlueBubbles",
+        route_kind="announce",
+        route_target="bluebubbles account personal channel iMessage;+;group-1",
+        event_type="gateway/send",
+        session_key=session_key,
+        conversation_target=conversation_target,
+        route_scope={
+            "route_name": "Gateway send to Replay Native BlueBubbles",
+            "route_kind": "announce",
+            "route_target": "bluebubbles account personal channel iMessage;+;group-1",
+            "route_match": "explicitTarget",
+            "source": "gateway.send",
+            "idempotency_key": "idem-replay-bluebubbles-media",
+        },
+        event_payload={
+            "message": "Photo caption",
+            "channel": "bluebubbles",
+            "to": "chat_guid:iMessage;+;group-1",
+            "accountId": "personal",
+            "mediaUrl": "https://example.com/photo.png",
+            "mediaUrls": ["https://example.com/photo.png"],
+            "sessionKey": session_key,
+            "conversationTarget": conversation_target,
+        },
+        message_summary="Photo caption",
+        test_delivery=False,
+        delivery_state="failed",
+        attempt_count=1,
+        last_attempt_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        last_error="temporary delivery timeout",
+    )
+    provider_requests: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def fake_provider_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        provider_requests.append(request)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": "bb-replay-media-1",
+            "chatId": "iMessage;+;group-1",
+            "mediaIds": ["bb-replay-media-1"],
+            "mediaUrls": ["https://example.com/photo.png"],
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),
+        FakeMissionService([]),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=GatewayOutboundRuntimeService(
+            provider_message_deliverer=fake_provider_delivery,
+        ),
+    )
+
+    result = await service.replay_outbound_deliveries(limit=10)
+    refreshed_delivery = await database.get_outbound_delivery(delivery_id)
+
+    assert result.ok is True
+    assert result.replayed_count == 1
+    assert provider_requests == [
+        GatewayOutboundRuntimeMessageRequest(
+            channel="bluebubbles",
+            target="chat_guid:iMessage;+;group-1",
+            message="Photo caption",
+            media_urls=("https://example.com/photo.png",),
+            account_id="personal",
+            session_key=session_key,
+        )
+    ]
+    assert refreshed_delivery is not None
+    assert refreshed_delivery["delivery_state"] == "delivered"
+    assert refreshed_delivery["delivery_message_id"] == "bb-replay-media-1"
+    assert refreshed_delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert refreshed_delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "bb-replay-media-1",
+        "chatId": "iMessage;+;group-1",
+        "mediaIds": ["bb-replay-media-1"],
+        "mediaUrls": ["https://example.com/photo.png"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_provider_runtime(
 ) -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-replay-gateway-poll-provider"

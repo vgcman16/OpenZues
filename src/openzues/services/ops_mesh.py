@@ -253,6 +253,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "line",
     "matrix",
 }
+NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {"bluebubbles", "line", "matrix", "whatsapp", "zalo"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -7110,27 +7111,30 @@ class OpsMeshService:
                     if isinstance(raw_media_urls, list)
                     else None
                 )
+                normalized_media_urls = tuple(
+                    _normalize_direct_channel_media_urls(
+                        media_url=media_url,
+                        media_urls=media_urls,
+                    )
+                )
+                replay_channel = str(
+                    payload.get("channel") or (conversation_target or {}).get("channel") or ""
+                ).strip() or None
+                replay_target = str(
+                    payload.get("to") or (conversation_target or {}).get("peer_id") or ""
+                ).strip() or None
+                replay_runtime_message = replay_message_text
+                if (
+                    str(replay_channel or "").lower() in NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS
+                    and normalized_media_urls
+                ):
+                    replay_runtime_message = str(payload.get("message") or "").strip()
                 runtime_result = await runtime.deliver_message(
                     session_key=runtime_session_key,
-                    message=replay_message_text,
-                    channel=str(
-                        payload.get("channel")
-                        or (conversation_target or {}).get("channel")
-                        or ""
-                    ).strip()
-                    or None,
-                    target=str(
-                        payload.get("to")
-                        or (conversation_target or {}).get("peer_id")
-                        or ""
-                    ).strip()
-                    or None,
-                    media_urls=tuple(
-                        _normalize_direct_channel_media_urls(
-                            media_url=media_url,
-                            media_urls=media_urls,
-                        )
-                    ),
+                    message=replay_runtime_message,
+                    channel=replay_channel,
+                    target=replay_target,
+                    media_urls=normalized_media_urls,
                     media_kind=str(payload.get("mediaKind") or "").strip() or None,
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
@@ -15976,8 +15980,7 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower()
-                    in {"whatsapp", "zalo", "line", "matrix", "bluebubbles"}
+                    resolved_target.channel.lower() in NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()

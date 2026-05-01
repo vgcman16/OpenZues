@@ -6467,6 +6467,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`14
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Saved native-provider media replays now preserve OpenClaw's original-caption
+  behavior: BlueBubbles/LINE/Matrix/WhatsApp/Zalo-style media adapters receive
+  the original payload `message` on replay instead of the generic formatted
+  fallback that appends the `Media:` inventory, while generic provider/session
+  replay remains unchanged.
+- Verified the native media replay caption slice with `python -m pytest
+  tests\test_ops_mesh.py::test_replay_outbound_deliveries_replays_native_media_with_original_caption
+  -q` (`1 failed` before implementation, replay sent `Photo caption` plus the
+  formatted media inventory), then the same command (`1 passed`), adjacent
+  replay/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime
+  or replay_outbound_deliveries_replays_native_media_with_original_caption or
+  replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_provider_runtime
+  or bluebubbles_"` (`17 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
