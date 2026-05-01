@@ -828,9 +828,12 @@ and leaving non-Windows / non-shell optional spawn fields unset. Explicit
 provider auth like OpenClaw's default-executable/custom-entry guard. Native ACP
 client permission resolution now also mirrors OpenClaw's safe search/read
 auto-approval, spoofing guards, owner/exec/control-plane prompting, option
-selection, cancellation, and terminal-title sanitization. Remaining ACP CLI
+selection, cancellation, and terminal-title sanitization. Native ACP prompt
+event mapping now covers OpenClaw's text/resource/resource-link extraction,
+resource-link control/delimiter escaping, prompt byte-limit accounting, image
+attachment projection, and tool-title control escaping. Remaining ACP CLI
 parity is still the real bridge client/server protocol runtime rather than the
-spawn preflight and permission-helper contracts.
+spawn preflight, permission-helper, and event-mapper contracts.
 `acp status [lookup]` now reads native ACP session metadata and linked
 OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
 thread id, runtime session id, label, task id, and run id. JSON output returns

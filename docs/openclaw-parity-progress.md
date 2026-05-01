@@ -5120,6 +5120,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\acp_client_runtime.py
   tests\test_acp_client_runtime.py tests\test_cli.py`, and `mypy
   src\openzues\services\acp_client_runtime.py`.
+- Native ACP event mapping now covers OpenClaw's prompt text/resource/resource
+  link extraction, resource metadata control/delimiter escaping, max-byte
+  accounting including newline separators, image-to-attachment projection, and
+  control escaping in formatted tool titles.
+- Verified the ACP event-mapper slice with `python -m pytest
+  tests\test_acp_event_mapper.py -q` (`6 passed`), adjacent ACP runtime proof
+  `python -m pytest tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`25 passed`), `ruff check
+  src\openzues\services\acp_event_mapper.py tests\test_acp_event_mapper.py`,
+  and `mypy src\openzues\services\acp_event_mapper.py`.
 
 ## References
 
