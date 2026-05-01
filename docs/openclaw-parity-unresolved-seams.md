@@ -825,9 +825,12 @@ ACP client invocation resolver by unwrapping `.cmd` shims to the Python
 executable without shell execution, failing closed for unresolved wrappers,
 and leaving non-Windows / non-shell optional spawn fields unset. Explicit
 `--server openzues` overrides that change the server args now also preserve
-provider auth like OpenClaw's default-executable/custom-entry guard. Remaining
-ACP CLI parity is still the real bridge client/server protocol runtime rather
-than the spawn preflight contract.
+provider auth like OpenClaw's default-executable/custom-entry guard. Native ACP
+client permission resolution now also mirrors OpenClaw's safe search/read
+auto-approval, spoofing guards, owner/exec/control-plane prompting, option
+selection, cancellation, and terminal-title sanitization. Remaining ACP CLI
+parity is still the real bridge client/server protocol runtime rather than the
+spawn preflight and permission-helper contracts.
 `acp status [lookup]` now reads native ACP session metadata and linked
 OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
 thread id, runtime session id, label, task id, and run id. JSON output returns

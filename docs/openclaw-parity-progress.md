@@ -5108,6 +5108,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_client_command_passes_spawn_plan_to_registered_runner or
   acp_status_json_and_human"` (`12 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Native ACP client permission resolution now follows OpenClaw's
+  `resolvePermissionRequest` contract for safe search/read auto-approval,
+  spoofing guard rails, exec/control-plane/owner-only prompting, allow/reject
+  option selection, cancellation when no options are available, and sanitized
+  terminal titles before logging or prompting.
+- Verified the ACP permission resolver slice with `python -m pytest
+  tests\test_acp_client_runtime.py -q` (`7 passed`), adjacent ACP client proof
+  `python -m pytest tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_client or acp_bridge_command or acp_status_json_and_human"` (`19
+  passed`), `ruff check src\openzues\services\acp_client_runtime.py
+  tests\test_acp_client_runtime.py tests\test_cli.py`, and `mypy
+  src\openzues\services\acp_client_runtime.py`.
 
 ## References
 
