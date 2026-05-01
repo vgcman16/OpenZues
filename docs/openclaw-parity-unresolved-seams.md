@@ -527,8 +527,11 @@ summaries for resolvable pinned message events.
 Matrix `message.action readMessages` now uses OpenClaw's room history endpoint
 shape with `dir`, bounded `limit`, `before`/`after` tokens, redaction filtering,
 message summaries, and `nextBatch` / `prevBatch` cursor projection.
+Matrix `message.action memberInfo` and `channelInfo` now map to OpenClaw's
+profile, room-state, and joined-member probe shapes, including display/avatar
+profile projection, room name/topic/canonical alias reads, and member counts.
 Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, and profile/account probe breadth.
+direct-room resolution, and self-profile update/config persistence breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

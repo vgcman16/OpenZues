@@ -2337,6 +2337,10 @@ def _matrix_whoami_endpoint(target: str | None) -> str:
     return f"{_matrix_base_url(target)}/_matrix/client/v3/account/whoami"
 
 
+def _matrix_profile_endpoint(target: str | None, *, user_id: str) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/profile/{quote(user_id, safe='')}"
+
+
 def _matrix_state_endpoint(
     target: str | None,
     *,
@@ -2380,6 +2384,13 @@ def _matrix_messages_endpoint(
     return (
         f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
         f"/messages?{urlencode(query)}"
+    )
+
+
+def _matrix_joined_members_endpoint(target: str | None, *, room_id: str) -> str:
+    return (
+        f"{_matrix_base_url(target)}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        "/joined_members"
     )
 
 
@@ -2511,6 +2522,15 @@ def _matrix_event_chunk(result: object) -> list[dict[str, object]]:
     if not isinstance(chunk, list):
         return []
     return [event for event in chunk if isinstance(event, dict)]
+
+
+def _matrix_optional_string_field(result: object, key: str) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    value = result.get(key)
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
 
 
 def _matrix_message_summary(result: object) -> dict[str, object] | None:
@@ -8045,6 +8065,38 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "matrix" and action in {"memberInfo", "member-info"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_member_info_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action in {"channelInfo", "channel-info"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_channel_info_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -9151,6 +9203,130 @@ class OpsMeshService:
             "nextBatch": next_batch,
             "prevBatch": prev_batch,
         }
+
+    def _dispatch_matrix_member_info_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        user_id = _message_action_param_string(request.params, "userId", required=True)
+        if user_id is None:
+            raise RuntimeError("Matrix memberInfo requires userId.")
+        room_id: str | None = None
+        room_target = _message_action_param_string(request.params, "roomId") or (
+            _message_action_param_string(request.params, "channelId")
+        )
+        if room_target is not None:
+            room_id = _matrix_room_id(room_target)
+        profile = self._get_json_provider_url(
+            _matrix_profile_endpoint(str(route.get("target") or ""), user_id=user_id),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        display_name = _matrix_optional_string_field(profile, "displayname")
+        avatar_url = _matrix_optional_string_field(profile, "avatar_url")
+        return {
+            "ok": True,
+            "member": {
+                "userId": user_id,
+                "profile": {
+                    "displayName": display_name,
+                    "avatarUrl": avatar_url,
+                },
+                "membership": None,
+                "powerLevel": None,
+                "displayName": display_name,
+                "roomId": room_id,
+            },
+        }
+
+    def _dispatch_matrix_channel_info_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix channelInfo")
+        name_state = self._matrix_room_state_event(
+            route,
+            room_id=room_id,
+            event_type="m.room.name",
+            secret_token=secret_token,
+        )
+        topic_state = self._matrix_room_state_event(
+            route,
+            room_id=room_id,
+            event_type="m.room.topic",
+            secret_token=secret_token,
+        )
+        alias_state = self._matrix_room_state_event(
+            route,
+            room_id=room_id,
+            event_type="m.room.canonical_alias",
+            secret_token=secret_token,
+        )
+        member_count = self._matrix_joined_member_count(
+            route,
+            room_id=room_id,
+            secret_token=secret_token,
+        )
+        return {
+            "ok": True,
+            "room": {
+                "roomId": room_id,
+                "name": _matrix_optional_string_field(name_state, "name"),
+                "topic": _matrix_optional_string_field(topic_state, "topic"),
+                "canonicalAlias": _matrix_optional_string_field(alias_state, "alias"),
+                "altAliases": [],
+                "memberCount": member_count,
+            },
+        }
+
+    def _matrix_room_state_event(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        event_type: str,
+        secret_token: str | None,
+    ) -> object | None:
+        try:
+            return self._get_json_provider_url(
+                _matrix_state_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type=event_type,
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+
+    def _matrix_joined_member_count(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> int | None:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_joined_members_endpoint(str(route.get("target") or ""), room_id=room_id),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+        if not isinstance(result, dict):
+            return None
+        joined = result.get("joined")
+        if isinstance(joined, dict):
+            return len(joined)
+        if isinstance(joined, list):
+            return len(joined)
+        return None
 
     def _matrix_action_room_id(
         self,

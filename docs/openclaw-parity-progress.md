@@ -5522,6 +5522,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_slack_thread_read_route"` (`15 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed member/room probe parity now covers `memberInfo` and
+  `channelInfo` with OpenClaw-shaped profile projection, room name/topic/canonical
+  alias state reads, joined-member counts, and null membership/power-level fields.
+- Verified the Matrix member/channel probe slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_member_info_route or
+  matrix_channel_info_route"` (`2 passed`), adjacent action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_member_info_route or
+  message_action_dispatches_discord_channel_info_route"` (`16 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
