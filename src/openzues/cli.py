@@ -12329,8 +12329,9 @@ def _validate_cli_remote_marketplace_plugin_source(
         )
 
 
-def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
-    marketplace = _resolve_cli_plugins_marketplace_source(source)
+def _build_plugins_marketplace_list_payload_from_source(
+    marketplace: _CliMarketplaceSource,
+) -> dict[str, object]:
     manifest_path = marketplace.manifest_path
     try:
         parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -12338,55 +12339,95 @@ def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
         raise ValueError(f"invalid marketplace JSON at {manifest_path}: {exc}") from exc
     except OSError as exc:
         raise ValueError(f"failed to read marketplace manifest at {manifest_path}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: expected object")
+    raw_plugins = parsed.get("plugins")
+    if not isinstance(raw_plugins, list):
+        raise ValueError(f"invalid marketplace JSON at {manifest_path}: missing plugins[]")
+    plugins: list[dict[str, object]] = []
+    for raw_plugin in raw_plugins:
+        if not isinstance(raw_plugin, dict):
+            raise ValueError(f"invalid marketplace entry in {manifest_path}: expected object")
+        name = _optional_cli_string(raw_plugin.get("name"))
+        if name is None:
+            raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
+        try:
+            source_value = _normalize_cli_marketplace_plugin_source(raw_plugin.get("source"))
+            if marketplace.origin == "remote":
+                _validate_cli_remote_marketplace_plugin_source(
+                    marketplace=marketplace,
+                    source=source_value,
+                )
+        except ValueError as exc:
+            raise ValueError(
+                f'invalid marketplace entry "{name}" in {marketplace.source_label}: {exc}'
+            ) from exc
+        plugin: dict[str, object] = {"name": name}
+        for key in ("version", "description"):
+            value = _optional_cli_string(raw_plugin.get(key))
+            if value is not None:
+                plugin[key] = value
+        plugin["source"] = source_value
+        plugins.append(plugin)
+    payload: dict[str, object] = {
+        "source": marketplace.source_label,
+        "plugins": plugins,
+    }
+    name = _optional_cli_string(parsed.get("name"))
+    if name is not None:
+        payload["name"] = name
+    version = _optional_cli_string(parsed.get("version"))
+    if version is not None:
+        payload["version"] = version
+    return payload
+
+
+def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
+    marketplace = _resolve_cli_plugins_marketplace_source(source)
     try:
-        if not isinstance(parsed, dict):
-            raise ValueError(f"invalid marketplace JSON at {manifest_path}: expected object")
-        raw_plugins = parsed.get("plugins")
-        if not isinstance(raw_plugins, list):
-            raise ValueError(f"invalid marketplace JSON at {manifest_path}: missing plugins[]")
-        plugins: list[dict[str, object]] = []
-        for raw_plugin in raw_plugins:
-            if not isinstance(raw_plugin, dict):
-                raise ValueError(
-                    f"invalid marketplace entry in {manifest_path}: expected object"
-                )
-            name = _optional_cli_string(raw_plugin.get("name"))
-            if name is None:
-                raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
-            try:
-                source_value = _normalize_cli_marketplace_plugin_source(
-                    raw_plugin.get("source")
-                )
-                if marketplace.origin == "remote":
-                    _validate_cli_remote_marketplace_plugin_source(
-                        marketplace=marketplace,
-                        source=source_value,
-                    )
-            except ValueError as exc:
-                raise ValueError(
-                    f'invalid marketplace entry "{name}" in {marketplace.source_label}: {exc}'
-                ) from exc
-            plugin: dict[str, object] = {"name": name}
-            for key in ("version", "description"):
-                value = _optional_cli_string(raw_plugin.get(key))
-                if value is not None:
-                    plugin[key] = value
-            plugin["source"] = source_value
-            plugins.append(plugin)
-        payload: dict[str, object] = {
-            "source": marketplace.source_label,
-            "plugins": plugins,
-        }
-        name = _optional_cli_string(parsed.get("name"))
-        if name is not None:
-            payload["name"] = name
-        version = _optional_cli_string(parsed.get("version"))
-        if version is not None:
-            payload["version"] = version
-        return payload
+        return _build_plugins_marketplace_list_payload_from_source(marketplace)
     finally:
         if marketplace.cleanup is not None:
             marketplace.cleanup()
+
+
+def _safe_cli_marketplace_install_leaf(plugin_id: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", plugin_id.strip()).strip(".-")
+    return safe or "plugin"
+
+
+def _cli_gateway_config_data_dir(gateway_config: object) -> Path:
+    data_dir = getattr(gateway_config, "_data_dir", None)
+    if isinstance(data_dir, Path):
+        return data_dir
+    raise RuntimeError("Gateway config data directory is unavailable.")
+
+
+def _copy_cli_remote_marketplace_plugin_install(
+    *,
+    services: CliServices,
+    plugin_id: str,
+    source_path: Path,
+) -> Path:
+    data_dir = _cli_gateway_config_data_dir(services.gateway_config)
+    install_root = data_dir / "plugins" / "marketplace"
+    install_root.mkdir(parents=True, exist_ok=True)
+    target_root = install_root / _safe_cli_marketplace_install_leaf(plugin_id)
+    source = source_path.resolve()
+    if target_root.exists():
+        if target_root.is_dir():
+            shutil.rmtree(target_root)
+        else:
+            target_root.unlink()
+    if source.is_dir():
+        shutil.copytree(source, target_root)
+        return target_root.resolve()
+    if source.is_file():
+        target_root.mkdir(parents=True, exist_ok=True)
+        target_file = target_root / source.name
+        shutil.copy2(source, target_file)
+        return target_file.resolve()
+    raise ValueError(f'plugin "{plugin_id}" source not found: {source_path}')
 
 
 async def _build_plugins_marketplace_install_payload(
@@ -12396,36 +12437,47 @@ async def _build_plugins_marketplace_install_payload(
     marketplace: str,
     force: bool,
 ) -> dict[str, object]:
-    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace)
-    marketplace_source = (
-        marketplace
-        if _cli_known_marketplace_record(marketplace) is not None
-        else str(manifest_path)
-    )
-    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
-    plugins = marketplace_payload.get("plugins")
-    plugin_rows = plugins if isinstance(plugins, list) else []
-    requested_id = plugin_id.strip()
-    if not requested_id:
-        raise ValueError("plugin id is required")
-    match = next(
-        (
-            plugin
-            for plugin in plugin_rows
-            if isinstance(plugin, dict)
-            and str(plugin.get("name") or "").strip() == requested_id
-        ),
-        None,
-    )
-    if match is None:
-        raise ValueError(
-            f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
+    marketplace_ref = _resolve_cli_plugins_marketplace_source(marketplace)
+    manifest_path = marketplace_ref.manifest_path
+    marketplace_source = marketplace_ref.source_label
+    if marketplace_ref.origin == "local" and _cli_known_marketplace_record(marketplace) is None:
+        marketplace_source = str(manifest_path)
+    try:
+        marketplace_payload = _build_plugins_marketplace_list_payload_from_source(
+            marketplace_ref
         )
-    install_path = _resolve_marketplace_plugin_install_path(
-        manifest_path=manifest_path,
-        source=match.get("source"),
-        plugin_name=requested_id,
-    )
+        plugins = marketplace_payload.get("plugins")
+        plugin_rows = plugins if isinstance(plugins, list) else []
+        requested_id = plugin_id.strip()
+        if not requested_id:
+            raise ValueError("plugin id is required")
+        match = next(
+            (
+                plugin
+                for plugin in plugin_rows
+                if isinstance(plugin, dict)
+                and str(plugin.get("name") or "").strip() == requested_id
+            ),
+            None,
+        )
+        if match is None:
+            raise ValueError(
+                f'plugin "{requested_id}" was not found in marketplace {manifest_path}'
+            )
+        install_path = _resolve_marketplace_plugin_install_path(
+            manifest_path=manifest_path,
+            source=match.get("source"),
+            plugin_name=requested_id,
+        )
+        if marketplace_ref.origin == "remote":
+            install_path = _copy_cli_remote_marketplace_plugin_install(
+                services=services,
+                plugin_id=requested_id,
+                source_path=install_path,
+            )
+    finally:
+        if marketplace_ref.cleanup is not None:
+            marketplace_ref.cleanup()
     result = services.gateway_config.record_marketplace_plugin_install(
         plugin_id=requested_id,
         install_path=str(install_path),
