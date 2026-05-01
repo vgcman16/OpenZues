@@ -5335,6 +5335,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_session_mapper or acp_event_mapper or acp_permission"` (`59 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Saved failed provider-backed `gateway/send` and `gateway/poll` replay now
+  preserves OpenClaw's delivery-queue recovery context by forwarding stored
+  `gatewayClientScopes`, requester session, requester account, and requester
+  sender metadata back into the native outbound runtime request.
+- Verified the provider replay context slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "retries_saved_failed_gateway_send_via_provider_runtime
+  or retries_saved_failed_gateway_poll_via_provider_runtime"` (`2 passed`),
+  adjacent OpsMesh outbound proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "replay_outbound_deliveries or direct_send or direct_channel or
+  provider_result or gateway_poll or gateway_send"` (`62 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

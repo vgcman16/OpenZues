@@ -16704,6 +16704,13 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_
             "channel": "telegram",
             "to": "chat:ops",
             "accountId": "alerts",
+            "gatewayClientScopes": ["operator.write", "gateway.send"],
+            "requesterSessionKey": "agent:main:main",
+            "requesterAccountId": "alerts",
+            "requesterSenderId": "telegram-user-7",
+            "requesterSenderName": "Release Captain",
+            "requesterSenderUsername": "release.captain",
+            "requesterSenderE164": "+15551234567",
             "threadId": "topic-42",
             "replyToId": "message-99",
             "silent": True,
@@ -16772,6 +16779,13 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_send_via_
             thread_id="topic-42",
             session_key=session_key,
             agent_id="release-bot",
+            requester_session_key="agent:main:main",
+            requester_account_id="alerts",
+            requester_sender_id="telegram-user-7",
+            requester_sender_name="Release Captain",
+            requester_sender_username="release.captain",
+            requester_sender_e164="+15551234567",
+            gateway_client_scopes=("operator.write", "gateway.send"),
         )
     ]
     assert refreshed_delivery is not None
@@ -16829,6 +16843,7 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_
             "channel": "slack",
             "to": "channel:C123",
             "accountId": "workspace-bot",
+            "gatewayClientScopes": ["operator.write", "gateway.poll"],
             "maxSelections": 1,
             "durationSeconds": 3600,
             "silent": True,
@@ -16889,6 +16904,7 @@ async def test_replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_
             account_id="workspace-bot",
             thread_id="1710000000.9999",
             session_key=session_key,
+            gateway_client_scopes=("operator.write", "gateway.poll"),
         )
     ]
     assert refreshed_delivery is not None

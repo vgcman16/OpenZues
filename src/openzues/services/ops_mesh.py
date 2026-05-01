@@ -5218,6 +5218,40 @@ class OpsMeshService:
             delivery_row.get("conversation_target")
         ) or _normalize_conversation_target(payload.get("conversationTarget"))
         replay_message = _saved_outbound_delivery_replay_message(delivery_row)
+        gateway_client_scopes = _normalize_gateway_client_scopes(
+            payload.get("gatewayClientScopes")
+        )
+        requester_session_key = canonicalize_session_key(payload.get("requesterSessionKey"))
+        requester_account_id = _normalize_optional_payload_string(
+            payload.get("requesterAccountId")
+        )
+        requester_sender_id = _normalize_optional_payload_string(
+            payload.get("requesterSenderId")
+        )
+        requester_sender_name = _normalize_optional_payload_string(
+            payload.get("requesterSenderName")
+        )
+        requester_sender_username = _normalize_optional_payload_string(
+            payload.get("requesterSenderUsername")
+        )
+        requester_sender_e164 = _normalize_optional_payload_string(
+            payload.get("requesterSenderE164")
+        )
+        if requester_account_id is None and any(
+            value is not None
+            for value in (
+                requester_session_key,
+                requester_sender_id,
+                requester_sender_name,
+                requester_sender_username,
+                requester_sender_e164,
+            )
+        ):
+            requester_account_id = _normalize_optional_payload_string(
+                payload.get("accountId")
+                or (conversation_target or {}).get("account_id")
+                or route_scope.get("resolved_account_id")
+            )
         runtime = self._resolve_outbound_runtime_service()
         attempt_started_at = utcnow()
         existing_attempts = max(0, int(delivery_row.get("attempt_count") or 0))
@@ -5306,6 +5340,7 @@ class OpsMeshService:
                         payload.get("threadId") or route_scope.get("thread_id") or ""
                     ).strip()
                     or None,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
             elif event_type == "gateway/send":
                 raw_media_url = payload.get("mediaUrl")
@@ -5354,6 +5389,13 @@ class OpsMeshService:
                     ).strip()
                     or None,
                     agent_id=str(payload.get("agentId") or "").strip() or None,
+                    requester_session_key=requester_session_key,
+                    requester_account_id=requester_account_id,
+                    requester_sender_id=requester_sender_id,
+                    requester_sender_name=requester_sender_name,
+                    requester_sender_username=requester_sender_username,
+                    requester_sender_e164=requester_sender_e164,
+                    gateway_client_scopes=gateway_client_scopes,
                 )
             else:
                 runtime_result = await runtime.deliver_message(

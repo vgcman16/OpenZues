@@ -441,6 +441,11 @@ through the saved sandbox workspace root before dispatch, deduping equivalent
 container/file-url forms while preserving remote media URLs. Remaining
 provider work is deeper provider-specific edge cases not yet exposed by focused
 tests and broader non-route CLI ergonomics.
+Saved failed provider-backed `gateway/send` and `gateway/poll` replay now also
+preserves OpenClaw's recovery-time caller context: stored
+`gatewayClientScopes`, requester session, requester account, and requester
+sender metadata are forwarded back into the native outbound runtime request
+instead of being dropped on replay.
 Direct audio-as-voice media sends now also preserve OpenClaw's
 `audioAsVoice` hint from gateway `send` through OpsMesh saved payloads,
 `GatewayOutboundRuntimeMessageRequest`, route-backed provider event payloads,
