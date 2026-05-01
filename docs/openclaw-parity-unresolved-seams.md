@@ -476,7 +476,11 @@ Empty-emoji `react` now also resolves the bot user through `auth.test`,
 removes only the bot-owned reactions, and returns the removed names.
 Telegram route-backed action parity now includes `react` add/remove/empty-clear
 dispatch via Bot API `setMessageReaction`, including the upstream empty
-reaction-array remove shape and soft missing-message-id result.
+reaction-array remove shape and soft missing-message-id result. Telegram
+`message.action send` now also dispatches through the native Bot API route,
+including OpenClaw's `asDocument` alias for forced document sends plus
+reply/thread/silent/media forwarding and provider `messageId` / `mediaIds`
+projection.
 Discord route-backed action parity now includes `react` add dispatch via REST
 own-reaction `PUT` using the saved bot token and OpenClaw-style encoded emoji
 identifier, plus explicit `remove=true` through the matching own-reaction

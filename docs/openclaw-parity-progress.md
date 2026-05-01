@@ -4929,6 +4929,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tasks_show_json or tasks_audit_json or tasks_maintenance_json"` (`7 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Telegram `message.action send` now reaches the native route-backed Bot API
+  runtime instead of falling through unsupported. The action forwards
+  OpenClaw-style `to`, `message`, `media`, `replyTo`, `threadId`, `silent`, and
+  `asDocument` (as `forceDocument`) into `gateway/send`, returning provider
+  `messageId`, `channelId`, and `mediaIds` metadata.
+- Verified the Telegram action-send slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_send_document_alias"` (`1 passed`),
+  adjacent route/provider coverage `python -m pytest tests\test_ops_mesh.py -q
+  -k "message_action_dispatches_slack_send_route or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_telegram_react_route or
+  message_action_dispatches_discord_send_route or
+  send_direct_channel_message_uses_telegram_native_options"` (`5 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
