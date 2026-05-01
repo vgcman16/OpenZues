@@ -7085,9 +7085,12 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_nat
     def fake_download_bluebubbles_media_url(
         self: OpsMeshService,
         media_url: str,
+        *,
+        account_id: str | None = None,
     ) -> tuple[bytes, str | None, str | None]:
         del self
         assert media_url == "https://example.com/photo.png"
+        assert account_id == "personal"
         return b"image-bytes", "image/png", "photo.png"
 
     def fake_request_bluebubbles_multipart_provider_url(
@@ -7264,9 +7267,12 @@ async def test_ops_mesh_service_send_direct_channel_message_rejects_bluebubbles_
     def fake_download_bluebubbles_media_url(
         self: OpsMeshService,
         media_url: str,
+        *,
+        account_id: str | None = None,
     ) -> tuple[bytes, str | None, str | None]:
         del self
         assert media_url == "https://example.com/not-audio.png"
+        assert account_id == "personal"
         return b"image-bytes", "image/png", "not-audio.png"
 
     def fake_request_bluebubbles_multipart_provider_url(
@@ -7319,6 +7325,84 @@ async def test_ops_mesh_service_send_direct_channel_message_rejects_bluebubbles_
     assert delivery is not None
     assert delivery["delivery_state"] == "failed"
     assert "voice messages require audio media" in str(delivery["last_error"])
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_bluebubbles_local_media_requires_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-local-media-no-roots"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    local_file = tmp_path / "upload.txt"
+    local_file.write_text("local upload", encoding="utf-8")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Local Media Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-local-should-not-send"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(ValueError, match="mediaLocalRoots"):
+        await service.send_direct_channel_message(
+            channel="bluebubbles",
+            to="chat_guid:iMessage;+;group-1",
+            message="",
+            media_urls=[str(local_file)],
+            account_id="personal",
+            idempotency_key="idem-native-bluebubbles-local-media-no-roots",
+        )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert multipart_requests == []
+    assert delivery is not None
+    assert delivery["delivery_state"] == "failed"
+    assert "mediaLocalRoots" in str(delivery["last_error"])
 
 
 @pytest.mark.asyncio

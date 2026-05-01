@@ -1109,6 +1109,128 @@ def _bluebubbles_voice_media_info(
     )
 
 
+def _bluebubbles_channel_config(snapshot: dict[str, Any]) -> dict[str, Any]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return {}
+    for channel_id in ("bluebubbles", "imessage"):
+        channel_config = channels.get(channel_id)
+        if isinstance(channel_config, dict):
+            return channel_config
+    return {}
+
+
+def _bluebubbles_account_config(
+    channel_config: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, Any]:
+    accounts = channel_config.get("accounts")
+    if not isinstance(accounts, dict):
+        return {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = accounts.get(normalized_account_id)
+    return account_config if isinstance(account_config, dict) else {}
+
+
+def _bluebubbles_media_local_roots(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> list[str]:
+    channel_config = _bluebubbles_channel_config(snapshot)
+    account_config = _bluebubbles_account_config(channel_config, account_id)
+    raw_account_roots = account_config.get("mediaLocalRoots")
+    if isinstance(raw_account_roots, list):
+        return [str(entry).strip() for entry in raw_account_roots if str(entry).strip()]
+    raw_channel_roots = channel_config.get("mediaLocalRoots")
+    if isinstance(raw_channel_roots, list):
+        return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
+    return []
+
+
+def _bluebubbles_file_url_path(raw: str, *, config_root: bool = False) -> Path:
+    parsed = urlparse(raw)
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        label = " in mediaLocalRoots" if config_root else ""
+        raise RuntimeError(f"Invalid file:// URL{label}: {raw}")
+    local_value = unquote(parsed.path)
+    if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+        local_value = local_value[1:]
+    return Path(local_value).expanduser()
+
+
+def _bluebubbles_local_media_source_path(source: str) -> Path | None:
+    parsed = urlparse(source)
+    if parsed.scheme == "file":
+        return _bluebubbles_file_url_path(source)
+    if parsed.scheme and not re.fullmatch(r"[A-Za-z]", parsed.scheme):
+        return None
+    return Path(source).expanduser()
+
+
+def _bluebubbles_configured_local_root(raw: str) -> Path:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError("Empty mediaLocalRoots entry is not allowed")
+    if normalized.lower().startswith("file://"):
+        root = _bluebubbles_file_url_path(normalized, config_root=True)
+    else:
+        root = Path(normalized).expanduser()
+    if not root.is_absolute():
+        raise RuntimeError(f"mediaLocalRoots entries must be absolute paths: {raw}")
+    return root.resolve(strict=False)
+
+
+def _bluebubbles_path_inside_root(candidate: Path, root: Path) -> bool:
+    candidate_value = str(candidate)
+    root_value = str(root)
+    if candidate_value == root_value:
+        return False
+    root_prefix = root_value.rstrip("\\/") + "\\"
+    alt_root_prefix = root_value.rstrip("\\/") + "/"
+    if candidate_value.startswith(root_prefix) or candidate_value.startswith(alt_root_prefix):
+        return True
+    candidate_lower = candidate_value.lower()
+    root_lower = root_value.lower().rstrip("\\/")
+    return candidate_lower.startswith(root_lower + "\\") or candidate_lower.startswith(
+        root_lower + "/"
+    )
+
+
+def _bluebubbles_allowed_local_media_path(
+    local_path: Path,
+    *,
+    source: str,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path:
+    if not local_roots:
+        suffix = (
+            f" or channels.bluebubbles.accounts.{account_id}.mediaLocalRoots"
+            if account_id
+            else ""
+        )
+        raise RuntimeError(
+            "Local BlueBubbles media paths are disabled by default. "
+            f"Set channels.bluebubbles.mediaLocalRoots{suffix} to explicitly "
+            "allow local file directories."
+        )
+    candidate = local_path.expanduser().resolve(strict=False)
+    for root_entry in local_roots:
+        root = _bluebubbles_configured_local_root(root_entry)
+        if not _bluebubbles_path_inside_root(candidate, root):
+            continue
+        if not local_path.is_file():
+            raise RuntimeError(f"Media path does not exist: {source}")
+        resolved_candidate = local_path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True) if root.exists() else root
+        if _bluebubbles_path_inside_root(resolved_candidate, resolved_root):
+            return resolved_candidate
+    raise RuntimeError(
+        f"Local media path is not under any configured mediaLocalRoots entry: {source}"
+    )
+
+
 def _message_action_param_string(
     params: dict[str, Any],
     key: str,
@@ -6607,6 +6729,15 @@ class OpsMeshService:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
 
+    def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        return snapshot if isinstance(snapshot, dict) else {}
+
     async def list_task_blueprint_views(self) -> list[TaskBlueprintView]:
         projects = {int(project["id"]): project for project in await self.database.list_projects()}
         tasks: list[TaskBlueprintView] = []
@@ -10620,6 +10751,11 @@ class OpsMeshService:
         if chat_guid is None:
             raise RuntimeError("BlueBubbles native provider send requires a chat_guid target.")
         reply_to_id = str(event.get("replyToId") or "").strip()
+        account_id = (
+            normalize_optional_account_id(event.get("accountId"))
+            or normalize_optional_account_id((conversation_target or {}).get("account_id"))
+            or DEFAULT_ACCOUNT_ID
+        )
         if media_urls:
             endpoint = _bluebubbles_api_endpoint(
                 str(route.get("target") or ""),
@@ -10631,7 +10767,8 @@ class OpsMeshService:
             as_voice = _optional_bool_payload_value(event, "audioAsVoice") is True
             for index, media_url in enumerate(media_urls):
                 media_bytes, content_type, filename = self._download_bluebubbles_media_url(
-                    media_url
+                    media_url,
+                    account_id=account_id,
                 )
                 safe_filename = _bluebubbles_safe_filename(filename, "attachment")
                 resolved_content_type = content_type or "application/octet-stream"
@@ -17509,6 +17646,8 @@ class OpsMeshService:
     def _download_bluebubbles_media_url(
         self,
         media_url: str,
+        *,
+        account_id: str | None = None,
     ) -> tuple[bytes, str | None, str | None]:
         parsed = urlparse(media_url)
         filename = _bluebubbles_safe_filename(
@@ -17523,20 +17662,19 @@ class OpsMeshService:
             if local_path is not None and local_path.is_file():
                 content_type = mimetypes.guess_type(str(local_path))[0]
                 return local_path.read_bytes(), content_type, local_path.name
-        if parsed.scheme == "file":
-            local_value = unquote(parsed.path)
-            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
-                local_value = local_value[1:]
-            local_path = Path(local_value).expanduser()
-            if local_path.is_file():
-                content_type = mimetypes.guess_type(str(local_path))[0]
-                return local_path.read_bytes(), content_type, local_path.name
-            raise RuntimeError(f"Media path does not exist: {media_url}")
-        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
-            local_path = Path(media_url).expanduser()
-            if local_path.is_file():
-                content_type = mimetypes.guess_type(str(local_path))[0]
-                return local_path.read_bytes(), content_type, local_path.name
+        local_source_path = _bluebubbles_local_media_source_path(media_url)
+        if local_source_path is not None:
+            allowed_path = _bluebubbles_allowed_local_media_path(
+                local_source_path,
+                source=media_url,
+                local_roots=_bluebubbles_media_local_roots(
+                    self._bluebubbles_config_snapshot(),
+                    account_id=account_id,
+                ),
+                account_id=account_id,
+            )
+            content_type = mimetypes.guess_type(str(allowed_path))[0]
+            return allowed_path.read_bytes(), content_type, allowed_path.name
         request = Request(media_url, method="GET")
         try:
             with urlopen(request, timeout=30) as response:

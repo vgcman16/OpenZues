@@ -6443,6 +6443,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   proof `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`12
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage local outbound media now follows OpenClaw's
+  `mediaLocalRoots` fail-closed policy: local paths and `file://` URLs are
+  rejected by default, remote-host `file://` values are rejected, configured
+  channel/account roots are read from the gateway config snapshot, and only
+  files under those roots are read before the native multipart send.
+- Verified the BlueBubbles local-media root slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_bluebubbles_local_media_requires_roots
+  -q` (`1 failed` before implementation, local files uploaded without
+  `mediaLocalRoots`), then the same command (`1 passed`), adjacent BlueBubbles
+  proof `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`13
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

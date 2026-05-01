@@ -3725,12 +3725,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   normalizes valid voice filenames/content types before setting
   `isAudioMessage` on the native multipart request. Verified with focused and
   adjacent OpsMesh proofs, `ruff check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage outbound local-media
-  and size hardening remains open. Source anchor is
-  `extensions/bluebubbles/src/media-send.ts`; OpenZues still needs the
-  OpenClaw-shaped `mediaLocalRoots` / max-byte policy for native BlueBubbles
-  local file sends instead of allowing arbitrary local paths through the
-  downloader.
+- Closed the BlueBubbles/iMessage outbound local-media root hardening seam from
+  OpenClaw `extensions/bluebubbles/src/media-send.ts`: native BlueBubbles
+  local file sends now read `channels.bluebubbles.mediaLocalRoots` and
+  account-scoped `mediaLocalRoots` from the gateway config snapshot, reject
+  local paths by default, reject remote-host `file://` paths, and only read
+  files under configured roots. Verified with focused and adjacent OpsMesh
+  proofs, `ruff check`, and `mypy`.
+- Next provider-native queue head: BlueBubbles/iMessage outbound media size
+  hardening remains open. Source anchor is
+  `extensions/bluebubbles/src/media-send.ts`; OpenZues still needs
+  OpenClaw-shaped `mediaMaxMb` / `agents.defaults.mediaMaxMb` max-byte
+  enforcement for native BlueBubbles local and remote media downloads.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and
