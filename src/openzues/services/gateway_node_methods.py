@@ -1533,6 +1533,7 @@ class GatewayNodeMethodService:
         self._voicewake_service = voicewake_service
         self._wake_service = wake_service
         self._set_heartbeats_enabled = set_heartbeats_enabled
+        self._heartbeats_runtime_enabled = True
         self._sync = sync
         self._wake_node = wake_node
         self._probe_secret = probe_secret
@@ -7778,6 +7779,7 @@ class GatewayNodeMethodService:
                     tracked_mode=tracked_mode,
                     thread_requested=thread,
                     explicit_stream_to=stream_to,
+                    heartbeats_runtime_enabled=self._heartbeats_runtime_enabled,
                 ):
                     effective_stream_to = "parent"
                 explicit_cwd = _optional_non_empty_string(payload.get("cwd"), label="cwd")
@@ -9869,7 +9871,9 @@ class GatewayNodeMethodService:
                     ),
                     status_code=503,
                 )
-            return {"ok": True, "enabled": await self._set_heartbeats_enabled(enabled_value)}
+            enabled_result = await self._set_heartbeats_enabled(enabled_value)
+            self._heartbeats_runtime_enabled = enabled_result
+            return {"ok": True, "enabled": enabled_result}
 
         if resolved_method == "voicewake.set":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("triggers",))
@@ -13516,12 +13520,14 @@ def _sessions_spawn_acp_should_implicitly_stream_to_parent(
     tracked_mode: Literal["run", "session"],
     thread_requested: bool,
     explicit_stream_to: str | None,
+    heartbeats_runtime_enabled: bool,
 ) -> bool:
     if (
         explicit_stream_to is not None
         or tracked_mode != "run"
         or thread_requested
         or config_service is None
+        or not heartbeats_runtime_enabled
     ):
         return False
     parsed_parent = parse_agent_session_key(parent_session_key)

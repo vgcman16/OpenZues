@@ -4840,6 +4840,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- ACP implicit parent streaming now also honors OpenClaw's runtime heartbeat
+  toggle: after `set-heartbeats enabled=false`, canonical subagent requester
+  ACP run spawns no longer receive implicit `streamTo="parent"` and do not
+  persist `streamTo` / `streamLogPath` metadata, while explicit stream
+  requests keep their existing behavior.
+- Verified the runtime-disabled heartbeat ACP stream gate with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_heartbeats_disabled
+  -q` (`1 passed`), adjacent heartbeat/implicit-stream coverage `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_implicitly_streams_to_parent
+  tests\test_gateway_node_methods.py::test_sessions_spawn_acp_run_from_subagent_requester_skips_stream_when_heartbeats_disabled
+  tests\test_gateway_node_methods.py::test_set_heartbeats_returns_ok_payload_when_runtime_is_wired
+  -q` (`3 passed`), ACP spawn gateway coverage `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn_acp or
+  set_heartbeats"` (`19 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 
