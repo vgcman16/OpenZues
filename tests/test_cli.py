@@ -8832,6 +8832,77 @@ def test_plugins_install_link_json_persists_local_plugin_path(
     )
 
 
+def test_plugins_install_json_copies_local_plugin_path(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": [],
+                    "entries": {},
+                    "load": {"paths": []},
+                },
+            }
+        )
+    )
+    plugin_dir = tmp_path / "source-plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps({"id": "frontend-design", "version": "1.2.4"}),
+        encoding="utf-8",
+    )
+    (plugin_dir / "index.js").write_text("module.exports = {}", encoding="utf-8")
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", str(plugin_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    install_path = Path(payload["install"]["installPath"])
+    assert install_path.is_dir()
+    assert install_path != plugin_dir.resolve()
+    assert install_path.is_relative_to(tmp_path / "plugins" / "local")
+    assert (install_path / "index.js").read_text(encoding="utf-8") == (
+        "module.exports = {}"
+    )
+    assert payload["pluginId"] == "frontend-design"
+    assert payload["source"] == "path"
+    assert payload["install"]["sourcePath"] == str(plugin_dir.resolve())
+    assert payload["install"]["version"] == "1.2.4"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["load"]["paths"] == [str(install_path)]
+    assert stored["plugins"]["installs"]["frontend-design"]["installPath"] == str(
+        install_path
+    )
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,

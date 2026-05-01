@@ -7,8 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, and local path-link install slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, and local path-link installs; remaining CLI gaps are now dominated by local copied installs, package/npm/clawhub install breadth, runtime activation/import depth, and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, and local path link/copy install slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, and local path link/copy installs; remaining CLI gaps are now dominated by package/npm/clawhub install breadth, runtime activation/import depth, and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7087,6 +7087,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.
+- `plugins install <local-path> --json` without `--link` now copies local
+  plugin directories/files into a durable `plugins/local/<id>` data-dir install
+  root before persisting the same OpenClaw-shaped path install record. The
+  source path remains tracked separately from the install/load path.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this copied-local install slice. Remaining
+  non-marketplace plugin install parity is package/npm/clawhub install/update
+  behavior plus deeper runtime activation/import depth.
+- Verified the copied local install slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_copies_local_plugin_path -q`
+  (`1 failed` before implementation because non-link local paths exited at the
+  temporary native boundary), then the same command (`1 passed`), adjacent
+  plugin CLI proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_uninstall_json_removes_native_install_metadata or
+  plugins_install_marketplace_json_persists_local_manifest_entry"` (`4
+  passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py src\openzues\services\gateway_config.py`.
 
 ## References
 

@@ -12480,6 +12480,33 @@ def _copy_cli_remote_marketplace_plugin_install(
     raise ValueError(f'plugin "{plugin_id}" source not found: {source_path}')
 
 
+def _copy_cli_local_plugin_install(
+    *,
+    services: CliServices,
+    plugin_id: str,
+    source_path: Path,
+) -> Path:
+    data_dir = _cli_gateway_config_data_dir(services.gateway_config)
+    install_root = data_dir / "plugins" / "local"
+    install_root.mkdir(parents=True, exist_ok=True)
+    target_root = install_root / _safe_cli_marketplace_install_leaf(plugin_id)
+    source = source_path.resolve()
+    if target_root.exists():
+        if target_root.is_dir():
+            shutil.rmtree(target_root)
+        else:
+            target_root.unlink()
+    if source.is_dir():
+        shutil.copytree(source, target_root)
+        return target_root.resolve()
+    if source.is_file():
+        target_root.mkdir(parents=True, exist_ok=True)
+        target_file = target_root / source.name
+        shutil.copy2(source, target_file)
+        return target_file.resolve()
+    raise ValueError(f'plugin "{plugin_id}" source not found: {source_path}')
+
+
 async def _build_plugins_marketplace_install_payload(
     services: CliServices,
     *,
@@ -12582,6 +12609,7 @@ async def _build_plugins_path_install_payload(
     services: CliServices,
     *,
     plugin_path: str,
+    link: bool,
     force: bool,
 ) -> dict[str, object]:
     source_path = Path(plugin_path).expanduser()
@@ -12591,9 +12619,18 @@ async def _build_plugins_path_install_payload(
     if not resolved_path.is_dir():
         raise ValueError("Linked plugin paths must be directories.")
     plugin_id, version = _read_cli_local_plugin_identity(resolved_path)
+    install_path = (
+        resolved_path
+        if link
+        else _copy_cli_local_plugin_install(
+            services=services,
+            plugin_id=plugin_id,
+            source_path=resolved_path,
+        )
+    )
     result = services.gateway_config.record_path_plugin_install(
         plugin_id=plugin_id,
-        install_path=str(resolved_path),
+        install_path=str(install_path),
         source_path=str(resolved_path),
         version=version,
         force=force,
@@ -19435,18 +19472,12 @@ def plugins_install_command(
             if link and force:
                 typer.echo("`--force` is not supported with `--link`.", err=True)
                 raise typer.Exit(code=1)
-            if not link:
-                typer.echo(
-                    "Native plugin install currently supports local path installs "
-                    "with --link.",
-                    err=True,
-                )
-                raise typer.Exit(code=1)
 
             async def _path_action(services: CliServices) -> dict[str, object]:
                 return await _build_plugins_path_install_payload(
                     services,
                     plugin_path=plugin_id,
+                    link=link,
                     force=force,
                 )
 
