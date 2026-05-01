@@ -11,7 +11,7 @@ import mimetypes
 import re
 import secrets
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -2346,6 +2346,24 @@ def _line_quick_reply_payload(labels: list[str]) -> dict[str, object] | None:
             }
             for label in normalized[:13]
         ]
+    }
+
+
+def _normalize_line_flex_message_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RuntimeError("LINE flexMessage must be an object.")
+    raw_alt_text = value.get("altText")
+    alt_text = str(raw_alt_text or "")
+    contents = value.get("contents")
+    if not alt_text.strip():
+        raise RuntimeError("LINE flexMessage requires altText.")
+    if not isinstance(contents, Mapping):
+        raise RuntimeError("LINE flexMessage requires object contents.")
+    return {
+        "altText": alt_text,
+        "contents": dict(contents),
     }
 
 
@@ -6222,6 +6240,9 @@ class OpsMeshService:
                     location=_normalize_line_location_payload(payload.get("location")),
                     quick_replies=tuple(
                         _normalize_line_quick_replies(payload.get("quickReplies"))
+                    ),
+                    flex_message=_normalize_line_flex_message_payload(
+                        payload.get("flexMessage")
                     ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
@@ -13516,6 +13537,8 @@ class OpsMeshService:
             payload["location"] = dict(request.location)
         if request.quick_replies:
             payload["quickReplies"] = list(request.quick_replies)
+        if request.flex_message is not None:
+            payload["flexMessage"] = dict(request.flex_message)
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
@@ -13879,6 +13902,9 @@ class OpsMeshService:
                     quick_replies=tuple(
                         _normalize_line_quick_replies(payload.get("quickReplies"))
                     ),
+                    flex_message=_normalize_line_flex_message_payload(
+                        payload.get("flexMessage")
+                    ),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13964,6 +13990,7 @@ class OpsMeshService:
         duration_ms: int | None = None,
         location: dict[str, object] | None = None,
         quick_replies: list[str] | tuple[str, ...] | None = None,
+        flex_message: dict[str, object] | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -13996,8 +14023,14 @@ class OpsMeshService:
             raise ValueError("send requires an explicit channel target")
         normalized_media_urls = _normalize_direct_channel_media_urls(media_urls=media_urls)
         normalized_location = _normalize_line_location_payload(location)
-        if not message.strip() and not normalized_media_urls and normalized_location is None:
-            raise ValueError("send requires text, media, or location")
+        normalized_flex_message = _normalize_line_flex_message_payload(flex_message)
+        if (
+            not message.strip()
+            and not normalized_media_urls
+            and normalized_location is None
+            and normalized_flex_message is None
+        ):
+            raise ValueError("send requires text, media, location, or flex message")
         payload: dict[str, Any] = {
             "message": message,
             "channel": conversation_target.channel,
@@ -14027,6 +14060,8 @@ class OpsMeshService:
         normalized_quick_replies = _normalize_line_quick_replies(quick_replies)
         if normalized_quick_replies:
             payload["quickReplies"] = normalized_quick_replies
+        if normalized_flex_message is not None:
+            payload["flexMessage"] = normalized_flex_message
         normalized_reply_to_id = str(reply_to_id or "").strip() or None
         if normalized_reply_to_id is not None:
             payload["replyToId"] = normalized_reply_to_id
@@ -16544,7 +16579,16 @@ class OpsMeshService:
         quick_reply = _line_quick_reply_payload(
             _normalize_line_quick_replies(event.get("quickReplies"))
         )
+        flex_message = _normalize_line_flex_message_payload(event.get("flexMessage"))
         messages: list[dict[str, object]] = []
+        if flex_message is not None:
+            messages.append(
+                {
+                    "type": "flex",
+                    "altText": str(flex_message["altText"])[:400],
+                    "contents": flex_message["contents"],
+                }
+            )
         for media_url in media_urls:
             _line_validate_media_url(media_url)
             if media_kind == "video":

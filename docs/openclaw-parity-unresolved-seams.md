@@ -521,8 +521,12 @@ runtime and emit LINE location messages with title/address truncation and
 latitude/longitude preservation. LINE native route-backed direct sends now also
 carry OpenClaw's `quickReplies` list through the shared outbound runtime and
 attach LINE `quickReply` action items to the final outgoing message, enforcing
-the upstream 13-item and 20-character label boundaries. Remaining LINE provider
-parity is rich Flex/template sends and account probe/action breadth.
+the upstream 13-item and 20-character label boundaries. LINE native
+route-backed direct sends now also carry OpenClaw's `flexMessage` payload
+through the shared outbound runtime, emit Bot API Flex messages with `altText`
+truncated at 400 characters, preserve the Flex `contents`, and keep companion
+text sends intact. Remaining LINE provider parity is template sends and account
+probe/action breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
 targets to room ids, preserve reply/thread relation metadata, split text at
