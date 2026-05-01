@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import io
 import json
@@ -1044,6 +1045,26 @@ def _bluebubbles_message_id_from_result(result: object) -> str:
                 if math.isfinite(float(candidate)):
                     return str(candidate)
     return "unknown"
+
+
+def _bluebubbles_decode_base64_buffer(raw: str | None, *, action: str) -> bytes:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError(f"BlueBubbles {action} requires buffer.")
+    try:
+        decoded = base64.b64decode(normalized, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError(f"BlueBubbles {action} buffer must be base64.") from exc
+    if not decoded:
+        raise RuntimeError(f"BlueBubbles {action} requires a non-empty buffer.")
+    return decoded
+
+
+def _bluebubbles_safe_filename(raw: str | None, fallback: str) -> str:
+    normalized = str(raw or "").strip().replace("\\", "/")
+    filename = normalized.rsplit("/", 1)[-1].strip() if normalized else ""
+    safe = re.sub(r'[\r\n"\\]', "_", filename or fallback).strip()
+    return safe or fallback
 
 
 def _message_action_param_string(
@@ -9320,8 +9341,11 @@ class OpsMeshService:
             "removeParticipant",
             "renameGroup",
             "reply",
+            "sendAttachment",
             "sendWithEffect",
+            "setGroupIcon",
             "unsend",
+            "upload-file",
         }:
             route = await self._bluebubbles_route_for_channel_account(
                 channel=channel,
@@ -9377,6 +9401,20 @@ class OpsMeshService:
             if action == "leaveGroup":
                 return await asyncio.to_thread(
                     self._dispatch_bluebubbles_leave_group_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "setGroupIcon":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_set_group_icon_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action in {"sendAttachment", "upload-file"}:
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_upload_file_message_action,
                     route,
                     request,
                     secret_token,
@@ -10509,6 +10547,109 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
             raise RuntimeError(str(result.get("error")))
         return result
+
+    def _dispatch_bluebubbles_upload_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        to = _message_action_param_string(request.params, "to", required=True)
+        if to is None:
+            raise RuntimeError("BlueBubbles upload-file requires to.")
+        chat_guid = _bluebubbles_chat_guid_value(to)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles upload-file requires a chat_guid target.")
+        filename = _bluebubbles_safe_filename(
+            _message_action_param_string(request.params, "filename", required=True),
+            "attachment",
+        )
+        content_type = (
+            _message_action_param_string(request.params, "contentType")
+            or _message_action_param_string(request.params, "mimeType")
+            or "application/octet-stream"
+        )
+        caption = _message_action_param_string(request.params, "caption") or (
+            _message_action_param_string(request.params, "message")
+        )
+        media_bytes = _bluebubbles_decode_base64_buffer(
+            _message_action_param_string(request.params, "buffer", required=True),
+            action="upload-file",
+        )
+        fields: dict[str, str] = {
+            "chatGuid": chat_guid,
+            "name": filename,
+            "tempGuid": f"temp-{uuid.uuid4().hex}",
+            "method": "private-api",
+        }
+        if _message_action_param_bool(request.params, "asVoice"):
+            fields["isAudioMessage"] = "true"
+        if caption:
+            fields["message"] = caption
+            fields["text"] = caption
+            fields["caption"] = caption
+        result = self._request_bluebubbles_multipart_provider_url(
+            _bluebubbles_api_endpoint(
+                str(route.get("target") or ""),
+                "/api/v1/message/attachment",
+                password=secret_token,
+            ),
+            fields=fields,
+            files=[
+                {
+                    "field": "attachment",
+                    "filename": filename,
+                    "contentType": content_type,
+                    "content": media_bytes,
+                }
+            ],
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "messageId": _bluebubbles_message_id_from_result(result)}
+
+    def _dispatch_bluebubbles_set_group_icon_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles setGroupIcon requires chatGuid.")
+        filename = _bluebubbles_safe_filename(
+            _message_action_param_string(request.params, "filename")
+            or _message_action_param_string(request.params, "name"),
+            "icon.png",
+        )
+        content_type = (
+            _message_action_param_string(request.params, "contentType")
+            or _message_action_param_string(request.params, "mimeType")
+            or "application/octet-stream"
+        )
+        icon_bytes = _bluebubbles_decode_base64_buffer(
+            _message_action_param_string(request.params, "buffer", required=True),
+            action="setGroupIcon",
+        )
+        result = self._request_bluebubbles_multipart_provider_url(
+            _bluebubbles_api_endpoint(
+                str(route.get("target") or ""),
+                f"/api/v1/chat/{quote(chat_guid, safe='')}/icon",
+                password=secret_token,
+            ),
+            fields={},
+            files=[
+                {
+                    "field": "icon",
+                    "filename": filename,
+                    "contentType": content_type,
+                    "content": icon_bytes,
+                }
+            ],
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return {"ok": True, "chatGuid": chat_guid, "iconSet": True}
 
     async def _dispatch_zalo_send_message_action(
         self,
@@ -16828,6 +16969,64 @@ class OpsMeshService:
             data=body,
             headers=headers,
             method=str(method or "GET").upper(),
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_bluebubbles_multipart_provider_url(
+        self,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object | None:
+        boundary = f"----BlueBubblesFormBoundary{uuid.uuid4().hex}"
+        body = bytearray()
+        for name, value in fields.items():
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("ascii")
+            )
+            body.extend(str(value).encode("utf-8"))
+            body.extend(b"\r\n")
+        for file_part in files:
+            field = str(file_part.get("field") or "file")
+            filename = _bluebubbles_safe_filename(
+                str(file_part.get("filename") or ""),
+                "upload",
+            )
+            content_type = str(file_part.get("contentType") or "application/octet-stream")
+            content = file_part.get("content")
+            if not isinstance(content, bytes):
+                raise RuntimeError("BlueBubbles multipart content must be bytes.")
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            disposition = (
+                f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            )
+            body.extend(disposition.encode("utf-8"))
+            body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("ascii"))
+            body.extend(content)
+            body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            target,
+            data=bytes(body),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
         )
         try:
             with urlopen(request, timeout=timeout_seconds) as response:

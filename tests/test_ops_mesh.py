@@ -6737,6 +6737,202 @@ async def test_ops_mesh_service_message_action_dispatches_bluebubbles_group_mana
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_upload_file_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-upload-file"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "group",
+            "peer_id": "group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "attachment-msg-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="upload-file",
+            params={
+                "to": "chat_guid:iMessage;+;group-1",
+                "buffer": "aGVsbG8=",
+                "filename": "doc.txt",
+                "contentType": "text/plain",
+                "caption": "Caption text",
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-upload-file-action",
+        )
+    )
+
+    assert result == {"ok": True, "messageId": "attachment-msg-1"}
+    assert len(multipart_requests) == 1
+    target, fields, files = multipart_requests[0]
+    assert target == "http://localhost:1234/api/v1/message/attachment?password=bb-password"
+    temp_guid = fields.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert fields == {
+        "chatGuid": "iMessage;+;group-1",
+        "name": "doc.txt",
+        "method": "private-api",
+        "message": "Caption text",
+        "text": "Caption text",
+        "caption": "Caption text",
+    }
+    assert files == [
+        {
+            "field": "attachment",
+            "filename": "doc.txt",
+            "contentType": "text/plain",
+            "content": b"hello",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_set_group_icon_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-set-group-icon"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "group",
+            "peer_id": "group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="imessage",
+            action="setGroupIcon",
+            params={
+                "chatGuid": "iMessage;+;group-1",
+                "buffer": "aWNvbg==",
+                "filename": "group.png",
+                "contentType": "image/png",
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-set-group-icon-action",
+        )
+    )
+
+    assert result == {"ok": True, "chatGuid": "iMessage;+;group-1", "iconSet": True}
+    assert multipart_requests == [
+        (
+            "http://localhost:1234/api/v1/chat/iMessage%3B%2B%3Bgroup-1/icon?password=bb-password",
+            {},
+            [
+                {
+                    "field": "icon",
+                    "filename": "group.png",
+                    "contentType": "image/png",
+                    "content": b"icon",
+                }
+            ],
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

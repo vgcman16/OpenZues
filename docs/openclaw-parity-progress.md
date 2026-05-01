@@ -6392,6 +6392,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   bluebubbles_edit_route or bluebubbles_unsend_route"` (`7 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage media actions now follow OpenClaw's BlueBubbles
+  attachment and group-icon adapters by routing `upload-file`, legacy
+  `sendAttachment`, and `setGroupIcon` through multipart/form-data requests
+  with decoded base64 buffers, filenames, content types, captions, temp GUIDs,
+  and upstream-shaped message/icon results.
+- Verified the BlueBubbles media/icon slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_upload_file_route or
+  bluebubbles_set_group_icon_route"` (`2 failed` before implementation,
+  actions returned `None`), then the same command (`2 passed`), adjacent
+  BlueBubbles proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bluebubbles_"` (`9 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
