@@ -572,3 +572,47 @@ async def test_acp_gateway_agent_set_session_config_option_patches_openclaw_fiel
         option["id"] == "fast_mode" and option["currentValue"] == "on"
         for option in result["configOptions"]  # type: ignore[index]
     )
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_rate_limits_new_session_creates() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    agent = AcpGatewayAgent(
+        FakeAcpConnection(),
+        FakeGateway(),
+        session_store=create_in_memory_session_store(),
+        session_create_rate_limit={"maxRequests": 2, "windowMs": 60_000},
+    )
+
+    await agent.new_session({"cwd": "C:/one", "mcpServers": [], "_meta": {"sessionKey": "one"}})
+    await agent.new_session({"cwd": "C:/two", "mcpServers": [], "_meta": {"sessionKey": "two"}})
+
+    with pytest.raises(RuntimeError, match="ACP session creation rate limit exceeded"):
+        await agent.new_session(
+            {"cwd": "C:/three", "mcpServers": [], "_meta": {"sessionKey": "three"}}
+        )
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_existing_load_session_refresh_does_not_count_rate_limit() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    store = create_in_memory_session_store()
+    agent = AcpGatewayAgent(
+        FakeAcpConnection(),
+        FakeGateway(),
+        session_store=store,
+        session_create_rate_limit={"maxRequests": 1, "windowMs": 60_000},
+    )
+
+    load_shared = {"sessionId": "shared", "cwd": "C:/one", "mcpServers": [], "_meta": {}}
+    await agent.load_session(load_shared)
+    await agent.load_session(load_shared)
+
+    with pytest.raises(RuntimeError, match="ACP session creation rate limit exceeded"):
+        await agent.load_session(
+            {"sessionId": "new", "cwd": "C:/two", "mcpServers": [], "_meta": {}}
+        )

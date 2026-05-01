@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -29,6 +30,8 @@ ACP_AGENT_INFO = {
     "version": "0.0.0-openzues",
 }
 _THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "adaptive"]
+_SESSION_CREATE_RATE_LIMIT_DEFAULT_MAX_REQUESTS = 120
+_SESSION_CREATE_RATE_LIMIT_DEFAULT_WINDOW_MS = 10_000
 
 
 class AcpGatewayClient(Protocol):
@@ -56,6 +59,15 @@ def _normalize_optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _read_positive_int(record: Mapping[str, object] | None, key: str, fallback: int) -> int:
+    if record is None:
+        return fallback
+    value = record.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return fallback
+    return max(1, int(value))
 
 
 def _format_thinking_level_name(level: str) -> str:
@@ -298,6 +310,23 @@ class AcpGatewayAgent:
         self._session_store = session_store or default_acp_session_store
         self._opts = opts
         self._pending_prompts: dict[str, _PendingPrompt] = {}
+        rate_limit = opts.get("session_create_rate_limit") or opts.get("sessionCreateRateLimit")
+        rate_limit_config = rate_limit if isinstance(rate_limit, Mapping) else None
+        self._session_create_rate_limit_max = _read_positive_int(
+            rate_limit_config,
+            "maxRequests",
+            _SESSION_CREATE_RATE_LIMIT_DEFAULT_MAX_REQUESTS,
+        )
+        self._session_create_rate_limit_window_ms = max(
+            1_000,
+            _read_positive_int(
+                rate_limit_config,
+                "windowMs",
+                _SESSION_CREATE_RATE_LIMIT_DEFAULT_WINDOW_MS,
+            ),
+        )
+        self._session_create_window_started_at = int(time.monotonic() * 1000)
+        self._session_create_window_count = 0
 
     async def initialize(self, _params: Mapping[str, object]) -> dict[str, object]:
         return {
@@ -324,6 +353,7 @@ class AcpGatewayAgent:
 
     async def new_session(self, params: Mapping[str, object]) -> dict[str, object]:
         self._assert_supported_session_setup(params.get("mcpServers"))
+        self._enforce_session_create_rate_limit("newSession")
         meta = parse_session_meta(params.get("_meta"))
         session_key = await resolve_session_key(
             meta=meta,
@@ -352,6 +382,8 @@ class AcpGatewayAgent:
     async def load_session(self, params: Mapping[str, object]) -> dict[str, object]:
         self._assert_supported_session_setup(params.get("mcpServers"))
         session_id = str(params.get("sessionId") or "")
+        if not self._session_store.has_session(session_id):
+            self._enforce_session_create_rate_limit("loadSession")
         meta = parse_session_meta(params.get("_meta"))
         session_key = await resolve_session_key(
             meta=meta,
@@ -623,6 +655,22 @@ class AcpGatewayAgent:
             "ACP bridge mode does not support per-session MCP servers. Configure MCP "
             "on the OpenClaw gateway or agent instead."
         )
+
+    def _enforce_session_create_rate_limit(self, method: str) -> None:
+        now_ms = int(time.monotonic() * 1000)
+        elapsed_ms = now_ms - self._session_create_window_started_at
+        if elapsed_ms >= self._session_create_rate_limit_window_ms:
+            self._session_create_window_started_at = now_ms
+            self._session_create_window_count = 0
+            elapsed_ms = 0
+        if self._session_create_window_count >= self._session_create_rate_limit_max:
+            retry_after_ms = max(1, self._session_create_rate_limit_window_ms - elapsed_ms)
+            retry_after_seconds = (retry_after_ms + 999) // 1000
+            raise RuntimeError(
+                f"ACP session creation rate limit exceeded for {method}; "
+                f"retry after {retry_after_seconds}s."
+            )
+        self._session_create_window_count += 1
 
     def _resolve_session_config_patch(
         self,

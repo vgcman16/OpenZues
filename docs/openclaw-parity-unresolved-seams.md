@@ -107,7 +107,9 @@ Remaining ACP protocol parity is the bridge server/client lifecycle around
 reconnect/replay reconciliation, prompt provenance fallback, session rate
 limits, and parent-stream relay fallback; `setSessionMode` and
 `setSessionConfigOption` are now covered by native `sessions.patch` mappings
-with ACP control refresh updates.
+with ACP control refresh updates, and ACP session creation rate limiting now
+matches OpenClaw's new-session/new-load budget with existing-load refresh
+exemption.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same
