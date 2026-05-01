@@ -6567,6 +6567,176 @@ async def test_ops_mesh_service_message_action_dispatches_bluebubbles_send_with_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_group_management_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-group-management"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "group",
+            "peer_id": "group-1",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+    chat_guid = "iMessage;+;group-1"
+
+    rename_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="renameGroup",
+            params={"chatGuid": chat_guid, "displayName": "New group name"},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-rename-group-action",
+        )
+    )
+    add_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="addParticipant",
+            params={"chatGuid": chat_guid, "address": "+15550000001"},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-add-participant-action",
+        )
+    )
+    remove_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="removeParticipant",
+            params={"to": f"chat_guid:{chat_guid}", "participant": "+15550000001"},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-remove-participant-action",
+        )
+    )
+    leave_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="leaveGroup",
+            params={"chatGuid": chat_guid},
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:group:group-1",
+            idempotency_key="idem-bluebubbles-leave-group-action",
+        )
+    )
+
+    assert rename_result == {
+        "ok": True,
+        "renamed": chat_guid,
+        "displayName": "New group name",
+    }
+    assert add_result == {"ok": True, "added": "+15550000001", "chatGuid": chat_guid}
+    assert remove_result == {
+        "ok": True,
+        "removed": "+15550000001",
+        "chatGuid": chat_guid,
+    }
+    assert leave_result == {"ok": True, "left": chat_guid}
+    encoded_chat_guid = "iMessage%3B%2B%3Bgroup-1"
+    assert bluebubbles_requests == [
+        (
+            "PUT",
+            f"http://localhost:1234/api/v1/chat/{encoded_chat_guid}?password=bb-password",
+            {"displayName": "New group name"},
+            None,
+            None,
+        ),
+        (
+            "POST",
+            (
+                "http://localhost:1234/api/v1/chat/"
+                f"{encoded_chat_guid}/participant?password=bb-password"
+            ),
+            {"address": "+15550000001"},
+            None,
+            None,
+        ),
+        (
+            "DELETE",
+            (
+                "http://localhost:1234/api/v1/chat/"
+                f"{encoded_chat_guid}/participant?password=bb-password"
+            ),
+            {"address": "+15550000001"},
+            None,
+            None,
+        ),
+        (
+            "POST",
+            (
+                "http://localhost:1234/api/v1/chat/"
+                f"{encoded_chat_guid}/leave?password=bb-password"
+            ),
+            None,
+            None,
+            None,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

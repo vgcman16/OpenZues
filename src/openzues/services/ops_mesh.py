@@ -9313,8 +9313,12 @@ class OpsMeshService:
         channel = request.channel.strip().lower()
         action = request.action.strip()
         if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {
+            "addParticipant",
             "edit",
+            "leaveGroup",
             "react",
+            "removeParticipant",
+            "renameGroup",
             "reply",
             "sendWithEffect",
             "unsend",
@@ -9345,6 +9349,34 @@ class OpsMeshService:
             if action == "reply":
                 return await asyncio.to_thread(
                     self._dispatch_bluebubbles_reply_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "renameGroup":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_rename_group_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "addParticipant":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_add_participant_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "removeParticipant":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_remove_participant_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "leaveGroup":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_leave_group_message_action,
                     route,
                     request,
                     secret_token,
@@ -10355,6 +10387,123 @@ class OpsMeshService:
         result = self._request_json_provider_url(
             target,
             method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return result
+
+    def _dispatch_bluebubbles_rename_group_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles renameGroup requires chatGuid.")
+        display_name = _message_action_param_string(
+            request.params,
+            "displayName",
+        ) or _message_action_param_string(request.params, "name")
+        if display_name is None:
+            raise RuntimeError("BlueBubbles renameGroup requires displayName or name.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            method="PUT",
+            payload={"displayName": display_name},
+        )
+        return {"ok": True, "renamed": chat_guid, "displayName": display_name}
+
+    def _dispatch_bluebubbles_add_participant_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles addParticipant requires chatGuid.")
+        address = _message_action_param_string(
+            request.params,
+            "address",
+        ) or _message_action_param_string(request.params, "participant")
+        if address is None:
+            raise RuntimeError("BlueBubbles addParticipant requires address or participant.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            suffix="/participant",
+            method="POST",
+            payload={"address": address},
+        )
+        return {"ok": True, "added": address, "chatGuid": chat_guid}
+
+    def _dispatch_bluebubbles_remove_participant_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles removeParticipant requires chatGuid.")
+        address = _message_action_param_string(
+            request.params,
+            "address",
+        ) or _message_action_param_string(request.params, "participant")
+        if address is None:
+            raise RuntimeError("BlueBubbles removeParticipant requires address or participant.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            suffix="/participant",
+            method="DELETE",
+            payload={"address": address},
+        )
+        return {"ok": True, "removed": address, "chatGuid": chat_guid}
+
+    def _dispatch_bluebubbles_leave_group_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles leaveGroup requires chatGuid.")
+        self._post_bluebubbles_chat_json(
+            route,
+            secret_token,
+            chat_guid,
+            suffix="/leave",
+            method="POST",
+            payload=None,
+        )
+        return {"ok": True, "left": chat_guid}
+
+    def _post_bluebubbles_chat_json(
+        self,
+        route: dict[str, Any],
+        secret_token: str | None,
+        chat_guid: str,
+        *,
+        suffix: str = "",
+        method: str,
+        payload: dict[str, object] | None,
+    ) -> object:
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            f"/api/v1/chat/{quote(chat_guid, safe='')}{suffix}",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method=method,
             payload=payload,
         )
         if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):

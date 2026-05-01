@@ -6377,6 +6377,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   bluebubbles_edit_route or bluebubbles_unsend_route"` (`6 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage group-management actions now follow OpenClaw's
+  BlueBubbles chat adapter by routing `renameGroup`, `addParticipant`,
+  `removeParticipant`, and `leaveGroup` through the native route-backed
+  `/api/v1/chat/{chatGuid}` API with the upstream HTTP methods and result
+  fields.
+- Verified the BlueBubbles group-management slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_bluebubbles_group_management_routes
+  -q` (`1 failed` before implementation, action returned `None`), then the
+  same command (`1 passed`), adjacent message-action proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_group_management_routes or
+  bluebubbles_reply_route or bluebubbles_send_with_effect_route or
+  bluebubbles_react_route or bluebubbles_remove_reaction_route or
+  bluebubbles_edit_route or bluebubbles_unsend_route"` (`7 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

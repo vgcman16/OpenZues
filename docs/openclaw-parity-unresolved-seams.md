@@ -3683,13 +3683,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `selectedMessageGuid` / `partIndex`, effect-id alias mapping, and
   upstream-shaped `messageId`, `repliedTo`, and `effect` results. Verified with
   focused and adjacent OpsMesh action proofs, `ruff check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage group-management
-  actions `renameGroup`, `addParticipant`, `removeParticipant`, and
-  `leaveGroup` remain open. Source anchors are
-  `extensions/bluebubbles/src/actions.ts` and
-  `extensions/bluebubbles/src/chat.ts`; OpenZues must route direct `chatGuid` /
-  `chat_guid` targets, display names, participant addresses, HTTP methods, and
-  upstream-shaped results through the native BlueBubbles route adapter.
+- Closed the BlueBubbles/iMessage group-management action seams
+  `renameGroup`, `addParticipant`, `removeParticipant`, and `leaveGroup` from
+  OpenClaw `extensions/bluebubbles/src/actions.ts` and
+  `extensions/bluebubbles/src/chat.ts`: route-backed BlueBubbles actions now
+  route direct `chatGuid` / `chat_guid` targets, display names, participant
+  addresses, HTTP methods, and upstream-shaped results through the native
+  BlueBubbles adapter. Verified with focused and adjacent OpsMesh action
+  proofs, `ruff check`, and `mypy`.
+- Next provider-native queue head: BlueBubbles/iMessage media actions
+  `setGroupIcon`, `sendAttachment`, and `upload-file` remain open. Source
+  anchors are `extensions/bluebubbles/src/actions.ts`,
+  `extensions/bluebubbles/src/chat.ts`, and
+  `extensions/bluebubbles/src/attachments.ts`; OpenZues must route base64
+  buffers, filenames, content types, captions, and multipart/form-data payloads
+  through the native BlueBubbles route adapter while preserving upstream-shaped
+  results.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and
