@@ -2391,6 +2391,13 @@ def create_app(
         active_settings.data_dir / "control-plane.lock"
     )
     active_manager.add_event_listener(active_mission_service.handle_event)
+    gateway_runtime_event_listener = getattr(
+        active_gateway_node_method_service,
+        "handle_runtime_event",
+        None,
+    )
+    if callable(gateway_runtime_event_listener):
+        active_manager.add_event_listener(gateway_runtime_event_listener)
     active_manager.add_server_request_listener(active_control_chat_service.handle_server_request)
     active_manager.add_server_request_listener(active_mission_service.handle_server_request)
     active_mission_service.add_event_listener(active_ops_mesh_service.handle_mission_event)

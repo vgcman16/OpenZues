@@ -1,6 +1,6 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-04-30
+Updated: 2026-05-01
 
 Current percentage rollup:
 
@@ -368,6 +368,10 @@ tracked child run reaches a terminal mission snapshot: successful runs become
 `endedAt`, `lastEventAt`, and session-queued delivery status; provider
 completion delivery can subsequently mark the task delivery as `delivered` or
 `failed`.
+ACP in-flight runtime progress now also advances those metadata-backed task
+records before terminal wait: app-server text delta events are matched by ACP
+run id or runtime thread id, normalized into an appended `progressSummary`, and
+bump `lastEventAt` while the record remains `status="running"`.
 Gateway ACP spawns now also honor `acp.enabled=false` before any runtime
 boundary, returning OpenClaw's `errorCode="acp_disabled"` disabled-policy
 response without selecting a target agent or dispatching RuntimeManager work.

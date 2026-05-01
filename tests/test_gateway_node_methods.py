@@ -19184,6 +19184,82 @@ async def test_sessions_spawn_acp_accepted_run_persists_openclaw_task_record(
 
 
 @pytest.mark.asyncio
+async def test_sessions_spawn_acp_runtime_progress_appends_task_record_summary(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-spawn-acp-progress.db")
+    await database.initialize()
+
+    class FakeAcpSpawnService:
+        async def spawn(
+            self,
+            params: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            del params, context
+            return {
+                "status": "accepted",
+                "childSessionKey": "agent:codex:acp:thread-acp-progress",
+                "runId": "run-acp-progress-1",
+                "mode": "run",
+                "runtimeThreadId": "thread-acp-progress",
+                "runtimeSessionId": "session-acp-progress",
+            }
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        hub=BroadcastHub(),
+        sessions_service=GatewaySessionsService(database),
+        acp_spawn_service=FakeAcpSpawnService(),
+    )
+
+    spawn_payload = await service.call(
+        "sessions.spawn",
+        {
+            "task": "Track ACP progress while the child is still running.",
+            "runtime": "acp",
+            "agentId": "codex",
+        },
+        now_ms=20_000,
+    )
+
+    child_session_key = str(spawn_payload["childSessionKey"])
+    await service.handle_runtime_event(
+        7,
+        {
+            "method": "item/assistantMessage/delta",
+            "threadId": "thread-acp-progress",
+            "params": {
+                "threadId": "thread-acp-progress",
+                "turnId": "run-acp-progress-1",
+                "delta": "checking  ",
+            },
+        },
+    )
+    await service.handle_runtime_event(
+        7,
+        {
+            "method": "item/assistantMessage/delta",
+            "threadId": "thread-acp-progress",
+            "params": {
+                "threadId": "thread-acp-progress",
+                "turnId": "run-acp-progress-1",
+                "text": "\nrepo",
+            },
+        },
+    )
+
+    metadata_row = await database.get_gateway_session_metadata(child_session_key)
+    assert metadata_row is not None
+    task_record = metadata_row["metadata"]["taskRecord"]
+    assert task_record["status"] == "running"
+    assert task_record["progressSummary"] == "checking repo"
+    assert task_record["lastEventAt"] > 20_000
+    assert "endedAt" not in task_record
+
+
+@pytest.mark.asyncio
 async def test_sessions_spawn_acp_stream_to_parent_tracks_child_run(
     tmp_path,
 ) -> None:

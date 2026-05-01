@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Updated: 2026-04-30.
+- Updated: 2026-05-01.
 - Estimated repo-wide parity: ~45% overall, with a reasonable band of ~40-50%.
 - Estimated active gateway/session/tool-contract family parity: ~97% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
@@ -4897,6 +4897,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- ACP in-flight runtime progress now updates the same metadata-backed
+  OpenClaw task record before terminal wait. The app-wired gateway runtime
+  event listener matches ACP app-server text deltas by run id or runtime thread
+  id, appends normalized output into `progressSummary`, and advances
+  `lastEventAt` while preserving `status="running"`.
+- Verified the ACP runtime progress task-record slice with `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "runtime_progress_appends_task_record_summary"` (`1 passed`), adjacent ACP
+  spawn/wait coverage `python -m pytest tests\test_gateway_node_methods.py -q
+  -k "sessions_spawn_acp or agent_wait"` (`39 passed`), runtime event-handler
+  neighborhood `python -m pytest tests\test_manager.py -q -k
+  "compact_event_payload or handle_event"` (`11 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py src\openzues\app.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py` plus `mypy
+  src\openzues\app.py`. A broader exploratory manager filter
+  `python -m pytest tests\test_manager.py -q -k "event or turn"` still exposes
+  unrelated fake-client `sandbox_mode` failures in four existing `start_turn`
+  tests.
 
 ## References
 

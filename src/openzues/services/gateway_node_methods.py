@@ -225,6 +225,7 @@ _ACP_SANDBOXED_REQUESTER_ERROR = (
     'Sandboxed sessions cannot spawn ACP sessions because runtime="acp" runs on the host. '
     'Use runtime="subagent" from sandboxed sessions.'
 )
+_ACP_BACKGROUND_TASK_PROGRESS_MAX_LENGTH = 240
 _GATEWAY_TOOLS_INVOKE_DEFAULT_DENY = {
     "exec",
     "spawn",
@@ -12571,6 +12572,83 @@ class GatewayNodeMethodService:
             await self._sleep(sleep_seconds)
             slept = True
 
+    async def handle_runtime_event(self, instance_id: int, event: dict[str, Any]) -> None:
+        del instance_id
+        progress_delta = _gateway_runtime_event_acp_progress_delta(event)
+        if progress_delta is None:
+            return
+        await self._mark_acp_task_record_runtime_progress(
+            run_id=_gateway_runtime_event_run_id(event),
+            runtime_thread_id=_gateway_runtime_event_thread_id(event),
+            progress_delta=progress_delta,
+            now_ms=_timestamp_ms(None),
+        )
+
+    async def _mark_acp_task_record_runtime_progress(
+        self,
+        *,
+        run_id: str | None,
+        runtime_thread_id: str | None,
+        progress_delta: str,
+        now_ms: int,
+    ) -> None:
+        if self._database is None or (run_id is None and runtime_thread_id is None):
+            return
+        for row in await self._database.list_gateway_session_metadata_rows():
+            metadata = row.get("metadata") if isinstance(row, dict) else None
+            if not isinstance(metadata, dict) or metadata.get("runtime") != "acp":
+                continue
+            raw_task_record = metadata.get("taskRecord")
+            if not isinstance(raw_task_record, Mapping):
+                continue
+            task_record = {
+                str(key): value
+                for key, value in raw_task_record.items()
+                if isinstance(key, str)
+            }
+            record_run_id = _string_or_none(task_record.get("runId")) or _string_or_none(
+                task_record.get("sourceId")
+            )
+            record_thread_ids = {
+                candidate
+                for candidate in (
+                    _string_or_none(metadata.get("runtimeThreadId")),
+                    _string_or_none(metadata.get("runtimeSessionId")),
+                )
+                if candidate is not None
+            }
+            run_matches = run_id is not None and record_run_id == run_id
+            thread_matches = (
+                runtime_thread_id is not None and runtime_thread_id in record_thread_ids
+            )
+            if not (run_matches or thread_matches):
+                continue
+            if run_id is not None and record_run_id is not None and record_run_id != run_id:
+                continue
+            current_status = _string_or_none(task_record.get("status"))
+            if current_status not in {None, "queued", "running"}:
+                continue
+            next_progress = _append_acp_task_progress_summary(
+                _string_or_none(task_record.get("progressSummary")) or "",
+                progress_delta,
+            )
+            if next_progress is None:
+                continue
+            task_record["status"] = "running"
+            task_record["progressSummary"] = next_progress
+            task_record["lastEventAt"] = now_ms
+            next_metadata = dict(metadata)
+            next_metadata["taskRecord"] = task_record
+            session_key = _string_or_none(row.get("session_key")) or _string_or_none(
+                task_record.get("childSessionKey")
+            )
+            if session_key is None:
+                continue
+            await self._database.upsert_gateway_session_metadata(
+                session_key=session_key,
+                metadata=next_metadata,
+            )
+
     async def _gateway_chat_terminal_snapshot(
         self,
         *,
@@ -13662,6 +13740,119 @@ def _sessions_spawn_acp_task_record(
     if label is not None:
         record["label"] = label
     return record
+
+
+def _gateway_runtime_event_params(event: Mapping[str, object]) -> Mapping[str, object]:
+    params = event.get("params")
+    return params if isinstance(params, Mapping) else {}
+
+
+def _gateway_runtime_event_thread_id(event: Mapping[str, object]) -> str | None:
+    params = _gateway_runtime_event_params(event)
+    for container in (event, params):
+        thread_id = _string_or_none(container.get("threadId"))
+        if thread_id is not None:
+            return thread_id
+    thread = _mapping_or_none(params.get("thread"))
+    if thread is not None:
+        return _string_or_none(thread.get("id"))
+    item = _mapping_or_none(params.get("item"))
+    if item is not None:
+        thread_id = _string_or_none(item.get("threadId"))
+        if thread_id is not None:
+            return thread_id
+        nested_thread = _mapping_or_none(item.get("thread"))
+        if nested_thread is not None:
+            return _string_or_none(nested_thread.get("id"))
+    return None
+
+
+def _gateway_runtime_event_run_id(event: Mapping[str, object]) -> str | None:
+    params = _gateway_runtime_event_params(event)
+    for key in ("turnId", "activeTurnId", "runId"):
+        value = _string_or_none(params.get(key))
+        if value is not None:
+            return value
+    turn = _mapping_or_none(params.get("turn"))
+    if turn is not None:
+        for key in ("id", "turnId", "runId"):
+            value = _string_or_none(turn.get(key))
+            if value is not None:
+                return value
+    item = _mapping_or_none(params.get("item"))
+    if item is not None:
+        for key in ("turnId", "activeTurnId", "runId"):
+            value = _string_or_none(item.get(key))
+            if value is not None:
+                return value
+        nested_turn = _mapping_or_none(item.get("turn"))
+        if nested_turn is not None:
+            for key in ("id", "turnId", "runId"):
+                value = _string_or_none(nested_turn.get(key))
+                if value is not None:
+                    return value
+    return None
+
+
+def _gateway_runtime_event_acp_progress_delta(
+    event: Mapping[str, object],
+) -> str | None:
+    method = _string_or_none(event.get("method"))
+    if method is None:
+        return None
+    params = _gateway_runtime_event_params(event)
+    event_type = _string_or_none(params.get("type"))
+    lower_method = method.lower()
+    is_delta_event = (
+        lower_method.endswith("/delta")
+        or lower_method.endswith("outputdelta")
+        or event_type == "text_delta"
+    )
+    nested_event = _mapping_or_none(params.get("event"))
+    if not is_delta_event and nested_event is not None:
+        nested_type = _string_or_none(nested_event.get("type"))
+        is_delta_event = nested_type == "text_delta"
+    if not is_delta_event:
+        return None
+    for container in (params, nested_event):
+        if container is None:
+            continue
+        stream = _string_or_none(container.get("stream"))
+        if stream == "thought":
+            return None
+        for key in ("delta", "text"):
+            value = _normalize_acp_task_progress_chunk(container.get(key))
+            if value is not None:
+                return value
+        delta = _mapping_or_none(container.get("delta"))
+        if delta is not None:
+            for key in ("text", "delta"):
+                value = _normalize_acp_task_progress_chunk(delta.get(key))
+                if value is not None:
+                    return value
+    return None
+
+
+def _normalize_acp_task_progress_chunk(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return normalized or None
+
+
+def _append_acp_task_progress_summary(current: str, chunk: str) -> str | None:
+    normalized_chunk = _normalize_acp_task_progress_chunk(chunk)
+    if normalized_chunk is None:
+        return _normalize_acp_task_progress_chunk(current)
+    normalized_current = _normalize_acp_task_progress_chunk(current)
+    combined = (
+        f"{normalized_current} {normalized_chunk}"
+        if normalized_current is not None
+        else normalized_chunk
+    )
+    if len(combined) <= _ACP_BACKGROUND_TASK_PROGRESS_MAX_LENGTH:
+        return combined
+    return f"{combined[: _ACP_BACKGROUND_TASK_PROGRESS_MAX_LENGTH - 3]}..."
 
 
 def _sessions_spawn_acp_should_implicitly_stream_to_parent(
