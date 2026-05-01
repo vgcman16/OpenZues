@@ -6166,6 +6166,7 @@ class OpsMeshService:
                     media_kind=str(payload.get("mediaKind") or "").strip() or None,
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
+                    duration_ms=_optional_int_payload_value(payload, "durationMs"),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13453,6 +13454,8 @@ class OpsMeshService:
             payload["mediaKind"] = request.media_kind
         if request.preview_image_url is not None:
             payload["previewImageUrl"] = request.preview_image_url
+        if request.duration_ms is not None:
+            payload["durationMs"] = request.duration_ms
         if request.gif_playback is not None:
             payload["gifPlayback"] = request.gif_playback
         if request.audio_as_voice is not None:
@@ -13811,6 +13814,7 @@ class OpsMeshService:
                     media_kind=str(payload.get("mediaKind") or "").strip() or None,
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
+                    duration_ms=_optional_int_payload_value(payload, "durationMs"),
                     gif_playback=_optional_bool_payload_value(payload, "gifPlayback"),
                     audio_as_voice=_optional_bool_payload_value(payload, "audioAsVoice"),
                     reply_to_id=str(payload.get("replyToId") or "").strip() or None,
@@ -13893,6 +13897,7 @@ class OpsMeshService:
         media_urls: list[str] | None = None,
         media_kind: str | None = None,
         preview_image_url: str | None = None,
+        duration_ms: int | None = None,
         gif_playback: bool | None = None,
         audio_as_voice: bool | None = None,
         reply_to_id: str | None = None,
@@ -13942,6 +13947,8 @@ class OpsMeshService:
             normalized_preview_image_url = str(preview_image_url or "").strip() or None
             if normalized_preview_image_url is not None:
                 payload["previewImageUrl"] = normalized_preview_image_url
+            if duration_ms is not None:
+                payload["durationMs"] = duration_ms
             if gif_playback is not None:
                 payload["gifPlayback"] = gif_playback
             if audio_as_voice is not None:
@@ -16460,6 +16467,7 @@ class OpsMeshService:
         )
         media_kind = str(event.get("mediaKind") or "").strip().lower()
         preview_image_url = str(event.get("previewImageUrl") or "").strip()
+        duration_ms = _optional_int_payload_value(event, "durationMs")
         messages: list[dict[str, object]] = []
         for media_url in media_urls:
             _line_validate_media_url(media_url)
@@ -16474,6 +16482,14 @@ class OpsMeshService:
                         "type": "video",
                         "originalContentUrl": media_url,
                         "previewImageUrl": preview_image_url,
+                    }
+                )
+            elif media_kind == "audio":
+                messages.append(
+                    {
+                        "type": "audio",
+                        "originalContentUrl": media_url,
+                        "duration": duration_ms if duration_ms is not None else 60000,
                     }
                 )
             else:
