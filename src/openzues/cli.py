@@ -1983,6 +1983,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "memorySearch",
         "bundledPluginRuntimeDependencies",
         "startupChannelMaintenance",
+        "runtimeBridge",
         "acp",
         "extras",
     ):
@@ -6264,6 +6265,311 @@ def _with_doctor_gateway_runtime_payload(
     return _with_doctor_added_warnings(next_payload, warnings)
 
 
+_RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
+    "bluebubbles",
+    "discord",
+    "line",
+    "matrix",
+    "slack",
+    "telegram",
+    "whatsapp",
+    "zalo",
+}
+_RUNTIME_BRIDGE_PROVIDER_EVENTS = {"gateway/send", "gateway/poll"}
+
+
+def _runtime_bridge_command_available(command: str | None) -> bool:
+    normalized = _optional_cli_string(command)
+    if normalized is None:
+        return False
+    candidate = Path(normalized).expanduser()
+    if candidate.is_absolute() and candidate.exists():
+        return True
+    return shutil.which(normalized) is not None
+
+
+def _runtime_bridge_field(value: object, *names: str) -> object:
+    if isinstance(value, Mapping):
+        for name in names:
+            if name in value:
+                return value[name]
+        return None
+    for name in names:
+        if hasattr(value, name):
+            return getattr(value, name)
+    return None
+
+
+def _runtime_bridge_bool_field(
+    value: object,
+    *names: str,
+    default: bool | None = None,
+) -> bool | None:
+    raw = _runtime_bridge_field(value, *names)
+    if isinstance(raw, bool):
+        return raw
+    return default
+
+
+def _runtime_bridge_route_events(route: object) -> list[str]:
+    raw_events = _runtime_bridge_field(route, "events", "eventTypes", "event_types")
+    if isinstance(raw_events, str):
+        return [raw_events]
+    if isinstance(raw_events, Sequence) and not isinstance(raw_events, (str, bytes)):
+        return [
+            event
+            for item in raw_events
+            if (event := _optional_cli_string(item)) is not None
+        ]
+    return []
+
+
+def _runtime_bridge_route_has_secret(route: object) -> bool | None:
+    explicit = _runtime_bridge_bool_field(route, "has_secret", "hasSecret")
+    if explicit is not None:
+        return explicit
+    for key in (
+        "secret_preview",
+        "secretPreview",
+        "secret_token",
+        "secretToken",
+        "vault_secret_id",
+        "vaultSecretId",
+    ):
+        if _runtime_bridge_field(route, key) not in (None, "", [], {}):
+            return True
+    return None
+
+
+def _runtime_bridge_conversation_target(route: object) -> dict[str, object] | None:
+    target = _runtime_bridge_field(
+        route,
+        "conversation_target",
+        "conversationTarget",
+    )
+    if target is None:
+        return None
+    if hasattr(target, "model_dump"):
+        dumped = target.model_dump(mode="json")
+        return dumped if isinstance(dumped, dict) else None
+    if isinstance(target, Mapping):
+        return dict(target)
+    return None
+
+
+def _runtime_bridge_native_provider_route_entry(
+    route: object,
+) -> dict[str, object] | None:
+    kind = _optional_cli_string(_runtime_bridge_field(route, "kind"))
+    normalized_kind = kind.lower() if kind is not None else None
+    if normalized_kind not in _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS:
+        return None
+    events = _runtime_bridge_route_events(route)
+    if events and not _RUNTIME_BRIDGE_PROVIDER_EVENTS.intersection(events):
+        return None
+    enabled = _runtime_bridge_bool_field(route, "enabled", default=True)
+    has_secret = _runtime_bridge_route_has_secret(route)
+    conversation_target = _runtime_bridge_conversation_target(route)
+    issues: list[str] = []
+    if enabled is not True:
+        issues.append("disabled")
+    if has_secret is False:
+        issues.append("missing_secret")
+    if conversation_target is None:
+        issues.append("missing_conversation_target")
+    status = "ready" if not issues else "warning"
+    entry: dict[str, object] = {
+        "id": _runtime_bridge_field(route, "id"),
+        "name": _runtime_bridge_field(route, "name"),
+        "kind": normalized_kind,
+        "events": events,
+        "enabled": enabled is True,
+        "status": status,
+        "issues": issues,
+    }
+    if has_secret is not None:
+        entry["hasSecret"] = has_secret
+    if conversation_target is not None:
+        entry["conversationTarget"] = conversation_target
+    return entry
+
+
+async def _build_doctor_runtime_bridge_provider_routes_payload(
+    ops_mesh: object | None,
+) -> dict[str, object]:
+    list_routes = getattr(ops_mesh, "list_notification_route_views", None)
+    if not callable(list_routes):
+        return {
+            "status": "unavailable",
+            "summary": "Provider route inventory is unavailable.",
+            "nativeCount": 0,
+            "routes": [],
+        }
+    try:
+        raw_routes = await list_routes()
+    except Exception as exc:  # pragma: no cover - defensive adapter boundary
+        return {
+            "status": "unavailable",
+            "summary": f"Provider route inventory could not be read: {exc}",
+            "nativeCount": 0,
+            "routes": [],
+        }
+    routes = [
+        entry
+        for route in raw_routes
+        if (entry := _runtime_bridge_native_provider_route_entry(route)) is not None
+    ]
+    ready_count = sum(1 for route in routes if route.get("status") == "ready")
+    status = "ok" if ready_count == len(routes) else "warning"
+    if not routes:
+        summary = "No native provider routes are configured for gateway send or poll."
+    else:
+        summary = (
+            f"{ready_count}/{len(routes)} native provider route"
+            f"{'s are' if len(routes) != 1 else ' is'} ready."
+        )
+    return {
+        "status": status,
+        "summary": summary,
+        "nativeCount": len(routes),
+        "readyCount": ready_count,
+        "routes": routes,
+    }
+
+
+def _build_doctor_runtime_bridge_plugin_executors_payload(
+    services: object,
+) -> dict[str, object]:
+    specs = _plugin_runtime_specs_from_services(services)
+    tools = [
+        {
+            "tool": spec.tool,
+            "pluginId": spec.plugin_id,
+            "pluginName": spec.plugin_name,
+            "ownerOnly": spec.owner_only,
+            "optional": spec.optional,
+            "source": spec.source,
+        }
+        for spec in specs
+    ]
+    owner_only_count = sum(1 for spec in specs if spec.owner_only)
+    return {
+        "status": "ok",
+        "count": len(tools),
+        "ownerOnlyCount": owner_only_count,
+        "tools": tools,
+    }
+
+
+def _build_doctor_runtime_bridge_acp_payload(
+    config_service: object | None,
+    gateway_node_methods: object | None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    acp_config = _dict_config(snapshot.get("acp"))
+    enabled = acp_config.get("enabled") is True
+    spawn_service = None
+    if gateway_node_methods is not None:
+        spawn_service = (
+            getattr(gateway_node_methods, "_acp_spawn_service", None)
+            or getattr(gateway_node_methods, "acp_spawn_service", None)
+        )
+    if enabled:
+        status = "ok" if spawn_service is not None else "warning"
+    else:
+        status = "disabled" if acp_config else "not_configured"
+    return {
+        "status": status,
+        "enabled": enabled,
+        "spawnService": "registered" if spawn_service is not None else "unregistered",
+    }
+
+
+def _build_doctor_runtime_bridge_codex_app_server_payload(
+    manager: object | None,
+) -> dict[str, object]:
+    command = (
+        _optional_cli_string(getattr(manager, "default_stdio_command", None))
+        or "codex"
+    )
+    args = (
+        _optional_cli_string(getattr(manager, "default_stdio_args", None))
+        or "app-server"
+    )
+    configured = "app-server" in args.split() or "app-server" in args
+    available = _runtime_bridge_command_available(command)
+    status = "ok" if configured and available else "warning"
+    return {
+        "status": status,
+        "command": command,
+        "args": args,
+        "configured": configured,
+        "available": available,
+        "platform": sys.platform,
+        "windowsFirst": True,
+    }
+
+
+def _doctor_runtime_bridge_status(sections: Sequence[dict[str, object]]) -> str:
+    warning_statuses = {"error", "unavailable", "warning", "warn"}
+    return (
+        "warning"
+        if any(section.get("status") in warning_statuses for section in sections)
+        else "ok"
+    )
+
+
+async def _build_doctor_runtime_bridge_payload(
+    services: object,
+) -> dict[str, object]:
+    codex_app_server = _build_doctor_runtime_bridge_codex_app_server_payload(
+        getattr(services, "manager", None)
+    )
+    sandbox = _build_doctor_sandbox_payload(getattr(services, "gateway_config", None))
+    provider_routes = await _build_doctor_runtime_bridge_provider_routes_payload(
+        getattr(services, "ops_mesh", None)
+    )
+    plugin_executors = _build_doctor_runtime_bridge_plugin_executors_payload(services)
+    acp = _build_doctor_runtime_bridge_acp_payload(
+        getattr(services, "gateway_config", None),
+        getattr(services, "gateway_node_methods", None),
+    )
+    sections = [
+        codex_app_server,
+        sandbox,
+        provider_routes,
+        plugin_executors,
+        acp,
+    ]
+    status = _doctor_runtime_bridge_status(sections)
+    return {
+        "status": status,
+        "summary": (
+            "Native runtime bridge posture is ready."
+            if status == "ok"
+            else "Native runtime bridge posture has unavailable or degraded checks."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:runtime-bridge",
+        "windowsFirst": True,
+        "codexAppServer": codex_app_server,
+        "sandbox": sandbox,
+        "providerRoutes": provider_routes,
+        "pluginExecutors": plugin_executors,
+        "acp": acp,
+        "warnings": [],
+    }
+
+
+async def _with_doctor_runtime_bridge_payload(
+    payload: dict[str, object],
+    services: object,
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["runtimeBridge"] = await _build_doctor_runtime_bridge_payload(services)
+    return next_payload
+
+
 _CLAUDE_CLI_PROVIDER_ID = "claude-cli"
 _CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli"
 
@@ -8912,6 +9218,43 @@ def _emit_plugins_inventory(
                 "  capabilities: "
                 + ", ".join(str(item) for item in capabilities if str(item).strip())
             )
+    if verbose:
+        runtime_executors = payload.get("runtimeExecutors")
+        runtime_payload = runtime_executors if isinstance(runtime_executors, dict) else {}
+        raw_tools = runtime_payload.get("tools")
+        tool_rows = raw_tools if isinstance(raw_tools, list) else []
+        if tool_rows:
+            raw_count = runtime_payload.get("count")
+            count = raw_count if isinstance(raw_count, int) else len(tool_rows)
+            raw_owner_only_count = runtime_payload.get("ownerOnlyCount")
+            owner_only_count = (
+                raw_owner_only_count
+                if isinstance(raw_owner_only_count, int)
+                else sum(
+                    1
+                    for entry in tool_rows
+                    if isinstance(entry, dict) and entry.get("ownerOnly") is True
+                )
+            )
+            typer.echo(f"Runtime executors ({count} registered, {owner_only_count} owner-only)")
+            for entry in tool_rows:
+                if not isinstance(entry, dict):
+                    continue
+                tool = _optional_cli_string(entry.get("tool"))
+                if tool is None:
+                    continue
+                runtime_plugin_id = _optional_cli_string(entry.get("pluginId"))
+                runtime_source = _optional_cli_string(entry.get("source"))
+                parts = [f"- {tool}"]
+                if runtime_plugin_id is not None:
+                    parts.append(f"[{runtime_plugin_id}]")
+                if runtime_source is not None:
+                    parts.append(f"source={runtime_source}")
+                if entry.get("optional") is True:
+                    parts.append("optional")
+                if entry.get("ownerOnly") is True:
+                    parts.append("owner-only")
+                typer.echo(" ".join(parts))
 
 
 def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> None:
@@ -11527,6 +11870,7 @@ async def _build_plugins_inventory_payload(
     return {
         "workspaceDir": workspace_dir,
         "plugins": plugins,
+        "runtimeExecutors": _build_doctor_runtime_bridge_plugin_executors_payload(services),
         "diagnostics": diagnostics,
     }
 
@@ -13074,6 +13418,26 @@ def _plugin_record_from_deck_item(
         values = _plugin_record_string_list(item, key)
         if values:
             record[key] = values
+    command_aliases = _plugin_manifest_command_aliases(item.get("commandAliases"))
+    if command_aliases:
+        record["commandAliases"] = command_aliases
+    activation = _plugin_manifest_activation(item.get("activation"))
+    if activation:
+        record["activation"] = activation
+    setup = _plugin_manifest_setup(item.get("setup"))
+    if setup:
+        record["setup"] = setup
+    qa_runners = _plugin_manifest_qa_runners(item.get("qaRunners"))
+    if qa_runners:
+        record["qaRunners"] = qa_runners
+    channel_configs = _plugin_manifest_channel_configs(item.get("channelConfigs"))
+    if channel_configs:
+        record["channelConfigs"] = channel_configs
+    model_support = _plugin_manifest_model_support(item.get("modelSupport"))
+    if model_support:
+        record["modelSupport"] = model_support
+    for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
+        record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
     if route_count:
         record["httpRoutes"] = route_count
@@ -13106,6 +13470,290 @@ def _plugin_manifest_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _plugin_manifest_string_list_record(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    for raw_key, raw_values in value.items():
+        normalized_key = _optional_cli_string(raw_key)
+        if normalized_key is None:
+            continue
+        values = _plugin_manifest_string_list(raw_values)
+        if values:
+            normalized[normalized_key] = values
+    return normalized
+
+
+def _plugin_manifest_string_record(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    for raw_key, raw_value in value.items():
+        normalized_key = _optional_cli_string(raw_key)
+        normalized_value = _optional_cli_string(raw_value)
+        if normalized_key is not None and normalized_value is not None:
+            normalized[normalized_key] = normalized_value
+    return normalized
+
+
+def _plugin_manifest_command_aliases(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    aliases: list[dict[str, object]] = []
+    for entry in value:
+        if isinstance(entry, str):
+            string_alias_name = entry.strip()
+            if string_alias_name:
+                aliases.append({"name": string_alias_name})
+            continue
+        if not isinstance(entry, dict):
+            continue
+        alias_name = _optional_cli_string(entry.get("name"))
+        if alias_name is None:
+            continue
+        alias: dict[str, object] = {"name": alias_name}
+        if entry.get("kind") == "runtime-slash":
+            alias["kind"] = "runtime-slash"
+        cli_command = _optional_cli_string(entry.get("cliCommand"))
+        if cli_command is not None:
+            alias["cliCommand"] = cli_command
+        aliases.append(alias)
+    return aliases
+
+
+def _plugin_manifest_activation(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    activation: dict[str, object] = {}
+    for key in (
+        "onProviders",
+        "onAgentHarnesses",
+        "onCommands",
+        "onChannels",
+        "onRoutes",
+    ):
+        values = _plugin_manifest_string_list(value.get(key))
+        if values:
+            activation[key] = values
+    capabilities = [
+        capability
+        for capability in _plugin_manifest_string_list(value.get("onCapabilities"))
+        if capability in {"provider", "channel", "tool", "hook"}
+    ]
+    if capabilities:
+        activation["onCapabilities"] = capabilities
+    return activation
+
+
+def _plugin_manifest_setup_providers(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    providers: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        provider_id = _optional_cli_string(entry.get("id"))
+        if provider_id is None:
+            continue
+        provider: dict[str, object] = {"id": provider_id}
+        auth_methods = _plugin_manifest_string_list(entry.get("authMethods"))
+        if auth_methods:
+            provider["authMethods"] = auth_methods
+        env_vars = _plugin_manifest_string_list(entry.get("envVars"))
+        if env_vars:
+            provider["envVars"] = env_vars
+        providers.append(provider)
+    return providers
+
+
+def _plugin_manifest_setup(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    setup: dict[str, object] = {}
+    providers = _plugin_manifest_setup_providers(value.get("providers"))
+    if providers:
+        setup["providers"] = providers
+    cli_backends = _plugin_manifest_string_list(value.get("cliBackends"))
+    if cli_backends:
+        setup["cliBackends"] = cli_backends
+    config_migrations = _plugin_manifest_string_list(value.get("configMigrations"))
+    if config_migrations:
+        setup["configMigrations"] = config_migrations
+    requires_runtime = value.get("requiresRuntime")
+    if isinstance(requires_runtime, bool):
+        setup["requiresRuntime"] = requires_runtime
+    return setup
+
+
+def _plugin_manifest_provider_endpoints(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    endpoints: list[dict[str, object]] = []
+    for raw_endpoint in value:
+        if not isinstance(raw_endpoint, dict):
+            continue
+        endpoint_class = _optional_cli_string(raw_endpoint.get("endpointClass"))
+        if endpoint_class is None:
+            continue
+        hosts = [
+            host.lower()
+            for host in _plugin_manifest_string_list(raw_endpoint.get("hosts"))
+        ]
+        base_urls = _plugin_manifest_string_list(raw_endpoint.get("baseUrls"))
+        if not hosts and not base_urls:
+            continue
+        endpoint: dict[str, object] = {"endpointClass": endpoint_class}
+        if hosts:
+            endpoint["hosts"] = hosts
+        if base_urls:
+            endpoint["baseUrls"] = base_urls
+        endpoints.append(endpoint)
+    return endpoints
+
+
+def _plugin_manifest_provider_auth_choices(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    choices: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        provider = _optional_cli_string(entry.get("provider"))
+        method = _optional_cli_string(entry.get("method"))
+        choice_id = _optional_cli_string(entry.get("choiceId"))
+        if provider is None or method is None or choice_id is None:
+            continue
+        choice: dict[str, object] = {
+            "provider": provider,
+            "method": method,
+            "choiceId": choice_id,
+        }
+        for key in (
+            "choiceLabel",
+            "choiceHint",
+            "groupId",
+            "groupLabel",
+            "groupHint",
+            "optionKey",
+            "cliFlag",
+            "cliOption",
+            "cliDescription",
+        ):
+            text = _optional_cli_string(entry.get(key))
+            if text is not None:
+                choice[key] = text
+        assistant_priority = entry.get("assistantPriority")
+        if isinstance(assistant_priority, int | float) and not isinstance(
+            assistant_priority,
+            bool,
+        ):
+            choice["assistantPriority"] = assistant_priority
+        assistant_visibility = entry.get("assistantVisibility")
+        if assistant_visibility in {"visible", "manual-only"}:
+            choice["assistantVisibility"] = assistant_visibility
+        deprecated_choice_ids = _plugin_manifest_string_list(
+            entry.get("deprecatedChoiceIds")
+        )
+        if deprecated_choice_ids:
+            choice["deprecatedChoiceIds"] = deprecated_choice_ids
+        onboarding_scopes = [
+            scope
+            for scope in _plugin_manifest_string_list(entry.get("onboardingScopes"))
+            if scope in {"text-inference", "image-generation"}
+        ]
+        if onboarding_scopes:
+            choice["onboardingScopes"] = onboarding_scopes
+        choices.append(choice)
+    return choices
+
+
+def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    for key in ("providerAuthEnvVars", "channelEnvVars"):
+        value = _plugin_manifest_string_list_record(manifest.get(key))
+        if value:
+            metadata[key] = value
+    for key in ("syntheticAuthRefs", "nonSecretAuthMarkers"):
+        values = _plugin_manifest_string_list(manifest.get(key))
+        if values:
+            metadata[key] = values
+    provider_auth_aliases = _plugin_manifest_string_record(
+        manifest.get("providerAuthAliases")
+    )
+    if provider_auth_aliases:
+        metadata["providerAuthAliases"] = provider_auth_aliases
+    provider_endpoints = _plugin_manifest_provider_endpoints(
+        manifest.get("providerEndpoints")
+    )
+    if provider_endpoints:
+        metadata["providerEndpoints"] = provider_endpoints
+    provider_auth_choices = _plugin_manifest_provider_auth_choices(
+        manifest.get("providerAuthChoices")
+    )
+    if provider_auth_choices:
+        metadata["providerAuthChoices"] = provider_auth_choices
+    return metadata
+
+
+def _plugin_manifest_qa_runners(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    runners: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        command_name = _optional_cli_string(entry.get("commandName"))
+        if command_name is None:
+            continue
+        runner: dict[str, object] = {"commandName": command_name}
+        description = _optional_cli_string(entry.get("description"))
+        if description is not None:
+            runner["description"] = description
+        runners.append(runner)
+    return runners
+
+
+def _plugin_manifest_channel_configs(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    configs: dict[str, object] = {}
+    for raw_channel_id, raw_config in value.items():
+        channel_id = _optional_cli_string(raw_channel_id)
+        if channel_id is None or not isinstance(raw_config, dict):
+            continue
+        schema = raw_config.get("schema")
+        if not isinstance(schema, dict):
+            continue
+        config: dict[str, object] = {"schema": dict(schema)}
+        ui_hints = raw_config.get("uiHints")
+        if isinstance(ui_hints, dict):
+            config["uiHints"] = dict(ui_hints)
+        label = _optional_cli_string(raw_config.get("label"))
+        if label is not None:
+            config["label"] = label
+        description = _optional_cli_string(raw_config.get("description"))
+        if description is not None:
+            config["description"] = description
+        prefer_over = _plugin_manifest_string_list(raw_config.get("preferOver"))
+        if prefer_over:
+            config["preferOver"] = prefer_over
+        configs[channel_id] = config
+    return configs
+
+
+def _plugin_manifest_model_support(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    model_support: dict[str, object] = {}
+    model_prefixes = _plugin_manifest_string_list(value.get("modelPrefixes"))
+    if model_prefixes:
+        model_support["modelPrefixes"] = model_prefixes
+    model_patterns = _plugin_manifest_string_list(value.get("modelPatterns"))
+    if model_patterns:
+        model_support["modelPatterns"] = model_patterns
+    return model_support
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -13454,6 +14102,26 @@ def _plugin_record_from_openclaw_manifest(
     tool_names = contracts.get("tools")
     if isinstance(tool_names, list):
         record["toolNames"] = list(tool_names)
+    command_aliases = _plugin_manifest_command_aliases(manifest.get("commandAliases"))
+    if command_aliases:
+        record["commandAliases"] = command_aliases
+    activation = _plugin_manifest_activation(manifest.get("activation"))
+    if activation:
+        record["activation"] = activation
+    setup = _plugin_manifest_setup(manifest.get("setup"))
+    if setup:
+        record["setup"] = setup
+    qa_runners = _plugin_manifest_qa_runners(manifest.get("qaRunners"))
+    if qa_runners:
+        record["qaRunners"] = qa_runners
+    channel_configs = _plugin_manifest_channel_configs(manifest.get("channelConfigs"))
+    if channel_configs:
+        record["channelConfigs"] = channel_configs
+    model_support = _plugin_manifest_model_support(manifest.get("modelSupport"))
+    if model_support:
+        record["modelSupport"] = model_support
+    for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
+        record[metadata_key] = metadata_value
     for key in (
         "commands",
         "cliCommands",
@@ -21492,7 +22160,13 @@ def routes_send_command(
     reply_to_id: str | None = typer.Option(
         None,
         "--reply-to",
+        "--reply-to-id",
         help="Provider message id to reply to.",
+    ),
+    reply_to_message_id: str | None = typer.Option(
+        None,
+        "--reply-to-message-id",
+        help="Provider message id to reply to, preferred over --reply-to.",
     ),
     silent: bool = typer.Option(
         False,
@@ -21512,6 +22186,12 @@ def routes_send_command(
         "--thread-id",
         help="Provider thread/topic id.",
     ),
+    message_thread_id: str | None = typer.Option(
+        None,
+        "--message-thread-id",
+        "--message-thread",
+        help="Provider message thread id, preferred over --thread.",
+    ),
     session_key: str | None = typer.Option(
         None,
         "--session-key",
@@ -21524,6 +22204,9 @@ def routes_send_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit the send result as JSON."),
 ) -> None:
+    resolved_reply_to_id = _optional_cli_string(reply_to_message_id) or reply_to_id
+    resolved_thread_id = _optional_cli_string(message_thread_id) or thread_id
+
     async def _action(services: CliServices) -> dict[str, object]:
         return await services.ops_mesh.send_direct_channel_message(
             channel=channel,
@@ -21531,12 +22214,12 @@ def routes_send_command(
             message=message,
             media_urls=list(media_urls or []),
             gif_playback=True if gif_playback else None,
-            reply_to_id=reply_to_id,
+            reply_to_id=resolved_reply_to_id,
             silent=True if silent else None,
             force_document=True if force_document else None,
             account_id=account_id,
             agent_id=agent_id,
-            thread_id=thread_id,
+            thread_id=resolved_thread_id,
             session_key=session_key,
             idempotency_key=idempotency_key,
         )
@@ -21599,13 +22282,25 @@ def routes_poll_command(
     reply_to_id: str | None = typer.Option(
         None,
         "--reply-to",
+        "--reply-to-id",
         help="Provider message id to reply to.",
+    ),
+    reply_to_message_id: str | None = typer.Option(
+        None,
+        "--reply-to-message-id",
+        help="Provider message id to reply to, preferred over --reply-to.",
     ),
     thread_id: str | None = typer.Option(
         None,
         "--thread",
         "--thread-id",
         help="Provider thread/topic id.",
+    ),
+    message_thread_id: str | None = typer.Option(
+        None,
+        "--message-thread-id",
+        "--message-thread",
+        help="Provider message thread id, preferred over --thread.",
     ),
     idempotency_key: str | None = typer.Option(
         None,
@@ -21620,6 +22315,8 @@ def routes_poll_command(
     resolved_max_selections = max_selections
     if resolved_max_selections is None and poll_multi:
         resolved_max_selections = len(poll_options)
+    resolved_reply_to_id = _optional_cli_string(reply_to_message_id) or reply_to_id
+    resolved_thread_id = _optional_cli_string(message_thread_id) or thread_id
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await services.ops_mesh.send_direct_channel_poll(
@@ -21633,8 +22330,8 @@ def routes_poll_command(
             silent=True if silent else None,
             is_anonymous=is_anonymous,
             account_id=account_id,
-            reply_to_id=reply_to_id,
-            thread_id=thread_id,
+            reply_to_id=resolved_reply_to_id,
+            thread_id=resolved_thread_id,
             idempotency_key=idempotency_key,
         )
 
@@ -22072,6 +22769,7 @@ def doctor(
             payload,
             services.gateway_config,
         )
+        payload = await _with_doctor_runtime_bridge_payload(payload, services)
         payload = _with_doctor_contribution_surfaces(payload)
         return payload
 

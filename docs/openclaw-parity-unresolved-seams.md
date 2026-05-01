@@ -4,14 +4,18 @@ Updated: 2026-05-01
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~45% overall, with a reasonable
-  band of ~40-50%.
-- The active gateway/session/tool-contract family is estimated at ~97% of the
+- Repo-wide OpenClaw parity is estimated at ~48% overall, with a reasonable
+  band of ~43-53%.
+- The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
+- The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
+  runtime bridge doctor posture, provider route send/poll alias-precedence,
+  plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
+  channel-config/model-support metadata slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1358,11 +1362,28 @@ now preserves those saved install records in the report-level `install` field.
 for configured `plugins.load.paths` entries that contain `openclaw.plugin.json`,
 preserving manifest `id`, `name`, `description`, `version`, contracts, tool
 names, manifest/root paths, and enabled/default status without importing plugin
-code. `plugins inspect --json` now also consults the native
+code. Metadata-only records now also normalize manifest-owned
+`commandAliases` string/object entries, preserving `runtime-slash` kind and
+`cliCommand` hints for pre-runtime CLI diagnostics. They also preserve manifest
+`activation` and `setup` descriptors for pre-runtime activation planning and
+setup/onboarding inventory, plus provider/channel auth env descriptors and
+provider auth choice metadata. Manifest `qaRunners` descriptors are also
+preserved for QA fallback command inventory, and manifest `channelConfigs`
+metadata is preserved for setup/onboarding channel configuration. Manifest
+`modelSupport` metadata is preserved for pre-runtime model-family ownership
+hints. `plugins inspect --json`
+now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
 runtime executor specs mark discovered plugins as imported, switch the inspect
 report from inventory-only to `capabilityMode="runtime"`, and project
 OpenClaw-shaped runtime tool entries with `names` / `optional` metadata.
+`plugins list --json` now also exposes the same registered native executor
+inventory at the top level as `runtimeExecutors`, including `count`,
+`ownerOnlyCount`, `optional`, `ownerOnly`, plugin id/name, and source metadata
+so operator/plugin inventory can see runtime-backed tools without inspecting a
+single plugin first. `plugins list --verbose` now also prints those registered
+runtime executor tools with plugin id, source, optional, and owner-only markers
+for human operator parity.
 Inspect reports now also project OpenClaw-shaped policy summaries from
 `plugins.entries.<id>.hooks.allowPromptInjection` and
 `plugins.entries.<id>.subagent` (`allowModelOverride`, `allowedModels`, and
@@ -3348,6 +3369,127 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
   plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`, `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the plugin list runtime-executor inventory seam from OpenClaw
+  `plugins/tools.ts` / `plugins/types.ts`: `plugins list --json` now includes
+  top-level `runtimeExecutors` projected from the native
+  `GatewayPluginRuntimeService.catalog_specs()` registry, preserving tool,
+  plugin id/name, owner-only, optional, and source metadata without importing
+  the TypeScript runtime, and `plugins list --verbose` prints the same
+  registered executor inventory for humans. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory
+  -q`, `python -m pytest
+  tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_projects_runtime_executor_inventory or
+  plugins_list_verbose_reports_runtime_executor_inventory or
+  plugins_list_json_projects_hermes_plugin_inventory or
+  plugins_list_enabled_filters_loaded_plugins or
+  plugins_list_json_includes_saved_config_install_records or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_preserves_runtime_executor_optional_metadata"`, `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest command-alias metadata seam from OpenClaw
+  `manifest-command-aliases.ts` / `manifest.ts`: metadata-only plugin
+  discovery now preserves normalized `commandAliases` entries from
+  `openclaw.plugin.json`, including string aliases, `kind="runtime-slash"`,
+  and `cliCommand` hints, without importing the TypeScript runtime. Verified
+  with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_command_aliases
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest activation/setup descriptor seam from OpenClaw
+  `manifest-registry.test.ts` / `manifest.ts`: metadata-only plugin discovery
+  now preserves normalized `activation` and `setup` descriptor blocks from
+  `openclaw.plugin.json`, including provider/agent-harness/command/channel/
+  route/capability activation hints, setup provider auth methods/env vars, CLI
+  backend ids, config migration ids, and `requiresRuntime`. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_activation_and_setup
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest auth/env metadata seam from OpenClaw
+  `manifest-registry.test.ts` / `manifest.ts`: metadata-only plugin discovery
+  now preserves normalized provider auth env vars, provider endpoint hints,
+  synthetic auth refs, non-secret auth markers, provider auth aliases, provider
+  auth choices, and channel env vars from `openclaw.plugin.json`. Verified with
+  `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest QA runner descriptor seam from OpenClaw
+  `manifest-registry.test.ts` / `manifest.ts`: metadata-only plugin discovery
+  now preserves normalized `qaRunners` command descriptors from
+  `openclaw.plugin.json`. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_qa_runners -q`,
+  adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest channel-config metadata seam from OpenClaw
+  `manifest-registry.test.ts` / `manifest.ts`: metadata-only plugin discovery
+  now preserves normalized `channelConfigs` metadata from `openclaw.plugin.json`,
+  including schemas, UI hints, labels, descriptions, and `preferOver` ordering.
+  Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_channel_configs
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the manifest model-support metadata seam from OpenClaw `manifest.ts`:
+  metadata-only plugin discovery now preserves `modelSupport` model-prefix and
+  model-pattern hints from `openclaw.plugin.json`. Verified with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_model_support
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Closed the structured `doctor:sandbox` contribution seam from OpenClaw
   `doctor-sandbox.ts` / `doctor-health-contributions.ts`: `doctor --json` now
   reports resolved sandbox mode/backend, Docker availability, missing-Docker
@@ -3739,16 +3881,49 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   the gateway config snapshot and reject oversized local or remote media before
   multipart upload. Verified with focused and adjacent OpsMesh proofs, `ruff
   check`, and `mypy`.
-- Next repo-wide queue head: provider-native replay/direct-announce delivery
-  consistency remains open. Source anchors are
+- Closed the provider-native replay caption consistency seam from OpenClaw
+  `src/infra/outbound/deliver.ts` and
+  `src/infra/outbound/outbound-send-service.ts`: saved native provider media
+  replays now pass the original payload caption to BlueBubbles/LINE/Matrix/
+  WhatsApp/Zalo-style media adapters instead of the formatted fallback text
+  that includes the `Media:` inventory, while generic provider/session replay
+  keeps the formatted fallback. Verified with focused and adjacent OpsMesh
+  replay/provider proofs, `ruff check`, and `mypy`.
+- Closed the direct-announce provider metadata consistency seam from OpenClaw
   `src/infra/outbound/deliver.ts`, `src/infra/outbound/outbound-send-service.ts`,
-  and route-backed provider adapters; OpenZues must keep saved delivery
-  replay, direct announce, and session delivery metadata aligned for native
-  provider transports after the BlueBubbles breadth work.
+  and `src/cron/delivery.ts`: OpenZues' ad-hoc announce owner now returns the
+  shared direct-channel result, tags saved route scopes with
+  `source="direct.announce"`, persists provider result metadata, exposes
+  transport on saved delivery views, and replays failed direct announces through
+  the saved channel/target/account provider runtime instead of degrading to
+  session-only delivery. The progress snapshot was updated from ~45% to ~46%
+  repo-wide, cron wake/delivery from ~98% to ~99%, and channels/direct
+  announce from ~96% to ~97%. Verified with focused and adjacent OpsMesh
+  proofs.
+- Closed the runtime bridge doctor/packaging posture seam from OpenClaw
+  runtime/CLI packaging and doctor surfaces: top-level `doctor --json` and
+  human doctor output now include a native `runtimeBridge` rollup for Codex
+  app-server readiness, sandbox setup posture, provider route readiness,
+  plugin executor inventory, and ACP spawn-service availability. The progress
+  snapshot was updated from ~46% to ~47% repo-wide, active
+  gateway/session/tool-contract parity from ~97% to ~98%, and
+  runtime/CLI/doctor native-bridge parity is now tracked at ~96%. Verified
+  with focused and adjacent CLI doctor proofs, `ruff check`, and `mypy`.
+- Closed the provider route CLI alias-precedence seam from OpenClaw
+  `src/cli/send-runtime/channel-outbound-send.ts`: native `routes send` and
+  `routes poll` now accept `--message-thread-id` / `--reply-to-message-id`,
+  keep `--reply-to-id` as an OpenClaw-shaped alias, and prefer the message
+  thread/reply ids over fallback `--thread` / `--reply-to` values. Runtime/
+  CLI/doctor native-bridge parity was adjusted from ~96% to ~97%. Verified
+  with focused and adjacent CLI route proofs, `ruff check`, and `mypy`.
+- Next repo-wide queue head: broader runtime command/packaging breadth remains
+  open. Source anchors are OpenClaw CLI runtime/session/provider command
+  surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human
+  parity for runtime inspection, plugin/runtime inventory commands, packaging/
+  distribution checks, and standalone ACP bridge lifecycle presentation.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially broader runtime/client integration, provider replay/direct
-  announce consistency, remaining runtime bridge doctor/packaging checks, and
-  session runtime methods (`chat.*`, `sessions.*`), rather than the older
+  especially broader runtime/client integration and session runtime methods
+  (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
   placeholders.

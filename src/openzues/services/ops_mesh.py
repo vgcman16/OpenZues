@@ -253,6 +253,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "line",
     "matrix",
 }
+NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {"bluebubbles", "line", "matrix", "whatsapp", "zalo"}
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -4309,7 +4310,7 @@ def _direct_channel_transport_from_delivery_row(
     if not isinstance(route_scope, dict):
         return None
     source = str(route_scope.get("source") or "").strip().lower()
-    if source not in {"gateway.send", "gateway.poll"}:
+    if source not in {"gateway.send", "gateway.poll", "direct.announce"}:
         return None
     event_payload = delivery_row.get("event_payload")
     if not isinstance(event_payload, dict):
@@ -7110,27 +7111,30 @@ class OpsMeshService:
                     if isinstance(raw_media_urls, list)
                     else None
                 )
+                normalized_media_urls = tuple(
+                    _normalize_direct_channel_media_urls(
+                        media_url=media_url,
+                        media_urls=media_urls,
+                    )
+                )
+                replay_channel = str(
+                    payload.get("channel") or (conversation_target or {}).get("channel") or ""
+                ).strip() or None
+                replay_target = str(
+                    payload.get("to") or (conversation_target or {}).get("peer_id") or ""
+                ).strip() or None
+                replay_runtime_message = replay_message_text
+                if (
+                    str(replay_channel or "").lower() in NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS
+                    and normalized_media_urls
+                ):
+                    replay_runtime_message = str(payload.get("message") or "").strip()
                 runtime_result = await runtime.deliver_message(
                     session_key=runtime_session_key,
-                    message=replay_message_text,
-                    channel=str(
-                        payload.get("channel")
-                        or (conversation_target or {}).get("channel")
-                        or ""
-                    ).strip()
-                    or None,
-                    target=str(
-                        payload.get("to")
-                        or (conversation_target or {}).get("peer_id")
-                        or ""
-                    ).strip()
-                    or None,
-                    media_urls=tuple(
-                        _normalize_direct_channel_media_urls(
-                            media_url=media_url,
-                            media_urls=media_urls,
-                        )
-                    ),
+                    message=replay_runtime_message,
+                    channel=replay_channel,
+                    target=replay_target,
+                    media_urls=normalized_media_urls,
                     media_kind=str(payload.get("mediaKind") or "").strip() or None,
                     preview_image_url=str(payload.get("previewImageUrl") or "").strip()
                     or None,
@@ -7170,6 +7174,35 @@ class OpsMeshService:
                     requester_sender_name=requester_sender_name,
                     requester_sender_username=requester_sender_username,
                     requester_sender_e164=requester_sender_e164,
+                    gateway_client_scopes=gateway_client_scopes,
+                )
+            elif str(route_scope.get("source") or "").strip().lower() == "direct.announce":
+                runtime_result = await runtime.deliver_message(
+                    session_key=runtime_session_key,
+                    message=replay_message_text,
+                    channel=str(
+                        payload.get("channel")
+                        or (conversation_target or {}).get("channel")
+                        or ""
+                    ).strip()
+                    or None,
+                    target=str(
+                        payload.get("to")
+                        or (conversation_target or {}).get("peer_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    account_id=str(
+                        payload.get("accountId")
+                        or (conversation_target or {}).get("account_id")
+                        or route_scope.get("resolved_account_id")
+                        or ""
+                    ).strip()
+                    or None,
+                    thread_id=str(
+                        payload.get("threadId") or route_scope.get("thread_id") or ""
+                    ).strip()
+                    or None,
                     gateway_client_scopes=gateway_client_scopes,
                 )
             else:
@@ -8246,14 +8279,19 @@ class OpsMeshService:
         payload: dict[str, Any],
         message: str,
         request_idempotency_key: str | None = None,
-    ) -> None:
-        await self._deliver_direct_channel_message(
+    ) -> dict[str, object]:
+        return await self._deliver_direct_channel_message(
             route_name=route_name,
             conversation_target=conversation_target,
             thread_id=thread_id,
             event_type=event_type,
             payload=payload,
             message=message,
+            route_scope_extra={
+                "source": "direct.announce",
+                "source_event_type": event_type,
+                "idempotency_key": request_idempotency_key,
+            },
             request_idempotency_key=request_idempotency_key,
         )
 
@@ -15866,6 +15904,8 @@ class OpsMeshService:
         payload_with_target = dict(payload)
         payload_with_target["sessionKey"] = announce_session_key
         payload_with_target["conversationTarget"] = serialized_target
+        payload_with_target.setdefault("channel", resolved_target.channel)
+        payload_with_target.setdefault("to", resolved_target.peer_id)
         if source_session_key is not None:
             payload_with_target["sourceSessionKey"] = source_session_key
         if "accountId" not in payload_with_target and resolved_target.account_id is not None:
@@ -15976,8 +16016,7 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower()
-                    in {"whatsapp", "zalo", "line", "matrix", "bluebubbles"}
+                    resolved_target.channel.lower() in NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()

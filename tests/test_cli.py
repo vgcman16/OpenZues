@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +34,7 @@ from openzues.database import Database
 from openzues.schemas import (
     ControlChatMessageView,
     ControlChatResponse,
+    ConversationTargetView,
     GatewayCapabilityView,
     MissionDraftView,
 )
@@ -392,6 +394,170 @@ def test_gateway_doctor_prefers_live_gateway_view_when_available(tmp_path, monke
     payload = json.loads(result.stdout)
     assert payload["headline"] == "Live gateway headline"
     assert payload["summary"] == "Live gateway summary"
+
+
+def test_doctor_json_includes_runtime_bridge_posture(monkeypatch) -> None:
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Runtime bridge profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "agents": {
+                    "defaults": {
+                        "sandbox": {
+                            "mode": "all",
+                            "backend": "docker",
+                            "workspaceAccess": "rw",
+                        }
+                    }
+                },
+                "acp": {"enabled": True},
+            }
+
+    class FakeOpsMesh:
+        async def list_notification_route_views(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    id=1,
+                    name="Slack Native",
+                    kind="slack",
+                    events=["gateway/send", "gateway/poll"],
+                    enabled=True,
+                    has_secret=True,
+                    conversation_target=ConversationTargetView(
+                        channel="slack",
+                        account_id="workspace-bot",
+                        peer_kind="channel",
+                        peer_id="channel:c123",
+                    ),
+                ),
+                SimpleNamespace(
+                    id=2,
+                    name="Discord Native",
+                    kind="discord",
+                    events=["gateway/send"],
+                    enabled=True,
+                    has_secret=True,
+                    conversation_target=ConversationTargetView(
+                        channel="discord",
+                        account_id=None,
+                        peer_kind="channel",
+                        peer_id="123",
+                    ),
+                ),
+            ]
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.owner",
+                executor=fake_executor,
+                owner_only=True,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+        ]
+    )
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+                manager=SimpleNamespace(
+                    default_stdio_command="codex",
+                    default_stdio_args="app-server",
+                ),
+                ops_mesh=FakeOpsMesh(),
+                plugin_runtime_service=plugin_runtime,
+                gateway_node_methods=SimpleNamespace(_acp_spawn_service=object()),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_sandbox_docker_available", lambda: True)
+    monkeypatch.setattr(cli_module, "_runtime_bridge_command_available", lambda _command: True)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    runtime_bridge = payload["runtimeBridge"]
+    assert runtime_bridge["status"] == "ok"
+    assert runtime_bridge["codexAppServer"] == {
+        "status": "ok",
+        "command": "codex",
+        "args": "app-server",
+        "configured": True,
+        "available": True,
+        "platform": sys.platform,
+        "windowsFirst": True,
+    }
+    assert runtime_bridge["sandbox"]["status"] == "ok"
+    assert runtime_bridge["providerRoutes"]["status"] == "ok"
+    assert runtime_bridge["providerRoutes"]["nativeCount"] == 2
+    assert [route["kind"] for route in runtime_bridge["providerRoutes"]["routes"]] == [
+        "slack",
+        "discord",
+    ]
+    assert runtime_bridge["pluginExecutors"] == {
+        "status": "ok",
+        "count": 2,
+        "ownerOnlyCount": 1,
+        "tools": [
+            {
+                "tool": "native_runtime.search",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": False,
+                "optional": False,
+                "source": "registry",
+            },
+            {
+                "tool": "native_runtime.owner",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": True,
+                "optional": False,
+                "source": "registry",
+            },
+        ],
+    }
+    assert runtime_bridge["acp"] == {
+        "status": "ok",
+        "enabled": True,
+        "spawnService": "registered",
+    }
 
 
 def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:
@@ -6106,6 +6272,665 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             "toolNames": ["native_runtime.search"],
         }
     ]
+
+
+def test_plugins_list_json_preserves_manifest_command_aliases(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "memory-core"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "memory-core",
+                "name": "Memory Core",
+                "description": "Memory command alias plugin.",
+                "version": "0.4.0",
+                "configSchema": {"type": "object"},
+                "commandAliases": [
+                    "memory",
+                    {
+                        "name": "reindex",
+                        "kind": "runtime-slash",
+                        "cliCommand": "memory",
+                    },
+                    {"name": ""},
+                    {"name": "bad-kind", "kind": "unknown"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["source"] == str(manifest_path)
+    assert payload["plugins"][0]["commandAliases"] == [
+        {"name": "memory"},
+        {"name": "reindex", "kind": "runtime-slash", "cliCommand": "memory"},
+        {"name": "bad-kind"},
+    ]
+
+
+def test_plugins_list_json_preserves_manifest_activation_and_setup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "providers": ["openai"],
+                "configSchema": {"type": "object"},
+                "activation": {
+                    "onProviders": ["openai", ""],
+                    "onAgentHarnesses": ["codex"],
+                    "onCommands": ["models"],
+                    "onChannels": ["web"],
+                    "onRoutes": ["gateway-webhook"],
+                    "onCapabilities": ["provider", "tool", "unknown"],
+                },
+                "setup": {
+                    "providers": [
+                        {
+                            "id": "openai",
+                            "authMethods": ["api-key"],
+                            "envVars": ["OPENAI_API_KEY", ""],
+                        },
+                        {"id": ""},
+                    ],
+                    "cliBackends": ["openai-cli"],
+                    "configMigrations": ["legacy-openai-auth"],
+                    "requiresRuntime": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["source"] == str(manifest_path)
+    assert payload["plugins"][0]["activation"] == {
+        "onProviders": ["openai"],
+        "onAgentHarnesses": ["codex"],
+        "onCommands": ["models"],
+        "onChannels": ["web"],
+        "onRoutes": ["gateway-webhook"],
+        "onCapabilities": ["provider", "tool"],
+    }
+    assert payload["plugins"][0]["setup"] == {
+        "providers": [
+            {
+                "id": "openai",
+                "authMethods": ["api-key"],
+                "envVars": ["OPENAI_API_KEY"],
+            }
+        ],
+        "cliBackends": ["openai-cli"],
+        "configMigrations": ["legacy-openai-auth"],
+        "requiresRuntime": False,
+    }
+
+
+def test_plugins_list_json_preserves_manifest_auth_and_env_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "enabledByDefault": True,
+                "providers": ["openai", "openai-codex"],
+                "configSchema": {"type": "object"},
+                "providerAuthEnvVars": {
+                    "openai": ["OPENAI_API_KEY", ""],
+                    "": ["IGNORED"],
+                },
+                "providerEndpoints": [
+                    {
+                        "endpointClass": "openai-public",
+                        "hosts": ["API.OPENAI.COM", ""],
+                        "baseUrls": ["https://api.openai.com/v1"],
+                    },
+                    {"endpointClass": "empty"},
+                ],
+                "syntheticAuthRefs": ["openai-cli", ""],
+                "nonSecretAuthMarkers": ["openai-cli"],
+                "providerAuthAliases": {
+                    "openai-codex": "openai",
+                    "ignored": "",
+                },
+                "providerAuthChoices": [
+                    {
+                        "provider": "openai",
+                        "method": "api-key",
+                        "choiceId": "openai-api-key",
+                        "choiceLabel": "OpenAI API key",
+                        "choiceHint": "Paste a key.",
+                        "assistantPriority": 10,
+                        "assistantVisibility": "visible",
+                        "deprecatedChoiceIds": ["openai-legacy", ""],
+                        "groupId": "openai",
+                        "groupLabel": "OpenAI",
+                        "groupHint": "OpenAI auth",
+                        "optionKey": "apiKey",
+                        "cliFlag": "--api-key",
+                        "cliOption": "api-key",
+                        "cliDescription": "Set an API key.",
+                        "onboardingScopes": ["text-inference", "invalid"],
+                    },
+                    {"provider": "", "method": "api-key", "choiceId": "ignored"},
+                ],
+                "channelEnvVars": {
+                    "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", ""],
+                    "": ["IGNORED"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["providerAuthEnvVars"] == {"openai": ["OPENAI_API_KEY"]}
+    assert plugin["providerEndpoints"] == [
+        {
+            "endpointClass": "openai-public",
+            "hosts": ["api.openai.com"],
+            "baseUrls": ["https://api.openai.com/v1"],
+        }
+    ]
+    assert plugin["syntheticAuthRefs"] == ["openai-cli"]
+    assert plugin["nonSecretAuthMarkers"] == ["openai-cli"]
+    assert plugin["providerAuthAliases"] == {"openai-codex": "openai"}
+    assert plugin["providerAuthChoices"] == [
+        {
+            "provider": "openai",
+            "method": "api-key",
+            "choiceId": "openai-api-key",
+            "choiceLabel": "OpenAI API key",
+            "choiceHint": "Paste a key.",
+            "assistantPriority": 10,
+            "assistantVisibility": "visible",
+            "deprecatedChoiceIds": ["openai-legacy"],
+            "groupId": "openai",
+            "groupLabel": "OpenAI",
+            "groupHint": "OpenAI auth",
+            "optionKey": "apiKey",
+            "cliFlag": "--api-key",
+            "cliOption": "api-key",
+            "cliDescription": "Set an API key.",
+            "onboardingScopes": ["text-inference"],
+        }
+    ]
+    assert plugin["channelEnvVars"] == {
+        "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]
+    }
+
+
+def test_plugins_list_json_preserves_manifest_qa_runners(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "qa-matrix"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "qa-matrix",
+                "configSchema": {"type": "object"},
+                "qaRunners": [
+                    {
+                        "commandName": "matrix",
+                        "description": "Run the Matrix live QA lane",
+                    },
+                    {"commandName": ""},
+                    {"commandName": "smoke"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["qaRunners"] == [
+        {
+            "commandName": "matrix",
+            "description": "Run the Matrix live QA lane",
+        },
+        {"commandName": "smoke"},
+    ]
+
+
+def test_plugins_list_json_preserves_manifest_channel_configs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "matrix"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "matrix",
+                "channels": ["matrix"],
+                "configSchema": {"type": "object"},
+                "channelConfigs": {
+                    "matrix": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"homeserver": {"type": "string"}},
+                        },
+                        "uiHints": {"homeserver": {"label": "Homeserver"}},
+                        "label": "Matrix",
+                        "description": "Matrix config",
+                        "preferOver": ["matrix-legacy", ""],
+                    },
+                    "ignored": {"label": "Missing schema"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["channelConfigs"] == {
+        "matrix": {
+            "schema": {
+                "type": "object",
+                "properties": {"homeserver": {"type": "string"}},
+            },
+            "uiHints": {"homeserver": {"label": "Homeserver"}},
+            "label": "Matrix",
+            "description": "Matrix config",
+            "preferOver": ["matrix-legacy"],
+        }
+    }
+
+
+def test_plugins_list_json_preserves_manifest_model_support(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "openai"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "openai",
+                "configSchema": {"type": "object"},
+                "modelSupport": {
+                    "modelPrefixes": ["gpt-", ""],
+                    "modelPatterns": ["^o[0-9]+", ""],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["modelSupport"] == {
+        "modelPrefixes": ["gpt-"],
+        "modelPatterns": ["^o[0-9]+"],
+    }
+
+
+def test_plugins_list_json_projects_runtime_executor_inventory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"native-runtime": {"enabled": True}},
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.owner",
+                executor=fake_executor,
+                owner_only=True,
+                optional=True,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeExecutors"] == {
+        "status": "ok",
+        "count": 2,
+        "ownerOnlyCount": 1,
+        "tools": [
+            {
+                "tool": "native_runtime.search",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": False,
+                "optional": False,
+                "source": "registry",
+            },
+            {
+                "tool": "native_runtime.owner",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": True,
+                "optional": True,
+                "source": "registry",
+            },
+        ],
+    }
+
+
+def test_plugins_list_verbose_reports_runtime_executor_inventory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"entries": {"native-runtime": {"enabled": True}}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.owner",
+                executor=fake_executor,
+                owner_only=True,
+                optional=True,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--verbose"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Runtime executors (2 registered, 1 owner-only)" in result.stdout
+    assert "- native_runtime.search [native-runtime] source=registry" in result.stdout
+    assert (
+        "- native_runtime.owner [native-runtime] source=registry optional owner-only"
+        in result.stdout
+    )
 
 
 def _write_openclaw_runtime_plugin(
@@ -12015,6 +12840,69 @@ def test_routes_send_accepts_openclaw_media_and_thread_id_aliases(monkeypatch) -
     ]
 
 
+def test_routes_send_prefers_openclaw_message_thread_and_reply_aliases(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 46,
+                "messageId": "matrix-46",
+                "channel": "matrix",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "send",
+            "--channel",
+            "matrix",
+            "--to",
+            "room:!ops:example.org",
+            "--message",
+            "Threaded reply.",
+            "--thread",
+            "$fallback-thread",
+            "--message-thread-id",
+            "$message-thread",
+            "--reply-to",
+            "$fallback-reply",
+            "--reply-to-message-id",
+            "$message-reply",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "matrix",
+            "to": "room:!ops:example.org",
+            "message": "Threaded reply.",
+            "media_urls": [],
+            "gif_playback": None,
+            "reply_to_id": "$message-reply",
+            "silent": None,
+            "force_document": None,
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": "$message-thread",
+            "session_key": None,
+            "idempotency_key": None,
+        }
+    ]
+
+
 def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -12147,6 +13035,74 @@ def test_routes_poll_accepts_openclaw_thread_id_alias(monkeypatch) -> None:
             "account_id": None,
             "reply_to_id": None,
             "thread_id": "topic-123",
+            "idempotency_key": None,
+        }
+    ]
+
+
+def test_routes_poll_prefers_openclaw_message_thread_and_reply_aliases(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 47,
+                "messageId": "matrix-poll-47",
+                "pollId": "poll-47",
+                "channel": "matrix",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "matrix",
+            "--to",
+            "room:!ops:example.org",
+            "--question",
+            "Pick a deploy lane?",
+            "--option",
+            "canary",
+            "--option",
+            "stable",
+            "--thread",
+            "$fallback-thread",
+            "--message-thread-id",
+            "$message-thread",
+            "--reply-to",
+            "$fallback-reply",
+            "--reply-to-message-id",
+            "$message-reply",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "matrix",
+            "to": "room:!ops:example.org",
+            "question": "Pick a deploy lane?",
+            "options": ["canary", "stable"],
+            "max_selections": None,
+            "duration_seconds": None,
+            "duration_hours": None,
+            "silent": None,
+            "is_anonymous": None,
+            "account_id": None,
+            "reply_to_id": "$message-reply",
+            "thread_id": "$message-thread",
             "idempotency_key": None,
         }
     ]

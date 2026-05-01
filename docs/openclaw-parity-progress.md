@@ -3,10 +3,11 @@
 ## Snapshot
 
 - Updated: 2026-05-01.
-- Estimated repo-wide parity: ~45% overall, with a reasonable band of ~40-50%.
-- Estimated active gateway/session/tool-contract family parity: ~97% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~48% overall, with a reasonable band of ~43-53%.
+- Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support metadata slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -706,6 +707,141 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_inspect_json_preserves_runtime_executor_optional_metadata or
   plugins_inspect_json_projects_record_runtime_surfaces"` (`3 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- `plugins list --json` now also includes a top-level
+  `runtimeExecutors` inventory from the native
+  `GatewayPluginRuntimeService.catalog_specs()` projection, using the same
+  `status`, `count`, `ownerOnlyCount`, and per-tool provider metadata shape as
+  the runtime bridge doctor surface. `plugins list --verbose` now also prints
+  the same registered runtime executor tools, including plugin id, source,
+  optional, and owner-only markers, for human operator parity.
+- Verified the plugin list runtime-executor inventory slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory
+  -q` (`1 passed`), human-output proof `python -m pytest
+  tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory
+  -q` (`1 passed`), adjacent plugin CLI proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_projects_runtime_executor_inventory or
+  plugins_list_verbose_reports_runtime_executor_inventory or
+  plugins_list_json_projects_hermes_plugin_inventory or
+  plugins_list_enabled_filters_loaded_plugins or
+  plugins_list_json_includes_saved_config_install_records or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_preserves_runtime_executor_optional_metadata"` (`8
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only `plugins.load.paths` discovery now also preserves OpenClaw
+  manifest-owned `commandAliases` entries, normalizing string aliases and
+  object aliases with `kind="runtime-slash"` / `cliCommand` metadata so CLI
+  diagnostics and plugin inventory can distinguish plugin ids from runtime
+  slash-command aliases before importing plugin code.
+- Verified the manifest command-alias metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_command_aliases
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`6 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest
+  `activation` and `setup` descriptors, including provider/agent-harness/
+  command/channel/route/capability activation hints plus setup provider auth
+  methods, env vars, CLI backend ids, config migration ids, and
+  `requiresRuntime` posture.
+- Verified the manifest activation/setup descriptor slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_activation_and_setup
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest auth/env
+  metadata: provider auth env vars, provider endpoint hints with lowercased
+  hosts, synthetic auth refs, non-secret auth markers, provider auth aliases,
+  provider auth choices, and channel env vars.
+- Verified the manifest auth/env metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`8 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest
+  `qaRunners` descriptors, including the QA command name and optional
+  description used by QA fallback host stubs.
+- Verified the manifest QA runner descriptor slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_qa_runners -q`
+  (`1 passed`), adjacent metadata proof `python -m pytest tests\test_cli.py
+  -q -k
+  "plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`9 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest
+  `channelConfigs` entries with required schemas plus UI hints, labels,
+  descriptions, and `preferOver` fallback ordering.
+- Verified the manifest channel-config metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_channel_configs
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`10 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Metadata-only plugin discovery now also preserves OpenClaw manifest
+  `modelSupport` entries, including model-prefix and regex-pattern metadata
+  used for pre-runtime model-family ownership.
+- Verified the manifest model-support metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_model_support
+  -q` (`1 passed`), adjacent metadata proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"` (`11 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - `plugins list --json`, `plugins inspect --json`, and `plugins doctor --json`
   now project OpenClaw-style bundled plugin runtime dependency inventory from
   `package.json` `dependencies` / `optionalDependencies`, compute bundled
@@ -1507,12 +1643,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
 | Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
-| Cron wake/delivery | Strong partial | ~98% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
+| Cron wake/delivery | Strong partial | ~99% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, direct-announce provider metadata, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~90% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Partial | ~91% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, and model-support metadata, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
-| Channels + direct announce delivery | Strong partial | ~96% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
+| Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
 | Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
 
@@ -1552,6 +1688,35 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `python -m pytest tests\test_cli.py -q -k "plugins_"`: 16 passed after rechecking plugin list/inspect/doctor/marketplace/install/update/uninstall/toggle surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin runtime inspect projection slice.
 - `mypy src\openzues\cli.py`: clean after the plugin runtime inspect projection slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory -q`: 1 passed after projecting top-level plugin runtime executor inventory through `plugins list --json`.
+- `python -m pytest tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory -q`: 1 passed after adding verbose human output for the same runtime executor inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_projects_runtime_executor_inventory or plugins_list_verbose_reports_runtime_executor_inventory or plugins_list_json_projects_hermes_plugin_inventory or plugins_list_enabled_filters_loaded_plugins or plugins_list_json_includes_saved_config_install_records or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_preserves_runtime_executor_optional_metadata"`: 8 passed after rechecking adjacent plugin list/inspect runtime surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the plugin list runtime executor inventory slice.
+- `mypy src\openzues\cli.py`: clean after the plugin list runtime executor inventory slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_command_aliases -q`: 1 passed after preserving OpenClaw manifest command aliases in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 6 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest command-alias metadata slice.
+- `mypy src\openzues\cli.py`: clean after the manifest command-alias metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_activation_and_setup -q`: 1 passed after preserving OpenClaw manifest activation/setup descriptors in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 7 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest activation/setup descriptor slice.
+- `mypy src\openzues\cli.py`: clean after the manifest activation/setup descriptor slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata -q`: 1 passed after preserving OpenClaw manifest auth/env metadata in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 8 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest auth/env metadata slice.
+- `mypy src\openzues\cli.py`: clean after the manifest auth/env metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_qa_runners -q`: 1 passed after preserving OpenClaw manifest QA runner descriptors in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 9 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest QA runner descriptor slice.
+- `mypy src\openzues\cli.py`: clean after the manifest QA runner descriptor slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_channel_configs -q`: 1 passed after preserving OpenClaw manifest channel config metadata in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 10 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest channel-config metadata slice.
+- `mypy src\openzues\cli.py`: clean after the manifest channel-config metadata slice.
+- `python -m pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_model_support -q`: 1 passed after preserving OpenClaw manifest model-support metadata in plugin inventory.
+- `python -m pytest tests\test_cli.py -q -k "plugins_list_json_preserves_manifest_model_support or plugins_list_json_preserves_manifest_channel_configs or plugins_list_json_preserves_manifest_qa_runners or plugins_list_json_preserves_manifest_auth_and_env_metadata or plugins_list_json_preserves_manifest_activation_and_setup or plugins_list_json_preserves_manifest_command_aliases or plugins_list_json_discovers_openclaw_manifest_load_paths or plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or plugins_inspect_json_projects_runtime_executor_tools or plugins_inspect_json_projects_record_runtime_surfaces or plugins_inspect_all_json_includes_saved_install_records"`: 11 passed after rechecking adjacent plugin metadata inventory/inspect surfaces.
+- `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the manifest model-support metadata slice.
+- `mypy src\openzues\cli.py`: clean after the manifest model-support metadata slice.
 - `python -m pytest tests\test_cli.py::test_plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies tests\test_cli.py::test_plugins_doctor_json_reports_missing_bundled_runtime_dependencies tests\test_cli.py::test_plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins -q`: 3 passed after adding bundled plugin runtime dependency inventory and doctor diagnostics.
 - `python -m pytest tests\test_cli.py -q -k "plugins_list_json_discovers_openclaw_manifest_load_paths or runtime_deps or runtime_dependencies or plugins_doctor or plugins_inspect_json_projects_runtime_executor_tools"`: 8 passed after rechecking adjacent plugin CLI surfaces.
 - `ruff check src\openzues\cli.py tests\test_cli.py`: clean after the bundled plugin runtime dependency doctor slice.
@@ -6467,6 +6632,88 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`14
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Saved native-provider media replays now preserve OpenClaw's original-caption
+  behavior: BlueBubbles/LINE/Matrix/WhatsApp/Zalo-style media adapters receive
+  the original payload `message` on replay instead of the generic formatted
+  fallback that appends the `Media:` inventory, while generic provider/session
+  replay remains unchanged.
+- Verified the native media replay caption slice with `python -m pytest
+  tests\test_ops_mesh.py::test_replay_outbound_deliveries_replays_native_media_with_original_caption
+  -q` (`1 failed` before implementation, replay sent `Photo caption` plus the
+  formatted media inventory), then the same command (`1 passed`), adjacent
+  replay/provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime
+  or replay_outbound_deliveries_replays_native_media_with_original_caption or
+  replay_outbound_deliveries_retries_saved_failed_gateway_poll_via_provider_runtime
+  or bluebubbles_"` (`17 passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Direct-announce provider delivery now preserves OpenClaw-style outbound
+  metadata across fresh sends, saved route scopes, delivery views, and replay:
+  ad-hoc announce sends return the shared direct-channel result, persisted rows
+  are tagged as `source="direct.announce"`, and provider-backed replays use the
+  saved channel/target/account instead of falling back to session-only delivery.
+- Progress estimates were adjusted after this slice: repo-wide parity moves
+  from roughly 45% to 46%, cron wake/delivery from roughly 98% to 99%, and
+  channels/direct announce from roughly 96% to 97%. These remain hand-scored
+  planning estimates, not generated coverage metrics.
+- Verified the direct-announce provider metadata slice with `python -m pytest
+  tests\test_ops_mesh.py::test_send_ad_hoc_announce_delivery_returns_provider_transport_metadata
+  -q` (`1 failed` before implementation because the ad-hoc announce owner
+  delivered but returned `None`), then focused proof plus direct-announce replay
+  `python -m pytest
+  tests\test_ops_mesh.py::test_send_ad_hoc_announce_delivery_returns_provider_transport_metadata
+  tests\test_ops_mesh.py::test_replay_outbound_deliveries_replays_direct_announce_via_provider_runtime
+  -q` (`2 passed`), and adjacent replay/direct-provider proof `python -m pytest
+  tests\test_ops_mesh.py -q -k
+  "send_ad_hoc_announce_delivery_returns_provider_transport_metadata or
+  replay_outbound_deliveries_replays_direct_announce_via_provider_runtime or
+  delivers_explicit_cron_failure_to_announce_thread_target or
+  dedupes_replayed_cron_failure_announce_delivery or
+  replay_outbound_deliveries_retries_saved_failed_announce_delivery or
+  replay_outbound_deliveries_retries_saved_failed_gateway_send_via_provider_runtime
+  or replay_outbound_deliveries_replays_native_media_with_original_caption"` (`8
+  passed`).
+- Top-level `doctor --json` and human doctor output now include a native
+  `runtimeBridge` posture rollup for the OpenClaw runtime/CLI packaging and
+  doctor seam. The rollup reports Codex app-server command readiness, resolved
+  sandbox posture, native provider route readiness, ordered plugin executor
+  inventory, and ACP spawn-service availability without claiming non-Windows
+  parity.
+- Progress estimates were adjusted after this slice: repo-wide parity moves
+  from roughly 46% to 47%, active gateway/session/tool-contract parity from
+  roughly 97% to 98%, and runtime/CLI/doctor native-bridge parity is now
+  tracked at roughly 96%. These remain hand-scored planning estimates, not
+  generated coverage metrics.
+- Verified the runtime bridge doctor posture slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_runtime_bridge_posture -q` (`1
+  failed` before implementation because `runtimeBridge` was absent), then the
+  same command (`1 passed`), adjacent doctor/runtime proof `python -m pytest
+  tests\test_cli.py -q -k
+  "runtime_bridge_posture or gateway_runtime_node or
+  doctor_json_includes_sandbox_contribution or
+  doctor_json_includes_security_and_shell_completion_surfaces or
+  doctor_json_includes_gateway_health_contribution_and_channel_warnings or
+  doctor_and_update_status_json_include_hermes_sections or
+  doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`8
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Provider route `send` and `poll` CLI commands now accept OpenClaw's
+  `messageThreadId` / `replyToMessageId` aliases as
+  `--message-thread-id` / `--reply-to-message-id`, with the same precedence
+  over `--thread` / `--reply-to` used by
+  `src/cli/send-runtime/channel-outbound-send.ts`.
+- Progress estimates were adjusted after this slice: runtime/CLI/doctor
+  native-bridge parity moves from roughly 96% to 97%. Repo-wide parity remains
+  roughly 47% because packaging/distribution and standalone ACP bridge breadth
+  still dominate the whole-product estimate.
+- Verified the provider route CLI alias slice with `python -m pytest
+  tests\test_cli.py::test_routes_send_prefers_openclaw_message_thread_and_reply_aliases
+  tests\test_cli.py::test_routes_poll_prefers_openclaw_message_thread_and_reply_aliases
+  -q` (`2 failed` before implementation because the CLI rejected the aliases),
+  then the same command (`2 passed`), adjacent route send/poll proof `python -m
+  pytest tests\test_cli.py -q -k "routes_send or routes_poll"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 
