@@ -439,7 +439,10 @@ WhatsApp Cloud API native route sends now also apply `replyToId` as Cloud API
 payload and provider-result metadata. `gifPlayback=true` WhatsApp media sends
 now use Cloud API `type="video"` / `video.link`, mirroring OpenClaw's
 WhatsApp video/GIF outbound behavior while keeping the existing caption and
-saved delivery metadata path.
+saved delivery metadata path. WhatsApp `message.action poll` now dispatches
+through the native interactive-button poll route, preserving OpenClaw's
+`pollQuestion`, `pollOption`, and `pollMulti` action params while returning
+provider `messageId`, `channelId`, `conversationId`, and `pollId` metadata.
 Zalo native route-backed direct text sends now use OpenClaw's Bot API
 `/bot{token}/sendMessage` shape and 2000-character split behavior, with native
 provider result metadata persisted through the direct-send delivery path.

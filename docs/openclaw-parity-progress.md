@@ -4974,6 +4974,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_discord_poll_route"` (`5 passed`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- WhatsApp `message.action poll` now reaches the native Cloud API
+  interactive-button poll runtime instead of falling through unsupported. The
+  action forwards OpenClaw-style `to`, `pollQuestion`, `pollOption`, and
+  `pollMulti` into `gateway/poll`, returning provider `messageId`,
+  `channelId`, `conversationId`, and `pollId` metadata.
+- Verified the WhatsApp action-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "whatsapp_poll_route"` (`1 passed`), adjacent
+  route/provider coverage `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_whatsapp_poll_route or
+  message_action_dispatches_whatsapp_react_route or
+  send_direct_channel_poll_uses_whatsapp_native_route or
+  message_action_dispatches_slack_poll_route or
+  message_action_dispatches_telegram_poll_route or
+  message_action_dispatches_discord_poll_route"` (`6 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - Sandbox `explain` now includes OpenClaw's read-only agent workspace mount
   hint: when the effective sandbox workspace access is `ro`, JSON and human
   output expose `agentWorkspaceMount="/agent"` so callers can distinguish the

@@ -7515,6 +7515,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "whatsapp" and action == "poll":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native WhatsApp route is configured for message.action poll."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_whatsapp_poll_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "telegram" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -8141,6 +8157,88 @@ class OpsMeshService:
         if remove or not emoji:
             return {"ok": True, "removed": True}
         return {"ok": True, "added": emoji}
+
+    def _dispatch_whatsapp_poll_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _message_action_param_string(request.params, "to", required=True)
+        if target is None:
+            raise RuntimeError("WhatsApp poll requires to.")
+        question = (
+            _message_action_param_string(
+                request.params,
+                "pollQuestion",
+                required=True,
+            )
+            or ""
+        )
+        options = _message_action_param_string_array(
+            request.params,
+            "pollOption",
+            required=True,
+            label="pollOption",
+        )
+        options = _normalize_direct_channel_poll_options(options or [])
+        _validate_direct_channel_poll_shape(question, options)
+        _validate_direct_channel_poll_option_count("whatsapp", options)
+        allow_multiselect = _message_action_param_bool(request.params, "pollMulti") is True
+        max_selections = len(options) if allow_multiselect else 1
+        explicit_max = _message_action_param_integer(request.params, "maxSelections")
+        if explicit_max is not None:
+            max_selections = explicit_max
+        _validate_direct_channel_poll_max_selections(options, max_selections)
+
+        event: dict[str, Any] = {
+            "to": target,
+            "question": question,
+            "options": options,
+            "maxSelections": max_selections,
+        }
+        duration_seconds = _message_action_param_integer(
+            request.params,
+            "durationSeconds",
+            "pollDurationSeconds",
+        )
+        duration_hours = _message_action_param_integer(
+            request.params,
+            "durationHours",
+            "pollDurationHours",
+        )
+        if duration_seconds is not None:
+            event["durationSeconds"] = duration_seconds
+        if duration_hours is not None:
+            event["durationHours"] = duration_hours
+        silent = _optional_bool_payload_value(request.params, "silent")
+        if silent is not None:
+            event["silent"] = silent
+        is_anonymous = _optional_bool_payload_value(request.params, "isAnonymous")
+        if is_anonymous is not None:
+            event["isAnonymous"] = is_anonymous
+
+        result = self._post_whatsapp_provider_event(
+            route,
+            "gateway/poll",
+            event,
+            secret_token,
+        )
+        message_id = str(result.get("messageId") or "").strip()
+        if not message_id:
+            raise RuntimeError("WhatsApp API response did not include a message id.")
+        channel_id = str(result.get("channelId") or result.get("chatId") or "").strip()
+        response_result: dict[str, object] = {
+            "messageId": message_id,
+            "channelId": channel_id,
+        }
+        conversation_id = result.get("conversationId")
+        if conversation_id is not None:
+            response_result["conversationId"] = str(conversation_id)
+        poll_id = result.get("pollId")
+        if poll_id is not None:
+            response_result["pollId"] = str(poll_id)
+        return {"ok": True, "result": response_result}
 
     def _dispatch_slack_react_message_action(
         self,
