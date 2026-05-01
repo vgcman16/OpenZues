@@ -3588,9 +3588,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   "message_action_dispatches_telegram"` and `python -m pytest
   tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
-  src\openzues\services\ops_mesh.py`. Remaining Telegram message-action
-  parity is `topic-create` / `createForumTopic` and `topic-edit` /
-  `editForumTopic` payload/result breadth.
+  src\openzues\services\ops_mesh.py`.
+- Closed the Telegram native `message.action topic-create` /
+  `createForumTopic` and `topic-edit` / `editForumTopic` seams from OpenClaw
+  `extensions/telegram/src/action-runtime.ts` and
+  `extensions/telegram/src/send.ts`: route-backed Telegram message actions now
+  call Bot API `createForumTopic` / `editForumTopic`, normalize topic-qualified
+  targets to the base supergroup chat id, validate supported topic icon colors,
+  forward custom icon emoji ids, and return OpenClaw-shaped topic result
+  envelopes. Verified with `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_topic_create_route or telegram_topic_edit_route"`, adjacent
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

@@ -6181,6 +6181,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py -q -k "telegram and message_action"` (`7 passed`
   each), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action topic-create` / `createForumTopic` and
+  `topic-edit` / `editForumTopic` now dispatch through the native Bot API forum
+  topic routes, including base-chat normalization for topic-qualified targets,
+  supported icon-color validation, custom icon emoji forwarding, and
+  OpenClaw-shaped topic result envelopes.
+- Verified the Telegram forum-topic action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_topic_create_route or
+  telegram_topic_edit_route"` (`2 passed`), adjacent Telegram action proofs
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"` (`9 passed`
+  each), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

@@ -1363,6 +1363,16 @@ def _telegram_api_endpoint(target: str | None, token: str, method: str) -> str:
     return endpoint
 
 
+_TELEGRAM_FORUM_TOPIC_ICON_COLORS = {
+    0x6FB9F0,
+    0xFFD67E,
+    0xCB86DB,
+    0x8EEE98,
+    0xFF93B2,
+    0xFB6F5F,
+}
+
+
 def _strip_telegram_target_prefixes(target: str | None) -> str:
     normalized = str(target or "").strip()
     while ":" in normalized:
@@ -9138,6 +9148,38 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "telegram" and action in {"createForumTopic", "topic-create"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_create_forum_topic_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "telegram" and action in {"editForumTopic", "topic-edit"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_edit_forum_topic_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "telegram" and action == "send":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -12027,6 +12069,130 @@ class OpsMeshService:
             "messageId": _telegram_message_id(result) or str(message_id),
             "chatId": _telegram_chat_from_result(result, chat_id),
         }
+
+    def _dispatch_telegram_create_forum_topic_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram createForumTopic requires chatId.")
+        name = _message_action_param_string(request.params, "name", required=True)
+        if name is None:
+            raise RuntimeError("Forum topic name is required.")
+        if len(name) > 128:
+            raise RuntimeError("Forum topic name must be 128 characters or fewer.")
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "name": name,
+        }
+        icon_color = _message_action_param_integer(request.params, "iconColor")
+        if icon_color is not None:
+            if icon_color not in _TELEGRAM_FORUM_TOPIC_ICON_COLORS:
+                raise RuntimeError(
+                    "iconColor must be one of Telegram's supported forum topic colors."
+                )
+            payload["icon_color"] = icon_color
+        icon_custom_emoji_id = _message_action_param_string(
+            request.params,
+            "iconCustomEmojiId",
+        )
+        if icon_custom_emoji_id is not None:
+            payload["icon_custom_emoji_id"] = icon_custom_emoji_id
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "createForumTopic",
+            ),
+            payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            raise RuntimeError(f"Telegram API returned {error}.")
+        result_payload = _telegram_result_payload(result)
+        topic_id = result_payload.get("message_thread_id")
+        if topic_id is None:
+            raise RuntimeError("Telegram API response did not include a topic id.")
+        return {
+            "ok": True,
+            "topicId": topic_id,
+            "name": str(result_payload.get("name") or name),
+            "chatId": chat_id,
+        }
+
+    def _dispatch_telegram_edit_forum_topic_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram editForumTopic requires chatId.")
+        message_thread_id = _message_action_param_positive_int(
+            request.params,
+            "messageThreadId",
+            "threadId",
+        )
+        if message_thread_id is None:
+            raise RuntimeError("messageThreadId or threadId is required.")
+        name = _message_action_param_string(request.params, "name")
+        if name is not None and len(name) > 128:
+            raise RuntimeError("Telegram forum topic name must be 128 characters or fewer.")
+        icon_custom_emoji_id = _message_action_param_string(
+            request.params,
+            "iconCustomEmojiId",
+        )
+        if name is None and icon_custom_emoji_id is None:
+            raise RuntimeError(
+                "Telegram forum topic update requires a name or iconCustomEmojiId."
+            )
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "message_thread_id": message_thread_id,
+        }
+        if name is not None:
+            payload["name"] = name
+        if icon_custom_emoji_id is not None:
+            payload["icon_custom_emoji_id"] = icon_custom_emoji_id
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "editForumTopic",
+            ),
+            payload,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            raise RuntimeError(f"Telegram API returned {error}.")
+        response: dict[str, object] = {
+            "ok": True,
+            "chatId": chat_id,
+            "messageThreadId": message_thread_id,
+        }
+        if name is not None:
+            response["name"] = name
+        if icon_custom_emoji_id is not None:
+            response["iconCustomEmojiId"] = icon_custom_emoji_id
+        return response
 
     def _dispatch_discord_set_presence_message_action(
         self,
