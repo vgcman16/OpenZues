@@ -550,8 +550,10 @@ OpenClaw-shaped `channels.matrix.accounts.<accountId>` config persistence.
 Matrix route-backed media sends now also include basic image dimension metadata
 for PNG/GIF/JPEG payloads in Matrix `info.w` / `info.h`, matching the
 OpenClaw media-info contract for image events.
+Matrix route-backed WAV audio sends now include OpenClaw-style `info.duration`
+metadata parsed from native RIFF/WAVE headers.
 Remaining Matrix provider parity is encrypted media, thumbnail generation, and
-audio/video duration metadata.
+broader video/non-WAV duration metadata.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

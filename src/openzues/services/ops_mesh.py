@@ -2502,6 +2502,45 @@ def _matrix_image_dimensions(
     return None
 
 
+def _matrix_wav_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_wav = normalized_content_type in {
+        "audio/wav",
+        "audio/wave",
+        "audio/x-wav",
+    } or normalized_filename.endswith(".wav")
+    if not is_wav or len(media) < 12 or not media.startswith(b"RIFF") or media[8:12] != b"WAVE":
+        return None
+    index = 12
+    byte_rate: int | None = None
+    data_size: int | None = None
+    while index + 8 <= len(media):
+        chunk_id = media[index : index + 4]
+        chunk_size = int.from_bytes(media[index + 4 : index + 8], "little")
+        chunk_start = index + 8
+        if chunk_id == b"fmt " and chunk_size >= 16 and chunk_start + 12 <= len(media):
+            byte_rate = int.from_bytes(media[chunk_start + 8 : chunk_start + 12], "little")
+        elif chunk_id == b"data":
+            data_size = chunk_size
+        if byte_rate and data_size is not None:
+            return max(0, round((data_size / byte_rate) * 1000))
+        index = chunk_start + chunk_size + (chunk_size % 2)
+    return None
+
+
+def _matrix_media_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    return _matrix_wav_duration_ms(media, content_type, filename)
+
+
 def _is_matrix_mxc_uri(value: str | None) -> bool:
     return str(value or "").strip().lower().startswith("mxc://")
 
@@ -16058,6 +16097,9 @@ class OpsMeshService:
             if dimensions is not None:
                 media_info["w"] = dimensions[0]
                 media_info["h"] = dimensions[1]
+            duration_ms = _matrix_media_duration_ms(media, content_type, filename)
+            if duration_ms is not None:
+                media_info["duration"] = duration_ms
             media_content: dict[str, object] = {
                 "msgtype": _matrix_media_msgtype(content_type, filename),
                 "body": body,
