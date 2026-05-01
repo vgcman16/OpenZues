@@ -920,7 +920,9 @@ version` is unavailable, the Hermes doctor payload carries the same actionable
 Sandbox warning text while preserving the existing warning surface. The
 top-level human/JSON doctor view now also reports OpenClaw-style session lock
 health for saved `agents/*/sessions/*.jsonl.lock` files, including pid
-liveness, age, stale posture, and read-only guidance without removing files.
+liveness, age, stale posture, read-only guidance, and `doctor --fix`
+stale-lock removal with `removedCount` / per-lock `removed` metadata while
+preserving fresh locks.
 The same state-integrity doctor surface now reports a structured
 `stateDirectory` payload and CRITICAL warning when the configured OpenZues data
 directory is missing, mirroring OpenClaw's missing-state-directory doctor

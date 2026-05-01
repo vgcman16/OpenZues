@@ -20572,6 +20572,41 @@ def test_doctor_human_output_reports_session_lock_files(tmp_path, monkeypatch) -
     assert lock_path.exists()
 
 
+def test_doctor_fix_removes_stale_session_lock_files(tmp_path, monkeypatch) -> None:
+    _bootstrap_cli_workspace(
+        tmp_path,
+        monkeypatch,
+        task_name="CLI Doctor Session Lock Repair",
+    )
+    data_dir = tmp_path / "data"
+    sessions_dir = data_dir / "agents" / "main" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    stale_lock = sessions_dir / "stale.jsonl.lock"
+    fresh_lock = sessions_dir / "fresh.jsonl.lock"
+    stale_lock.write_text(
+        json.dumps({"pid": -1, "createdAt": "2000-01-01T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    fresh_lock.write_text(
+        json.dumps({"pid": os.getpid(), "createdAt": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    session_locks = payload["session_locks"]
+    assert session_locks["staleCount"] == 1
+    assert session_locks["removedCount"] == 1
+    assert any(
+        lock["path"] == str(stale_lock) and lock["removed"] is True
+        for lock in session_locks["locks"]
+    )
+    assert not stale_lock.exists()
+    assert fresh_lock.exists()
+
+
 def test_hermes_profile_set_updates_saved_defaults(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     hermes_root = tmp_path / "hermes-agent-main"

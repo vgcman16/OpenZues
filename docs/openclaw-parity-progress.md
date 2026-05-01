@@ -400,14 +400,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_node_methods.py`.
 - Top-level `doctor` now reports OpenClaw-style session lock health for
   `agents/*/sessions/*.jsonl.lock` files in human and JSON output, including
-  pid liveness, age labels, stale posture, and read-only guidance.
+  pid liveness, age labels, stale posture, read-only guidance, and `--fix`
+  removal of stale locks while preserving fresh locks.
 - Verified the doctor session-lock slice with `python -m pytest
-  tests\test_cli.py -q -k "doctor_human_output_reports_session_lock_files"` (`1
-  passed`), adjacent doctor proof `python -m pytest tests\test_cli.py -q -k
-  "doctor_human_output_reports_session_lock_files or
-  doctor_json_warns_when_sandbox_enabled_without_docker or
-  doctor_and_update_status_json_include_hermes_sections"` (`3 passed`), `ruff
-  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+  tests\test_cli.py -q -k "doctor_human_output_reports_session_lock_files or
+  doctor_fix_removes_stale_session_lock_files"` (`2 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Top-level `doctor --json` now reports the OpenClaw state-integrity warning
   for a missing configured state/data directory, including a structured
   `stateDirectory` payload and the CRITICAL warning text from

@@ -3440,23 +3440,44 @@ def _with_doctor_state_directory_health(
     return next_payload
 
 
-def _doctor_session_lock_payload(data_dir: Path) -> dict[str, object] | None:
+def _doctor_session_lock_payload(
+    data_dir: Path,
+    *,
+    should_repair: bool = False,
+) -> dict[str, object] | None:
     lock_paths = sorted((data_dir / "agents").glob("*/sessions/*.jsonl.lock"))
     if not lock_paths:
         return None
-    locks = [_doctor_session_lock_record(lock_path) for lock_path in lock_paths]
+    locks: list[dict[str, object]] = []
+    removed_count = 0
+    for lock_path in lock_paths:
+        lock = _doctor_session_lock_record(lock_path)
+        if should_repair and lock.get("stale") is True:
+            try:
+                lock_path.unlink(missing_ok=True)
+                lock["removed"] = True
+                removed_count += 1
+            except OSError as exc:
+                lock["removeError"] = str(exc)
+        locks.append(lock)
     stale_count = sum(1 for lock in locks if lock.get("stale") is True)
     lines = [
         f"- Found {len(locks)} session lock file{'s' if len(locks) != 1 else ''}.",
         *[_doctor_session_lock_line(lock) for lock in locks],
     ]
-    if stale_count:
+    if stale_count and not should_repair:
         lines.append(f"- {stale_count} lock file{'s are' if stale_count != 1 else ' is'} stale.")
-        lines.append("- Remove stale lock files only after confirming no writer owns them.")
+        lines.append('- Run "openzues doctor --fix" to remove stale lock files automatically.')
+    if should_repair and removed_count:
+        lines.append(
+            f"- Removed {removed_count} stale session lock "
+            f"file{'s' if removed_count != 1 else ''}."
+        )
     return {
         "summary": lines[0][2:],
         "count": len(locks),
         "staleCount": stale_count,
+        "removedCount": removed_count,
         "locks": locks,
         "lines": lines,
     }
@@ -3507,7 +3528,8 @@ def _doctor_session_lock_line(lock: dict[str, object]) -> str:
         if lock.get("stale") is True
         else "stale=no"
     )
-    return f"- {path} {pid_status} {age_status} {stale_status}"
+    removed_status = " [removed]" if lock.get("removed") is True else ""
+    return f"- {path} {pid_status} {age_status} {stale_status}{removed_status}"
 
 
 def _doctor_session_lock_pid(value: object) -> int | None:
@@ -3578,8 +3600,10 @@ def _doctor_session_lock_age_label(value: object) -> str:
 def _with_doctor_session_lock_health(
     payload: dict[str, object],
     data_dir: Path,
+    *,
+    should_repair: bool = False,
 ) -> dict[str, object]:
-    session_locks = _doctor_session_lock_payload(data_dir)
+    session_locks = _doctor_session_lock_payload(data_dir, should_repair=should_repair)
     if session_locks is None:
         return payload
     next_payload = dict(payload)
@@ -21859,7 +21883,11 @@ def doctor(
         payload = _with_doctor_sandbox_payload(payload, services.gateway_config)
         if isinstance(data_dir, Path):
             payload = _with_doctor_state_directory_health(payload, data_dir)
-            payload = _with_doctor_session_lock_health(payload, data_dir)
+            payload = _with_doctor_session_lock_health(
+                payload,
+                data_dir,
+                should_repair=fix,
+            )
         payload = _with_doctor_legacy_cron_payload(
             payload,
             services.gateway_config,
