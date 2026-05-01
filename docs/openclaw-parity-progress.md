@@ -6240,6 +6240,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   telegram_media_group or telegram_buttons or telegram_pin"` (`12 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action send` now maps OpenClaw's action-level `buttons`
+  parameter to native Bot API `reply_markup.inline_keyboard`, preserving
+  callback data and optional styles while rejecting malformed rows/buttons,
+  callback data over 64 UTF-8 bytes, and unsupported styles before dispatch.
+- Verified the Telegram action-buttons slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_send_buttons"` (`1 failed` before
+  implementation, missing `reply_markup`), then `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_send_buttons"` (`1 passed`),
+  adjacent Telegram action proof `python -m pytest tests\test_ops_mesh.py -q
+  -k "telegram_send_buttons or
+  message_action_dispatches_telegram_send_document_alias or
+  message_action_dispatches_telegram"` (`10 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

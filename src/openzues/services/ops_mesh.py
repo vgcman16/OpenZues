@@ -1543,6 +1543,56 @@ def _telegram_inline_keyboard(channel_data: object) -> dict[str, object] | None:
     return {"inline_keyboard": keyboard_rows}
 
 
+_TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64
+_TELEGRAM_BUTTON_STYLES = {"danger", "success", "primary"}
+
+
+def _telegram_action_channel_data(params: dict[str, Any]) -> dict[str, object] | None:
+    raw_buttons = params.get("buttons")
+    if raw_buttons is None:
+        return None
+    if not isinstance(raw_buttons, list):
+        raise RuntimeError("buttons must be an array of button rows")
+    rows: list[list[dict[str, object]]] = []
+    for row_index, row in enumerate(raw_buttons):
+        if not isinstance(row, list):
+            raise RuntimeError(f"buttons[{row_index}] must be an array")
+        button_row: list[dict[str, object]] = []
+        for button_index, button in enumerate(row):
+            if not isinstance(button, dict):
+                raise RuntimeError(f"buttons[{row_index}][{button_index}] must be an object")
+            text = str(button.get("text") or "").strip()
+            callback_data = str(button.get("callback_data") or "").strip()
+            if not text or not callback_data:
+                raise RuntimeError(
+                    f"buttons[{row_index}][{button_index}] requires text and callback_data"
+                )
+            if len(callback_data.encode("utf-8")) > _TELEGRAM_CALLBACK_DATA_MAX_BYTES:
+                raise RuntimeError(
+                    f"buttons[{row_index}][{button_index}] callback_data too long "
+                    f"(max {_TELEGRAM_CALLBACK_DATA_MAX_BYTES} bytes)"
+                )
+            raw_style = button.get("style")
+            style = str(raw_style).strip().lower() if isinstance(raw_style, str) else None
+            if raw_style is not None and not isinstance(raw_style, str):
+                raise RuntimeError(f"buttons[{row_index}][{button_index}] style must be string")
+            if style and style not in _TELEGRAM_BUTTON_STYLES:
+                raise RuntimeError(
+                    f"buttons[{row_index}][{button_index}] style must be one of "
+                    f"{', '.join(sorted(_TELEGRAM_BUTTON_STYLES))}"
+                )
+            normalized_button: dict[str, object] = {
+                "text": text,
+                "callback_data": callback_data,
+            }
+            if style:
+                normalized_button["style"] = style
+            button_row.append(normalized_button)
+        if button_row:
+            rows.append(button_row)
+    return {"telegram": {"buttons": rows}} if rows else None
+
+
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_MAX_EMOJI_BYTES = 256 * 1024
 DISCORD_MAX_EVENT_COVER_BYTES = 8 * 1024 * 1024
@@ -12056,6 +12106,9 @@ class OpsMeshService:
             force_document = _optional_bool_payload_value(request.params, "asDocument")
         if force_document is not None:
             event["forceDocument"] = force_document
+        channel_data = _telegram_action_channel_data(request.params)
+        if channel_data is not None:
+            event["channelData"] = channel_data
         result = self._post_telegram_provider_event(
             route,
             "gateway/send",

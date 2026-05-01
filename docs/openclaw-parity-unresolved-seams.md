@@ -681,7 +681,10 @@ reaction-array remove shape and soft missing-message-id result. Telegram
 `message.action send` now also dispatches through the native Bot API route,
 including OpenClaw's `asDocument` alias for forced document sends plus
 reply/thread/silent/media forwarding and provider `messageId` / `mediaIds`
-projection. Telegram `message.action poll` now also dispatches through the
+projection. Telegram `message.action send` also maps OpenClaw-style action
+`buttons` to Bot API `reply_markup.inline_keyboard` with strict row, button,
+callback-data byte length, and style validation before dispatch. Telegram
+`message.action poll` now also dispatches through the
 native Bot API poll route, preserving OpenClaw's `pollQuestion`,
 `pollOption`, `pollMulti`, `replyTo`, `threadId`, and `silent` fields while
 returning provider `messageId`, `channelId`, `conversationId`, and `pollId`
