@@ -17,7 +17,7 @@ Current percentage rollup:
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata and Claude bundle command
-  projection slices.
+  plus MCP/LSP server projection slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1400,6 +1400,8 @@ normalized before Codex/Claude/Cursor bundle projection.
 Claude bundle command roots now also project Markdown command names into native
 plugin inventory/inspect metadata, including frontmatter `name` overrides,
 relative-path defaults, and `disable-model-invocation` skips.
+Bundle MCP/LSP server maps now also project into native plugin inventory/inspect
+metadata for inline and file-backed OpenClaw bundle config shapes.
 `plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
@@ -1421,9 +1423,9 @@ Inspect reports now also project OpenClaw-shaped policy summaries from
 surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
 `httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
 metadata-only manifest records instead of being zeroed in the report.
-Remaining plugin CLI parity is remote marketplace clone/update breadth, bundle
-MCP/LSP execution projection, and deeper runtime activation/import metadata
-beyond the native metadata/runtime projection.
+Remaining plugin CLI parity is remote marketplace clone/update breadth and
+deeper runtime activation/import metadata beyond the native metadata/runtime
+projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default

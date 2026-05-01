@@ -6419,6 +6419,7 @@ def test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths(
         "bundleCapabilities": ["skills", "hooks", "mcpServers", "apps"],
         "skills": ["skills"],
         "hooks": ["hooks"],
+        "mcpServers": ["sample"],
     }
     assert plugins["claude-sample"]["bundleFormat"] == "claude"
     assert plugins["claude-sample"]["bundleCapabilities"] == [
@@ -6654,6 +6655,87 @@ Do not expose this command.
     assert payload["plugin"]["commands"] == ["ship-it", "ops:status"]
     assert payload["commands"] == ["ship-it", "ops:status"]
     assert payload["bundleCapabilities"] == ["skills", "commands"]
+
+
+def test_plugins_inspect_json_projects_bundle_mcp_and_lsp_servers(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "claude-servers"
+    (plugin_dir / ".claude-plugin").mkdir(parents=True)
+    (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Claude Servers",
+                "description": "Claude server bundle.",
+                "mcpServers": ".mcp.json",
+                "lspServers": ".lsp.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "bundleProbe": {
+                        "command": "node",
+                        "args": ["./server.mjs"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / ".lsp.json").write_text(
+        json.dumps(
+            {
+                "lspServers": {
+                    "languageProbe": {
+                        "command": "node",
+                        "args": ["./lsp.mjs"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"claude-servers": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "inspect", "claude-servers", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["mcpServers"] == ["bundleProbe"]
+    assert payload["plugin"]["lspServers"] == ["languageProbe"]
+    assert payload["mcpServers"] == ["bundleProbe"]
+    assert payload["lspServers"] == ["languageProbe"]
+    assert payload["bundleCapabilities"] == ["mcpServers", "lspServers"]
 
 
 def test_plugins_list_json_preserves_manifest_command_aliases(

@@ -13146,8 +13146,8 @@ def _plugin_inspect_report(
         "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
         "services": _plugin_record_string_list(plugin, "services"),
         "gatewayMethods": _plugin_record_string_list(plugin, "gatewayMethods"),
-        "mcpServers": [],
-        "lspServers": [],
+        "mcpServers": _plugin_record_string_list(plugin, "mcpServers"),
+        "lspServers": _plugin_record_string_list(plugin, "lspServers"),
         "httpRouteCount": _plugin_record_http_route_count(plugin),
         "policy": dict(policy) if policy is not None else {},
         "diagnostics": [],
@@ -14593,6 +14593,69 @@ def _plugin_bundle_claude_commands(
     return _dedupe_cli_strings(commands)
 
 
+def _plugin_bundle_server_names_from_payload(
+    raw: object,
+    *,
+    key: str,
+) -> list[str]:
+    if not isinstance(raw, dict):
+        return []
+    nested = raw.get(key)
+    if isinstance(nested, dict):
+        source = nested
+    elif key == "mcpServers" and isinstance(raw.get("servers"), dict):
+        source = raw["servers"]
+    else:
+        source = raw
+    return [
+        server_name
+        for raw_name, raw_config in source.items()
+        if (server_name := _optional_cli_string(raw_name)) is not None
+        and isinstance(raw_config, dict)
+    ]
+
+
+def _plugin_bundle_server_config_paths(
+    bundle_format: str,
+    manifest: dict[str, object],
+    root_dir: Path,
+    *,
+    key: str,
+) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get(key))
+    default_path = ".mcp.json" if key == "mcpServers" else ".lsp.json"
+    if key == "lspServers" and bundle_format != "claude":
+        return declared
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_existing_defaults(root_dir, [default_path]),
+        declared,
+    )
+
+
+def _plugin_bundle_server_names(
+    bundle_format: str,
+    manifest: dict[str, object],
+    root_dir: Path,
+    *,
+    key: str,
+) -> list[str]:
+    names: list[str] = []
+    raw_inline = manifest.get(key)
+    if isinstance(raw_inline, dict):
+        names.extend(_plugin_bundle_server_names_from_payload(raw_inline, key=key))
+    for relative_path in _plugin_bundle_server_config_paths(
+        bundle_format,
+        manifest,
+        root_dir,
+        key=key,
+    ):
+        loaded = _read_cli_json5_object(root_dir / relative_path)
+        if loaded is None:
+            continue
+        names.extend(_plugin_bundle_server_names_from_payload(loaded, key=key))
+    return _dedupe_cli_strings(names)
+
+
 def _plugin_bundle_cursor_skill_paths(
     manifest: dict[str, object],
     root_dir: Path,
@@ -14770,6 +14833,22 @@ def _plugin_bundle_manifest_record(
         commands = _plugin_bundle_claude_commands(manifest, root_dir)
         if commands:
             record["commands"] = commands
+    mcp_servers = _plugin_bundle_server_names(
+        bundle_format,
+        manifest,
+        root_dir,
+        key="mcpServers",
+    )
+    if mcp_servers:
+        record["mcpServers"] = mcp_servers
+    lsp_servers = _plugin_bundle_server_names(
+        bundle_format,
+        manifest,
+        root_dir,
+        key="lspServers",
+    )
+    if lsp_servers:
+        record["lspServers"] = lsp_servers
     return record
 
 
