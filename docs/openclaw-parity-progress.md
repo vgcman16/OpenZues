@@ -6362,6 +6362,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   bluebubbles_edit_route or bluebubbles_unsend_route"` (`4 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage `message.action reply` and `sendWithEffect` now follow
+  OpenClaw's BlueBubbles send adapter by routing reply text, `messageId`,
+  `partIndex`, target chat GUIDs, and short effect aliases through
+  `POST /api/v1/message/text`, using Private API method payloads, temp GUIDs,
+  and upstream-shaped `messageId`, `repliedTo`, and `effect` results.
+- Verified the BlueBubbles reply/effect slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_reply_route or
+  bluebubbles_send_with_effect_route"` (`2 failed` before implementation,
+  actions returned `None`), then the same command (`2 passed`), adjacent
+  message-action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bluebubbles_reply_route or bluebubbles_send_with_effect_route or
+  bluebubbles_react_route or bluebubbles_remove_reaction_route or
+  bluebubbles_edit_route or bluebubbles_unsend_route"` (`6 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

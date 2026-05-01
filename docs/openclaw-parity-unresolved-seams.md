@@ -3675,13 +3675,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `POST /api/v1/message/react`, and preserve OpenClaw-shaped add/remove
   results. Verified with focused and adjacent OpsMesh action proofs, `ruff
   check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage `message.action reply`
-  and `sendWithEffect` remain open. Source anchors are
+- Closed the BlueBubbles/iMessage native `message.action reply` and
+  `sendWithEffect` seams from OpenClaw
   `extensions/bluebubbles/src/actions.ts` and
-  `extensions/bluebubbles/src/send.ts`; OpenZues must route reply message
-  content, `messageId`, `partIndex`, effect aliases, and chat target selection
-  through the native BlueBubbles send payload while preserving upstream-shaped
-  results.
+  `extensions/bluebubbles/src/send.ts`: route-backed BlueBubbles actions now
+  send `POST /api/v1/message/text` with Private API method, temp GUIDs, reply
+  `selectedMessageGuid` / `partIndex`, effect-id alias mapping, and
+  upstream-shaped `messageId`, `repliedTo`, and `effect` results. Verified with
+  focused and adjacent OpsMesh action proofs, `ruff check`, and `mypy`.
+- Next provider-native queue head: BlueBubbles/iMessage group-management
+  actions `renameGroup`, `addParticipant`, `removeParticipant`, and
+  `leaveGroup` remain open. Source anchors are
+  `extensions/bluebubbles/src/actions.ts` and
+  `extensions/bluebubbles/src/chat.ts`; OpenZues must route direct `chatGuid` /
+  `chat_guid` targets, display names, participant addresses, HTTP methods, and
+  upstream-shaped results through the native BlueBubbles route adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

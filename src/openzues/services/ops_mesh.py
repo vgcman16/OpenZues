@@ -220,6 +220,25 @@ BLUEBUBBLES_REACTION_EMOJIS = {
     "\u2753": "question",
     "\u2754": "question",
 }
+BLUEBUBBLES_EFFECT_IDS = {
+    "slam": "com.apple.MobileSMS.expressivesend.impact",
+    "loud": "com.apple.MobileSMS.expressivesend.loud",
+    "gentle": "com.apple.MobileSMS.expressivesend.gentle",
+    "invisible": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "invisible-ink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "invisible ink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "invisibleink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "echo": "com.apple.messages.effect.CKEchoEffect",
+    "spotlight": "com.apple.messages.effect.CKSpotlightEffect",
+    "balloons": "com.apple.messages.effect.CKHappyBirthdayEffect",
+    "confetti": "com.apple.messages.effect.CKConfettiEffect",
+    "love": "com.apple.messages.effect.CKHeartEffect",
+    "heart": "com.apple.messages.effect.CKHeartEffect",
+    "hearts": "com.apple.messages.effect.CKHeartEffect",
+    "lasers": "com.apple.messages.effect.CKLasersEffect",
+    "fireworks": "com.apple.messages.effect.CKFireworksEffect",
+    "celebration": "com.apple.messages.effect.CKSparklesEffect",
+}
 NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -969,6 +988,62 @@ def _bluebubbles_chat_guid_from_params(params: dict[str, Any]) -> str | None:
     if resolved is not None:
         return resolved
     return None
+
+
+def _bluebubbles_message_text(params: dict[str, Any]) -> str | None:
+    return _message_action_param_string(params, "text") or _message_action_param_string(
+        params,
+        "message",
+    )
+
+
+def _bluebubbles_chat_guid_from_send_target(params: dict[str, Any]) -> str | None:
+    target = _message_action_param_string(params, "to") or _message_action_param_string(
+        params,
+        "target",
+    )
+    resolved = _bluebubbles_chat_guid_value(target)
+    if resolved is not None:
+        return resolved
+    return _bluebubbles_chat_guid_from_params(params)
+
+
+def _bluebubbles_effect_id(raw: str | None) -> str | None:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    mapped = BLUEBUBBLES_EFFECT_IDS.get(lowered)
+    if mapped:
+        return mapped
+    dashed = re.sub(r"[\s_]+", "-", lowered)
+    mapped = BLUEBUBBLES_EFFECT_IDS.get(dashed)
+    if mapped:
+        return mapped
+    compact = re.sub(r"[\s_-]+", "", lowered)
+    return BLUEBUBBLES_EFFECT_IDS.get(compact) or normalized
+
+
+def _bluebubbles_message_id_from_result(result: object) -> str:
+    if not isinstance(result, dict):
+        return "ok" if result in (None, "") else "unknown"
+    roots: list[dict[str, Any]] = [result]
+    for key in ("data", "result", "payload", "message"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            roots.append(value)
+    data = result.get("data")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        roots.append(data[0])
+    for root in roots:
+        for key in ("message_id", "messageId", "messageGuid", "message_guid", "guid", "id", "uuid"):
+            candidate = root.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                if math.isfinite(float(candidate)):
+                    return str(candidate)
+    return "unknown"
 
 
 def _message_action_param_string(
@@ -9237,7 +9312,13 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
-        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {"edit", "react", "unsend"}:
+        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {
+            "edit",
+            "react",
+            "reply",
+            "sendWithEffect",
+            "unsend",
+        }:
             route = await self._bluebubbles_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -9257,6 +9338,20 @@ class OpsMeshService:
             if action == "react":
                 return await asyncio.to_thread(
                     self._dispatch_bluebubbles_react_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "reply":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_reply_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "sendWithEffect":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_send_with_effect_message_action,
                     route,
                     request,
                     secret_token,
@@ -10177,6 +10272,94 @@ class OpsMeshService:
         if remove:
             return {"ok": True, "removed": True}
         return {"ok": True, "added": emoji}
+
+    def _dispatch_bluebubbles_reply_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles reply requires messageId.")
+        message = _bluebubbles_message_text(request.params)
+        if message is None:
+            raise RuntimeError("BlueBubbles reply requires text or message.")
+        chat_guid = _bluebubbles_chat_guid_from_send_target(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles reply requires to or target chat_guid.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "tempGuid": str(uuid.uuid4()),
+            "message": message,
+            "method": "private-api",
+            "selectedMessageGuid": message_id,
+            "partIndex": part_index if part_index is not None else 0,
+        }
+        result = self._post_bluebubbles_text_message(route, secret_token, payload)
+        return {
+            "ok": True,
+            "messageId": _bluebubbles_message_id_from_result(result),
+            "repliedTo": message_id,
+        }
+
+    def _dispatch_bluebubbles_send_with_effect_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message = _bluebubbles_message_text(request.params)
+        if message is None:
+            raise RuntimeError("BlueBubbles sendWithEffect requires text or message.")
+        raw_effect = _message_action_param_string(
+            request.params,
+            "effectId",
+        ) or _message_action_param_string(request.params, "effect")
+        effect_id = _bluebubbles_effect_id(raw_effect)
+        if raw_effect is None or effect_id is None:
+            raise RuntimeError("BlueBubbles sendWithEffect requires effectId or effect.")
+        chat_guid = _bluebubbles_chat_guid_from_send_target(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles sendWithEffect requires to or target chat_guid.")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "tempGuid": str(uuid.uuid4()),
+            "message": message,
+            "method": "private-api",
+            "effectId": effect_id,
+        }
+        result = self._post_bluebubbles_text_message(route, secret_token, payload)
+        return {
+            "ok": True,
+            "messageId": _bluebubbles_message_id_from_result(result),
+            "effect": raw_effect,
+        }
+
+    def _post_bluebubbles_text_message(
+        self,
+        route: dict[str, Any],
+        secret_token: str | None,
+        payload: dict[str, object],
+    ) -> object:
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            "/api/v1/message/text",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        return result
 
     async def _dispatch_zalo_send_message_action(
         self,
