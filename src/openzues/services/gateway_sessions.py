@@ -359,6 +359,9 @@ class GatewaySessionsService:
         last_thread_id = _route_thread_id_or_none(session_payload.get("lastThreadId"))
         if last_thread_id is not None:
             payload["lastThreadId"] = last_thread_id
+        delivery_context = _delivery_context_or_none(session_payload.get("deliveryContext"))
+        if delivery_context is not None:
+            payload["deliveryContext"] = delivery_context
         total_tokens_fresh = _bool_or_none(session_payload.get("totalTokensFresh"))
         if total_tokens_fresh is not None:
             payload["totalTokensFresh"] = total_tokens_fresh
@@ -1793,6 +1796,7 @@ def _apply_session_event_metadata(
         "lastTo",
         "lastAccountId",
         "lastThreadId",
+        "deliveryContext",
     ):
         if field in session_payload:
             payload[field] = session_payload[field]

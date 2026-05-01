@@ -187,10 +187,18 @@ async def test_message_payloads_surface_spawn_and_route_metadata(tmp_path: Path)
         "lastAccountId": "acct-1",
         "lastThreadId": 42,
     }
+    expected_delivery_context = {
+        "channel": "telegram",
+        "to": "-100123",
+        "accountId": "acct-1",
+        "threadId": 42,
+    }
     assert message_payload is not None
     assert {key: message_payload.get(key) for key in expected_metadata} == expected_metadata
+    assert message_payload["deliveryContext"] == expected_delivery_context
     assert changed_payload is not None
     assert {key: changed_payload.get(key) for key in expected_metadata} == expected_metadata
+    assert changed_payload["deliveryContext"] == expected_delivery_context
 
 
 @pytest.mark.asyncio
@@ -461,7 +469,13 @@ async def test_changed_event_payload_surfaces_session_setting_route_metadata(
     assert payload["lastChannel"] == "telegram"
     assert payload["lastTo"] == "-100123"
     assert payload["lastAccountId"] == "acct-1"
-    assert payload["lastThreadId"] == "42"
+    assert payload["lastThreadId"] == 42
+    assert payload["deliveryContext"] == {
+        "channel": "telegram",
+        "to": "-100123",
+        "accountId": "acct-1",
+        "threadId": 42,
+    }
 
 
 @pytest.mark.asyncio
@@ -537,6 +551,12 @@ async def test_route_metadata_preserves_string_thread_ids(
         "threadId": "1737500000.123456",
     }
     assert changed_payload["lastThreadId"] == "1737500000.123456"
+    assert changed_payload["deliveryContext"] == {
+        "channel": "whatsapp",
+        "to": "+1555",
+        "accountId": "work",
+        "threadId": "1737500000.123456",
+    }
 
 
 @pytest.mark.asyncio

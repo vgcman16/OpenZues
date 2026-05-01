@@ -1708,6 +1708,14 @@ Current queue-head adjustment: transcript `session.message` and message-phase
 should move to session message subscription/filtering parity, `sessions.get`
 fidelity, or SSE fast-path replay gaps.
 
+Current queue-head adjustment: OpenZues now also carries the nested
+OpenClaw-shaped `deliveryContext` snapshot through live `session.message`,
+message-phase `sessions.changed`, and mutation `sessions.changed` event
+payloads, preserving numeric and string provider thread ids alongside the
+existing flattened last-route fields. The next bounded seam should stay with
+source-backed session event replay/finality shape or the next concrete
+`sessions.*` lifecycle metadata mismatch.
+
 Current queue-head adjustment: `sessions.get` now supports cursor pagination
 when the visible transcript spans multiple pages, preserving the legacy
 `messages` field while adding `items`, `hasMore`, `nextCursor`, and raw

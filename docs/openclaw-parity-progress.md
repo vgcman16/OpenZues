@@ -2224,6 +2224,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `pytest tests/test_gateway_sessions.py tests/test_gateway_node_methods.py -q -k "message_payloads_surface or chat_inject_sanitizes_live_session_message_events or chat_inject_appends or sessions_patch_persists_current_session_metadata"`: 6 passed after rechecking adjacent metadata/event paths.
 - `ruff check src/openzues/services/gateway_sessions.py tests/test_gateway_sessions.py tests/test_gateway_node_methods.py`: clean after the session event metadata breadth seam.
 - `mypy src/openzues/services/gateway_sessions.py`: clean after the session event metadata breadth seam.
+- Live `session.message`, message-phase `sessions.changed`, and mutation
+  `sessions.changed` events now include the nested OpenClaw-shaped
+  `deliveryContext` object already present on session snapshots, preserving
+  `channel`, `to`, `accountId`, and numeric/string `threadId` values alongside
+  the existing flattened last-route fields.
+- `python -m pytest tests\test_gateway_sessions.py::test_message_payloads_surface_spawn_and_route_metadata -q`
+  and `python -m pytest tests\test_gateway_sessions.py::test_route_metadata_preserves_string_thread_ids -q`:
+  both passed after extending event payload coverage.
+- `python -m pytest tests\test_gateway_sessions.py -q -k "message_payloads_surface_spawn_and_route_metadata or route_metadata_preserves_string_thread_ids or build_snapshot_surfaces_delivery_context_from_route_metadata or build_snapshot_derives_delivery_context_from_origin_metadata or changed_event_payload_surfaces_session_setting_route_metadata or changed_event_payload_surfaces_transcript_usage_metadata"`:
+  6 passed after rechecking session snapshot and event route metadata.
+- `python -m pytest tests\test_gateway_node_methods.py -q -k "session_message or sessions_changed or message_event or changed_event"`:
+  3 passed after rechecking the adjacent gateway-method event publisher paths.
+- `ruff check src\openzues\services\gateway_sessions.py
+  tests\test_gateway_sessions.py` and `mypy
+  src\openzues\services\gateway_sessions.py`: clean after the live
+  `deliveryContext` event seam.
 - `pytest tests/test_gateway_node_methods.py -q -k "sessions_get_supports_cursor_pagination"`: 1 passed after adding cursor pagination metadata and string `nextCursor` round-trip support to `sessions.get`.
 - `pytest tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py -q -k "sessions_get"`: 5 passed after rechecking legacy flat responses and API coverage.
 - `ruff check src/openzues/services/gateway_node_methods.py tests/test_gateway_node_methods.py tests/test_gateway_nodes_api.py`: clean after the `sessions.get` cursor seam.
