@@ -498,8 +498,11 @@ Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 targets to room ids, preserve reply/thread relation metadata, split text at
 Matrix's 4000-character event boundary, and persist `messageId`, `roomId`,
 `channelId`, `conversationId`, `primaryMessageId`, and ordered `messageIds`.
+Matrix native route-backed polls now also emit OpenClaw's `m.poll.start`
+payload with disclosed/undisclosed selection kind, answer ids, fallback text,
+thread relation metadata, and persisted `messageId` / `pollId` metadata.
 Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, native polls, profile/actions, account probes, and
+direct-room resolution, profile/actions, account probes, and
 read/reaction/edit/delete/pin action breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,

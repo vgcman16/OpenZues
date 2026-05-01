@@ -2361,6 +2361,39 @@ def _matrix_message_id(result: object) -> str | None:
     return str(candidate).strip() or None
 
 
+def _matrix_poll_fallback_text(question: str, options: list[str]) -> str:
+    return "\n".join(
+        [question, *[f"{index}. {option}" for index, option in enumerate(options, start=1)]]
+    )
+
+
+def _matrix_poll_start_content(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+) -> dict[str, object]:
+    normalized_max_selections = max(1, min(max_selections or 1, len(options)))
+    fallback_text = _matrix_poll_fallback_text(question, options)
+    return {
+        "m.poll.start": {
+            "question": {"m.text": question},
+            "kind": (
+                "m.poll.undisclosed"
+                if normalized_max_selections > 1
+                else "m.poll.disclosed"
+            ),
+            "max_selections": normalized_max_selections,
+            "answers": [
+                {"id": f"answer{index}", "m.text": option}
+                for index, option in enumerate(options, start=1)
+            ],
+        },
+        "m.text": fallback_text,
+        "org.matrix.msc1767.text": fallback_text,
+    }
+
+
 def _cron_delivery_summary(mission: dict[str, Any]) -> str | None:
     summary = str(mission.get("last_checkpoint") or "").strip()
     return summary or None
@@ -14344,8 +14377,10 @@ class OpsMeshService:
         event: dict[str, Any],
         secret_token: str | None,
     ) -> dict[str, object]:
+        if event_type == "gateway/poll":
+            return self._post_matrix_poll_provider_event(route, event, secret_token)
         if event_type != "gateway/send":
-            raise RuntimeError("Matrix native provider route poll sends are not implemented yet.")
+            raise RuntimeError("Matrix native provider route only supports sends and polls.")
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
         room_id = _matrix_room_id(
             str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
@@ -14406,6 +14441,61 @@ class OpsMeshService:
             "conversationId": room_id,
             "primaryMessageId": message_ids[0],
             "messageIds": message_ids,
+        }
+
+    def _post_matrix_poll_provider_event(
+        self,
+        route: dict[str, Any],
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        room_id = _matrix_room_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if room_id is None:
+            raise RuntimeError("Matrix route is missing a room target.")
+        question = str(event.get("question") or event.get("summary") or "").strip()
+        raw_options = event.get("options")
+        options = (
+            [str(option).strip() for option in raw_options if str(option).strip()]
+            if isinstance(raw_options, list)
+            else []
+        )
+        _validate_direct_channel_poll_shape(question, options)
+        max_selections = _optional_int_payload_value(event, "maxSelections")
+        _validate_direct_channel_poll_max_selections(options, max_selections)
+        content = _matrix_poll_start_content(
+            question=question,
+            options=options,
+            max_selections=max_selections,
+        )
+        thread_id = str(event.get("threadId") or "").strip() or None
+        relation = _matrix_relation(thread_id=thread_id, reply_to_id=None)
+        if relation is not None:
+            content["m.relates_to"] = relation
+        content["m.mentions"] = {}
+        result = self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.poll.start",
+                transaction_id=_matrix_transaction_id(event),
+            ),
+            content,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        message_id = _matrix_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "roomId": room_id,
+            "channelId": room_id,
+            "conversationId": room_id,
+            "pollId": message_id,
         }
 
     def _post_webhook(

@@ -11871,6 +11871,154 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_matrix_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_uses_matrix_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-matrix-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    matrix_target = "room:!ops:matrix.example"
+    await database.create_notification_route(
+        name="Matrix Native Poll Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": matrix_target,
+        },
+    )
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$matrix-poll-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="matrix",
+        to=matrix_target,
+        question="Deploy?",
+        options=["Ship", "Wait"],
+        max_selections=2,
+        thread_id="$poll-thread",
+        account_id="matrix-bot",
+        idempotency_key="idem-native-matrix-poll",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="matrix",
+                account_id="matrix-bot",
+                peer_kind="channel",
+                peer_id=matrix_target,
+            ),
+        ),
+        thread_id="$poll-thread",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-matrix-poll",
+        "channel": "matrix",
+        "messageId": "$matrix-poll-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "matrix",
+            "target": matrix_target,
+            "accountId": "matrix-bot",
+            "threadId": "$poll-thread",
+            "sessionKey": expected_session_key,
+        },
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "pollId": "$matrix-poll-1",
+    }
+    assert len(matrix_puts) == 1
+    matrix_endpoint, matrix_payload, matrix_header, matrix_token = matrix_puts[0]
+    assert re.fullmatch(
+        (
+            r"https://matrix\.example\.org/_matrix/client/v3/rooms/"
+            r"%21ops%3Amatrix\.example/send/m\.poll\.start/[a-f0-9]{32}"
+        ),
+        matrix_endpoint,
+    )
+    assert matrix_payload == {
+        "m.poll.start": {
+            "question": {"m.text": "Deploy?"},
+            "kind": "m.poll.undisclosed",
+            "max_selections": 2,
+            "answers": [
+                {"id": "answer1", "m.text": "Ship"},
+                {"id": "answer2", "m.text": "Wait"},
+            ],
+        },
+        "m.text": "Deploy?\n1. Ship\n2. Wait",
+        "org.matrix.msc1767.text": "Deploy?\n1. Ship\n2. Wait",
+        "m.relates_to": {
+            "rel_type": "m.thread",
+            "event_id": "$poll-thread",
+            "is_falling_back": True,
+            "m.in_reply_to": {"event_id": "$poll-thread"},
+        },
+        "m.mentions": {},
+    }
+    assert matrix_header == "Authorization"
+    assert matrix_token == "Bearer matrix-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["transport_runtime"] == "native-provider-backed"
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "$matrix-poll-1",
+        "roomId": "!ops:matrix.example",
+        "channelId": "!ops:matrix.example",
+        "conversationId": "!ops:matrix.example",
+        "pollId": "$matrix-poll-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

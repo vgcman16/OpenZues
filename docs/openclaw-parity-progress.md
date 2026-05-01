@@ -142,6 +142,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`.
+- Native Matrix route-backed polls now dispatch OpenClaw-style `m.poll.start`
+  events with disclosed/undisclosed max-selection handling, answer ids,
+  fallback text, thread relation metadata, bearer-token auth, and `pollId`
+  provider metadata.
+- Verified the Matrix native-poll slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_native_route"` (`2 passed`), adjacent
+  provider proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_native_route or line_native_route or direct_channel_message or
+  route_provider_send or route_provider_poll or gateway_send or gateway_poll or
+  replay_outbound_deliveries"` (`46 passed`), `ruff check
+  src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`.
 - Native `routes send` / `routes poll` now accept OpenClaw-compatible outbound
   CLI aliases: `routes send --media` maps to the same native media list as
   `--media-url`, and both send/poll accept `--thread-id` alongside
