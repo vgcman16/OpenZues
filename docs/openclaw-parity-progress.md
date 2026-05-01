@@ -7,8 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, and known Claude marketplace shortcut slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~96% after closing the bundle metadata mini-queue and the known-local marketplace install shortcut; remote marketplace clone/download/update breadth still keeps plugin install parity short of complete.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, and remote marketplace listing slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~96% after closing the bundle metadata mini-queue, the known-local marketplace install shortcut, and remote marketplace source listing; remote marketplace install/download/update breadth still keeps plugin install parity short of complete.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -6949,6 +6949,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_marketplace_list_json_reads_local_manifest or
   plugins_update_json_refreshes_local_marketplace_install or
   plugins_uninstall_json_removes_native_install_metadata"` (`5 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins marketplace list <github-source>` now follows OpenClaw's remote
+  marketplace listing shape for GitHub/Git sources through a fakeable clone
+  adapter. The native CLI resolves cloned `.claude-plugin/marketplace.json`
+  files, preserves the remote source label, normalizes plugin sources to
+  `kind` records, validates remote path entries stay inside the cloned root,
+  and runs clone cleanup after JSON projection.
+- Progress estimates remain roughly 48% repo-wide and ~96% for the
+  CLI/operator control plane after this remote-listing slice; the remaining
+  plugin marketplace queue is now remote install/download/update execution for
+  Git/GitHub/URL plugin sources, not source listing.
+- Verified the remote marketplace listing slice with `python -m pytest
+  tests\test_cli.py::test_plugins_marketplace_list_json_reads_cloned_github_shorthand
+  -q` (`1 failed` before implementation because the CLI only resolved local
+  marketplace paths), then the same command (`1 passed`), adjacent marketplace
+  proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_marketplace_list_json_reads_cloned_github_shorthand or
+  plugins_marketplace_list_json_reads_local_manifest or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut or
+  plugins_update_json_refreshes_local_marketplace_install"` (`5 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 

@@ -17,10 +17,12 @@ Current percentage rollup:
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
-  plus MCP/LSP server projection, and known Claude marketplace shortcut slices.
+  plus MCP/LSP server projection, known Claude marketplace shortcut, and remote
+  marketplace listing slices.
 - The CLI/operator control-plane family is estimated at ~96% after the bundle
-  metadata mini-queue and known-local marketplace install shortcut; remote
-  marketplace clone/download/update breadth remains open.
+  metadata mini-queue, known-local marketplace install shortcut, and remote
+  marketplace source listing; remote marketplace install/download/update breadth
+  remains open.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1340,13 +1342,16 @@ existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
 append configured allowlists on enable, and mirror built-in channel plugin
 toggles into `channels.<id>.enabled` for channel-backed providers. Remaining
-plugin CLI parity is remote marketplace clone/download/update breadth beyond
-known local shortcuts and deeper production plugin manifest/runtime metadata
-discovery. `plugins marketplace list` now
+plugin CLI parity is remote marketplace install/download/update breadth beyond
+source listing and known local shortcuts, plus deeper production plugin
+manifest/runtime metadata discovery. `plugins marketplace list` now
 supports local Claude-compatible marketplace manifests from
 `.claude-plugin/marketplace.json` or `marketplace.json`, returning the
 OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while
-leaving remote clone semantics to the heavier packaging/install queue.
+also supporting fakeable Git/GitHub source clone/list flows with remote source
+labels, normalized `kind` source records, remote path validation, and clone
+cleanup. Remote plugin install/download execution remains in the heavier
+packaging/install queue.
 `plugins install <name> --marketplace <local>` now resolves local manifest
 entries, rejects escaping/missing plugin sources, persists an OpenClaw-shaped
 `plugins.installs.<id>` marketplace record, enables the plugin, appends the
@@ -1431,9 +1436,9 @@ Inspect reports now also project OpenClaw-shaped policy summaries from
 surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
 `httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
 metadata-only manifest records instead of being zeroed in the report.
-Remaining plugin CLI parity is remote marketplace clone/download/update breadth
-for Git/GitHub/URL sources and deeper runtime activation/import metadata beyond
-the native metadata/runtime projection.
+Remaining plugin CLI parity is remote marketplace install/download/update
+execution for Git/GitHub/URL plugin sources and deeper runtime
+activation/import metadata beyond the native metadata/runtime projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default

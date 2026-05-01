@@ -8586,10 +8586,68 @@ def test_plugins_marketplace_list_json_reads_local_manifest(tmp_path) -> None:
                 "name": "frontend-design",
                 "version": "0.2.0",
                 "description": "Design helper.",
-                "source": {"type": "path", "path": "plugins/frontend-design"},
+                "source": {"kind": "path", "path": "plugins/frontend-design"},
             }
         ],
     }
+
+
+def test_plugins_marketplace_list_json_reads_cloned_github_shorthand(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    manifest_dir = repo_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    plugin_file = repo_dir / "plugins" / "frontend-design.tgz"
+    plugin_file.parent.mkdir(parents=True)
+    plugin_file.write_text("plugin archive", encoding="utf-8")
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "source": "./plugins/frontend-design.tgz",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cleanup_calls: list[str] = []
+
+    def fake_clone_marketplace_source(source: str) -> SimpleNamespace:
+        assert source == "owner/repo"
+        return SimpleNamespace(
+            root_dir=repo_dir,
+            label="owner/repo",
+            cleanup=lambda: cleanup_calls.append("cleanup"),
+        )
+
+    monkeypatch.setattr(
+        "openzues.cli._clone_cli_plugins_marketplace_source",
+        fake_clone_marketplace_source,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        ["plugins", "marketplace", "list", "owner/repo", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "source": "owner/repo",
+        "plugins": [
+            {
+                "name": "frontend-design",
+                "source": {"kind": "path", "path": "./plugins/frontend-design.tgz"},
+            }
+        ],
+    }
+    assert cleanup_calls == ["cleanup"]
 
 
 def test_plugins_install_marketplace_json_persists_local_manifest_entry(

@@ -20,6 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -11958,6 +11959,27 @@ async def _build_plugins_toggle_payload(
 _CLI_CLAUDE_KNOWN_MARKETPLACES_PATH = (
     Path("~") / ".claude" / "plugins" / "known_marketplaces.json"
 )
+_CLI_MARKETPLACE_MANIFEST_CANDIDATES = (
+    Path(".claude-plugin") / "marketplace.json",
+    Path("marketplace.json"),
+)
+_CLI_MARKETPLACE_GIT_TIMEOUT_SECONDS = 120
+
+
+@dataclass(frozen=True)
+class _CliMarketplaceSource:
+    manifest_path: Path
+    root_dir: Path
+    source_label: str
+    origin: Literal["local", "remote"]
+    cleanup: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True)
+class _CliMarketplaceClone:
+    root_dir: Path
+    label: str
+    cleanup: Callable[[], None]
 
 
 def _read_cli_claude_known_marketplaces() -> dict[str, dict[str, object]]:
@@ -12053,49 +12075,318 @@ def _resolve_cli_marketplace_install_shortcut(raw: str) -> tuple[str, str] | Non
     return plugin, marketplace
 
 
+def _cli_marketplace_split_ref(source: str) -> tuple[str, str | None]:
+    trimmed = source.strip()
+    hash_index = trimmed.rfind("#")
+    if hash_index <= 0 or hash_index >= len(trimmed) - 1:
+        return trimmed, None
+    return trimmed[:hash_index], _optional_cli_string(trimmed[hash_index + 1 :])
+
+
+def _cli_marketplace_is_http_url(value: str) -> bool:
+    return re.match(r"^https?://", value, flags=re.IGNORECASE) is not None
+
+
+def _cli_marketplace_is_git_url(value: str) -> bool:
+    return (
+        re.match(r"^git@", value, flags=re.IGNORECASE) is not None
+        or re.match(r"^ssh://", value, flags=re.IGNORECASE) is not None
+        or re.match(r"^https?://.+\.git(?:#.*)?$", value, flags=re.IGNORECASE)
+        is not None
+    )
+
+
+def _cli_marketplace_looks_like_github_repo(value: str) -> bool:
+    return (
+        re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#.+)?$", value.strip())
+        is not None
+    )
+
+
+def _normalize_cli_marketplace_git_source(
+    source: str,
+) -> tuple[str, str | None, str] | None:
+    base, ref = _cli_marketplace_split_ref(source)
+    if _cli_marketplace_looks_like_github_repo(base):
+        return f"https://github.com/{base}.git", ref, base
+    if _cli_marketplace_is_git_url(source):
+        return base, ref, base
+    if _cli_marketplace_is_http_url(source):
+        parsed = urlparse(base)
+        if parsed.hostname != "github.com":
+            return None
+        parts = [part for part in parsed.path.strip("/").split("/") if part]
+        if len(parts) < 2:
+            return None
+        repo = f"{parts[0]}/{parts[1].removesuffix('.git')}"
+        return f"https://github.com/{repo}.git", ref, repo
+    return None
+
+
+def _clone_cli_plugins_marketplace_source(source: str) -> _CliMarketplaceClone:
+    normalized = _normalize_cli_marketplace_git_source(source)
+    if normalized is None:
+        raise ValueError(f"unsupported marketplace source: {source}")
+    clone_url, ref, label = normalized
+    tmp_dir = Path(tempfile.mkdtemp(prefix="openzues-marketplace-"))
+    repo_dir = tmp_dir / "repo"
+    argv = ["git", "clone", "--depth", "1"]
+    if ref is not None:
+        argv.extend(["--branch", ref])
+    argv.extend([clone_url, str(repo_dir)])
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=_CLI_MARKETPLACE_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise ValueError(
+            f"failed to clone marketplace source {label}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        detail = result.stderr.strip() or result.stdout.strip() or "git clone failed"
+        raise ValueError(f"failed to clone marketplace source {label}: {detail}")
+    return _CliMarketplaceClone(
+        root_dir=repo_dir,
+        label=label,
+        cleanup=lambda: shutil.rmtree(tmp_dir, ignore_errors=True),
+    )
+
+
+def _derive_cli_marketplace_root_from_manifest_path(manifest_path: Path) -> Path:
+    manifest_dir = manifest_path.parent
+    return manifest_dir.parent if manifest_dir.name == ".claude-plugin" else manifest_dir
+
+
+def _find_cli_marketplace_manifest(root_dir: Path) -> Path | None:
+    for relative in _CLI_MARKETPLACE_MANIFEST_CANDIDATES:
+        candidate = root_dir / relative
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _resolve_cli_local_marketplace_source(source: str) -> _CliMarketplaceSource | None:
+    source_path = Path(source).expanduser()
+    if not source_path.exists():
+        return None
+    if source_path.is_file():
+        manifest_path = source_path.resolve()
+        return _CliMarketplaceSource(
+            manifest_path=manifest_path,
+            root_dir=_derive_cli_marketplace_root_from_manifest_path(manifest_path).resolve(),
+            source_label=str(manifest_path),
+            origin="local",
+        )
+    if source_path.is_dir():
+        root_dir = source_path.parent if source_path.name == ".claude-plugin" else source_path
+        discovered_manifest_path = _find_cli_marketplace_manifest(root_dir)
+        if discovered_manifest_path is not None:
+            return _CliMarketplaceSource(
+                manifest_path=discovered_manifest_path,
+                root_dir=root_dir.resolve(),
+                source_label=str(discovered_manifest_path),
+                origin="local",
+            )
+        raise ValueError(f"marketplace manifest not found under {source}")
+    raise ValueError(f"unsupported marketplace source: {source_path.resolve()}")
+
+
+def _resolve_cli_plugins_marketplace_source(source: str) -> _CliMarketplaceSource:
+    normalized_source = _optional_cli_string(source)
+    if normalized_source is None:
+        raise ValueError("marketplace source is required")
+    known_source = _cli_known_marketplace_source_input(normalized_source)
+    if known_source is not None and known_source != normalized_source:
+        resolved = _resolve_cli_plugins_marketplace_source(known_source)
+        if _cli_known_marketplace_record(normalized_source) is not None:
+            return _CliMarketplaceSource(
+                manifest_path=resolved.manifest_path,
+                root_dir=resolved.root_dir,
+                source_label=normalized_source,
+                origin=resolved.origin,
+                cleanup=resolved.cleanup,
+            )
+        return resolved
+    local = _resolve_cli_local_marketplace_source(normalized_source)
+    if local is not None:
+        return local
+    cloned = _clone_cli_plugins_marketplace_source(normalized_source)
+    root_dir = Path(cloned.root_dir).resolve()
+    manifest_path = _find_cli_marketplace_manifest(root_dir)
+    if manifest_path is None:
+        cloned.cleanup()
+        raise ValueError(f"marketplace manifest not found in {cloned.label}")
+    return _CliMarketplaceSource(
+        manifest_path=manifest_path,
+        root_dir=root_dir,
+        source_label=cloned.label,
+        origin="remote",
+        cleanup=cloned.cleanup,
+    )
+
+
+def _normalize_cli_marketplace_plugin_source(source: object) -> dict[str, object]:
+    if isinstance(source, str):
+        value = _optional_cli_string(source)
+        if value is None:
+            raise ValueError("empty plugin source")
+        if _cli_marketplace_is_http_url(value):
+            return {"kind": "url", "url": value}
+        return {"kind": "path", "path": value}
+    if not isinstance(source, dict):
+        raise ValueError("plugin source must be a string or object")
+    source_kind = _optional_cli_string(source.get("type")) or _optional_cli_string(
+        source.get("source")
+    )
+    if source_kind is None:
+        raise ValueError('plugin source object missing "type" or "source"')
+    if source_kind == "path":
+        path_value = _optional_cli_string(source.get("path"))
+        if path_value is None:
+            raise ValueError('path source missing "path"')
+        return {"kind": "path", "path": path_value}
+    if source_kind == "github":
+        repo = _optional_cli_string(source.get("repo")) or _optional_cli_string(
+            source.get("url")
+        )
+        if repo is None:
+            raise ValueError('github source missing "repo"')
+        result: dict[str, object] = {"kind": "github", "repo": repo}
+    elif source_kind == "git":
+        url = _optional_cli_string(source.get("url")) or _optional_cli_string(
+            source.get("repo")
+        )
+        if url is None:
+            raise ValueError('git source missing "url"')
+        result = {"kind": "git", "url": url}
+    elif source_kind == "git-subdir":
+        url = _optional_cli_string(source.get("url")) or _optional_cli_string(
+            source.get("repo")
+        )
+        path_value = _optional_cli_string(source.get("path")) or _optional_cli_string(
+            source.get("subdir")
+        )
+        if url is None:
+            raise ValueError('git-subdir source missing "url"')
+        if path_value is None:
+            raise ValueError('git-subdir source missing "path"')
+        result = {"kind": "git-subdir", "url": url, "path": path_value}
+    elif source_kind == "url":
+        url = _optional_cli_string(source.get("url"))
+        if url is None:
+            raise ValueError('url source missing "url"')
+        return {"kind": "url", "url": url}
+    else:
+        raise ValueError(f"unsupported plugin source kind: {source_kind}")
+    ref = (
+        _optional_cli_string(source.get("ref"))
+        or _optional_cli_string(source.get("branch"))
+        or _optional_cli_string(source.get("tag"))
+    )
+    path_value = _optional_cli_string(source.get("path"))
+    if path_value is not None and "path" not in result:
+        result["path"] = path_value
+    if ref is not None:
+        result["ref"] = ref
+    return result
+
+
+def _validate_cli_remote_marketplace_plugin_source(
+    *,
+    marketplace: _CliMarketplaceSource,
+    source: dict[str, object],
+) -> None:
+    source_kind = _optional_cli_string(source.get("kind"))
+    if source_kind != "path":
+        raise ValueError(
+            f'remote marketplaces may not use {source_kind or "unknown"} plugin sources'
+        )
+    source_path_value = _optional_cli_string(source.get("path"))
+    if source_path_value is None:
+        raise ValueError('path source missing "path"')
+    if _cli_marketplace_is_http_url(source_path_value):
+        raise ValueError("remote marketplaces may not use HTTP(S) plugin paths")
+    source_path = Path(source_path_value)
+    if source_path.is_absolute():
+        raise ValueError("remote marketplaces may only use relative plugin paths")
+    root = marketplace.root_dir.resolve()
+    resolved = (root / source_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"plugin source escapes marketplace root: {source_path_value}"
+        ) from exc
+    if not resolved.exists():
+        raise ValueError(
+            f"plugin source not found in marketplace root: {source_path_value}"
+        )
+
+
 def _build_plugins_marketplace_list_payload(source: str) -> dict[str, object]:
-    manifest_path = _resolve_plugins_marketplace_manifest_path(source)
+    marketplace = _resolve_cli_plugins_marketplace_source(source)
+    manifest_path = marketplace.manifest_path
     try:
         parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
     except ValueError as exc:
         raise ValueError(f"invalid marketplace JSON at {manifest_path}: {exc}") from exc
     except OSError as exc:
         raise ValueError(f"failed to read marketplace manifest at {manifest_path}: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ValueError(f"invalid marketplace JSON at {manifest_path}: expected object")
-    raw_plugins = parsed.get("plugins")
-    if not isinstance(raw_plugins, list):
-        raise ValueError(f"invalid marketplace JSON at {manifest_path}: missing plugins[]")
-    plugins: list[dict[str, object]] = []
-    for raw_plugin in raw_plugins:
-        if not isinstance(raw_plugin, dict):
-            raise ValueError(f"invalid marketplace entry in {manifest_path}: expected object")
-        name = _optional_cli_string(raw_plugin.get("name"))
-        if name is None:
-            raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
-        source_value = raw_plugin.get("source")
-        if not isinstance(source_value, (str, dict)):
-            raise ValueError(
-                f'invalid marketplace entry "{name}" in {manifest_path}: missing source'
-            )
-        plugin: dict[str, object] = {"name": name}
-        for key in ("version", "description"):
-            value = _optional_cli_string(raw_plugin.get(key))
-            if value is not None:
-                plugin[key] = value
-        plugin["source"] = dict(source_value) if isinstance(source_value, dict) else source_value
-        plugins.append(plugin)
-    payload: dict[str, object] = {
-        "source": str(manifest_path),
-        "plugins": plugins,
-    }
-    name = _optional_cli_string(parsed.get("name"))
-    if name is not None:
-        payload["name"] = name
-    version = _optional_cli_string(parsed.get("version"))
-    if version is not None:
-        payload["version"] = version
-    return payload
+    try:
+        if not isinstance(parsed, dict):
+            raise ValueError(f"invalid marketplace JSON at {manifest_path}: expected object")
+        raw_plugins = parsed.get("plugins")
+        if not isinstance(raw_plugins, list):
+            raise ValueError(f"invalid marketplace JSON at {manifest_path}: missing plugins[]")
+        plugins: list[dict[str, object]] = []
+        for raw_plugin in raw_plugins:
+            if not isinstance(raw_plugin, dict):
+                raise ValueError(
+                    f"invalid marketplace entry in {manifest_path}: expected object"
+                )
+            name = _optional_cli_string(raw_plugin.get("name"))
+            if name is None:
+                raise ValueError(f"invalid marketplace entry in {manifest_path}: missing name")
+            try:
+                source_value = _normalize_cli_marketplace_plugin_source(
+                    raw_plugin.get("source")
+                )
+                if marketplace.origin == "remote":
+                    _validate_cli_remote_marketplace_plugin_source(
+                        marketplace=marketplace,
+                        source=source_value,
+                    )
+            except ValueError as exc:
+                raise ValueError(
+                    f'invalid marketplace entry "{name}" in {marketplace.source_label}: {exc}'
+                ) from exc
+            plugin: dict[str, object] = {"name": name}
+            for key in ("version", "description"):
+                value = _optional_cli_string(raw_plugin.get(key))
+                if value is not None:
+                    plugin[key] = value
+            plugin["source"] = source_value
+            plugins.append(plugin)
+        payload: dict[str, object] = {
+            "source": marketplace.source_label,
+            "plugins": plugins,
+        }
+        name = _optional_cli_string(parsed.get("name"))
+        if name is not None:
+            payload["name"] = name
+        version = _optional_cli_string(parsed.get("version"))
+        if version is not None:
+            payload["version"] = version
+        return payload
+    finally:
+        if marketplace.cleanup is not None:
+            marketplace.cleanup()
 
 
 async def _build_plugins_marketplace_install_payload(
@@ -12348,7 +12639,11 @@ def _resolve_marketplace_plugin_install_path(
     plugin_name: str,
 ) -> Path:
     if isinstance(source, dict):
-        source_type = _optional_cli_string(source.get("type"))
+        source_type = (
+            _optional_cli_string(source.get("type"))
+            or _optional_cli_string(source.get("kind"))
+            or _optional_cli_string(source.get("source"))
+        )
         if source_type not in (None, "path"):
             raise ValueError(
                 f'unsupported marketplace source for plugin "{plugin_name}": {source_type}'
