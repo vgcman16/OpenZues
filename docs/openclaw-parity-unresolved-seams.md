@@ -4,17 +4,17 @@ Updated: 2026-05-01
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~47% overall, with a reasonable
-  band of ~42-52%.
+- Repo-wide OpenClaw parity is estimated at ~48% overall, with a reasonable
+  band of ~43-53%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~97% after the
-  runtime bridge doctor posture and provider route send/poll alias-precedence
-  slices.
+- The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
+  runtime bridge doctor posture, provider route send/poll alias-precedence,
+  and plugin runtime executor inventory slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1366,6 +1366,11 @@ code. `plugins inspect --json` now also consults the native
 runtime executor specs mark discovered plugins as imported, switch the inspect
 report from inventory-only to `capabilityMode="runtime"`, and project
 OpenClaw-shaped runtime tool entries with `names` / `optional` metadata.
+`plugins list --json` now also exposes the same registered native executor
+inventory at the top level as `runtimeExecutors`, including `count`,
+`ownerOnlyCount`, `optional`, `ownerOnly`, plugin id/name, and source metadata
+so operator/plugin inventory can see runtime-backed tools without inspecting a
+single plugin first.
 Inspect reports now also project OpenClaw-shaped policy summaries from
 `plugins.entries.<id>.hooks.allowPromptInjection` and
 `plugins.entries.<id>.subagent` (`allowModelOverride`, `allowedModels`, and
@@ -3350,6 +3355,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   doctor_and_update_status_json_include_hermes_sections or
   plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
   plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins"`, `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the plugin list runtime-executor inventory seam from OpenClaw
+  `plugins/tools.ts` / `plugins/types.ts`: `plugins list --json` now includes
+  top-level `runtimeExecutors` projected from the native
+  `GatewayPluginRuntimeService.catalog_specs()` registry, preserving tool,
+  plugin id/name, owner-only, optional, and source metadata without importing
+  the TypeScript runtime. Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_projects_runtime_executor_inventory
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_projects_runtime_executor_inventory or
+  plugins_list_json_projects_hermes_plugin_inventory or
+  plugins_list_enabled_filters_loaded_plugins or
+  plugins_list_json_includes_saved_config_install_records or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_preserves_runtime_executor_optional_metadata"`, `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Closed the structured `doctor:sandbox` contribution seam from OpenClaw
   `doctor-sandbox.ts` / `doctor-health-contributions.ts`: `doctor --json` now

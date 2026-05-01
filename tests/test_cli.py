@@ -6274,6 +6274,110 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
     ]
 
 
+def test_plugins_list_json_projects_runtime_executor_inventory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"native-runtime": {"enabled": True}},
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.owner",
+                executor=fake_executor,
+                owner_only=True,
+                optional=True,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {"items": []},
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeExecutors"] == {
+        "status": "ok",
+        "count": 2,
+        "ownerOnlyCount": 1,
+        "tools": [
+            {
+                "tool": "native_runtime.search",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": False,
+                "optional": False,
+                "source": "registry",
+            },
+            {
+                "tool": "native_runtime.owner",
+                "pluginId": "native-runtime",
+                "pluginName": "Native Runtime",
+                "ownerOnly": True,
+                "optional": True,
+                "source": "registry",
+            },
+        ],
+    }
+
+
 def _write_openclaw_runtime_plugin(
     plugin_dir: Path,
     *,

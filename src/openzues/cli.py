@@ -11833,6 +11833,7 @@ async def _build_plugins_inventory_payload(
     return {
         "workspaceDir": workspace_dir,
         "plugins": plugins,
+        "runtimeExecutors": _build_doctor_runtime_bridge_plugin_executors_payload(services),
         "diagnostics": diagnostics,
     }
 
