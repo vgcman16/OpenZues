@@ -1065,6 +1065,14 @@ through the `channels.status` gateway method owner, and the channel inventory
 service has a fakeable account-probe adapter that records per-account probe
 results when one is registered; remaining channel CLI parity is provider-specific
 credential probe implementations and production provider-backed live resolve
+adapters. Matrix route-backed account probes now mirror OpenClaw's
+`createMatrixProbeAccount` / `probeMatrix` status hook: `channels status
+--probe --timeout <ms> --json` calls the Matrix Client-Server `whoami`
+endpoint through the saved native route token, normalizes Matrix homeserver
+targets that already include `/_matrix/client/v3`, and returns the resolved
+Matrix user/device identity in the per-account probe result. Remaining channel
+CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix and production provider-backed live resolve
 adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over

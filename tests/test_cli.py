@@ -755,6 +755,85 @@ def test_channels_status_json_uses_route_backed_discord_probe(tmp_path, monkeypa
     ]
 
 
+def test_channels_status_json_uses_route_backed_matrix_probe(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Matrix Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Matrix Native Probe Route",
+            kind="matrix",
+            target="https://matrix.example.org/_matrix/client/v3",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "matrix",
+                "account_id": "ops",
+                "peer_kind": "channel",
+                "peer_id": "room:!ops:matrix.example",
+                "summary": "matrix ops room !ops:matrix.example",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="matrix-access-token",
+            vault_secret_id=None,
+        )
+    )
+    matrix_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        matrix_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {"user_id": "@openzues:matrix.example", "device_id": "OPENZUES"}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["matrix"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "matrix",
+        "runtime": "native-provider-backed",
+        "userId": "@openzues:matrix.example",
+        "deviceId": "OPENZUES",
+        "timeoutMs": 2500,
+    }
+    assert matrix_gets == [
+        (
+            "https://matrix.example.org/_matrix/client/v3/account/whoami",
+            "Authorization",
+            "Bearer matrix-access-token",
+            2.5,
+        )
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,

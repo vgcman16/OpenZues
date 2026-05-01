@@ -5853,6 +5853,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- Matrix route-backed channel account probes now mirror OpenClaw's
+  `createMatrixProbeAccount` / `probeMatrix` path: native Matrix routes are
+  included in the probeable provider set, `channels status --probe --json`
+  calls `/_matrix/client/v3/account/whoami` with the saved route access token,
+  and the account probe result exposes the Matrix user/device identity.
+- Verified the Matrix account-probe slice with `python -m pytest
+  tests\test_cli.py -q -k "route_backed_matrix_probe"` (`1 passed`), adjacent
+  status-probe proof `python -m pytest tests\test_cli.py -q -k
+  "channels_status_json_uses_route_backed_slack_probe or
+  channels_status_json_uses_route_backed_telegram_probe or
+  channels_status_json_uses_route_backed_discord_probe or
+  channels_status_json_uses_route_backed_matrix_probe or
+  channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded or
+  channels_status_json_accepts_probe_timeout_options"` (`6 passed`), plus
+  `ruff check src\openzues\services\ops_mesh.py tests\test_cli.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

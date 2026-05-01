@@ -158,7 +158,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "line",
     "matrix",
 }
-PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord"}
+PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {"slack", "telegram", "discord", "matrix"}
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
 DEFAULT_CRON_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000
 DEFAULT_CRON_RETRY_MAX_ATTEMPTS = 3
@@ -7470,6 +7470,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "matrix":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_matrix_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         try:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,
@@ -8230,6 +8248,49 @@ class OpsMeshService:
                 application["flags"] = flags
                 application["intents"] = _discord_privileged_intents_from_flags(flags)
             payload["application"] = application
+        return payload
+
+    def _probe_matrix_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _matrix_whoami_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Matrix API returned a non-JSON whoami response.")
+        user_id = str(result.get("user_id") or "").strip()
+        if not user_id:
+            error = str(
+                result.get("error")
+                or result.get("errcode")
+                or "Matrix whoami did not return user_id."
+            )
+            return {
+                "ok": False,
+                "status": "error",
+                "provider": "matrix",
+                "runtime": "native-provider-backed",
+                "error": error,
+                "timeoutMs": timeout_ms,
+            }
+        payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "provider": "matrix",
+            "runtime": "native-provider-backed",
+            "userId": user_id,
+            "timeoutMs": timeout_ms,
+        }
+        device_id = str(result.get("device_id") or "").strip()
+        if device_id:
+            payload["deviceId"] = device_id
         return payload
 
     async def _resolve_explicit_delivery_conversation_target(
