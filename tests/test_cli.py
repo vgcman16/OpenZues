@@ -6275,6 +6275,182 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
     ]
 
 
+def test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    codex_dir = tmp_path / "plugins" / "codex-bundle"
+    (codex_dir / ".codex-plugin").mkdir(parents=True)
+    (codex_dir / "skills").mkdir()
+    (codex_dir / "hooks").mkdir()
+    (codex_dir / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Codex Sample",
+                "description": "Codex bundle fixture.",
+                "version": "1.0.0",
+                "skills": "skills",
+                "hooks": "hooks",
+                "mcpServers": {"sample": {"command": "node"}},
+                "apps": {"sample": {"title": "Sample app"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    claude_dir = tmp_path / "plugins" / "claude-bundle"
+    (claude_dir / ".claude-plugin").mkdir(parents=True)
+    for relative in ("skills", "commands", "agents", "hooks-pack", "styles"):
+        (claude_dir / relative).mkdir()
+    (claude_dir / "hooks").mkdir()
+    (claude_dir / "hooks" / "hooks.json").write_text(
+        json.dumps({"hooks": []}),
+        encoding="utf-8",
+    )
+    (claude_dir / ".mcp.json").write_text(json.dumps({"servers": {}}), encoding="utf-8")
+    (claude_dir / ".lsp.json").write_text(json.dumps({"servers": {}}), encoding="utf-8")
+    (claude_dir / "settings.json").write_text(
+        json.dumps({"hideThinkingBlock": True}),
+        encoding="utf-8",
+    )
+    (claude_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Claude Sample",
+                "description": "Claude bundle fixture.",
+                "skills": "skills",
+                "commands": "commands",
+                "agents": "agents",
+                "hooks": "hooks-pack",
+                "mcpServers": ".mcp.json",
+                "lspServers": ".lsp.json",
+                "outputStyles": "styles",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cursor_dir = tmp_path / "plugins" / "cursor-bundle"
+    (cursor_dir / ".cursor-plugin").mkdir(parents=True)
+    for relative in (
+        "skills",
+        ".cursor",
+        ".cursor/commands",
+        ".cursor/agents",
+        ".cursor/rules",
+    ):
+        (cursor_dir / relative).mkdir(exist_ok=True)
+    (cursor_dir / ".cursor" / "hooks.json").write_text(
+        json.dumps({"hooks": []}),
+        encoding="utf-8",
+    )
+    (cursor_dir / ".mcp.json").write_text(json.dumps({"servers": {}}), encoding="utf-8")
+    (cursor_dir / ".cursor-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Cursor Sample",
+                "description": "Cursor bundle fixture.",
+                "mcpServers": "./.mcp.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {
+                        "codex-sample": {"enabled": True},
+                        "claude-sample": {"enabled": True},
+                        "cursor-sample": {"enabled": True},
+                    },
+                    "load": {
+                        "paths": [
+                            str(codex_dir),
+                            str(claude_dir),
+                            str(cursor_dir),
+                        ]
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        plugin["id"]: plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["codex-sample"] == {
+        "id": "codex-sample",
+        "name": "Codex Sample",
+        "status": "loaded",
+        "format": "bundle",
+        "source": str(codex_dir),
+        "origin": "config",
+        "description": "Codex bundle fixture.",
+        "capabilities": [
+            "bundle:skills",
+            "bundle:hooks",
+            "bundle:mcpServers",
+            "bundle:apps",
+        ],
+        "parityStatus": "metadata",
+        "version": "1.0.0",
+        "rootDir": str(codex_dir),
+        "manifestPath": str(codex_dir / ".codex-plugin" / "plugin.json"),
+        "bundleFormat": "codex",
+        "bundleCapabilities": ["skills", "hooks", "mcpServers", "apps"],
+        "skills": ["skills"],
+        "hooks": ["hooks"],
+    }
+    assert plugins["claude-sample"]["bundleFormat"] == "claude"
+    assert plugins["claude-sample"]["bundleCapabilities"] == [
+        "skills",
+        "commands",
+        "agents",
+        "hooks",
+        "mcpServers",
+        "lspServers",
+        "outputStyles",
+        "settings",
+    ]
+    assert plugins["claude-sample"]["skills"] == [
+        "skills",
+        "commands",
+        "agents",
+        "styles",
+    ]
+    assert plugins["claude-sample"]["hooks"] == ["hooks/hooks.json", "hooks-pack"]
+    assert plugins["claude-sample"]["settingsFiles"] == ["settings.json"]
+    assert plugins["cursor-sample"]["bundleFormat"] == "cursor"
+    assert plugins["cursor-sample"]["bundleCapabilities"] == [
+        "skills",
+        "commands",
+        "agents",
+        "hooks",
+        "rules",
+        "mcpServers",
+    ]
+    assert plugins["cursor-sample"]["skills"] == ["skills", ".cursor/commands"]
+
+
 def test_plugins_list_json_preserves_manifest_command_aliases(
     tmp_path,
     monkeypatch,

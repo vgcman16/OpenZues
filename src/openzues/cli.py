@@ -13461,6 +13461,11 @@ def _plugin_record_from_deck_item(
 
 
 _OPENCLAW_PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
+_OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS: dict[str, Path] = {
+    "codex": Path(".codex-plugin") / "plugin.json",
+    "claude": Path(".claude-plugin") / "plugin.json",
+    "cursor": Path(".cursor-plugin") / "plugin.json",
+}
 _OPENCLAW_MIN_HOST_VERSION_FORMAT = (
     'openclaw.install.minHostVersion must use a semver floor in the form ">=x.y.z"'
 )
@@ -14319,6 +14324,274 @@ def _plugin_manifest_path_for_load_path(load_path: Path) -> Path | None:
     return manifest_path if manifest_path.is_file() else None
 
 
+def _plugin_bundle_manifest_path_for_load_path(
+    load_path: Path,
+) -> tuple[str, Path, Path] | None:
+    if load_path.is_file():
+        for bundle_format, relative_path in _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS.items():
+            if (
+                load_path.name == relative_path.name
+                and load_path.parent.name == relative_path.parent.name
+            ):
+                return bundle_format, load_path, load_path.parent.parent
+        return None
+    for bundle_format, relative_path in _OPENCLAW_BUNDLE_MANIFEST_RELATIVE_PATHS.items():
+        manifest_path = load_path / relative_path
+        if manifest_path.is_file():
+            return bundle_format, manifest_path, load_path
+    return None
+
+
+def _plugin_bundle_path_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    return _plugin_manifest_string_list(value)
+
+
+def _plugin_bundle_merge_path_lists(*groups: list[str]) -> list[str]:
+    return _dedupe_cli_strings([entry for group in groups for entry in group])
+
+
+def _plugin_bundle_has_inline_capability(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value)
+    if isinstance(value, dict):
+        return bool(value)
+    return value is True
+
+
+def _plugin_bundle_existing_defaults(root_dir: Path, defaults: list[str]) -> list[str]:
+    return [relative for relative in defaults if (root_dir / relative).exists()]
+
+
+def _plugin_bundle_slug_id(raw_name: str | None, root_dir: Path) -> str:
+    source = (raw_name or root_dir.name).strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", source)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "bundle-plugin"
+
+
+def _plugin_bundle_codex_skills(manifest: dict[str, object], root_dir: Path) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get("skills"))
+    if declared:
+        return declared
+    return ["skills"] if (root_dir / "skills").exists() else []
+
+
+def _plugin_bundle_codex_hooks(manifest: dict[str, object], root_dir: Path) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get("hooks"))
+    if declared:
+        return declared
+    return ["hooks"] if (root_dir / "hooks").exists() else []
+
+
+def _plugin_bundle_claude_component_paths(
+    manifest: dict[str, object],
+    root_dir: Path,
+    key: str,
+    defaults: list[str],
+) -> list[str]:
+    declared = _plugin_bundle_path_list(manifest.get(key))
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_existing_defaults(root_dir, defaults),
+        declared,
+    )
+
+
+def _plugin_bundle_claude_skill_paths(
+    manifest: dict[str, object],
+    root_dir: Path,
+) -> list[str]:
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_claude_component_paths(manifest, root_dir, "skills", ["skills"]),
+        _plugin_bundle_claude_component_paths(manifest, root_dir, "commands", ["commands"]),
+        _plugin_bundle_claude_component_paths(manifest, root_dir, "agents", ["agents"]),
+        _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "outputStyles",
+            ["output-styles"],
+        ),
+    )
+
+
+def _plugin_bundle_cursor_skill_paths(
+    manifest: dict[str, object],
+    root_dir: Path,
+) -> list[str]:
+    return _plugin_bundle_merge_path_lists(
+        _plugin_bundle_existing_defaults(root_dir, ["skills"]),
+        _plugin_bundle_path_list(manifest.get("skills")),
+        _plugin_bundle_existing_defaults(root_dir, [".cursor/commands"]),
+        _plugin_bundle_path_list(manifest.get("commands")),
+    )
+
+
+def _plugin_bundle_capabilities(
+    bundle_format: str,
+    manifest: dict[str, object],
+    root_dir: Path,
+    *,
+    skills: list[str],
+    hooks: list[str],
+    settings_files: list[str],
+) -> list[str]:
+    capabilities: list[str] = []
+    if skills:
+        capabilities.append("skills")
+    if bundle_format == "codex":
+        if hooks:
+            capabilities.append("hooks")
+        if _plugin_bundle_has_inline_capability(manifest.get("mcpServers")) or (
+            root_dir / ".mcp.json"
+        ).exists():
+            capabilities.append("mcpServers")
+        if _plugin_bundle_has_inline_capability(manifest.get("apps")) or (
+            root_dir / ".app.json"
+        ).exists():
+            capabilities.append("apps")
+        return capabilities
+    if bundle_format == "claude":
+        if _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "commands",
+            ["commands"],
+        ):
+            capabilities.append("commands")
+        if _plugin_bundle_claude_component_paths(manifest, root_dir, "agents", ["agents"]):
+            capabilities.append("agents")
+        if hooks:
+            capabilities.append("hooks")
+        if _plugin_bundle_has_inline_capability(manifest.get("mcpServers")) or (
+            _plugin_bundle_claude_component_paths(
+                manifest,
+                root_dir,
+                "mcpServers",
+                [".mcp.json"],
+            )
+        ):
+            capabilities.append("mcpServers")
+        if _plugin_bundle_has_inline_capability(manifest.get("lspServers")) or (
+            _plugin_bundle_claude_component_paths(
+                manifest,
+                root_dir,
+                "lspServers",
+                [".lsp.json"],
+            )
+        ):
+            capabilities.append("lspServers")
+        if _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "outputStyles",
+            ["output-styles"],
+        ):
+            capabilities.append("outputStyles")
+        if settings_files:
+            capabilities.append("settings")
+        return capabilities
+    if _plugin_bundle_existing_defaults(root_dir, [".cursor/commands"]) or _plugin_bundle_path_list(
+        manifest.get("commands")
+    ):
+        capabilities.append("commands")
+    if _plugin_bundle_existing_defaults(root_dir, [".cursor/agents"]) or _plugin_bundle_path_list(
+        manifest.get("subagents") or manifest.get("agents")
+    ):
+        capabilities.append("agents")
+    if _plugin_bundle_has_inline_capability(manifest.get("hooks")) or (
+        root_dir / ".cursor" / "hooks.json"
+    ).exists():
+        capabilities.append("hooks")
+    if _plugin_bundle_has_inline_capability(manifest.get("rules")) or (
+        root_dir / ".cursor" / "rules"
+    ).exists():
+        capabilities.append("rules")
+    if _plugin_bundle_has_inline_capability(manifest.get("mcpServers")) or (
+        root_dir / ".mcp.json"
+    ).exists():
+        capabilities.append("mcpServers")
+    return capabilities
+
+
+def _plugin_bundle_manifest_record(
+    bundle_format: str,
+    manifest_path: Path,
+    root_dir: Path,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object] | None = None,
+) -> dict[str, object] | None:
+    manifest = _read_cli_json_object(manifest_path)
+    if manifest is None:
+        return None
+    interface_record = manifest.get("interface")
+    interface_payload = interface_record if isinstance(interface_record, dict) else {}
+    name = _optional_cli_string(manifest.get("name"))
+    plugin_id = _plugin_bundle_slug_id(name, root_dir)
+    description = (
+        _optional_cli_string(manifest.get("description"))
+        or _optional_cli_string(manifest.get("shortDescription"))
+        or _optional_cli_string(interface_payload.get("shortDescription"))
+        or ""
+    )
+    settings_files: list[str] = []
+    if bundle_format == "codex":
+        skills = _plugin_bundle_codex_skills(manifest, root_dir)
+        hooks = _plugin_bundle_codex_hooks(manifest, root_dir)
+    elif bundle_format == "claude":
+        skills = _plugin_bundle_claude_skill_paths(manifest, root_dir)
+        hooks = _plugin_bundle_claude_component_paths(
+            manifest,
+            root_dir,
+            "hooks",
+            ["hooks/hooks.json"],
+        )
+        settings_files = _plugin_bundle_existing_defaults(root_dir, ["settings.json"])
+    else:
+        skills = _plugin_bundle_cursor_skill_paths(manifest, root_dir)
+        hooks = []
+    bundle_capabilities = _plugin_bundle_capabilities(
+        bundle_format,
+        manifest,
+        root_dir,
+        skills=skills,
+        hooks=hooks,
+        settings_files=settings_files,
+    )
+    record: dict[str, object] = {
+        "id": plugin_id,
+        "name": name or plugin_id,
+        "status": _plugin_manifest_status(
+            {},
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+        ),
+        "format": "bundle",
+        "source": str(root_dir),
+        "origin": "config",
+        "description": description,
+        "capabilities": [f"bundle:{capability}" for capability in bundle_capabilities],
+        "parityStatus": "metadata",
+        "rootDir": str(root_dir),
+        "manifestPath": str(manifest_path),
+        "bundleFormat": bundle_format,
+        "bundleCapabilities": bundle_capabilities,
+        "skills": skills,
+        "hooks": hooks,
+    }
+    version = _optional_cli_string(manifest.get("version"))
+    if version is not None:
+        record["version"] = version
+    if settings_files:
+        record["settingsFiles"] = settings_files
+    return record
+
+
 def _plugin_manifest_status(
     manifest: dict[str, object],
     *,
@@ -14488,14 +14761,24 @@ def _plugin_manifest_records_from_config_snapshot(
     seen_ids: set[str] = set()
     for load_path in _plugin_manifest_load_paths(plugins_config):
         manifest_path = _plugin_manifest_path_for_load_path(load_path)
-        if manifest_path is None:
+        if manifest_path is not None:
+            record = _plugin_record_from_openclaw_manifest(
+                manifest_path,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+                diagnostics=diagnostics,
+            )
+        elif bundle_match := _plugin_bundle_manifest_path_for_load_path(load_path):
+            bundle_format, bundle_manifest_path, bundle_root_dir = bundle_match
+            record = _plugin_bundle_manifest_record(
+                bundle_format,
+                bundle_manifest_path,
+                bundle_root_dir,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+            )
+        else:
             continue
-        record = _plugin_record_from_openclaw_manifest(
-            manifest_path,
-            plugins_config=plugins_config,
-            config_snapshot=config_snapshot,
-            diagnostics=diagnostics,
-        )
         if record is None:
             continue
         plugin_id = str(record.get("id") or "")
