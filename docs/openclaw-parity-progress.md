@@ -6170,6 +6170,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py -q -k "telegram and message_action"` (`6 passed`
   each), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Telegram `message.action edit` / `editMessage` now dispatches through the
+  native Bot API `editMessageText` route with OpenClaw's chat/content aliases,
+  treats "message is not modified" as success, and returns the upstream-shaped
+  top-level `messageId` / `chatId` result.
+- Verified the Telegram edit action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram_edit_route"` (`1 passed`), adjacent
+  Telegram action proofs `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"` (`7 passed`
+  each), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

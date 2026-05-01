@@ -9122,6 +9122,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "telegram" and action in {"edit", "editMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Telegram route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_telegram_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "telegram" and action == "send":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -11958,6 +11974,59 @@ class OpsMeshService:
             error = str(result.get("description") or result.get("error_code") or "unknown")
             raise RuntimeError(f"Telegram API returned {error}.")
         return {"ok": True, "deleted": True}
+
+    def _dispatch_telegram_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _telegram_chat_id(
+            _message_action_param_string_or_number(request.params, "chatId")
+            or _message_action_param_string_or_number(request.params, "channelId")
+            or _message_action_param_string_or_number(request.params, "to", required=True)
+        )
+        if chat_id is None:
+            raise RuntimeError("Telegram editMessage requires chatId.")
+        message_id = _message_action_param_positive_int(
+            request.params,
+            "messageId",
+            "message_id",
+        )
+        if message_id is None:
+            raise RuntimeError("Telegram editMessage requires messageId.")
+        content = _message_action_param_string(
+            request.params,
+            "content",
+        ) or _message_action_param_string(request.params, "message", required=True)
+        if content is None:
+            raise RuntimeError("Telegram editMessage requires message.")
+        token = _telegram_bot_token(secret_token)
+        result = self._post_json_webhook(
+            _telegram_api_endpoint(
+                str(route.get("target") or ""),
+                token,
+                "editMessageText",
+            ),
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": content,
+                "parse_mode": "HTML",
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Telegram API returned a non-JSON response.")
+        if result.get("ok") is False:
+            error = str(result.get("description") or result.get("error_code") or "unknown")
+            if "message is not modified" in error.lower():
+                return {"ok": True, "messageId": str(message_id), "chatId": chat_id}
+            raise RuntimeError(f"Telegram API returned {error}.")
+        return {
+            "ok": True,
+            "messageId": _telegram_message_id(result) or str(message_id),
+            "chatId": _telegram_chat_from_result(result, chat_id),
+        }
 
     def _dispatch_discord_set_presence_message_action(
         self,

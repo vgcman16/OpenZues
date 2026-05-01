@@ -3576,9 +3576,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   -q -k "message_action_dispatches_telegram"` and `python -m pytest
   tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Closed the Telegram native `message.action edit` / `editMessage` seam from
+  OpenClaw `extensions/telegram/src/action-runtime.ts` and
+  `extensions/telegram/src/send.ts`: route-backed Telegram message actions now
+  call Bot API `editMessageText` with normalized `chatId` / `channelId` / `to`
+  targets, `content` / `message` aliases, HTML parse mode, and an
+  OpenClaw-shaped top-level `messageId` / `chatId` result. Verified with
+  `python -m pytest tests\test_ops_mesh.py -q -k "telegram_edit_route"`,
+  adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_telegram"` and `python -m pytest
+  tests\test_ops_mesh.py -q -k "telegram and message_action"`, `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Remaining Telegram message-action
-  parity is `edit` / `editMessage`, `topic-create` / `createForumTopic`, and
-  `topic-edit` / `editForumTopic` payload/result breadth.
+  parity is `topic-create` / `createForumTopic` and `topic-edit` /
+  `editForumTopic` payload/result breadth.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and
