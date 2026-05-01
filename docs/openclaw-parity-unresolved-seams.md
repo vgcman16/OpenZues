@@ -3709,12 +3709,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   message id/provider metadata propagates through direct send responses and
   saved outbound deliveries. Verified with focused and adjacent OpsMesh proofs,
   `ruff check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage outbound media send
-  remains open. Source anchors are
-  `extensions/bluebubbles/src/channel.ts` and
-  `extensions/bluebubbles/src/attachments.ts`; OpenZues must route
-  `gateway.send` media payloads through the native BlueBubbles attachment
-  endpoint, preserving captions, media metadata, and native message ids.
+- Closed the BlueBubbles/iMessage route-backed outbound media send seam from
+  OpenClaw `extensions/bluebubbles/src/channel.ts`,
+  `extensions/bluebubbles/src/media-send.ts`, and
+  `extensions/bluebubbles/src/attachments.ts`: `gateway.send` media payloads
+  now download through a fakeable native helper, post multipart attachments to
+  `/api/v1/message/attachment`, deliver the leading caption as a follow-up
+  BlueBubbles text message, preserve reply threading metadata, and return
+  native attachment ids, media ids, media URLs, and saved delivery metadata.
+  Verified with focused and adjacent OpsMesh proofs, `ruff check`, and `mypy`.
+- Next provider-native queue head: BlueBubbles/iMessage outbound voice-media
+  hardening remains open. Source anchors are
+  `extensions/bluebubbles/src/media-send.ts` and
+  `extensions/bluebubbles/src/attachments.ts`; OpenZues must reject
+  `audioAsVoice=true` unless the outbound media is MP3/CAF audio and must keep
+  the native `isAudioMessage` multipart field only for valid voice sends.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

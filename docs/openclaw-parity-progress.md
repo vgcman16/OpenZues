@@ -6417,6 +6417,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`10 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound media sends now follow OpenClaw's channel
+  runtime by routing `gateway.send` media payloads through
+  `POST /api/v1/message/attachment`, downloading media through a fakeable
+  native helper, preserving reply threading fields, sending the leading
+  caption as a follow-up BlueBubbles text message, and returning attachment
+  ids, media ids, media URLs, and saved provider metadata.
+- Verified the BlueBubbles outbound media-send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_media_route
+  -q` (`1 failed` before implementation, media sends returned the caption
+  text id and skipped the attachment endpoint), then the same command (`1
+  passed`), adjacent BlueBubbles proof `python -m pytest tests\test_ops_mesh.py
+  -q -k "bluebubbles_"` (`11 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

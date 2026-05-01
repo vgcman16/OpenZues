@@ -7051,6 +7051,186 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_nat
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_bluebubbles_native_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-native-bluebubbles-media-send"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Gateway Media Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "channel",
+            "peer_id": "chat_guid:iMessage;+;group-1",
+        },
+    )
+    multipart_requests: list[tuple[str, dict[str, str], list[dict[str, object]]]] = []
+    text_requests: list[tuple[str, object | None]] = []
+
+    def fake_download_bluebubbles_media_url(
+        self: OpsMeshService,
+        media_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        assert media_url == "https://example.com/photo.png"
+        return b"image-bytes", "image/png", "photo.png"
+
+    def fake_request_bluebubbles_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        files: list[dict[str, object]],
+        timeout_seconds: float = 60.0,
+    ) -> object:
+        del self, timeout_seconds
+        multipart_requests.append((target, fields, files))
+        return {"data": {"guid": "bb-media-1"}}
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, method, secret_header_name, secret_token, extra_headers, timeout_seconds
+        text_requests.append((target, payload))
+        return {"data": {"guid": "bb-caption-1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_bluebubbles_media_url",
+        fake_download_bluebubbles_media_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bluebubbles_multipart_provider_url",
+        fake_request_bluebubbles_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="bluebubbles",
+        to="chat_guid:iMessage;+;group-1",
+        message="Photo caption",
+        media_urls=["https://example.com/photo.png"],
+        account_id="personal",
+        reply_to_id="reply-guid-1",
+        idempotency_key="idem-native-bluebubbles-media-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="bluebubbles",
+            account_id="personal",
+            peer_kind="channel",
+            peer_id="chat_guid:iMessage;+;group-1",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-bluebubbles-media-send",
+        "channel": "bluebubbles",
+        "messageId": "bb-media-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "bluebubbles",
+            "target": "chat_guid:iMessage;+;group-1",
+            "accountId": "personal",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "iMessage;+;group-1",
+        "channelId": "iMessage;+;group-1",
+        "conversationId": "iMessage;+;group-1",
+        "mediaIds": ["bb-media-1"],
+        "mediaUrls": ["https://example.com/photo.png"],
+        "messageIds": ["bb-media-1", "bb-caption-1"],
+    }
+    assert len(multipart_requests) == 1
+    target, fields, files = multipart_requests[0]
+    assert target == "http://localhost:1234/api/v1/message/attachment?password=bb-password"
+    temp_guid = fields.pop("tempGuid", None)
+    assert isinstance(temp_guid, str) and temp_guid
+    assert fields == {
+        "chatGuid": "iMessage;+;group-1",
+        "name": "photo.png",
+        "method": "private-api",
+        "selectedMessageGuid": "reply-guid-1",
+        "partIndex": "0",
+    }
+    assert files == [
+        {
+            "field": "attachment",
+            "filename": "photo.png",
+            "contentType": "image/png",
+            "content": b"image-bytes",
+        }
+    ]
+    assert len(text_requests) == 1
+    text_target, text_payload = text_requests[0]
+    assert text_target == "http://localhost:1234/api/v1/message/text?password=bb-password"
+    assert isinstance(text_payload, dict)
+    caption_temp_guid = text_payload.pop("tempGuid", None)
+    assert isinstance(caption_temp_guid, str) and caption_temp_guid
+    assert text_payload == {
+        "chatGuid": "iMessage;+;group-1",
+        "message": "Photo caption",
+        "method": "private-api",
+        "selectedMessageGuid": "reply-guid-1",
+        "partIndex": 0,
+    }
+    assert delivery is not None
+    assert delivery["delivery_message_id"] == "bb-media-1"
+    assert delivery["event_payload"]["mediaUrls"] == ["https://example.com/photo.png"]
+    assert delivery["route_scope"]["provider_result"]["mediaIds"] == ["bb-media-1"]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

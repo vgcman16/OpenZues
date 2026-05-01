@@ -10561,21 +10561,98 @@ class OpsMeshService:
         if event_type != "gateway/send":
             raise RuntimeError("BlueBubbles native provider route only supports sends.")
         message = str(event.get("message") or "").strip()
-        if not message:
-            raise RuntimeError("BlueBubbles native provider send requires message text.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not message and not media_urls:
+            raise RuntimeError("BlueBubbles native provider send requires message text or media.")
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
         fallback_target = str((conversation_target or {}).get("peer_id") or "").strip()
         raw_target = str(event.get("to") or fallback_target).strip()
         chat_guid = _bluebubbles_chat_guid_value(raw_target)
         if chat_guid is None:
             raise RuntimeError("BlueBubbles native provider send requires a chat_guid target.")
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if media_urls:
+            endpoint = _bluebubbles_api_endpoint(
+                str(route.get("target") or ""),
+                "/api/v1/message/attachment",
+                password=secret_token,
+            )
+            media_ids: list[str] = []
+            message_ids: list[str] = []
+            as_voice = _optional_bool_payload_value(event, "audioAsVoice") is True
+            for index, media_url in enumerate(media_urls):
+                media_bytes, content_type, filename = self._download_bluebubbles_media_url(
+                    media_url
+                )
+                safe_filename = _bluebubbles_safe_filename(filename, "attachment")
+                fields: dict[str, str] = {
+                    "chatGuid": chat_guid,
+                    "name": safe_filename,
+                    "tempGuid": f"temp-{uuid.uuid4().hex}",
+                    "method": "private-api",
+                }
+                if reply_to_id:
+                    fields["selectedMessageGuid"] = reply_to_id
+                    fields["partIndex"] = "0"
+                if as_voice:
+                    fields["isAudioMessage"] = "true"
+                result = self._request_bluebubbles_multipart_provider_url(
+                    endpoint,
+                    fields=fields,
+                    files=[
+                        {
+                            "field": "attachment",
+                            "filename": safe_filename,
+                            "contentType": content_type or "application/octet-stream",
+                            "content": media_bytes,
+                        }
+                    ],
+                )
+                if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+                    raise RuntimeError(str(result.get("error")))
+                message_id = _bluebubbles_message_id_from_result(result)
+                media_ids.append(message_id)
+                message_ids.append(message_id)
+                if index == 0 and message:
+                    caption_payload: dict[str, object] = {
+                        "chatGuid": chat_guid,
+                        "tempGuid": str(uuid.uuid4()),
+                        "message": message,
+                        "method": "private-api",
+                    }
+                    if reply_to_id:
+                        caption_payload["selectedMessageGuid"] = reply_to_id
+                        caption_payload["partIndex"] = 0
+                    caption_result = self._post_bluebubbles_text_message(
+                        route,
+                        secret_token,
+                        caption_payload,
+                    )
+                    message_ids.append(_bluebubbles_message_id_from_result(caption_result))
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": media_ids[0],
+                "chatId": chat_guid,
+                "channelId": chat_guid,
+                "conversationId": chat_guid,
+                "mediaIds": media_ids,
+                "mediaUrls": media_urls,
+                "messageIds": message_ids,
+            }
         payload: dict[str, object] = {
             "chatGuid": chat_guid,
             "tempGuid": str(uuid.uuid4()),
             "message": message,
             "method": "private-api",
         }
-        reply_to_id = str(event.get("replyToId") or "").strip()
         if reply_to_id:
             payload["selectedMessageGuid"] = reply_to_id
             payload["partIndex"] = 0
@@ -15665,7 +15742,8 @@ class OpsMeshService:
                 )
                 runtime_message = message
                 if (
-                    resolved_target.channel.lower() in {"whatsapp", "zalo", "line", "matrix"}
+                    resolved_target.channel.lower()
+                    in {"whatsapp", "zalo", "line", "matrix", "bluebubbles"}
                     and normalized_media_urls
                 ):
                     runtime_message = str(payload.get("message") or "").strip()
@@ -17375,6 +17453,51 @@ class OpsMeshService:
                 if response.status >= 400:
                     raise RuntimeError(f"Media URL returned HTTP {response.status}")
                 content_type = response.headers.get("Content-Type")
+                return response.read(), content_type, filename
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Media URL failed: {exc.reason}") from exc
+
+    def _download_bluebubbles_media_url(
+        self,
+        media_url: str,
+    ) -> tuple[bytes, str | None, str | None]:
+        parsed = urlparse(media_url)
+        filename = _bluebubbles_safe_filename(
+            unquote(Path(parsed.path).name) if parsed.path else "",
+            "attachment",
+        )
+        if self.canvas_state_dir is not None:
+            local_path = resolve_canvas_http_path_to_local_path(
+                media_url,
+                state_dir=self.canvas_state_dir,
+            )
+            if local_path is not None and local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+        if parsed.scheme == "file":
+            local_value = unquote(parsed.path)
+            if re.fullmatch(r"/[A-Za-z]:/.*", local_value):
+                local_value = local_value[1:]
+            local_path = Path(local_value).expanduser()
+            if local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+            raise RuntimeError(f"Media path does not exist: {media_url}")
+        if not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme):
+            local_path = Path(media_url).expanduser()
+            if local_path.is_file():
+                content_type = mimetypes.guess_type(str(local_path))[0]
+                return local_path.read_bytes(), content_type, local_path.name
+        request = Request(media_url, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Media URL returned HTTP {response.status}")
+                content_type = response.headers.get("Content-Type")
+                if not content_type:
+                    content_type = mimetypes.guess_type(filename)[0]
                 return response.read(), content_type, filename
         except HTTPError as exc:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
