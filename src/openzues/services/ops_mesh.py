@@ -150,6 +150,76 @@ TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 ZALO_API_BASE_URL = "https://bot-api.zaloplatforms.com"
 LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
+BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
+BLUEBUBBLES_REACTION_ALIASES = {
+    "heart": "love",
+    "love": "love",
+    "red_heart": "love",
+    "thumbs_up": "like",
+    "thumbsup": "like",
+    "thumbs-up": "like",
+    "like": "like",
+    "thumb": "like",
+    "ok": "like",
+    "thumbs_down": "dislike",
+    "thumbsdown": "dislike",
+    "thumbs-down": "dislike",
+    "dislike": "dislike",
+    "boo": "dislike",
+    "no": "dislike",
+    "haha": "laugh",
+    "lol": "laugh",
+    "lmao": "laugh",
+    "rofl": "laugh",
+    "xd": "laugh",
+    "laugh": "laugh",
+    "emphasis": "emphasize",
+    "emphasize": "emphasize",
+    "exclaim": "emphasize",
+    "!!": "emphasize",
+    "important": "emphasize",
+    "bang": "emphasize",
+    "question": "question",
+    "?": "question",
+    "ask": "question",
+    "loved": "love",
+    "liked": "like",
+    "disliked": "dislike",
+    "laughed": "laugh",
+    "emphasized": "emphasize",
+    "questioned": "question",
+    "fire": "love",
+    "wow": "emphasize",
+    "!": "emphasize",
+    "heart_eyes": "love",
+    "smile": "laugh",
+    "smiley": "laugh",
+    "happy": "laugh",
+    "joy": "laugh",
+}
+BLUEBUBBLES_REACTION_EMOJIS = {
+    "\u2764\ufe0f": "love",
+    "\u2764": "love",
+    "\u2665\ufe0f": "love",
+    "\u2665": "love",
+    "\U0001f60d": "love",
+    "\U0001f495": "love",
+    "\U0001f44d": "like",
+    "\U0001f44c": "like",
+    "\U0001f44e": "dislike",
+    "\U0001f645": "dislike",
+    "\U0001f602": "laugh",
+    "\U0001f923": "laugh",
+    "\U0001f606": "laugh",
+    "\U0001f601": "laugh",
+    "\U0001f639": "laugh",
+    "\u203c\ufe0f": "emphasize",
+    "\u203c": "emphasize",
+    "\u2757": "emphasize",
+    "\u2755": "emphasize",
+    "\u2753": "question",
+    "\u2754": "question",
+}
 NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -854,6 +924,51 @@ def _slack_reaction_name(raw: str | None) -> str:
     if not normalized:
         raise RuntimeError("Emoji is required for Slack reactions")
     return normalized.strip(":")
+
+
+def _bluebubbles_reaction_name(raw: str | None, *, remove: bool = False) -> str:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        raise RuntimeError("BlueBubbles reaction requires an emoji or name.")
+    lowered = normalized.lower()
+    if lowered.startswith("-"):
+        lowered = lowered[1:].strip()
+    mapped = (
+        BLUEBUBBLES_REACTION_EMOJIS.get(normalized)
+        or BLUEBUBBLES_REACTION_EMOJIS.get(lowered)
+        or BLUEBUBBLES_REACTION_ALIASES.get(lowered, lowered)
+    )
+    if mapped not in BLUEBUBBLES_REACTION_TYPES:
+        mapped = "love"
+    return f"-{mapped}" if remove else mapped
+
+
+def _bluebubbles_chat_guid_value(raw: str | None) -> str | None:
+    normalized = str(raw or "").strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    if lowered.startswith("bluebubbles:"):
+        normalized = normalized[len("bluebubbles:") :].strip()
+        lowered = normalized.lower()
+    for prefix in ("chat_guid:", "chatguid:", "guid:"):
+        if lowered.startswith(prefix):
+            value = normalized[len(prefix) :].strip()
+            return value or None
+    if re.match(r"^[^;]+;[+-];[^;]+$", normalized):
+        return normalized
+    return None
+
+
+def _bluebubbles_chat_guid_from_params(params: dict[str, Any]) -> str | None:
+    direct = _message_action_param_string(params, "chatGuid")
+    if direct is not None:
+        return _bluebubbles_chat_guid_value(direct) or direct
+    target = _message_action_param_string(params, "to")
+    resolved = _bluebubbles_chat_guid_value(target)
+    if resolved is not None:
+        return resolved
+    return None
 
 
 def _message_action_param_string(
@@ -9122,7 +9237,7 @@ class OpsMeshService:
     ) -> dict[str, object] | None:
         channel = request.channel.strip().lower()
         action = request.action.strip()
-        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {"edit", "unsend"}:
+        if channel in BLUEBUBBLES_ROUTE_CHANNEL_ALIASES and action in {"edit", "react", "unsend"}:
             route = await self._bluebubbles_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -9135,6 +9250,13 @@ class OpsMeshService:
             if action == "edit":
                 return await asyncio.to_thread(
                     self._dispatch_bluebubbles_edit_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            if action == "react":
+                return await asyncio.to_thread(
+                    self._dispatch_bluebubbles_react_message_action,
                     route,
                     request,
                     secret_token,
@@ -10008,6 +10130,53 @@ class OpsMeshService:
         if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
             raise RuntimeError(str(result.get("error")))
         return {"ok": True, "edited": message_id}
+
+    def _dispatch_bluebubbles_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _message_action_param_string_or_number(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("BlueBubbles react requires messageId.")
+        emoji = _message_action_param_string(
+            request.params,
+            "emoji",
+            required=True,
+        )
+        if emoji is None:
+            raise RuntimeError("BlueBubbles react requires emoji.")
+        remove = bool(_message_action_param_bool(request.params, "remove"))
+        chat_guid = _bluebubbles_chat_guid_from_params(request.params)
+        if chat_guid is None:
+            raise RuntimeError("BlueBubbles react requires chatGuid or chat_guid to.")
+        part_index = _message_action_param_integer(request.params, "partIndex")
+        payload: dict[str, object] = {
+            "chatGuid": chat_guid,
+            "selectedMessageGuid": message_id,
+            "reaction": _bluebubbles_reaction_name(emoji, remove=remove),
+            "partIndex": part_index if part_index is not None else 0,
+        }
+        target = _bluebubbles_api_endpoint(
+            str(route.get("target") or ""),
+            "/api/v1/message/react",
+            password=secret_token,
+        )
+        result = self._request_json_provider_url(
+            target,
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error") not in (None, "", [], {}):
+            raise RuntimeError(str(result.get("error")))
+        if remove:
+            return {"ok": True, "removed": True}
+        return {"ok": True, "added": emoji}
 
     async def _dispatch_zalo_send_message_action(
         self,

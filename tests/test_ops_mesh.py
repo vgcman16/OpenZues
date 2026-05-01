@@ -6169,6 +6169,204 @@ async def test_ops_mesh_service_message_action_dispatches_bluebubbles_edit_route
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-bluebubbles-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="imessage",
+            action="react",
+            params={
+                "chatGuid": "iMessage;-;+15551234567",
+                "messageId": "msg-3",
+                "emoji": "heart",
+                "partIndex": 3,
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "heart"}
+    assert bluebubbles_requests == [
+        (
+            "POST",
+            "http://localhost:1234/api/v1/message/react?password=bb-password",
+            {
+                "chatGuid": "iMessage;-;+15551234567",
+                "selectedMessageGuid": "msg-3",
+                "reaction": "love",
+                "partIndex": 3,
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_bluebubbles_remove_reaction_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-bluebubbles-remove-reaction"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="BlueBubbles Native Action Provider",
+        kind="bluebubbles",
+        target="http://localhost:1234",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="bb-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "bluebubbles",
+            "account_id": "personal",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    bluebubbles_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, extra_headers, timeout_seconds
+        bluebubbles_requests.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="bluebubbles",
+            action="react",
+            params={
+                "chatGuid": "iMessage;-;+15551234567",
+                "messageId": "msg-4",
+                "emoji": "-love",
+                "remove": True,
+            },
+            account_id="personal",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:bluebubbles:direct:+15551234567",
+            idempotency_key="idem-bluebubbles-remove-reaction-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": True}
+    assert bluebubbles_requests == [
+        (
+            "POST",
+            "http://localhost:1234/api/v1/message/react?password=bb-password",
+            {
+                "chatGuid": "iMessage;-;+15551234567",
+                "selectedMessageGuid": "msg-4",
+                "reaction": "-love",
+                "partIndex": 0,
+            },
+            None,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_zalo_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

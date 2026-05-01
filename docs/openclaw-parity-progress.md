@@ -6348,6 +6348,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_read_alias_route"` (`4 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage `message.action react` now follows OpenClaw's
+  BlueBubbles action adapter by routing `messageId`, `emoji`, `remove`,
+  `partIndex`, and direct `chatGuid` / `chat_guid` targets to
+  `POST /api/v1/message/react`, normalizing tapbacks to BlueBubbles reaction
+  names and preserving the OpenClaw-shaped add/remove results.
+- Verified the BlueBubbles reaction slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "bluebubbles_react_route or
+  bluebubbles_remove_reaction_route"` (`2 failed` before implementation,
+  actions returned `None`), then the same command (`2 passed`), adjacent
+  message-action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "bluebubbles_react_route or bluebubbles_remove_reaction_route or
+  bluebubbles_edit_route or bluebubbles_unsend_route"` (`4 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
