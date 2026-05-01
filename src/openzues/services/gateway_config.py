@@ -932,6 +932,38 @@ class GatewayConfigService:
         )
         return write_result
 
+    def record_path_plugin_install(
+        self,
+        *,
+        plugin_id: str,
+        install_path: str,
+        source_path: str,
+        version: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        record = _record_path_plugin_install_in_snapshot(
+            current,
+            plugin_id=plugin_id,
+            install_path=install_path,
+            source_path=source_path,
+            version=version,
+            force=force,
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(record["config"], base_hash=base_hash)
+        write_result.update(
+            {
+                "pluginId": record["pluginId"],
+                "install": record["install"],
+                "loadPath": record["loadPath"],
+                "enabled": True,
+                "restart": "gateway",
+            }
+        )
+        return write_result
+
     def preview_plugin_uninstall(self, plugin_id: str) -> dict[str, Any]:
         current = self.build_snapshot()
         result = _uninstall_plugin_in_snapshot(current, plugin_id=plugin_id)
@@ -1690,6 +1722,79 @@ def _record_marketplace_plugin_install_in_snapshot(
     )
     if normalized_marketplace_name:
         install_record["marketplaceName"] = normalized_marketplace_name
+    normalized_version = version.strip() if isinstance(version, str) else None
+    if normalized_version:
+        install_record["version"] = normalized_version
+    next_installs[requested_id] = install_record
+
+    entries = plugins_config.get("entries")
+    next_entries = dict(entries) if isinstance(entries, dict) else {}
+    existing_entry = next_entries.get(requested_id)
+    next_entry = dict(existing_entry) if isinstance(existing_entry, dict) else {}
+    next_entry["enabled"] = True
+    next_entries[requested_id] = next_entry
+
+    allow = plugins_config.get("allow")
+    next_allow = list(allow) if isinstance(allow, list) else []
+    if requested_id not in {str(value) for value in next_allow}:
+        next_allow.append(requested_id)
+
+    load = plugins_config.get("load")
+    next_load = dict(load) if isinstance(load, dict) else {}
+    paths = next_load.get("paths")
+    next_paths = [str(value) for value in paths] if isinstance(paths, list) else []
+    if normalized_install_path not in next_paths:
+        next_paths.append(normalized_install_path)
+    next_load["paths"] = next_paths
+
+    next_plugins = dict(plugins_config)
+    next_plugins["allow"] = next_allow
+    next_plugins["entries"] = next_entries
+    next_plugins["installs"] = next_installs
+    next_plugins["load"] = next_load
+
+    next_snapshot = dict(snapshot)
+    next_snapshot["plugins"] = next_plugins
+    return {
+        "config": next_snapshot,
+        "pluginId": requested_id,
+        "install": install_record,
+        "loadPath": normalized_install_path,
+    }
+
+
+def _record_path_plugin_install_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    plugin_id: str,
+    install_path: str,
+    source_path: str,
+    version: str | None,
+    force: bool,
+) -> dict[str, Any]:
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        raise ValueError("plugin id is required")
+    normalized_install_path = install_path.strip()
+    if not normalized_install_path:
+        raise ValueError("plugin install path is required")
+    normalized_source_path = source_path.strip()
+    if not normalized_source_path:
+        raise ValueError("plugin source path is required")
+
+    plugins = snapshot.get("plugins")
+    plugins_config = dict(plugins) if isinstance(plugins, dict) else {}
+    installs = plugins_config.get("installs")
+    next_installs = dict(installs) if isinstance(installs, dict) else {}
+    if requested_id in next_installs and not force:
+        raise ValueError(f'plugin "{requested_id}" is already installed; pass --force to update')
+
+    install_record: dict[str, Any] = {
+        "source": "path",
+        "sourcePath": normalized_source_path,
+        "installPath": normalized_install_path,
+        "installedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
     normalized_version = version.strip() if isinstance(version, str) else None
     if normalized_version:
         install_record["version"] = normalized_version

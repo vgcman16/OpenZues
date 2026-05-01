@@ -12563,6 +12563,56 @@ async def _build_plugins_marketplace_install_payload(
     }
 
 
+def _read_cli_local_plugin_identity(plugin_path: Path) -> tuple[str, str | None]:
+    manifest_path = plugin_path / "openclaw.plugin.json"
+    if manifest_path.is_file():
+        try:
+            parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            plugin_id = _optional_cli_string(parsed.get("id"))
+            version = _optional_cli_string(parsed.get("version"))
+            if plugin_id is not None:
+                return plugin_id, version
+    return plugin_path.name, None
+
+
+async def _build_plugins_path_install_payload(
+    services: CliServices,
+    *,
+    plugin_path: str,
+    force: bool,
+) -> dict[str, object]:
+    source_path = Path(plugin_path).expanduser()
+    if not source_path.exists():
+        raise ValueError(f"Path not found: {source_path}")
+    resolved_path = source_path.resolve()
+    if not resolved_path.is_dir():
+        raise ValueError("Linked plugin paths must be directories.")
+    plugin_id, version = _read_cli_local_plugin_identity(resolved_path)
+    result = services.gateway_config.record_path_plugin_install(
+        plugin_id=plugin_id,
+        install_path=str(resolved_path),
+        source_path=str(resolved_path),
+        version=version,
+        force=force,
+    )
+    install = result.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result.get("pluginId") or plugin_id,
+        "source": "path",
+        "install": install_payload,
+        "loadPath": result.get("loadPath"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+    }
+
+
 async def _build_plugins_uninstall_payload(
     services: CliServices,
     *,
@@ -19380,6 +19430,39 @@ def plugins_install_command(
         if shortcut is not None:
             resolved_plugin_id, resolved_marketplace = shortcut
     if resolved_marketplace is None:
+        local_path = Path(plugin_id).expanduser()
+        if local_path.exists():
+            if link and force:
+                typer.echo("`--force` is not supported with `--link`.", err=True)
+                raise typer.Exit(code=1)
+            if not link:
+                typer.echo(
+                    "Native plugin install currently supports local path installs "
+                    "with --link.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+            async def _path_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_path_install_payload(
+                    services,
+                    plugin_path=plugin_id,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_path_action))
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
+        if link:
+            typer.echo("`--link` requires a local path.", err=True)
+            raise typer.Exit(code=1)
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",
