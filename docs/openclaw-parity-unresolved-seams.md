@@ -101,7 +101,10 @@ back into normalized configured binding specs, and the fakeable native ensure
 adapter keeps matching ready ACP sessions while closing/reinitializing stale,
 mismatched, or errored runtime sessions. Native reset-in-place handling now
 clears configured ACP binding metadata for recreation on the next turn while
-keeping ordinary ACP binding reset behavior close-only.
+keeping ordinary ACP binding reset behavior close-only. The native resolver now
+also materializes top-level `type="acp"` `bindings[]` entries into configured
+ACP specs/records, prefers exact accounts over wildcard bindings, and maps
+configured ACP session keys back to matching config-derived specs.
 Remaining ACP binding parity is real provider-native child-thread creation/store
 breadth, unbind lifecycle breadth, and the standalone ACP bridge server/client
 runtime. Native

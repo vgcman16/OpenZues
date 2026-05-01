@@ -6,6 +6,8 @@ from openzues.services.acp_persistent_bindings import (
     ensure_configured_acp_binding_session,
     parse_configured_acp_session_key,
     reset_acp_session_in_place,
+    resolve_configured_acp_binding_record,
+    resolve_configured_acp_binding_spec_by_session_key,
     resolve_configured_acp_binding_spec_from_record,
     to_configured_acp_binding_record,
 )
@@ -339,3 +341,89 @@ async def test_reset_acp_session_in_place_skips_blank_session_key() -> None:
 
     assert result == {"ok": False, "skipped": True}
     assert manager.close_calls == []
+
+
+def test_resolve_configured_acp_binding_record_from_top_level_bindings() -> None:
+    cfg = {
+        "bindings": [
+            {
+                "type": "acp",
+                "agentId": "codex",
+                "match": {
+                    "channel": "discord",
+                    "accountId": "default",
+                    "peer": {"kind": "channel", "id": "1478836151241412759"},
+                },
+                "acp": {"backend": "acpx", "cwd": "C:/work/openzues"},
+            }
+        ]
+    }
+
+    resolved = resolve_configured_acp_binding_record(
+        cfg,
+        channel="discord",
+        account_id="default",
+        conversation_id="1478836151241412759",
+    )
+
+    assert resolved is not None
+    assert resolved["spec"] == ConfiguredAcpBindingSpec(
+        channel="discord",
+        account_id="default",
+        conversation_id="1478836151241412759",
+        agent_id="codex",
+        mode="persistent",
+        cwd="C:/work/openzues",
+        backend="acpx",
+    )
+    assert resolved["record"]["targetSessionKey"] == (
+        "agent:codex:acp:binding:discord:default:f56b4624dd829241"
+    )
+    assert resolved["record"]["metadata"]["source"] == "config"
+
+
+def test_resolve_configured_acp_binding_spec_by_session_key_prefers_exact_account() -> None:
+    cfg = {
+        "bindings": [
+            {
+                "type": "acp",
+                "agentId": "wild",
+                "match": {
+                    "channel": "discord",
+                    "accountId": "*",
+                    "peer": {"kind": "channel", "id": "1478836151241412759"},
+                },
+                "acp": {"backend": "wild"},
+            },
+            {
+                "type": "acp",
+                "agentId": "codex",
+                "match": {
+                    "channel": "discord",
+                    "accountId": "default",
+                    "peer": {"kind": "channel", "id": "1478836151241412759"},
+                },
+                "acp": {"backend": "exact"},
+            },
+        ]
+    }
+    session_key = build_configured_acp_session_key(
+        ConfiguredAcpBindingSpec(
+            channel="discord",
+            account_id="default",
+            conversation_id="1478836151241412759",
+            agent_id="codex",
+            mode="persistent",
+        )
+    )
+
+    spec = resolve_configured_acp_binding_spec_by_session_key(cfg, session_key=session_key)
+
+    assert spec == ConfiguredAcpBindingSpec(
+        channel="discord",
+        account_id="default",
+        conversation_id="1478836151241412759",
+        agent_id="codex",
+        mode="persistent",
+        backend="exact",
+    )

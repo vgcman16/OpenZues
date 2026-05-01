@@ -51,11 +51,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   sessions with the configured ACP harness agent override. Native reset-in-place
   handling now clears metadata for configured ACP binding sessions so the next
   turn can recreate them, keeps metadata for ordinary ACP binding sessions, and
-  treats configured bindings with no ACP metadata as already reset.
+  treats configured bindings with no ACP metadata as already reset. The native
+  resolver now also materializes top-level `type="acp"` `bindings[]` config
+  entries into configured ACP binding specs/records, prefers exact accounts
+  over wildcard bindings, and resolves configured ACP session keys back to the
+  matching config-derived spec.
 - Verified the configured ACP binding helper slice with `python -m pytest
-  tests\test_acp_persistent_bindings.py -q` (`12 passed`), adjacent ACP spawn
+  tests\test_acp_persistent_bindings.py -q` (`14 passed`), adjacent ACP spawn
   proof `python -m pytest tests\test_acp_persistent_bindings.py
-  tests\test_gateway_acp_spawn.py -q` (`31 passed`), adjacent gateway ACP
+  tests\test_gateway_acp_spawn.py -q` (`33 passed`), adjacent gateway ACP
   proof `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and
   thread"` (`7 passed`), `ruff check
   src\openzues\services\acp_persistent_bindings.py
