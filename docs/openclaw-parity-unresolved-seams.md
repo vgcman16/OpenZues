@@ -3747,16 +3747,28 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   that includes the `Media:` inventory, while generic provider/session replay
   keeps the formatted fallback. Verified with focused and adjacent OpsMesh
   replay/provider proofs, `ruff check`, and `mypy`.
-- Next repo-wide queue head: direct-announce provider metadata consistency
-  remains open. Source anchors are `src/infra/outbound/deliver.ts`,
-  `src/infra/outbound/outbound-send-service.ts`, and OpenZues'
-  ad-hoc announce delivery owner; OpenZues must keep direct announce delivery
-  responses, saved route scopes, provider result fields, and replay behavior
-  aligned for native provider transports.
+- Closed the direct-announce provider metadata consistency seam from OpenClaw
+  `src/infra/outbound/deliver.ts`, `src/infra/outbound/outbound-send-service.ts`,
+  and `src/cron/delivery.ts`: OpenZues' ad-hoc announce owner now returns the
+  shared direct-channel result, tags saved route scopes with
+  `source="direct.announce"`, persists provider result metadata, exposes
+  transport on saved delivery views, and replays failed direct announces through
+  the saved channel/target/account provider runtime instead of degrading to
+  session-only delivery. The progress snapshot was updated from ~45% to ~46%
+  repo-wide, cron wake/delivery from ~98% to ~99%, and channels/direct
+  announce from ~96% to ~97%. Verified with focused and adjacent OpsMesh
+  proofs.
+- Next repo-wide queue head: remaining runtime bridge doctor/packaging
+  posture remains open. Source anchors are OpenClaw runtime/CLI packaging and
+  doctor surfaces plus OpenZues' CLI/doctor/runtime bridge owners; OpenZues
+  must report Codex app-server readiness, sandbox setup posture, provider route
+  readiness, plugin executor inventory, and ACP/native runtime availability
+  consistently in JSON and human output without claiming unsupported
+  Linux/macOS parity.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially broader runtime/client integration, provider replay/direct
-  announce consistency, remaining runtime bridge doctor/packaging checks, and
-  session runtime methods (`chat.*`, `sessions.*`), rather than the older
+  especially broader runtime/client integration, remaining runtime bridge
+  doctor/packaging checks, and session runtime methods (`chat.*`,
+  `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
   placeholders.
