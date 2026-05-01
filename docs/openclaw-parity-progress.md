@@ -6455,6 +6455,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   proof `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`13
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- BlueBubbles/iMessage outbound media now enforces OpenClaw's configured
+  media-size limits: account-level, channel-level, and
+  `agents.defaults.mediaMaxMb` values from the gateway config snapshot are
+  converted to byte ceilings and oversized local or remote media is rejected
+  before native multipart upload.
+- Verified the BlueBubbles media max-size slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_bluebubbles_local_media_honors_media_max_mb
+  -q` (`1 failed` before implementation, a 1MB+1 local file uploaded under a
+  1MB limit), then the same command (`1 passed`), adjacent BlueBubbles proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "bluebubbles_"` (`14
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

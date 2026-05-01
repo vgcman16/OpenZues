@@ -3732,11 +3732,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   local paths by default, reject remote-host `file://` paths, and only read
   files under configured roots. Verified with focused and adjacent OpsMesh
   proofs, `ruff check`, and `mypy`.
-- Next provider-native queue head: BlueBubbles/iMessage outbound media size
-  hardening remains open. Source anchor is
-  `extensions/bluebubbles/src/media-send.ts`; OpenZues still needs
-  OpenClaw-shaped `mediaMaxMb` / `agents.defaults.mediaMaxMb` max-byte
-  enforcement for native BlueBubbles local and remote media downloads.
+- Closed the BlueBubbles/iMessage outbound media size hardening seam from
+  OpenClaw `extensions/bluebubbles/src/media-send.ts` and
+  `src/channels/plugins/media-limits.ts`: native BlueBubbles media downloads
+  now resolve account, channel, and `agents.defaults.mediaMaxMb` limits from
+  the gateway config snapshot and reject oversized local or remote media before
+  multipart upload. Verified with focused and adjacent OpsMesh proofs, `ruff
+  check`, and `mypy`.
+- Next repo-wide queue head: provider-native replay/direct-announce delivery
+  consistency remains open. Source anchors are
+  `src/infra/outbound/deliver.ts`, `src/infra/outbound/outbound-send-service.ts`,
+  and route-backed provider adapters; OpenZues must keep saved delivery
+  replay, direct announce, and session delivery metadata aligned for native
+  provider transports after the BlueBubbles breadth work.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration, provider replay/direct
   announce consistency, remaining runtime bridge doctor/packaging checks, and

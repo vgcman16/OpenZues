@@ -153,6 +153,7 @@ LINE_API_BASE_URL = "https://api.line.me/v2/bot/message"
 BLUEBUBBLES_ROUTE_CHANNEL_ALIASES = {"bluebubbles", "imessage"}
 BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
+BLUEBUBBLES_MEDIA_MB = 1024 * 1024
 BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
 BLUEBUBBLES_REACTION_ALIASES = {
     "heart": "love",
@@ -1146,6 +1147,46 @@ def _bluebubbles_media_local_roots(
     if isinstance(raw_channel_roots, list):
         return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
     return []
+
+
+def _bluebubbles_positive_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)) or float(value) <= 0:
+        return None
+    return float(value)
+
+
+def _bluebubbles_media_max_bytes(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> int | None:
+    channel_config = _bluebubbles_channel_config(snapshot)
+    account_config = _bluebubbles_account_config(channel_config, account_id)
+    for value in (
+        account_config.get("mediaMaxMb"),
+        channel_config.get("mediaMaxMb"),
+        (((snapshot.get("agents") or {}).get("defaults") or {}).get("mediaMaxMb"))
+        if isinstance(snapshot.get("agents"), dict)
+        else None,
+    ):
+        max_mb = _bluebubbles_positive_number(value)
+        if max_mb is not None:
+            return int(max_mb * BLUEBUBBLES_MEDIA_MB)
+    return None
+
+
+def _bluebubbles_assert_media_within_limit(
+    size_bytes: int,
+    *,
+    max_bytes: int | None,
+) -> None:
+    if max_bytes is None or max_bytes <= 0 or size_bytes <= max_bytes:
+        return
+    max_label = f"{max_bytes / BLUEBUBBLES_MEDIA_MB:.0f}"
+    size_label = f"{size_bytes / BLUEBUBBLES_MEDIA_MB:.2f}"
+    raise RuntimeError(f"Media exceeds {max_label}MB limit (got {size_label}MB)")
 
 
 def _bluebubbles_file_url_path(raw: str, *, config_root: bool = False) -> Path:
@@ -10756,6 +10797,7 @@ class OpsMeshService:
             or normalize_optional_account_id((conversation_target or {}).get("account_id"))
             or DEFAULT_ACCOUNT_ID
         )
+        config_snapshot = self._bluebubbles_config_snapshot()
         if media_urls:
             endpoint = _bluebubbles_api_endpoint(
                 str(route.get("target") or ""),
@@ -10769,6 +10811,14 @@ class OpsMeshService:
                 media_bytes, content_type, filename = self._download_bluebubbles_media_url(
                     media_url,
                     account_id=account_id,
+                    local_roots=_bluebubbles_media_local_roots(
+                        config_snapshot,
+                        account_id=account_id,
+                    ),
+                    max_bytes=_bluebubbles_media_max_bytes(
+                        config_snapshot,
+                        account_id=account_id,
+                    ),
                 )
                 safe_filename = _bluebubbles_safe_filename(filename, "attachment")
                 resolved_content_type = content_type or "application/octet-stream"
@@ -17648,6 +17698,8 @@ class OpsMeshService:
         media_url: str,
         *,
         account_id: str | None = None,
+        local_roots: list[str] | None = None,
+        max_bytes: int | None = None,
     ) -> tuple[bytes, str | None, str | None]:
         parsed = urlparse(media_url)
         filename = _bluebubbles_safe_filename(
@@ -17661,20 +17713,27 @@ class OpsMeshService:
             )
             if local_path is not None and local_path.is_file():
                 content_type = mimetypes.guess_type(str(local_path))[0]
-                return local_path.read_bytes(), content_type, local_path.name
+                media_bytes = local_path.read_bytes()
+                _bluebubbles_assert_media_within_limit(
+                    len(media_bytes),
+                    max_bytes=max_bytes,
+                )
+                return media_bytes, content_type, local_path.name
         local_source_path = _bluebubbles_local_media_source_path(media_url)
         if local_source_path is not None:
             allowed_path = _bluebubbles_allowed_local_media_path(
                 local_source_path,
                 source=media_url,
-                local_roots=_bluebubbles_media_local_roots(
-                    self._bluebubbles_config_snapshot(),
-                    account_id=account_id,
-                ),
+                local_roots=local_roots or [],
                 account_id=account_id,
             )
             content_type = mimetypes.guess_type(str(allowed_path))[0]
-            return allowed_path.read_bytes(), content_type, allowed_path.name
+            media_bytes = allowed_path.read_bytes()
+            _bluebubbles_assert_media_within_limit(
+                len(media_bytes),
+                max_bytes=max_bytes,
+            )
+            return media_bytes, content_type, allowed_path.name
         request = Request(media_url, method="GET")
         try:
             with urlopen(request, timeout=30) as response:
@@ -17683,7 +17742,13 @@ class OpsMeshService:
                 content_type = response.headers.get("Content-Type")
                 if not content_type:
                     content_type = mimetypes.guess_type(filename)[0]
-                return response.read(), content_type, filename
+                read_size = max_bytes + 1 if max_bytes is not None and max_bytes > 0 else -1
+                media_bytes = response.read(read_size)
+                _bluebubbles_assert_media_within_limit(
+                    len(media_bytes),
+                    max_bytes=max_bytes,
+                )
+                return media_bytes, content_type, filename
         except HTTPError as exc:
             raise RuntimeError(_http_error_message("Media URL returned HTTP", exc)) from exc
         except URLError as exc:
