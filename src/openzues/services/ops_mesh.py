@@ -2373,30 +2373,69 @@ def _normalize_line_template_message_payload(value: object) -> dict[str, object]
     if not isinstance(value, Mapping):
         raise RuntimeError("LINE templateMessage must be an object.")
     template_type = str(value.get("type") or "").strip().lower()
-    if template_type != "confirm":
-        raise RuntimeError("LINE templateMessage currently supports confirm templates.")
-    required_keys = ("text", "confirmLabel", "confirmData", "cancelLabel", "cancelData")
-    missing = [
-        key
-        for key in required_keys
-        if not str(value.get(key) or "").strip()
-    ]
-    if missing:
-        raise RuntimeError(
-            "LINE confirm template requires " + ", ".join(missing) + "."
-        )
-    normalized: dict[str, object] = {
-        "type": "confirm",
-        "text": str(value["text"]),
-        "confirmLabel": str(value["confirmLabel"]),
-        "confirmData": str(value["confirmData"]),
-        "cancelLabel": str(value["cancelLabel"]),
-        "cancelData": str(value["cancelData"]),
-    }
-    alt_text = str(value.get("altText") or "")
-    if alt_text:
-        normalized["altText"] = alt_text
-    return normalized
+    if template_type == "confirm":
+        required_keys = ("text", "confirmLabel", "confirmData", "cancelLabel", "cancelData")
+        missing = [
+            key
+            for key in required_keys
+            if not str(value.get(key) or "").strip()
+        ]
+        if missing:
+            raise RuntimeError(
+                "LINE confirm template requires " + ", ".join(missing) + "."
+            )
+        normalized: dict[str, object] = {
+            "type": "confirm",
+            "text": str(value["text"]),
+            "confirmLabel": str(value["confirmLabel"]),
+            "confirmData": str(value["confirmData"]),
+            "cancelLabel": str(value["cancelLabel"]),
+            "cancelData": str(value["cancelData"]),
+        }
+        alt_text = str(value.get("altText") or "")
+        if alt_text:
+            normalized["altText"] = alt_text
+        return normalized
+    if template_type == "buttons":
+        actions_value = value.get("actions")
+        if not isinstance(actions_value, (list, tuple)):
+            raise RuntimeError("LINE buttons template requires an actions list.")
+        actions: list[dict[str, object]] = []
+        for action in actions_value:
+            if not isinstance(action, Mapping):
+                raise RuntimeError("LINE buttons template actions must be objects.")
+            label = str(action.get("label") or "")
+            if not label.strip():
+                raise RuntimeError("LINE buttons template actions require label.")
+            normalized_action: dict[str, object] = {"label": label}
+            action_type = str(action.get("type") or "").strip().lower()
+            if action_type in {"message", "uri", "postback"}:
+                normalized_action["type"] = action_type
+            data = str(action.get("data") or "")
+            uri = str(action.get("uri") or "")
+            if data:
+                normalized_action["data"] = data
+            if uri:
+                normalized_action["uri"] = uri
+            actions.append(normalized_action)
+        title = str(value.get("title") or "")
+        text = str(value.get("text") or "")
+        if not title.strip() or not text.strip():
+            raise RuntimeError("LINE buttons template requires title and text.")
+        normalized = {
+            "type": "buttons",
+            "title": title,
+            "text": text,
+            "actions": actions,
+        }
+        thumbnail_image_url = str(value.get("thumbnailImageUrl") or "")
+        if thumbnail_image_url:
+            normalized["thumbnailImageUrl"] = thumbnail_image_url
+        alt_text = str(value.get("altText") or "")
+        if alt_text:
+            normalized["altText"] = alt_text
+        return normalized
+    raise RuntimeError("LINE templateMessage currently supports confirm and buttons templates.")
 
 
 def _line_template_action(label: str, data: str) -> dict[str, object]:
@@ -2420,28 +2459,78 @@ def _line_template_action(label: str, data: str) -> dict[str, object]:
     }
 
 
+def _line_template_payload_action(action: Mapping[str, object]) -> dict[str, object]:
+    label = str(action["label"])
+    action_type = str(action.get("type") or "").strip().lower()
+    uri = str(action.get("uri") or "")
+    data = str(action.get("data") or "")
+    if action_type == "uri" and uri:
+        return {
+            "type": "uri",
+            "label": label[:20],
+            "uri": uri,
+        }
+    if action_type == "postback" and data:
+        return {
+            "type": "postback",
+            "label": label[:20],
+            "data": data[:300],
+            "displayText": label[:300],
+        }
+    return {
+        "type": "message",
+        "label": label[:20],
+        "text": data or label,
+    }
+
+
 def _line_template_message_payload(template_message: dict[str, object]) -> dict[str, object]:
     template_type = str(template_message.get("type") or "").strip().lower()
-    if template_type != "confirm":
-        raise RuntimeError("LINE templateMessage currently supports confirm templates.")
-    text = str(template_message["text"])
-    alt_text = str(template_message.get("altText") or text)
-    confirm_label = str(template_message["confirmLabel"])
-    confirm_data = str(template_message["confirmData"])
-    cancel_label = str(template_message["cancelLabel"])
-    cancel_data = str(template_message["cancelData"])
-    return {
-        "type": "template",
-        "altText": alt_text[:400],
-        "template": {
-            "type": "confirm",
-            "text": text[:240],
-            "actions": [
-                _line_template_action(confirm_label, confirm_data),
-                _line_template_action(cancel_label, cancel_data),
-            ],
-        },
-    }
+    if template_type == "confirm":
+        text = str(template_message["text"])
+        alt_text = str(template_message.get("altText") or text)
+        confirm_label = str(template_message["confirmLabel"])
+        confirm_data = str(template_message["confirmData"])
+        cancel_label = str(template_message["cancelLabel"])
+        cancel_data = str(template_message["cancelData"])
+        return {
+            "type": "template",
+            "altText": alt_text[:400],
+            "template": {
+                "type": "confirm",
+                "text": text[:240],
+                "actions": [
+                    _line_template_action(confirm_label, confirm_data),
+                    _line_template_action(cancel_label, cancel_data),
+                ],
+            },
+        }
+    if template_type == "buttons":
+        title = str(template_message["title"])
+        text = str(template_message["text"])
+        thumbnail_image_url = str(template_message.get("thumbnailImageUrl") or "")
+        text_limit = 160 if thumbnail_image_url.strip() else 60
+        actions = [
+            _line_template_payload_action(cast(Mapping[str, object], action))
+            for action in cast(list[object], template_message["actions"])[:4]
+        ]
+        template: dict[str, object] = {
+            "type": "buttons",
+            "title": title[:40],
+            "text": text[:text_limit],
+            "actions": actions,
+            "imageAspectRatio": "rectangle",
+            "imageSize": "cover",
+        }
+        if thumbnail_image_url:
+            template["thumbnailImageUrl"] = thumbnail_image_url
+        alt_text = str(template_message.get("altText") or f"{title}: {text}")
+        return {
+            "type": "template",
+            "altText": alt_text[:400],
+            "template": template,
+        }
+    raise RuntimeError("LINE templateMessage currently supports confirm and buttons templates.")
 
 
 def _matrix_bearer_token(secret_token: str | None) -> str:

@@ -529,8 +529,13 @@ text sends intact. LINE native route-backed direct sends now also carry
 OpenClaw's confirm-style `templateMessage` payload through the shared outbound
 runtime, map confirm/cancel data to URI, postback, or message actions, enforce
 the upstream confirm text, alternate text, label, and postback data boundaries,
-and keep companion text sends intact. Remaining LINE provider parity is
-buttons/carousel template sends and account probe/action breadth.
+and keep companion text sends intact. LINE native route-backed direct sends now
+also carry OpenClaw's buttons-style `templateMessage` payload through the shared
+outbound runtime, preserve the source action list for replay, emit Bot API
+buttons templates with title/text/action truncation, default image layout
+options, optional thumbnail support, and URI/postback/message action mapping.
+Remaining LINE provider parity is carousel template sends and account
+probe/action breadth.
 Matrix native route-backed direct text sends now use OpenClaw's Client-Server
 `m.room.message` send shape, normalize `matrix:` / `room:` / `channel:`
 targets to room ids, preserve reply/thread relation metadata, split text at
