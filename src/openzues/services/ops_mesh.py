@@ -7737,6 +7737,22 @@ class OpsMeshService:
             return await self._dispatch_zalo_send_message_action(request)
         if channel == "matrix" and action in {"send", "sendMessage"}:
             return await self._dispatch_matrix_send_message_action(request)
+        if channel == "matrix" and action in {"edit", "editMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -8426,6 +8442,80 @@ class OpsMeshService:
         if not provider_result.get("messageId"):
             raise RuntimeError("Matrix API response did not include an event id.")
         return {"ok": True, "result": provider_result}
+
+    def _dispatch_matrix_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError("Matrix edit requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError("Matrix edit requires roomId.")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix edit requires messageId.")
+        content_value = _message_action_param_string(
+            request.params,
+            "content",
+            allow_empty=True,
+        )
+        if content_value is None:
+            content_value = _message_action_param_string(
+                request.params,
+                "message",
+                allow_empty=True,
+            )
+        content = (content_value or "").strip()
+        if not content:
+            raise RuntimeError("Matrix edit requires content.")
+        relation: dict[str, object] = {
+            "rel_type": "m.replace",
+            "event_id": message_id,
+        }
+        thread_id = _message_action_param_string(request.params, "threadId")
+        if thread_id is not None:
+            relation["m.in_reply_to"] = {"event_id": thread_id}
+        payload: dict[str, object] = {
+            "msgtype": "m.text",
+            "body": f"* {content}",
+            "m.new_content": {
+                "msgtype": "m.text",
+                "body": content,
+            },
+            "m.relates_to": relation,
+        }
+        result = self._put_json_provider(
+            _matrix_send_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.room.message",
+                transaction_id=request.idempotency_key or uuid.uuid4().hex,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        event_id = _matrix_message_id(result)
+        if event_id is None:
+            raise RuntimeError("Matrix API response did not include an event id.")
+        return {
+            "ok": True,
+            "result": {
+                "eventId": event_id,
+            },
+        }
 
     def _dispatch_whatsapp_react_message_action(
         self,
