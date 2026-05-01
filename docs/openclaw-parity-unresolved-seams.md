@@ -540,9 +540,11 @@ resolution behavior for native room targets.
 Matrix direct-user targets now classify as direct peers and resolve through
 OpenClaw's first `m.direct` path: Matrix `whoami`, account-data lookup, and
 strict two-member joined-room validation before native send/poll delivery.
+Matrix direct-user fallback now also inspects joined rooms when `m.direct` is
+missing or stale, selects a strict two-member room, and persists the repaired
+primary `m.direct` account-data mapping before native delivery.
 Remaining Matrix provider parity is encrypted media/thumbnail/duration metadata,
-joined-room direct fallback / mapping persistence, and self-profile update/config
-persistence breadth.
+and self-profile update/config persistence breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

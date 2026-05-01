@@ -5604,6 +5604,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_matrix_channel_info_route"` (`17 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix direct-user fallback now follows OpenClaw's joined-room repair path:
+  stale or missing `m.direct` mappings fall back to joined-room inspection,
+  strict two-member rooms are selected, and the primary `m.direct` account-data
+  mapping is persisted before native delivery.
+- Verified the Matrix direct-room fallback slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_direct_room"` (`2 passed`), adjacent
+  Matrix route/action proof `python -m pytest tests\test_ops_mesh.py -q -k
+  "matrix_native_route or matrix_direct_room or
+  message_action_dispatches_matrix_send_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_read_messages_route or
+  message_action_dispatches_matrix_member_info_route or
+  message_action_dispatches_matrix_channel_info_route"` (`18 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

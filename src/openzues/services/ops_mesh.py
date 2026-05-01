@@ -985,7 +985,7 @@ def _message_action_param_integer(
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
-    if normalized.startswith(("direct:", "dm:", "user:", "matrix:user:")):
+    if normalized.startswith(("direct:", "dm:", "user:", "matrix:user:", "matrix:@", "@")):
         return "direct"
     if normalized.startswith("group:"):
         return "group"
@@ -2450,6 +2450,10 @@ def _matrix_joined_members_endpoint(target: str | None, *, room_id: str) -> str:
     )
 
 
+def _matrix_joined_rooms_endpoint(target: str | None) -> str:
+    return f"{_matrix_base_url(target)}/_matrix/client/v3/joined_rooms"
+
+
 def _matrix_reaction_relations_endpoint(
     target: str | None,
     *,
@@ -2589,6 +2593,22 @@ def _matrix_joined_member_ids(result: object) -> list[str]:
     if isinstance(joined, list):
         return [str(user_id).strip() for user_id in joined if str(user_id).strip()]
     return []
+
+
+def _matrix_joined_room_ids(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    joined_rooms = result.get("joined_rooms") or result.get("joinedRooms")
+    if not isinstance(joined_rooms, list):
+        return []
+    seen: set[str] = set()
+    rooms: list[str] = []
+    for raw_room_id in joined_rooms:
+        room_id = str(raw_room_id).strip()
+        if room_id and room_id not in seen:
+            seen.add(room_id)
+            rooms.append(room_id)
+    return rooms
 
 
 def _matrix_optional_string_field(result: object, key: str) -> str | None:
@@ -9448,7 +9468,78 @@ class OpsMeshService:
             )
             if sorted(joined) == sorted([self_user_id, remote_user_id]):
                 return room_id
+        fallback_room_id = self._resolve_matrix_joined_direct_room_id(
+            route,
+            self_user_id=self_user_id,
+            remote_user_id=remote_user_id,
+            secret_token=secret_token,
+        )
+        if fallback_room_id is not None:
+            self._persist_matrix_direct_mapping(
+                route,
+                self_user_id=self_user_id,
+                remote_user_id=remote_user_id,
+                room_id=fallback_room_id,
+                direct_content=direct_data,
+                secret_token=secret_token,
+            )
+            return fallback_room_id
         raise RuntimeError(f"No direct room found for {remote_user_id} (m.direct missing)")
+
+    def _resolve_matrix_joined_direct_room_id(
+        self,
+        route: dict[str, Any],
+        *,
+        self_user_id: str,
+        remote_user_id: str,
+        secret_token: str | None,
+    ) -> str | None:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_joined_rooms_endpoint(str(route.get("target") or "")),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+        for room_id in _matrix_joined_room_ids(result):
+            joined = self._matrix_joined_member_ids(
+                route,
+                room_id=room_id,
+                secret_token=secret_token,
+            )
+            if sorted(joined) == sorted([self_user_id, remote_user_id]):
+                return room_id
+        return None
+
+    def _persist_matrix_direct_mapping(
+        self,
+        route: dict[str, Any],
+        *,
+        self_user_id: str,
+        remote_user_id: str,
+        room_id: str,
+        direct_content: dict[str, Any],
+        secret_token: str | None,
+    ) -> None:
+        existing_raw = direct_content.get(remote_user_id)
+        existing = (
+            [str(candidate).strip() for candidate in existing_raw if str(candidate).strip()]
+            if isinstance(existing_raw, list)
+            else []
+        )
+        next_rooms = [room_id, *[candidate for candidate in existing if candidate != room_id]]
+        next_content = dict(direct_content)
+        next_content[remote_user_id] = next_rooms
+        self._put_json_provider(
+            _matrix_direct_account_data_endpoint(
+                str(route.get("target") or ""),
+                user_id=self_user_id,
+            ),
+            next_content,
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
 
     def _resolve_matrix_route_room_id(
         self,
