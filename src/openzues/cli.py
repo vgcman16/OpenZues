@@ -13797,7 +13797,7 @@ def _plugin_manifest_root_metadata(source: dict[str, object]) -> dict[str, objec
         metadata["providerDiscoveryEntry"] = provider_discovery_entry
     ui_hints = source.get("uiHints")
     if isinstance(ui_hints, dict):
-        metadata["uiHints"] = dict(ui_hints)
+        metadata["configUiHints"] = dict(ui_hints)
     return metadata
 
 

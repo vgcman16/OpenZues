@@ -1376,7 +1376,8 @@ config path ownership, dangerous literal flags, and secret input materialization
 hints. Manifest root identity/classification fields are now also preserved,
 including `enabledByDefault`, `legacyPluginIds`,
 `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
-`providerDiscoveryEntry`, `cliBackends`, `skills`, and top-level `uiHints`.
+`providerDiscoveryEntry`, `cliBackends`, `skills`, and `configUiHints`
+projected from top-level `uiHints`.
 `plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
@@ -3521,8 +3522,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `contracts/inventory/bundled-capability-metadata.ts`: metadata-only plugin
   discovery now preserves `enabledByDefault`, `legacyPluginIds`,
   `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
-  `providerDiscoveryEntry`, `cliBackends`, `skills`, and top-level `uiHints`
-  from `openclaw.plugin.json`. Verified with `python -m pytest
+  `providerDiscoveryEntry`, `cliBackends`, `skills`, and `configUiHints`
+  projected from top-level `uiHints` in `openclaw.plugin.json`. Verified with
+  `python -m pytest
   tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification
   -q`, adjacent `python -m pytest tests\test_cli.py -q -k
   "plugins_list_json_preserves_manifest_identity_and_classification or

@@ -6892,7 +6892,7 @@ def test_plugins_list_json_preserves_manifest_identity_and_classification(
     assert plugin["providerDiscoveryEntry"] == "extensions/openai/providers"
     assert plugin["cliBackends"] == ["openai-cli"]
     assert plugin["skills"] == ["skills/openai"]
-    assert plugin["uiHints"] == {"apiKey": {"label": "API key"}}
+    assert plugin["configUiHints"] == {"apiKey": {"label": "API key"}}
     assert "text-inference:openai" in plugin["capabilities"]
 
 
