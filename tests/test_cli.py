@@ -2249,6 +2249,56 @@ def test_acp_bridge_command_rejects_mixed_gateway_alias_secret_sources(
     assert "Use either --token or --token-file for Gateway token." in result.stderr
 
 
+def test_acp_bridge_command_passes_options_to_registered_runner(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    token_file = tmp_path / "gateway-token.txt"
+    token_file.write_text("gateway-token\n", encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    def fake_runner(options: dict[str, object]) -> int:
+        calls.append(options)
+        return 6
+
+    monkeypatch.setattr(cli_module, "_acp_bridge_runner", fake_runner)
+
+    result = runner.invoke(
+        app,
+        [
+            "acp",
+            "--gateway-url",
+            "ws://gateway.invalid/openzues",
+            "--gateway-token-file",
+            str(token_file),
+            "--session",
+            "agent:main:main",
+            "--require-existing",
+            "--reset-session",
+            "--no-prefix-cwd",
+            "--provenance",
+            "meta+receipt",
+            "--verbose",
+        ],
+    )
+
+    assert result.exit_code == 6
+    assert calls == [
+        {
+            "gatewayUrl": "ws://gateway.invalid/openzues",
+            "gatewayToken": "gateway-token",
+            "gatewayPassword": None,
+            "defaultSessionKey": "agent:main:main",
+            "defaultSessionLabel": None,
+            "requireExistingSession": True,
+            "resetSession": True,
+            "prefixCwd": False,
+            "provenanceMode": "meta+receipt",
+            "verbose": True,
+        }
+    ]
+
+
 def test_acp_client_command_reports_native_runtime_unavailable() -> None:
     result = runner.invoke(
         app,

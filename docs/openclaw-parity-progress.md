@@ -5318,6 +5318,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_status_json_and_human"` (`58 passed`), `ruff check
   src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
   src\openzues\services\acp_agent.py`.
+- The top-level `openzues acp` command now has a native fakeable bridge-runner
+  seam matching the existing ACP client runner path: resolved gateway URL,
+  token/password sources, default session key/label, require/reset posture,
+  cwd-prefix, provenance mode, and verbosity are passed to the registered
+  runner before the legacy unavailable fallback is emitted.
+- Verified the ACP bridge runner CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_bridge_command"` (`4 passed`), adjacent ACP CLI
+  and support proof `python -m pytest tests\test_cli.py tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py -q -k
+  "acp_bridge_command or acp_client_command or acp_status_json_and_human or
+  acp_client_spawn_plan or acp_client_spawn_invocation or acp_gateway_agent or
+  acp_translator or acp_session_store or acp_available_commands or
+  acp_session_mapper or acp_event_mapper or acp_permission"` (`59 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 

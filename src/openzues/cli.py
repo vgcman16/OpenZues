@@ -151,7 +151,9 @@ _DEFAULT_SANDBOX_TOOL_DENY = [
     "xmtp",
 ]
 _AcpClientRunner = Callable[[AcpClientSpawnPlan], int | None]
+_AcpBridgeRunner = Callable[[dict[str, object]], int | None]
 _acp_client_runner: _AcpClientRunner | None = None
+_acp_bridge_runner: _AcpBridgeRunner | None = None
 _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
     "discord": {
         "chatTypes": ["direct", "channel"],
@@ -8830,6 +8832,11 @@ def configure_acp_client_runner(runner: _AcpClientRunner | None) -> None:
     _acp_client_runner = runner
 
 
+def configure_acp_bridge_runner(runner: _AcpBridgeRunner | None) -> None:
+    global _acp_bridge_runner
+    _acp_bridge_runner = runner
+
+
 def _emit_acp_bridge_unavailable(
     *,
     kind: str,
@@ -17226,6 +17233,21 @@ def acp_bridge_command(
     if isinstance(warnings, list):
         for warning in warnings:
             typer.echo(str(warning), err=True)
+    runner_options: dict[str, object] = {
+        "gatewayUrl": url,
+        "gatewayToken": auth_options.get("gatewayToken"),
+        "gatewayPassword": auth_options.get("gatewayPassword"),
+        "defaultSessionKey": session,
+        "defaultSessionLabel": session_label,
+        "requireExistingSession": require_existing,
+        "resetSession": reset_session,
+        "prefixCwd": not no_prefix_cwd,
+        "provenanceMode": provenance_mode,
+        "verbose": verbose,
+    }
+    if _acp_bridge_runner is not None:
+        code = _acp_bridge_runner(runner_options)
+        raise typer.Exit(code=0 if code is None else code)
     _emit_acp_bridge_unavailable(
         kind="Gateway",
         context={
