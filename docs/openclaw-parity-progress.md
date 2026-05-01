@@ -39,6 +39,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   saved_path_attachment_stages"` (`5 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Native configured ACP binding helpers now mirror OpenClaw's
+  `persistent-bindings.types.ts` key/record contract: session keys use the
+  16-character SHA-256 hash of `channel:accountId:conversationId`, and
+  config-sourced binding records persist `targetKind="session"`, `boundAt=0`,
+  conversation ids, and ACP metadata including mode, agent ids, backend, cwd,
+  and label.
+- Verified the configured ACP binding helper slice with `python -m pytest
+  tests\test_acp_persistent_bindings.py -q` (`2 passed`), adjacent ACP spawn
+  proof `python -m pytest tests\test_acp_persistent_bindings.py
+  tests\test_gateway_acp_spawn.py -q` (`21 passed`), adjacent gateway ACP
+  proof `python -m pytest tests\test_gateway_node_methods.py -q -k "acp and
+  thread"` (`7 passed`), `ruff check
+  src\openzues\services\acp_persistent_bindings.py
+  tests\test_acp_persistent_bindings.py`, and `mypy
+  src\openzues\services\acp_persistent_bindings.py`.
 - Route-backed thread-bound spawn binding now includes LINE current-conversation
   routes. The shared binder accepts LINE notification route views, keeps the
   provider target for delivery, and stores normalized LINE conversation ids in
