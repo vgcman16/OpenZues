@@ -820,11 +820,12 @@ set `OPENCLAW_SHELL=acp-client`, strip provider auth and active-skill env keys
 case-insensitively, and preserve provider auth when callers choose an explicit
 custom ACP server. The spawn preflight now also mirrors OpenClaw's Windows-safe
 ACP client invocation resolver by unwrapping `.cmd` shims to the Python
-executable without shell execution. Explicit `--server openzues` overrides
-that change the server args now also preserve provider auth like OpenClaw's
-default-executable/custom-entry guard. Remaining ACP CLI parity is still the
-real bridge client/server protocol runtime rather than the spawn preflight
-contract.
+executable without shell execution, failing closed for unresolved wrappers,
+and leaving non-Windows / non-shell optional spawn fields unset. Explicit
+`--server openzues` overrides that change the server args now also preserve
+provider auth like OpenClaw's default-executable/custom-entry guard. Remaining
+ACP CLI parity is still the real bridge client/server protocol runtime rather
+than the spawn preflight contract.
 `acp status [lookup]` now reads native ACP session metadata and linked
 OpenClaw-shaped task records, resolving lookup tokens by session key, runtime
 thread id, runtime session id, label, task id, and run id. JSON output returns

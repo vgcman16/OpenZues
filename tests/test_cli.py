@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -2402,6 +2403,23 @@ def test_acp_client_spawn_plan_preserves_provider_auth_for_default_command_overr
     assert plan.stripped_env_keys == ()
 
 
+def test_acp_client_spawn_invocation_keeps_non_windows_options_unset() -> None:
+    from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
+
+    invocation = resolve_acp_client_spawn_invocation(
+        server_command="openzues",
+        server_args=("acp", "--verbose"),
+        platform="darwin",
+        env={},
+        executable="/usr/bin/python",
+    )
+
+    assert invocation == {
+        "command": "openzues",
+        "args": ("acp", "--verbose"),
+    }
+
+
 def test_acp_client_spawn_invocation_unwraps_windows_cmd_shim(tmp_path: Path) -> None:
     from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
 
@@ -2425,9 +2443,26 @@ def test_acp_client_spawn_invocation_unwraps_windows_cmd_shim(tmp_path: Path) ->
     assert invocation == {
         "command": r"C:\Python312\python.exe",
         "args": (str(script_path), "acp", "--verbose"),
-        "shell": False,
         "windowsHide": True,
     }
+
+
+def test_acp_client_spawn_invocation_fails_closed_for_unresolved_windows_wrapper(
+    tmp_path: Path,
+) -> None:
+    from openzues.services.acp_client_runtime import resolve_acp_client_spawn_invocation
+
+    shim_path = tmp_path / "openzues.cmd"
+    shim_path.write_text("@ECHO off\r\necho wrapper\r\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="without shell execution"):
+        resolve_acp_client_spawn_invocation(
+            server_command=str(shim_path),
+            server_args=("acp",),
+            platform="win32",
+            env={"PATH": str(tmp_path), "PATHEXT": ".CMD;.EXE;.BAT"},
+            executable=r"C:\Python312\python.exe",
+        )
 
 
 def test_acp_client_command_passes_spawn_plan_to_registered_runner(monkeypatch) -> None:

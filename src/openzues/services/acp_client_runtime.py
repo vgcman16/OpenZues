@@ -157,8 +157,6 @@ def resolve_acp_client_spawn_invocation(
         return {
             "command": server_command,
             "args": args,
-            "shell": False,
-            "windowsHide": False,
         }
     command_path = _resolve_windows_acp_client_command_path(server_command, env or os.environ)
     if command_path is None or command_path.suffix.lower() not in {".cmd", ".bat"}:
@@ -176,7 +174,6 @@ def resolve_acp_client_spawn_invocation(
     return {
         "command": executable or sys.executable,
         "args": (str(entry_path), *args),
-        "shell": False,
         "windowsHide": True,
     }
 

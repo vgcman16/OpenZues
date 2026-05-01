@@ -5081,6 +5081,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_client_command_passes_spawn_plan_to_registered_runner"` (`5 passed`),
   `ruff check src\openzues\services\acp_client_runtime.py tests\test_cli.py`,
   and `mypy src\openzues\services\acp_client_runtime.py`.
+- ACP client spawn invocation now mirrors OpenClaw's optional spawn-option
+  shape: non-Windows calls leave `shell` / `windowsHide` unset, resolved
+  Windows `.cmd` shims still unwrap without shell execution and only set
+  `windowsHide`, and unresolved Windows wrappers fail closed.
+- Verified the ACP client invocation-option slice with `python -m pytest
+  tests\test_cli.py -q -k "acp_client_spawn_invocation"` (`3 passed`),
+  adjacent ACP client proof `python -m pytest tests\test_cli.py -q -k
+  "acp_client_spawn_invocation or
+  acp_client_spawn_plan_strips_provider_auth_for_default_bridge or
+  acp_client_spawn_plan_preserves_provider_auth_for_default_command_override
+  or acp_client_spawn_plan_preserves_provider_auth_for_custom_server or
+  acp_client_command_passes_spawn_plan_to_registered_runner"` (`7 passed`),
+  `ruff check src\openzues\services\acp_client_runtime.py tests\test_cli.py`,
+  and `mypy src\openzues\services\acp_client_runtime.py`.
 
 ## References
 
