@@ -93,7 +93,13 @@ thread intro metadata, including `threadName`, optional `label`, and the
 runtime cwd line when `cwd` is present.
 Remaining ACP binding parity is real provider-native child-thread
 creation/store breadth, unbind lifecycle breadth, and the
-standalone ACP bridge server/client runtime.
+standalone ACP bridge server/client runtime. Native ACP prompt request assembly
+now also mirrors OpenClaw's translator contract for cwd prefixing, home
+redaction with Windows separator preservation, prompt attachments,
+`_meta` thinking/deliver/timeout send options, and system provenance
+metadata/receipt construction. Remaining ACP protocol parity is the bridge
+server/client agent lifecycle around `initialize`, `newSession`, `loadSession`,
+`prompt`, `cancel`, transcript replay, and parent-stream relay fallback.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same

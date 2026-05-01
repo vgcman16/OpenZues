@@ -5183,6 +5183,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_status_json_and_human"` (`41 passed`), `ruff check
   src\openzues\services\acp_session_store.py tests\test_acp_session_store.py`,
   and `mypy src\openzues\services\acp_session_store.py`.
+- Native ACP prompt request assembly now follows OpenClaw's translator prompt
+  send contract for cwd prefixing, home redaction with Windows separator
+  preservation, prompt attachment forwarding, `_meta` thinking/deliver/timeout
+  options, and system provenance metadata/receipt construction.
+- Verified the ACP translator prompt-send slice with `python -m pytest
+  tests\test_acp_translator.py -q` (`4 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py tests\test_cli.py
+  -q -k "acp_translator or acp_session_store or acp_available_commands or
+  acp_session_mapper or acp_event_mapper or acp_permission or acp_client or
+  acp_bridge_command or acp_status_json_and_human"` (`45 passed`), `ruff check
+  src\openzues\services\acp_translator.py tests\test_acp_translator.py`, and
+  `mypy src\openzues\services\acp_translator.py`.
 
 ## References
 
