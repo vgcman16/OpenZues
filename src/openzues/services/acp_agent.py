@@ -438,6 +438,55 @@ class AcpGatewayAgent:
             self._pending_prompts.pop(session_id, None)
             pending.future.set_result({"stopReason": "cancelled"})
 
+    async def setSessionMode(self, params: Mapping[str, object]) -> dict[str, object]:  # noqa: N802
+        return await self.set_session_mode(params)
+
+    async def set_session_mode(self, params: Mapping[str, object]) -> dict[str, object]:
+        session_id = str(params.get("sessionId") or "")
+        session = self._session_store.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} not found")
+        mode_id = params.get("modeId")
+        if not isinstance(mode_id, str) or not mode_id:
+            return {}
+        session_key = str(session.get("sessionKey") or "")
+        await self._gateway.request(
+            "sessions.patch",
+            {"key": session_key, "thinkingLevel": mode_id},
+        )
+        snapshot = await self._get_session_snapshot(
+            session_key,
+            overrides={"thinkingLevel": mode_id},
+        )
+        await self._send_session_snapshot_update(session_id, snapshot, include_controls=True)
+        return {}
+
+    async def setSessionConfigOption(  # noqa: N802
+        self,
+        params: Mapping[str, object],
+    ) -> dict[str, object]:
+        return await self.set_session_config_option(params)
+
+    async def set_session_config_option(
+        self,
+        params: Mapping[str, object],
+    ) -> dict[str, object]:
+        session_id = str(params.get("sessionId") or "")
+        session = self._session_store.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} not found")
+        config_id = str(params.get("configId") or "")
+        value = params.get("value")
+        patch_info = self._resolve_session_config_patch(config_id, value)
+        session_key = str(session.get("sessionKey") or "")
+        await self._gateway.request("sessions.patch", {"key": session_key, **patch_info["patch"]})
+        snapshot = await self._get_session_snapshot(
+            session_key,
+            overrides=patch_info["overrides"],
+        )
+        await self._send_session_snapshot_update(session_id, snapshot, include_controls=True)
+        return {"configOptions": snapshot["configOptions"]}
+
     async def handleGatewayEvent(self, event: Mapping[str, object]) -> None:  # noqa: N802
         await self.handle_gateway_event(event)
 
@@ -575,6 +624,43 @@ class AcpGatewayAgent:
             "on the OpenClaw gateway or agent instead."
         )
 
+    def _resolve_session_config_patch(
+        self,
+        config_id: str,
+        value: object,
+    ) -> dict[str, dict[str, object]]:
+        if not isinstance(value, str):
+            raise ValueError(
+                "ACP bridge does not support non-string session config option "
+                f'values for "{config_id}".'
+            )
+        match config_id:
+            case "thought_level":
+                return {
+                    "patch": {"thinkingLevel": value},
+                    "overrides": {"thinkingLevel": value},
+                }
+            case "fast_mode":
+                enabled = value == "on"
+                return {"patch": {"fastMode": enabled}, "overrides": {"fastMode": enabled}}
+            case "verbose_level":
+                return {"patch": {"verboseLevel": value}, "overrides": {"verboseLevel": value}}
+            case "trace_level":
+                return {"patch": {"traceLevel": value}, "overrides": {"traceLevel": value}}
+            case "reasoning_level":
+                return {
+                    "patch": {"reasoningLevel": value},
+                    "overrides": {"reasoningLevel": value},
+                }
+            case "response_usage":
+                return {"patch": {"responseUsage": value}, "overrides": {"responseUsage": value}}
+            case "elevated_level":
+                return {"patch": {"elevatedLevel": value}, "overrides": {"elevatedLevel": value}}
+            case _:
+                raise ValueError(
+                    f'ACP bridge mode does not support session config option "{config_id}".'
+                )
+
     def _find_pending_by_session_key(
         self,
         session_key: str,
@@ -647,12 +733,16 @@ class AcpGatewayAgent:
         if not pending.future.done():
             pending.future.set_result({"stopReason": stop_reason})
 
-    async def _get_session_snapshot(self, session_key: str) -> dict[str, object]:
+    async def _get_session_snapshot(
+        self,
+        session_key: str,
+        overrides: Mapping[str, Any] | None = None,
+    ) -> dict[str, object]:
         try:
             row = await self._get_gateway_session_row(session_key)
         except Exception:  # noqa: BLE001 - bridge snapshot fallback mirrors OpenClaw.
             row = None
-        snapshot = _build_session_presentation(row)
+        snapshot = _build_session_presentation(row, overrides)
         snapshot["metadata"] = _build_session_metadata(row=row, session_key=session_key)
         usage = _build_session_usage_snapshot(row)
         if usage is not None:

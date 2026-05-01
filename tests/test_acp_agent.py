@@ -508,3 +508,67 @@ async def test_acp_gateway_agent_streams_tool_call_events() -> None:
         },
     ]
     assert await prompt_task == {"stopReason": "end_turn"}
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_set_session_mode_patches_and_refreshes_controls() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    connection = FakeAcpConnection()
+    gateway = FakeGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:work",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(connection, gateway, session_store=store)
+
+    result = await agent.set_session_mode({"sessionId": "session-1", "modeId": "high"})
+
+    assert result == {}
+    assert ("sessions.patch", {"key": "agent:main:work", "thinkingLevel": "high"}) in gateway.calls
+    assert {
+        "sessionId": "session-1",
+        "update": {
+            "sessionUpdate": "current_mode_update",
+            "currentModeId": "high",
+        },
+    } in connection.session_updates
+    assert any(
+        update["sessionId"] == "session-1"
+        and isinstance(update["update"], dict)
+        and update["update"].get("sessionUpdate") == "config_option_update"
+        and any(
+            option.get("id") == "thought_level" and option.get("currentValue") == "high"
+            for option in update["update"].get("configOptions", [])
+        )
+        for update in connection.session_updates
+    )
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_set_session_config_option_patches_openclaw_fields() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    connection = FakeAcpConnection()
+    gateway = FakeGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:work",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(connection, gateway, session_store=store)
+
+    result = await agent.set_session_config_option(
+        {"sessionId": "session-1", "configId": "fast_mode", "value": "on"}
+    )
+
+    assert ("sessions.patch", {"key": "agent:main:work", "fastMode": True}) in gateway.calls
+    assert any(
+        option["id"] == "fast_mode" and option["currentValue"] == "on"
+        for option in result["configOptions"]  # type: ignore[index]
+    )
