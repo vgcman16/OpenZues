@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -10,6 +13,7 @@ from openzues.services.acp_session_store import (
     InMemoryAcpSessionStore,
     default_acp_session_store,
 )
+from openzues.services.acp_translator import build_prompt_send_request
 
 ACP_PROTOCOL_VERSION = "0.4.0"
 ACP_LOAD_SESSION_REPLAY_LIMIT = 1_000_000
@@ -29,6 +33,16 @@ class AcpGatewayClient(Protocol):
 class AcpConnection(Protocol):
     async def session_update(self, payload: dict[str, object]) -> object:
         ...
+
+
+@dataclass
+class _PendingPrompt:
+    session_id: str
+    session_key: str
+    run_id: str
+    future: asyncio.Future[dict[str, object]]
+    sent_text_length: int = 0
+    sent_thought_length: int = 0
 
 
 def _normalize_optional_string(value: object) -> str | None:
@@ -276,6 +290,7 @@ class AcpGatewayAgent:
         self._gateway = gateway
         self._session_store = session_store or default_acp_session_store
         self._opts = opts
+        self._pending_prompts: dict[str, _PendingPrompt] = {}
 
     async def initialize(self, _params: Mapping[str, object]) -> dict[str, object]:
         return {
@@ -357,6 +372,103 @@ class AcpGatewayAgent:
             "modes": snapshot["modes"],
         }
 
+    async def prompt(self, params: Mapping[str, object]) -> dict[str, object]:
+        session_id = str(params.get("sessionId") or "")
+        session = self._session_store.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} not found")
+        if session.get("activeRunId") or session.get("abort"):
+            self._session_store.cancel_active_run(session_id)
+
+        run_id = str(uuid.uuid4())
+        request_params = build_prompt_send_request(
+            session=session,
+            prompt_request=params,
+            run_id=run_id,
+            opts=self._opts,
+        )
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, object]] = loop.create_future()
+        pending = _PendingPrompt(
+            session_id=session_id,
+            session_key=str(session.get("sessionKey") or ""),
+            run_id=run_id,
+            future=future,
+        )
+        self._pending_prompts[session_id] = pending
+        self._session_store.set_active_run(session_id, run_id, lambda: None)
+        try:
+            await self._gateway.request("chat.send", request_params)
+        except Exception:
+            self._pending_prompts.pop(session_id, None)
+            self._session_store.clear_active_run(session_id)
+            raise
+        return await future
+
+    async def cancel(self, params: Mapping[str, object]) -> None:
+        session_id = str(params.get("sessionId") or "")
+        session = self._session_store.get_session(session_id)
+        if session is None:
+            return
+        active_run_id = session.get("activeRunId")
+        pending = self._pending_prompts.get(session_id)
+        if isinstance(active_run_id, str):
+            scoped_run_id = active_run_id
+        elif pending is not None:
+            scoped_run_id = pending.run_id
+        else:
+            scoped_run_id = None
+        self._session_store.cancel_active_run(session_id)
+        if scoped_run_id is not None:
+            try:
+                await self._gateway.request(
+                    "chat.abort",
+                    {"sessionKey": str(session.get("sessionKey") or ""), "runId": scoped_run_id},
+                )
+            except Exception:
+                pass
+        if pending is not None and not pending.future.done():
+            self._pending_prompts.pop(session_id, None)
+            pending.future.set_result({"stopReason": "cancelled"})
+
+    async def handleGatewayEvent(self, event: Mapping[str, object]) -> None:  # noqa: N802
+        await self.handle_gateway_event(event)
+
+    async def handle_gateway_event(self, event: Mapping[str, object]) -> None:
+        if event.get("event") != "chat":
+            return
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            return
+        session_key = payload.get("sessionKey")
+        state = payload.get("state")
+        run_id = payload.get("runId")
+        if not isinstance(session_key, str) or not isinstance(state, str):
+            return
+        pending = self._find_pending_by_session_key(
+            session_key,
+            run_id if isinstance(run_id, str) else None,
+        )
+        if pending is None:
+            return
+        message = payload.get("message")
+        if isinstance(message, Mapping) and state in {"delta", "final"}:
+            await self._handle_delta_event(pending, message)
+            if state == "delta":
+                return
+        if state == "final":
+            raw_stop_reason = payload.get("stopReason")
+            stop_reason = "max_tokens" if raw_stop_reason == "max_tokens" else "end_turn"
+            await self._finish_prompt(pending, stop_reason)
+            return
+        if state == "aborted":
+            await self._finish_prompt(pending, "cancelled")
+            return
+        if state == "error":
+            error_kind = payload.get("errorKind")
+            stop_reason = "refusal" if error_kind == "refusal" else "end_turn"
+            await self._finish_prompt(pending, stop_reason)
+
     def _assert_supported_session_setup(self, mcp_servers: object) -> None:
         if not isinstance(mcp_servers, Sequence) or isinstance(mcp_servers, str | bytes):
             return
@@ -366,6 +478,78 @@ class AcpGatewayAgent:
             "ACP bridge mode does not support per-session MCP servers. Configure MCP "
             "on the OpenClaw gateway or agent instead."
         )
+
+    def _find_pending_by_session_key(
+        self,
+        session_key: str,
+        run_id: str | None = None,
+    ) -> _PendingPrompt | None:
+        for pending in self._pending_prompts.values():
+            if pending.session_key != session_key:
+                continue
+            if run_id is not None and pending.run_id != run_id:
+                continue
+            return pending
+        return None
+
+    async def _handle_delta_event(
+        self,
+        pending: _PendingPrompt,
+        message: Mapping[str, object],
+    ) -> None:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return
+        thought_parts: list[str] = []
+        text_parts: list[str] = []
+        for block in content:
+            if not isinstance(block, Mapping):
+                continue
+            if block.get("type") == "thinking" and isinstance(block.get("thinking"), str):
+                thought_parts.append(str(block["thinking"]))
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                text_parts.append(str(block["text"]))
+        full_thought = "\n".join(thought_parts).rstrip()
+        if full_thought and len(full_thought) > pending.sent_thought_length:
+            new_thought = full_thought[pending.sent_thought_length :]
+            pending.sent_thought_length = len(full_thought)
+            await self._session_update(
+                {
+                    "sessionId": pending.session_id,
+                    "update": {
+                        "sessionUpdate": "agent_thought_chunk",
+                        "content": {"type": "text", "text": new_thought},
+                    },
+                }
+            )
+        full_text = "\n".join(text_parts).rstrip()
+        if full_text and len(full_text) > pending.sent_text_length:
+            new_text = full_text[pending.sent_text_length :]
+            pending.sent_text_length = len(full_text)
+            await self._session_update(
+                {
+                    "sessionId": pending.session_id,
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": new_text},
+                    },
+                }
+            )
+
+    async def _finish_prompt(self, pending: _PendingPrompt, stop_reason: str) -> None:
+        self._pending_prompts.pop(pending.session_id, None)
+        self._session_store.clear_active_run(pending.session_id)
+        try:
+            snapshot = await self._get_session_snapshot(pending.session_key)
+            await self._send_session_snapshot_update(
+                pending.session_id,
+                snapshot,
+                include_controls=False,
+            )
+        except Exception:
+            pass
+        if not pending.future.done():
+            pending.future.set_result({"stopReason": stop_reason})
 
     async def _get_session_snapshot(self, session_key: str) -> dict[str, object]:
         try:

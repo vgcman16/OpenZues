@@ -97,13 +97,15 @@ standalone ACP bridge server/client runtime. Native ACP prompt request assembly
 now also mirrors OpenClaw's translator contract for cwd prefixing, home
 redaction with Windows separator preservation, prompt attachments,
 `_meta` thinking/deliver/timeout send options, and system provenance
-metadata/receipt construction. Remaining ACP protocol parity is the bridge
-server/client agent lifecycle around `prompt`, `cancel`, gateway event
-streaming, reconnect/replay reconciliation, set-session controls, and
-parent-stream relay fallback. Native `AcpGatewayAgent` now covers
-OpenClaw-shaped `initialize`, `newSession`, and `loadSession` behavior,
-including capability advertisement, gateway-backed session snapshots, usage
-updates, transcript replay, and available command updates.
+metadata/receipt construction. Native `AcpGatewayAgent` now covers
+OpenClaw-shaped `initialize`, `newSession`, `loadSession`, `prompt`, and
+`cancel` behavior, including capability advertisement, gateway-backed session
+snapshots, usage updates, transcript replay, available command updates,
+active-run prompt tracking, chat delta projection, terminal stop-reason
+mapping, and scoped `chat.abort`. Remaining ACP protocol parity is the bridge
+server/client lifecycle around tool-call event streaming, reconnect/replay
+reconciliation, set-session controls, prompt provenance fallback, session rate
+limits, and parent-stream relay fallback.
 Gateway-level ACP `thread=true` spawns now also honor OpenClaw's channel
 thread-binding spawn policy for explicit
 `channels.<channel>.threadBindings.spawnAcpSessions=false`, returning the same

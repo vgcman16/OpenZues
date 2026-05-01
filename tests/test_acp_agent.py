@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -189,3 +190,191 @@ async def test_acp_gateway_agent_load_session_replays_transcript_and_snapshot() 
         },
     } in connection.session_updates
     assert ("sessions.get", {"key": "agent:main:work", "limit": 1_000_000}) in gateway.calls
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_prompt_sends_chat_and_resolves_on_final_event() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    connection = FakeAcpConnection()
+    gateway = FakeGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:main",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(connection, gateway, session_store=store)
+
+    prompt_task = asyncio.create_task(
+        agent.prompt(
+            {
+                "sessionId": "session-1",
+                "prompt": [{"type": "text", "text": "hello"}],
+                "_meta": {"prefixCwd": False, "thinking": "high"},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+
+    send_method, send_params = gateway.calls[-1]
+    assert send_method == "chat.send"
+    run_id = send_params["idempotencyKey"]
+    assert isinstance(run_id, str)
+    assert send_params == {
+        "sessionKey": "agent:main:main",
+        "message": "hello",
+        "idempotencyKey": run_id,
+        "thinking": "high",
+    }
+    assert store.get_session("session-1")["activeRunId"] == run_id  # type: ignore[index]
+    assert not prompt_task.done()
+
+    await agent.handle_gateway_event(
+        {
+            "event": "chat",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "state": "final",
+                "stopReason": "max_tokens",
+            },
+        }
+    )
+
+    assert await prompt_task == {"stopReason": "max_tokens"}
+    assert store.get_session("session-1")["activeRunId"] is None  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_chat_delta_emits_incremental_text_and_thinking() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    connection = FakeAcpConnection()
+    gateway = FakeGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:main",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(connection, gateway, session_store=store)
+    prompt_task = asyncio.create_task(
+        agent.prompt(
+            {
+                "sessionId": "session-1",
+                "prompt": [{"type": "text", "text": "hello"}],
+                "_meta": {"prefixCwd": False},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    run_id = gateway.calls[-1][1]["idempotencyKey"]
+    connection.session_updates.clear()
+
+    await agent.handle_gateway_event(
+        {
+            "event": "chat",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "state": "delta",
+                "message": {
+                    "content": [
+                        {"type": "thinking", "thinking": "Private"},
+                        {"type": "text", "text": "Visible"},
+                    ]
+                },
+            },
+        }
+    )
+    await agent.handle_gateway_event(
+        {
+            "event": "chat",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "state": "delta",
+                "message": {
+                    "content": [
+                        {"type": "thinking", "thinking": "Private thought"},
+                        {"type": "text", "text": "Visible reply"},
+                    ]
+                },
+            },
+        }
+    )
+    await agent.handle_gateway_event(
+        {
+            "event": "chat",
+            "payload": {
+                "sessionKey": "agent:main:main",
+                "runId": run_id,
+                "state": "final",
+            },
+        }
+    )
+
+    assert {
+        "sessionId": "session-1",
+        "update": {
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {"type": "text", "text": "Private"},
+        },
+    } in connection.session_updates
+    assert {
+        "sessionId": "session-1",
+        "update": {
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {"type": "text", "text": " thought"},
+        },
+    } in connection.session_updates
+    assert {
+        "sessionId": "session-1",
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": "Visible"},
+        },
+    } in connection.session_updates
+    assert {
+        "sessionId": "session-1",
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": " reply"},
+        },
+    } in connection.session_updates
+    assert await prompt_task == {"stopReason": "end_turn"}
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_cancel_aborts_active_prompt_run() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    connection = FakeAcpConnection()
+    gateway = FakeGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:main",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(connection, gateway, session_store=store)
+    prompt_task = asyncio.create_task(
+        agent.prompt(
+            {
+                "sessionId": "session-1",
+                "prompt": [{"type": "text", "text": "hello"}],
+                "_meta": {"prefixCwd": False},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    run_id = gateway.calls[-1][1]["idempotencyKey"]
+
+    await agent.cancel({"sessionId": "session-1"})
+
+    assert ("chat.abort", {"sessionKey": "agent:main:main", "runId": run_id}) in gateway.calls
+    assert await prompt_task == {"stopReason": "cancelled"}

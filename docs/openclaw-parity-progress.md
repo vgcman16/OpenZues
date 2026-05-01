@@ -5215,6 +5215,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_status_json_and_human"` (`48 passed`), `ruff check
   src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
   src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent.prompt` now follows OpenClaw's prompt lifecycle for
+  gateway `chat.send` dispatch, active-run tracking, chat delta projection into
+  assistant text/thinking ACP chunks, terminal chat-event stop reason mapping,
+  session snapshot refresh on finish, and `cancel` scoping through
+  `chat.abort`.
+- Verified the ACP agent prompt/cancel slice with `python -m pytest
+  tests\test_acp_agent.py -q` (`6 passed`), adjacent ACP support proof
+  `python -m pytest tests\test_acp_agent.py tests\test_acp_translator.py
+  tests\test_acp_session_store.py tests\test_acp_commands.py
+  tests\test_acp_session_mapper.py tests\test_acp_event_mapper.py
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k
+  "acp_gateway_agent or acp_translator or acp_session_store or
+  acp_available_commands or acp_session_mapper or acp_event_mapper or
+  acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`51 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
 
 ## References
 
