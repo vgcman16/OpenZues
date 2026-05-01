@@ -19911,6 +19911,50 @@ def test_gateway_session_history_rest_endpoint_streams_initial_sse_history() -> 
     assert payload["messages"][0]["content"][0]["text"] == "streamed initial history"
 
 
+def test_gateway_session_history_rest_endpoint_full_initial_sse_without_query() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-sse-full-api"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+    session_key = "openzues:thread:sse-full"
+
+    asyncio.run(app.state.database.initialize())
+    for index in range(201):
+        asyncio.run(
+            app.state.database.append_control_chat_message(
+                role="assistant",
+                content=f"history message {index + 1}",
+                session_key=session_key,
+            )
+        )
+
+    base_url, server, thread = _start_test_server(app)
+    try:
+        encoded_key = quote(session_key, safe="")
+        timeout = httpx.Timeout(5.0, read=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "GET",
+                f"{base_url}/sessions/{encoded_key}/history",
+                headers={"accept": "text/event-stream"},
+            ) as stream:
+                assert stream.status_code == 200
+                payload = _read_sse_payload(stream.iter_lines(), "history")
+    finally:
+        _stop_test_server(server, thread)
+
+    assert payload["sessionKey"] == session_key
+    assert len(payload["messages"]) == 201
+    assert payload["messages"][0]["__openclaw"]["seq"] == 1
+    assert payload["messages"][-1]["__openclaw"]["seq"] == 201
+    assert payload["hasMore"] is False
+    assert "nextCursor" not in payload
+
+
 def test_gateway_session_history_rest_endpoint_streams_live_message_updates() -> None:
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "gateway-session-history-rest-live-api"
     shutil.rmtree(tmp_path, ignore_errors=True)
@@ -20009,6 +20053,7 @@ def test_gateway_session_history_rest_endpoint_streams_live_message_updates() ->
             "id": "2",
             "role": "assistant",
             "content": [{"type": "text", "text": "live streamed update"}],
+            "parentId": "1",
             "__openclaw": {"id": "2", "seq": 2},
         },
         "messageId": "2",
@@ -20125,6 +20170,7 @@ def test_gateway_session_history_rest_endpoint_suppresses_no_reply_live_messages
             "id": "3",
             "role": "assistant",
             "content": [{"type": "text", "text": "visible after silent reply"}],
+            "parentId": "2",
             "__openclaw": {"id": "3", "seq": 3},
         },
         "messageId": "3",
@@ -20263,6 +20309,7 @@ def test_gateway_session_history_rest_endpoint_resyncs_sequence_after_silent_ref
             "id": "4",
             "role": "assistant",
             "content": [{"type": "text", "text": "third visible history"}],
+            "parentId": "3",
             "__openclaw": {"id": "4", "seq": 4},
         },
         "messageId": "4",

@@ -248,6 +248,7 @@ CONTROL_UI_BOOTSTRAP_CONFIG_PATH = "/__openclaw/control-ui-config.json"
 CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
 DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
+DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -4232,6 +4233,8 @@ def create_app(
                 pass
         if "cursor" not in params:
             params["cursor"] = 1_000_000_000
+        if not limit_requested and not cursor_requested:
+            params["limit"] = DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT
         requester = await resolve_gateway_node_method_requester(request)
         scope_response = gateway_session_history_scope_response(request)
         if scope_response is not None:

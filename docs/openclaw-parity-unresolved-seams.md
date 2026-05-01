@@ -1588,6 +1588,14 @@ edge cases such as auth/scope rejection, duplicate/freshest session resolution,
 or silent transcript refresh semantics if they map cleanly to OpenZues'
 SQLite-backed session store.
 
+Current queue-head adjustment: no-query direct session-history REST/SSE loads
+now request an explicit full initial history window instead of inheriting the
+RPC `sessions.get` 200-message default. Initial `history` SSE events preserve
+raw `__openclaw.seq` coverage from the first visible row through the latest row,
+return `hasMore: false`, and omit `nextCursor` unless the caller explicitly
+asks for pagination. Remaining direct-history seams should stay with
+source-backed duplicate/freshest resolution or auth/scope edge cases.
+
 Current queue-head adjustment: RPC `sessions.get` now accepts explicit limits
 above 1000 like OpenClaw's WebSocket method, while direct HTTP
 `/sessions/{sessionKey}/history` keeps its upstream 1000-row REST cap. The next
