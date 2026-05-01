@@ -50,6 +50,7 @@ class _PendingPrompt:
     session_key: str
     run_id: str
     future: asyncio.Future[dict[str, object]]
+    send_accepted: bool = False
     sent_text_length: int = 0
     sent_thought_length: int = 0
     tool_calls: dict[str, dict[str, object]] = field(default_factory=dict)
@@ -320,6 +321,7 @@ class AcpGatewayAgent:
         self._session_store = session_store or default_acp_session_store
         self._opts = opts
         self._pending_prompts: dict[str, _PendingPrompt] = {}
+        self._disconnect_reason: str | None = None
         rate_limit = opts.get("session_create_rate_limit") or opts.get("sessionCreateRateLimit")
         rate_limit_config = rate_limit if isinstance(rate_limit, Mapping) else None
         self._session_create_rate_limit_max = _read_positive_int(
@@ -448,6 +450,7 @@ class AcpGatewayAgent:
         self._session_store.set_active_run(session_id, run_id, lambda: None)
         try:
             await self._gateway.request("chat.send", request_params)
+            pending.send_accepted = True
         except Exception as exc:
             has_provenance = (
                 "systemInputProvenance" in request_params
@@ -461,6 +464,7 @@ class AcpGatewayAgent:
                 }
                 try:
                     await self._gateway.request("chat.send", retry_params)
+                    pending.send_accepted = True
                 except Exception:
                     self._pending_prompts.pop(session_id, None)
                     self._session_store.clear_active_run(session_id)
@@ -470,6 +474,30 @@ class AcpGatewayAgent:
             self._session_store.clear_active_run(session_id)
             raise
         return await future
+
+    def handleGatewayDisconnect(self, reason: str) -> None:  # noqa: N802
+        self.handle_gateway_disconnect(reason)
+
+    def handle_gateway_disconnect(self, reason: str) -> None:
+        self._disconnect_reason = reason
+
+    async def handleGatewayReconnect(self) -> None:  # noqa: N802
+        await self.handle_gateway_reconnect()
+
+    async def handle_gateway_reconnect(self) -> None:
+        self._disconnect_reason = None
+        for pending in list(self._pending_prompts.values()):
+            if not pending.send_accepted:
+                continue
+            try:
+                result = await self._gateway.request(
+                    "agent.wait",
+                    {"runId": pending.run_id, "timeoutMs": 0},
+                )
+            except Exception:
+                continue
+            if result.get("status") == "ok":
+                await self._finish_prompt(pending, "end_turn")
 
     async def cancel(self, params: Mapping[str, object]) -> None:
         session_id = str(params.get("sessionId") or "")

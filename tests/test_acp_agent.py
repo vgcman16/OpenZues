@@ -681,3 +681,46 @@ async def test_acp_gateway_agent_retries_prompt_without_admin_provenance_fields(
         }
     )
     assert await prompt_task == {"stopReason": "end_turn"}
+
+
+@pytest.mark.asyncio
+async def test_acp_gateway_agent_reconciles_accepted_prompt_on_reconnect() -> None:
+    from openzues.services.acp_agent import AcpGatewayAgent
+    from openzues.services.acp_session_store import create_in_memory_session_store
+
+    class ReconnectGateway(FakeGateway):
+        async def request(self, method: str, params: dict[str, object]) -> dict[str, Any]:
+            self.calls.append((method, params))
+            if method == "chat.send":
+                return {"ok": True}
+            if method == "agent.wait":
+                return {"status": "ok"}
+            return await super().request(method, params)
+
+    gateway = ReconnectGateway()
+    store = create_in_memory_session_store()
+    store.create_session(
+        session_id="session-1",
+        session_key="agent:main:main",
+        cwd="C:/work",
+    )
+    agent = AcpGatewayAgent(FakeAcpConnection(), gateway, session_store=store)
+    prompt_task = asyncio.create_task(
+        agent.prompt(
+            {
+                "sessionId": "session-1",
+                "prompt": [{"type": "text", "text": "hello"}],
+                "_meta": {"prefixCwd": False},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    run_id = [params for method, params in gateway.calls if method == "chat.send"][0][
+        "idempotencyKey"
+    ]
+
+    agent.handle_gateway_disconnect("1006: connection lost")
+    await agent.handle_gateway_reconnect()
+
+    assert ("agent.wait", {"runId": run_id, "timeoutMs": 0}) in gateway.calls
+    assert await prompt_task == {"stopReason": "end_turn"}

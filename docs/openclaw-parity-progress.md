@@ -5301,6 +5301,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   acp_status_json_and_human"` (`57 passed`), `ruff check
   src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
   src\openzues\services\acp_agent.py`.
+- Native `AcpGatewayAgent` reconnect handling now covers OpenClaw's missed-final
+  reconciliation for accepted prompts: reconnect clears the disconnect posture,
+  rechecks each accepted pending run with `agent.wait timeoutMs=0`, and resolves
+  the ACP prompt as `end_turn` when the gateway reports completion.
+- Verified the ACP reconnect reconciliation slice with `python -m pytest
+  tests\test_acp_agent.py -q -k "reconnect"` (`1 passed`), full ACP agent proof
+  `python -m pytest tests\test_acp_agent.py -q` (`13 passed`), adjacent ACP
+  support proof `python -m pytest tests\test_acp_agent.py
+  tests\test_acp_translator.py tests\test_acp_session_store.py
+  tests\test_acp_commands.py tests\test_acp_session_mapper.py
+  tests\test_acp_event_mapper.py tests\test_acp_client_runtime.py
+  tests\test_cli.py -q -k "acp_gateway_agent or acp_translator or
+  acp_session_store or acp_available_commands or acp_session_mapper or
+  acp_event_mapper or acp_permission or acp_client or acp_bridge_command or
+  acp_status_json_and_human"` (`58 passed`), `ruff check
+  src\openzues\services\acp_agent.py tests\test_acp_agent.py`, and `mypy
+  src\openzues\services\acp_agent.py`.
 
 ## References
 
