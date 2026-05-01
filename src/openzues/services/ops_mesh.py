@@ -2608,12 +2608,106 @@ def _matrix_mp4_duration_ms(
     return scan_boxes(0, len(media))
 
 
+def _matrix_mp3_duration_ms(
+    media: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> int | None:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    normalized_filename = str(filename or "").strip().lower()
+    is_mp3 = normalized_content_type in {
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/x-mpeg",
+    } or normalized_filename.endswith(".mp3")
+    if not is_mp3 or len(media) < 4:
+        return None
+    sample_rates = {
+        0: (11025, 12000, 8000),
+        2: (22050, 24000, 16000),
+        3: (44100, 48000, 32000),
+    }
+    bitrate_tables = {
+        (3, 3): (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0),
+        (3, 2): (0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0),
+        (3, 1): (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0),
+        (2, 3): (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0),
+        (2, 2): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+        (2, 1): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+        (0, 3): (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0),
+        (0, 2): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+        (0, 1): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0),
+    }
+
+    index = 0
+    if media.startswith(b"ID3") and len(media) >= 10:
+        tag_size = (
+            ((media[6] & 0x7F) << 21)
+            | ((media[7] & 0x7F) << 14)
+            | ((media[8] & 0x7F) << 7)
+            | (media[9] & 0x7F)
+        )
+        index = 10 + tag_size + (10 if media[5] & 0x10 else 0)
+
+    frames = 0
+    samples = 0
+    first_sample_rate: int | None = None
+    while index + 4 <= len(media):
+        if media[index] != 0xFF or (media[index + 1] & 0xE0) != 0xE0:
+            index += 1
+            continue
+        version = (media[index + 1] >> 3) & 0x03
+        layer = (media[index + 1] >> 1) & 0x03
+        bitrate_index = (media[index + 2] >> 4) & 0x0F
+        sample_rate_index = (media[index + 2] >> 2) & 0x03
+        padding = (media[index + 2] >> 1) & 0x01
+        if (
+            version == 1
+            or layer == 0
+            or sample_rate_index == 3
+            or bitrate_index in {0, 15}
+        ):
+            index += 1
+            continue
+        sample_rate = sample_rates[version][sample_rate_index]
+        bitrate_kbps = bitrate_tables[(version, layer)][bitrate_index]
+        if bitrate_kbps <= 0 or sample_rate <= 0:
+            index += 1
+            continue
+        if layer == 3:
+            frame_length = (((12 * bitrate_kbps * 1000) // sample_rate) + padding) * 4
+            frame_samples = 384
+        elif layer == 2:
+            frame_length = ((144 * bitrate_kbps * 1000) // sample_rate) + padding
+            frame_samples = 1152
+        else:
+            coefficient = 144 if version == 3 else 72
+            frame_length = ((coefficient * bitrate_kbps * 1000) // sample_rate) + padding
+            frame_samples = 1152 if version == 3 else 576
+        if frame_length <= 4:
+            index += 1
+            continue
+        if index + frame_length > len(media):
+            break
+        frames += 1
+        samples += frame_samples
+        first_sample_rate = first_sample_rate or sample_rate
+        index += frame_length
+    if frames <= 0 or first_sample_rate is None:
+        return None
+    return max(0, round((samples / first_sample_rate) * 1000))
+
+
 def _matrix_media_duration_ms(
     media: bytes,
     content_type: str | None,
     filename: str | None,
 ) -> int | None:
     return _matrix_wav_duration_ms(media, content_type, filename) or _matrix_mp4_duration_ms(
+        media,
+        content_type,
+        filename,
+    ) or _matrix_mp3_duration_ms(
         media,
         content_type,
         filename,

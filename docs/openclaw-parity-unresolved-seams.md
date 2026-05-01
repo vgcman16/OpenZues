@@ -563,7 +563,9 @@ Matrix route-backed encrypted media sends now probe `m.room.encryption`,
 AES-CTR-encrypt outbound media and large-image thumbnails, upload encrypted
 bytes, omit unencrypted MXC `url` fields, and attach OpenClaw-shaped `file` /
 `info.thumbnail_file` payloads with encrypted-file metadata.
-Remaining Matrix provider parity is non-WAV audio duration metadata.
+Matrix route-backed MP3 audio sends now parse common MPEG frame timing into
+Matrix `info.duration`, closing the Matrix media-info duration head for WAV,
+MP3, and MP4/MOV-family timed media.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the
