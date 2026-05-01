@@ -7485,6 +7485,8 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_react_remove_ro
     [
         ("pinMessage", ["$a"], ["$a", "$b"]),
         ("unpinMessage", ["$a", "$b", "$c"], ["$a", "$c"]),
+        ("pin", ["$a"], ["$a", "$b"]),
+        ("unpin", ["$a", "$b", "$c"], ["$a", "$c"]),
     ],
 )
 async def test_ops_mesh_service_message_action_dispatches_matrix_pin_mutation_route(
@@ -7607,10 +7609,12 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_pin_mutation_ro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["listPins", "list-pins"])
 async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route(
     monkeypatch: pytest.MonkeyPatch,
+    action: str,
 ) -> None:
-    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-list-pins"
+    tmp_path = Path.cwd() / f".tmp-pytest-local/ops-mesh-message-action-matrix-{action}"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
     database = Database(tmp_path / "ops.db")
@@ -7677,7 +7681,7 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route
     result = await service.dispatch_message_action(
         GatewayMessageActionDispatchRequest(
             channel="matrix",
-            action="listPins",
+            action=action,
             params={
                 "roomId": "room:!ops:matrix.example",
             },
@@ -7685,7 +7689,7 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route
             requester_sender_id="@alice:matrix.example",
             sender_is_owner=True,
             session_key="agent:main:matrix:channel:!ops:matrix.example",
-            idempotency_key="idem-matrix-list-pins-action",
+            idempotency_key=f"idem-matrix-{action}-action",
         )
     )
 

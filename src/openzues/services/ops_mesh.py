@@ -9140,7 +9140,7 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "matrix" and action in {"pinMessage", "unpinMessage"}:
+        if channel == "matrix" and action in {"pin", "pinMessage", "unpin", "unpinMessage"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
@@ -9156,14 +9156,14 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "matrix" and action == "listPins":
+        if channel == "matrix" and action in {"list-pins", "listPins"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Matrix route is configured for message.action listPins."
+                    f"No native Matrix route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
@@ -10429,7 +10429,7 @@ class OpsMeshService:
             room_id=room_id,
             secret_token=secret_token,
         )
-        if request.action == "pinMessage":
+        if request.action in {"pin", "pinMessage"}:
             next_pinned = pinned if message_id in pinned else [*pinned, message_id]
         else:
             next_pinned = [event_id for event_id in pinned if event_id != message_id]

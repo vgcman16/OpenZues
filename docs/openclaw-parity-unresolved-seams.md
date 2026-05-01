@@ -599,7 +599,9 @@ current-user reaction events are redacted for remove/clear requests.
 Matrix `message.action pinMessage`, `unpinMessage`, and `listPins` now use
 OpenClaw's `m.room.pinned_events` state behavior: current pins are read from room
 state, pin/unpin writes the updated state, and listPins returns pinned ids plus
-summaries for resolvable pinned message events.
+summaries for resolvable pinned message events. Matrix `message.action pin`,
+`unpin`, and `list-pins` now also follow OpenClaw's public action aliases and
+route to those same native pin state implementations.
 Matrix `message.action readMessages` now uses OpenClaw's room history endpoint
 shape with `dir`, bounded `limit`, `before`/`after` tokens, redaction filtering,
 message summaries, and `nextBatch` / `prevBatch` cursor projection.

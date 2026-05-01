@@ -6299,6 +6299,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   matrix_read_messages_route or message_action_dispatches_matrix_read"` (`2
   passed`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+- Matrix `message.action pin`, `unpin`, and `list-pins` now match OpenClaw's
+  public Matrix action adapter by routing to the existing native
+  `pinMessage`, `unpinMessage`, and `listPins` room pin-state implementations.
+- Verified the Matrix pin alias slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_pin_mutation_route or
+  matrix_list_pins_route"` (`3 failed` before implementation for `pin`,
+  `unpin`, and `list-pins`; internal names still passed), then the same command
+  (`6 passed`), adjacent Matrix alias proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_pin_mutation_route or
+  matrix_list_pins_route or matrix_read_alias_route"` (`7 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 
