@@ -13427,6 +13427,9 @@ def _plugin_record_from_deck_item(
     setup = _plugin_manifest_setup(item.get("setup"))
     if setup:
         record["setup"] = setup
+    qa_runners = _plugin_manifest_qa_runners(item.get("qaRunners"))
+    if qa_runners:
+        record["qaRunners"] = qa_runners
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(item).items():
         record[metadata_key] = metadata_value
     route_count = _plugin_record_http_route_count(item)
@@ -13686,6 +13689,24 @@ def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str,
     if provider_auth_choices:
         metadata["providerAuthChoices"] = provider_auth_choices
     return metadata
+
+
+def _plugin_manifest_qa_runners(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    runners: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        command_name = _optional_cli_string(entry.get("commandName"))
+        if command_name is None:
+            continue
+        runner: dict[str, object] = {"commandName": command_name}
+        description = _optional_cli_string(entry.get("description"))
+        if description is not None:
+            runner["description"] = description
+        runners.append(runner)
+    return runners
 
 
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
@@ -14043,6 +14064,9 @@ def _plugin_record_from_openclaw_manifest(
     setup = _plugin_manifest_setup(manifest.get("setup"))
     if setup:
         record["setup"] = setup
+    qa_runners = _plugin_manifest_qa_runners(manifest.get("qaRunners"))
+    if qa_runners:
+        record["qaRunners"] = qa_runners
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
         record[metadata_key] = metadata_value
     for key in (
