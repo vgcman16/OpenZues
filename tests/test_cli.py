@@ -12181,6 +12181,69 @@ def test_routes_send_accepts_openclaw_media_and_thread_id_aliases(monkeypatch) -
     ]
 
 
+def test_routes_send_prefers_openclaw_message_thread_and_reply_aliases(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 46,
+                "messageId": "matrix-46",
+                "channel": "matrix",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "send",
+            "--channel",
+            "matrix",
+            "--to",
+            "room:!ops:example.org",
+            "--message",
+            "Threaded reply.",
+            "--thread",
+            "$fallback-thread",
+            "--message-thread-id",
+            "$message-thread",
+            "--reply-to",
+            "$fallback-reply",
+            "--reply-to-message-id",
+            "$message-reply",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "matrix",
+            "to": "room:!ops:example.org",
+            "message": "Threaded reply.",
+            "media_urls": [],
+            "gif_playback": None,
+            "reply_to_id": "$message-reply",
+            "silent": None,
+            "force_document": None,
+            "account_id": None,
+            "agent_id": None,
+            "thread_id": "$message-thread",
+            "session_key": None,
+            "idempotency_key": None,
+        }
+    ]
+
+
 def test_routes_poll_human_output_calls_native_direct_poll_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -12313,6 +12376,74 @@ def test_routes_poll_accepts_openclaw_thread_id_alias(monkeypatch) -> None:
             "account_id": None,
             "reply_to_id": None,
             "thread_id": "topic-123",
+            "idempotency_key": None,
+        }
+    ]
+
+
+def test_routes_poll_prefers_openclaw_message_thread_and_reply_aliases(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeOpsMesh:
+        async def send_direct_channel_poll(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "deliveryId": 47,
+                "messageId": "matrix-poll-47",
+                "pollId": "poll-47",
+                "channel": "matrix",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(ops_mesh=FakeOpsMesh()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "poll",
+            "--channel",
+            "matrix",
+            "--to",
+            "room:!ops:example.org",
+            "--question",
+            "Pick a deploy lane?",
+            "--option",
+            "canary",
+            "--option",
+            "stable",
+            "--thread",
+            "$fallback-thread",
+            "--message-thread-id",
+            "$message-thread",
+            "--reply-to",
+            "$fallback-reply",
+            "--reply-to-message-id",
+            "$message-reply",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [
+        {
+            "channel": "matrix",
+            "to": "room:!ops:example.org",
+            "question": "Pick a deploy lane?",
+            "options": ["canary", "stable"],
+            "max_selections": None,
+            "duration_seconds": None,
+            "duration_hours": None,
+            "silent": None,
+            "is_anonymous": None,
+            "account_id": None,
+            "reply_to_id": "$message-reply",
+            "thread_id": "$message-thread",
             "idempotency_key": None,
         }
     ]

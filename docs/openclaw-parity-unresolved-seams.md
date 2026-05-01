@@ -12,8 +12,9 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~96% after the
-  runtime bridge doctor posture slice.
+- The runtime/CLI/doctor native-bridge family is estimated at ~97% after the
+  runtime bridge doctor posture and provider route send/poll alias-precedence
+  slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -3769,11 +3770,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity from ~97% to ~98%, and
   runtime/CLI/doctor native-bridge parity is now tracked at ~96%. Verified
   with focused and adjacent CLI doctor proofs, `ruff check`, and `mypy`.
+- Closed the provider route CLI alias-precedence seam from OpenClaw
+  `src/cli/send-runtime/channel-outbound-send.ts`: native `routes send` and
+  `routes poll` now accept `--message-thread-id` / `--reply-to-message-id`,
+  keep `--reply-to-id` as an OpenClaw-shaped alias, and prefer the message
+  thread/reply ids over fallback `--thread` / `--reply-to` values. Runtime/
+  CLI/doctor native-bridge parity was adjusted from ~96% to ~97%. Verified
+  with focused and adjacent CLI route proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open. Source anchors are OpenClaw CLI runtime/session/provider command
   surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human
-  parity for runtime inspection, provider route sends/polls, plugin/runtime
-  inventory commands, and standalone ACP bridge lifecycle presentation.
+  parity for runtime inspection, plugin/runtime inventory commands, packaging/
+  distribution checks, and standalone ACP bridge lifecycle presentation.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

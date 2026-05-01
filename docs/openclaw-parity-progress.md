@@ -7,7 +7,7 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~96% after the runtime bridge doctor posture slice; remaining gaps are broader runtime command ergonomics, packaging/distribution breadth, and standalone ACP bridge lifecycle depth.
+- Estimated runtime/CLI/doctor native-bridge parity: ~97% after the runtime bridge doctor posture and provider route send/poll alias-precedence slices; remaining gaps are broader runtime inspection ergonomics, packaging/distribution breadth, and standalone ACP bridge lifecycle depth.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -6532,6 +6532,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections or
   doctor_json_includes_bundled_plugin_runtime_dependency_contribution"` (`8
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Provider route `send` and `poll` CLI commands now accept OpenClaw's
+  `messageThreadId` / `replyToMessageId` aliases as
+  `--message-thread-id` / `--reply-to-message-id`, with the same precedence
+  over `--thread` / `--reply-to` used by
+  `src/cli/send-runtime/channel-outbound-send.ts`.
+- Progress estimates were adjusted after this slice: runtime/CLI/doctor
+  native-bridge parity moves from roughly 96% to 97%. Repo-wide parity remains
+  roughly 47% because packaging/distribution and standalone ACP bridge breadth
+  still dominate the whole-product estimate.
+- Verified the provider route CLI alias slice with `python -m pytest
+  tests\test_cli.py::test_routes_send_prefers_openclaw_message_thread_and_reply_aliases
+  tests\test_cli.py::test_routes_poll_prefers_openclaw_message_thread_and_reply_aliases
+  -q` (`2 failed` before implementation because the CLI rejected the aliases),
+  then the same command (`2 passed`), adjacent route send/poll proof `python -m
+  pytest tests\test_cli.py -q -k "routes_send or routes_poll"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 
 ## References

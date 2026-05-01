@@ -21798,7 +21798,13 @@ def routes_send_command(
     reply_to_id: str | None = typer.Option(
         None,
         "--reply-to",
+        "--reply-to-id",
         help="Provider message id to reply to.",
+    ),
+    reply_to_message_id: str | None = typer.Option(
+        None,
+        "--reply-to-message-id",
+        help="Provider message id to reply to, preferred over --reply-to.",
     ),
     silent: bool = typer.Option(
         False,
@@ -21818,6 +21824,12 @@ def routes_send_command(
         "--thread-id",
         help="Provider thread/topic id.",
     ),
+    message_thread_id: str | None = typer.Option(
+        None,
+        "--message-thread-id",
+        "--message-thread",
+        help="Provider message thread id, preferred over --thread.",
+    ),
     session_key: str | None = typer.Option(
         None,
         "--session-key",
@@ -21830,6 +21842,9 @@ def routes_send_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit the send result as JSON."),
 ) -> None:
+    resolved_reply_to_id = _optional_cli_string(reply_to_message_id) or reply_to_id
+    resolved_thread_id = _optional_cli_string(message_thread_id) or thread_id
+
     async def _action(services: CliServices) -> dict[str, object]:
         return await services.ops_mesh.send_direct_channel_message(
             channel=channel,
@@ -21837,12 +21852,12 @@ def routes_send_command(
             message=message,
             media_urls=list(media_urls or []),
             gif_playback=True if gif_playback else None,
-            reply_to_id=reply_to_id,
+            reply_to_id=resolved_reply_to_id,
             silent=True if silent else None,
             force_document=True if force_document else None,
             account_id=account_id,
             agent_id=agent_id,
-            thread_id=thread_id,
+            thread_id=resolved_thread_id,
             session_key=session_key,
             idempotency_key=idempotency_key,
         )
@@ -21905,13 +21920,25 @@ def routes_poll_command(
     reply_to_id: str | None = typer.Option(
         None,
         "--reply-to",
+        "--reply-to-id",
         help="Provider message id to reply to.",
+    ),
+    reply_to_message_id: str | None = typer.Option(
+        None,
+        "--reply-to-message-id",
+        help="Provider message id to reply to, preferred over --reply-to.",
     ),
     thread_id: str | None = typer.Option(
         None,
         "--thread",
         "--thread-id",
         help="Provider thread/topic id.",
+    ),
+    message_thread_id: str | None = typer.Option(
+        None,
+        "--message-thread-id",
+        "--message-thread",
+        help="Provider message thread id, preferred over --thread.",
     ),
     idempotency_key: str | None = typer.Option(
         None,
@@ -21926,6 +21953,8 @@ def routes_poll_command(
     resolved_max_selections = max_selections
     if resolved_max_selections is None and poll_multi:
         resolved_max_selections = len(poll_options)
+    resolved_reply_to_id = _optional_cli_string(reply_to_message_id) or reply_to_id
+    resolved_thread_id = _optional_cli_string(message_thread_id) or thread_id
 
     async def _action(services: CliServices) -> dict[str, object]:
         return await services.ops_mesh.send_direct_channel_poll(
@@ -21939,8 +21968,8 @@ def routes_poll_command(
             silent=True if silent else None,
             is_anonymous=is_anonymous,
             account_id=account_id,
-            reply_to_id=reply_to_id,
-            thread_id=thread_id,
+            reply_to_id=resolved_reply_to_id,
+            thread_id=resolved_thread_id,
             idempotency_key=idempotency_key,
         )
 
