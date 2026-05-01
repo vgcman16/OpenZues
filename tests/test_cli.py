@@ -6519,6 +6519,66 @@ def test_plugins_list_json_discovers_manifestless_claude_bundle_load_paths(
     ]
 
 
+def test_plugins_list_json_accepts_json5_bundle_manifests(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "json5-bundle"
+    (plugin_dir / ".codex-plugin").mkdir(parents=True)
+    (plugin_dir / "skills").mkdir()
+    (plugin_dir / "hooks").mkdir()
+    (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
+        """
+{
+  // Bundle manifests match OpenClaw JSON5 parsing.
+  name: "Codex JSON5 Bundle",
+  description: "JSON5 bundle fixture.",
+  version: "1.1.0",
+  skills: "skills",
+  hooks: "hooks",
+}
+""",
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"codex-json5-bundle": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugins"][0]["id"] == "codex-json5-bundle"
+    assert payload["plugins"][0]["name"] == "Codex JSON5 Bundle"
+    assert payload["plugins"][0]["format"] == "bundle"
+    assert payload["plugins"][0]["bundleFormat"] == "codex"
+    assert payload["plugins"][0]["bundleCapabilities"] == ["skills", "hooks"]
+    assert payload["plugins"][0]["version"] == "1.1.0"
+
+
 def test_plugins_list_json_preserves_manifest_command_aliases(
     tmp_path,
     monkeypatch,

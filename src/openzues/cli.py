@@ -13925,6 +13925,70 @@ def _read_cli_json_object(path: Path) -> dict[str, object] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _strip_cli_json5_comments(text: str) -> str:
+    result: list[str] = []
+    in_string: str | None = None
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if in_string is not None:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            index += 1
+            continue
+        if char in {'"', "'"}:
+            in_string = char
+            result.append('"' if char == "'" else char)
+            index += 1
+            continue
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
+                index += 1
+            index += 2 if index + 1 < len(text) else 0
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _normalize_cli_json5_subset(text: str) -> str:
+    without_comments = _strip_cli_json5_comments(text)
+    quoted_keys = re.sub(
+        r'([{\[,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:',
+        r'\1"\2":',
+        without_comments,
+    )
+    return re.sub(r",(\s*[}\]])", r"\1", quoted_keys)
+
+
+def _read_cli_json5_object(path: Path) -> dict[str, object] | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for candidate in (text, _normalize_cli_json5_subset(text)):
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def _plugin_package_json_metadata(plugin_root: Path) -> dict[str, object]:
     package_json = _read_cli_json_object(plugin_root / "package.json")
     if package_json is None:
@@ -14555,7 +14619,7 @@ def _plugin_bundle_manifest_record(
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
-    manifest = _read_cli_json_object(manifest_path)
+    manifest = _read_cli_json5_object(manifest_path)
     if manifest is None:
         if bundle_format != "claude" or manifest_path.exists():
             return None

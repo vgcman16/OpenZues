@@ -16,7 +16,7 @@ Current percentage rollup:
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
-  explicit and manifestless bundle metadata slices.
+  JSON5-capable explicit and manifestless bundle metadata slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1393,6 +1393,9 @@ Configured marker-only Claude bundle roots now also match OpenClaw's
 manifestless bundle detection when they contain markers such as `skills`,
 `commands`, or `settings.json` and no native plugin manifest/default entry file,
 preserving the same metadata-only bundle projection.
+Bundle manifest reads now also accept OpenClaw's JSON5 fixture subset for
+metadata inventory: comments, unquoted object keys, and trailing commas are
+normalized before Codex/Claude/Cursor bundle projection.
 `plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
@@ -1414,10 +1417,9 @@ Inspect reports now also project OpenClaw-shaped policy summaries from
 surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
 `httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
 metadata-only manifest records instead of being zeroed in the report.
-Remaining plugin CLI parity is remote marketplace clone/update breadth, JSON5
-bundle manifest parsing, bundle command/MCP/LSP execution projection, and deeper
-runtime activation/import metadata beyond the native metadata/runtime
-projection.
+Remaining plugin CLI parity is remote marketplace clone/update breadth, bundle
+command/MCP/LSP execution projection, and deeper runtime activation/import
+metadata beyond the native metadata/runtime projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
