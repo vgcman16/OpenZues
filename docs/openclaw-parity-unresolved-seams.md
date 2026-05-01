@@ -4,8 +4,8 @@ Updated: 2026-05-01
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~48% overall, with a reasonable
-  band of ~43-53%.
+- Repo-wide OpenClaw parity is estimated at ~49% overall, with a reasonable
+  band of ~44-54%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98% after the latest
@@ -18,11 +18,13 @@ Current percentage rollup:
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
   plus MCP/LSP server projection, known Claude marketplace shortcut, remote
-  marketplace listing, and remote marketplace path-entry install slices.
-- The CLI/operator control-plane family is estimated at ~97% after the bundle
-  metadata mini-queue, known-local marketplace install shortcut, remote
-  marketplace source listing, and durable remote path-entry installs; remote
-  plugin entry-source downloads/update breadth remains open.
+  marketplace listing, remote marketplace path-entry install/update,
+  Git/GitHub entry-source install, URL/archive entry-source install, and local
+  path link/copy install slices.
+- The CLI/operator control-plane family is estimated at ~98% after the bundle
+  metadata mini-queue and marketplace source-shape install/update queue;
+  remaining CLI gaps are now dominated by package/npm/clawhub install breadth,
+  runtime activation/import depth, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1342,9 +1344,9 @@ existing gateway config owner with OpenClaw-shaped
 `plugins.entries.<id>.enabled` persistence, preserve existing entry config,
 append configured allowlists on enable, and mirror built-in channel plugin
 toggles into `channels.<id>.enabled` for channel-backed providers. Remaining
-plugin CLI parity is remote marketplace entry-source download/update breadth
-beyond source listing, path-entry install, and known local shortcuts, plus deeper production plugin
-manifest/runtime metadata discovery. `plugins marketplace list` now
+plugin CLI parity is non-marketplace package/npm/clawhub install breadth plus
+deeper production plugin manifest/runtime metadata discovery. `plugins
+marketplace list` now
 supports local Claude-compatible marketplace manifests from
 `.claude-plugin/marketplace.json` or `marketplace.json`, returning the
 OpenClaw-shaped `source`, `name`, `version`, and `plugins` JSON payload while
@@ -1364,7 +1366,23 @@ install <name> --marketplace <github-source>` now also supports remote
 marketplace path entries by cloning through the fakeable Git/GitHub adapter,
 copying the resolved plugin directory/file into a durable OpenZues data-dir
 install root, cleaning up the clone, and preserving the remote source label in
-the install record. `plugins uninstall` now removes native plugin config
+the install record. `plugins update <name>` now refreshes those remote
+path-entry marketplace records through the same clone resolver, copies changed
+plugin files into the durable install root, and preserves OpenClaw-shaped
+updated/unchanged outcome metadata. Marketplace entries whose source is a
+separate `github`, `git`, or `git-subdir` repo now clone through the same
+fakeable adapter, resolve the configured subpath inside the plugin clone, copy
+the plugin into the durable data-dir install root, and clean up the clone.
+Marketplace entries whose source is an archive/URL now download through a
+fakeable bounded native downloader, copy the downloaded file into the durable
+data-dir install root, and clean up the temporary download.
+`plugins install <local-path> --link` now persists native `source="path"`
+install records with `sourcePath`, `installPath`, version metadata from
+`openclaw.plugin.json`, and load-path/allow/entry state.
+`plugins install <local-path>` without `--link` now copies local plugin
+directories/files into a durable `plugins/local/<id>` data-dir install root
+while preserving separate `sourcePath` and `installPath` metadata.
+`plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
 intact and reporting OpenClaw-shaped action metadata. `plugins update` now
@@ -1440,10 +1458,9 @@ Inspect reports now also project OpenClaw-shaped policy summaries from
 surface fields: `commands`, `cliCommands`, `services`, `gatewayMethods`,
 `httpRouteCount`, and `bundleCapabilities` are copied from live inventory or
 metadata-only manifest records instead of being zeroed in the report.
-Remaining plugin CLI parity is remote marketplace entry-source execution for
-Git/GitHub/git-subdir/URL plugin sources, archive/download handling, remote
-update refreshes, and deeper runtime activation/import metadata beyond the
-native metadata/runtime projection.
+Remaining plugin CLI parity is package/npm/clawhub install/update behavior and
+deeper runtime activation/import metadata beyond the native metadata/runtime
+projection.
 
 Current queue-head adjustment: `sessions.spawn` now preserves and applies
 OpenClaw's `gateway.agents.defaults.subagents.runTimeoutSeconds` config default
