@@ -6898,6 +6898,100 @@ def test_plugins_list_json_preserves_manifest_identity_and_classification(
     assert "text-inference:openai" in plugin["capabilities"]
 
 
+def test_plugins_list_json_preserves_package_manifest_runtime_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "matrix"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "matrix",
+                "channels": ["matrix"],
+                "configSchema": {"type": "object"},
+                "channelConfigs": {
+                    "matrix": {
+                        "schema": {"type": "object"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    package_path = plugin_dir / "package.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/matrix",
+                "version": "1.2.3",
+                "description": "Matrix package channel.",
+                "openclaw": {
+                    "extensions": ["index.ts"],
+                    "setupEntry": "setup.ts",
+                    "startup": {
+                        "deferConfiguredChannelFullLoadUntilAfterListen": True,
+                    },
+                    "channel": {
+                        "id": "matrix",
+                        "label": "Matrix",
+                        "blurb": "Matrix package setup.",
+                        "preferOver": ["matrix-legacy", ""],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["name"] == "@openclaw/matrix"
+    assert plugin["version"] == "1.2.3"
+    assert plugin["description"] == "Matrix package channel."
+    assert plugin["setupSource"] == str((plugin_dir / "setup.ts").resolve())
+    assert plugin["startupDeferConfiguredChannelFullLoadUntilAfterListen"] is True
+    assert plugin["channelCatalogMeta"] == {
+        "id": "matrix",
+        "label": "Matrix",
+        "blurb": "Matrix package setup.",
+        "preferOver": ["matrix-legacy"],
+    }
+    assert plugin["channelConfigs"]["matrix"] == {
+        "schema": {"type": "object"},
+        "label": "Matrix",
+        "description": "Matrix package setup.",
+        "preferOver": ["matrix-legacy"],
+    }
+
+
 def test_plugins_list_json_projects_runtime_executor_inventory(
     tmp_path,
     monkeypatch,

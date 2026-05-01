@@ -13894,6 +13894,96 @@ def _read_cli_json_object(path: Path) -> dict[str, object] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _plugin_package_json_metadata(plugin_root: Path) -> dict[str, object]:
+    package_json = _read_cli_json_object(plugin_root / "package.json")
+    if package_json is None:
+        return {}
+    metadata: dict[str, object] = {}
+    for key in ("name", "version", "description"):
+        value = _optional_cli_string(package_json.get(key))
+        if value is not None:
+            metadata[key] = value
+    openclaw = package_json.get("openclaw")
+    if isinstance(openclaw, dict):
+        metadata["openclaw"] = openclaw
+    return metadata
+
+
+def _plugin_package_channel_catalog_meta(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    channel_id = _optional_cli_string(value.get("id"))
+    if channel_id is None:
+        return {}
+    metadata: dict[str, object] = {"id": channel_id}
+    label = _optional_cli_string(value.get("label"))
+    if label is not None:
+        metadata["label"] = label
+    blurb = _optional_cli_string(value.get("blurb"))
+    if blurb is not None:
+        metadata["blurb"] = blurb
+    prefer_over = _plugin_manifest_string_list(value.get("preferOver"))
+    if prefer_over:
+        metadata["preferOver"] = prefer_over
+    return metadata
+
+
+def _plugin_package_openclaw_record_metadata(
+    value: object,
+    *,
+    plugin_root: Path,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    metadata: dict[str, object] = {}
+    setup_entry = _optional_cli_string(value.get("setupEntry"))
+    if setup_entry is not None:
+        metadata["setupSource"] = str((plugin_root / setup_entry).resolve(strict=False))
+    startup = value.get("startup")
+    if (
+        isinstance(startup, dict)
+        and startup.get("deferConfiguredChannelFullLoadUntilAfterListen") is True
+    ):
+        metadata["startupDeferConfiguredChannelFullLoadUntilAfterListen"] = True
+    channel_catalog_meta = _plugin_package_channel_catalog_meta(value.get("channel"))
+    if channel_catalog_meta:
+        metadata["channelCatalogMeta"] = channel_catalog_meta
+    return metadata
+
+
+def _merge_package_channel_meta(
+    channel_configs: dict[str, object],
+    package_openclaw: object,
+) -> dict[str, object]:
+    if not isinstance(package_openclaw, dict):
+        return channel_configs
+    channel = package_openclaw.get("channel")
+    if not isinstance(channel, dict):
+        return channel_configs
+    channel_id = _optional_cli_string(channel.get("id"))
+    if channel_id is None:
+        return channel_configs
+    raw_config = channel_configs.get(channel_id)
+    if not isinstance(raw_config, dict):
+        return channel_configs
+    merged_configs = dict(channel_configs)
+    config = dict(raw_config)
+    if _optional_cli_string(config.get("label")) is None:
+        label = _optional_cli_string(channel.get("label"))
+        if label is not None:
+            config["label"] = label
+    if _optional_cli_string(config.get("description")) is None:
+        blurb = _optional_cli_string(channel.get("blurb"))
+        if blurb is not None:
+            config["description"] = blurb
+    if not _plugin_manifest_string_list(config.get("preferOver")):
+        prefer_over = _plugin_manifest_string_list(channel.get("preferOver"))
+        if prefer_over:
+            config["preferOver"] = prefer_over
+    merged_configs[channel_id] = config
+    return merged_configs
+
+
 def _plugin_manifest_contracts(manifest: dict[str, object]) -> dict[str, object]:
     raw_contracts = manifest.get("contracts")
     contracts = raw_contracts if isinstance(raw_contracts, dict) else {}
@@ -14204,10 +14294,20 @@ def _plugin_record_from_openclaw_manifest(
         return None
     contracts = _plugin_manifest_contracts(manifest)
     capabilities = _plugin_manifest_capabilities(manifest, contracts)
-    description = _optional_cli_string(manifest.get("description")) or ""
+    package_metadata = _plugin_package_json_metadata(manifest_path.parent)
+    package_openclaw = package_metadata.get("openclaw")
+    description = (
+        _optional_cli_string(manifest.get("description"))
+        or _optional_cli_string(package_metadata.get("description"))
+        or ""
+    )
     record: dict[str, object] = {
         "id": plugin_id,
-        "name": _optional_cli_string(manifest.get("name")) or plugin_id,
+        "name": (
+            _optional_cli_string(manifest.get("name"))
+            or _optional_cli_string(package_metadata.get("name"))
+            or plugin_id
+        ),
         "status": _plugin_manifest_status(
             manifest,
             plugin_id=plugin_id,
@@ -14224,9 +14324,16 @@ def _plugin_record_from_openclaw_manifest(
         "manifestPath": str(manifest_path),
         "configSchema": True,
     }
-    version = _optional_cli_string(manifest.get("version"))
+    version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
+        package_metadata.get("version")
+    )
     if version is not None:
         record["version"] = version
+    for metadata_key, metadata_value in _plugin_package_openclaw_record_metadata(
+        package_openclaw,
+        plugin_root=manifest_path.parent,
+    ).items():
+        record[metadata_key] = metadata_value
     for metadata_key, metadata_value in _plugin_manifest_root_metadata(
         manifest,
         root_dir=manifest_path.parent,
@@ -14250,6 +14357,7 @@ def _plugin_record_from_openclaw_manifest(
     if qa_runners:
         record["qaRunners"] = qa_runners
     channel_configs = _plugin_manifest_channel_configs(manifest.get("channelConfigs"))
+    channel_configs = _merge_package_channel_meta(channel_configs, package_openclaw)
     if channel_configs:
         record["channelConfigs"] = channel_configs
     model_support = _plugin_manifest_model_support(manifest.get("modelSupport"))

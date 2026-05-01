@@ -15,7 +15,7 @@ Current percentage rollup:
 - The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
-  channel-config/model-support/config-contract/root metadata slices.
+  channel-config/model-support/config-contract/root/package metadata slices.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1378,7 +1378,10 @@ including `enabledByDefault`, `legacyPluginIds`,
 `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
 `providerDiscoverySource` resolved from `providerDiscoveryEntry`,
 `cliBackends`, `skills`, and `configUiHints` projected from top-level
-`uiHints`.
+`uiHints`. Adjacent package manifest metadata now also supplies package
+name/version/description fallbacks, setup source, startup deferral, channel
+catalog metadata, and package-owned channel label/description/prefer-over
+hydration.
 `plugins inspect --json`
 now also consults the native
 `GatewayPluginRuntimeService.catalog_specs()` registry when present: matching
@@ -3529,6 +3532,29 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification
   -q`, adjacent `python -m pytest tests\test_cli.py -q -k
   "plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_list_json_surfaces_openclaw_manifest_runtime_dependencies or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_all_json_includes_saved_install_records"`, `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Closed the package manifest runtime metadata seam from OpenClaw
+  `manifest-registry.ts` / `discovery.ts`: metadata-only plugin discovery now
+  reads adjacent `package.json` `openclaw` metadata for package
+  name/version/description fallbacks, `setupSource`, startup deferral, channel
+  catalog metadata, and package channel label/description/prefer-over hydration.
+  Verified with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_package_manifest_runtime_metadata
+  -q`, adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_package_manifest_runtime_metadata or
+  plugins_list_json_preserves_manifest_identity_and_classification or
   plugins_list_json_preserves_manifest_config_contracts or
   plugins_list_json_preserves_manifest_model_support or
   plugins_list_json_preserves_manifest_channel_configs or
