@@ -7855,6 +7855,119 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_read_messages_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_read_alias_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-read-alias"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {
+            "start": "batch-start",
+            "end": "batch-end",
+            "chunk": [
+                {
+                    "event_id": "$msg",
+                    "sender": "@alice:matrix.example",
+                    "type": "m.room.message",
+                    "origin_server_ts": 456,
+                    "content": {
+                        "msgtype": "m.text",
+                        "body": "hello history",
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="read",
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "limit": 2,
+                "before": "batch-before",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-read-alias-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "messages": [
+            {
+                "eventId": "$msg",
+                "sender": "@alice:matrix.example",
+                "body": "hello history",
+                "msgtype": "m.text",
+                "timestamp": 456,
+            }
+        ],
+        "nextBatch": "batch-end",
+        "prevBatch": "batch-start",
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/messages?dir=b&limit=2&from=batch-before"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_matrix_member_info_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

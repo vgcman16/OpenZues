@@ -603,6 +603,8 @@ summaries for resolvable pinned message events.
 Matrix `message.action readMessages` now uses OpenClaw's room history endpoint
 shape with `dir`, bounded `limit`, `before`/`after` tokens, redaction filtering,
 message summaries, and `nextBatch` / `prevBatch` cursor projection.
+Matrix `message.action read` now also follows OpenClaw's public action adapter
+alias and routes to the same native `readMessages` history implementation.
 Matrix `message.action memberInfo` and `channelInfo` now map to OpenClaw's
 profile, room-state, and joined-member probe shapes, including display/avatar
 profile projection, room name/topic/canonical alias reads, and member counts.

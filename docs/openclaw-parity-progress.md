@@ -6287,6 +6287,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_and_update_status_json_include_hermes_sections"` (`5 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- Matrix `message.action read` now matches OpenClaw's public Matrix action
+  adapter by routing to the existing native `readMessages` room-history
+  implementation with the same `roomId`, bounded `limit`, `before`, and
+  `after` handling.
+- Verified the Matrix read alias slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_matrix_read_alias_route
+  -q` (`1 failed` before implementation, `read` returned `None`), then the
+  same command (`1 passed`), adjacent Matrix read proof `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_read_alias_route or
+  matrix_read_messages_route or message_action_dispatches_matrix_read"` (`2
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 

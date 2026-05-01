@@ -9172,14 +9172,14 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel == "matrix" and action == "readMessages":
+        if channel == "matrix" and action in {"read", "readMessages"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Matrix route is configured for message.action readMessages."
+                    f"No native Matrix route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
