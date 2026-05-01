@@ -12590,11 +12590,13 @@ async def _build_plugins_update_payload(
             )
             continue
         try:
-            update = _resolve_local_marketplace_update(
+            update = _resolve_marketplace_update(
+                services=services,
                 plugin_id=target,
                 marketplace_source=marketplace_source,
                 marketplace_plugin=marketplace_plugin,
                 current_record=record,
+                copy_remote=not dry_run,
             )
         except ValueError as exc:
             outcomes.append(
@@ -12628,7 +12630,7 @@ async def _build_plugins_update_payload(
                 result = services.gateway_config.record_marketplace_plugin_install(
                     plugin_id=target,
                     install_path=str(update["installPath"]),
-                    marketplace_source=str(update["manifestPath"]),
+                    marketplace_source=str(update["marketplaceSource"]),
                     marketplace_plugin=marketplace_plugin,
                     marketplace_name=marketplace_name,
                     version=version,
@@ -12731,43 +12733,66 @@ def _resolve_marketplace_plugin_install_path(
     return resolved
 
 
-def _resolve_local_marketplace_update(
+def _resolve_marketplace_update(
     *,
+    services: CliServices,
     plugin_id: str,
     marketplace_source: str,
     marketplace_plugin: str,
     current_record: dict[str, object],
+    copy_remote: bool,
 ) -> dict[str, object]:
-    manifest_path = _resolve_plugins_marketplace_manifest_path(marketplace_source)
-    marketplace_payload = _build_plugins_marketplace_list_payload(str(manifest_path))
-    plugins = marketplace_payload.get("plugins")
-    plugin_rows = plugins if isinstance(plugins, list) else []
-    match = next(
-        (
-            plugin
-            for plugin in plugin_rows
-            if isinstance(plugin, dict)
-            and str(plugin.get("name") or "").strip() == marketplace_plugin
-        ),
-        None,
-    )
-    if match is None:
-        raise ValueError(
-            f'plugin "{marketplace_plugin}" was not found in marketplace {manifest_path}'
+    marketplace_ref = _resolve_cli_plugins_marketplace_source(marketplace_source)
+    manifest_path = marketplace_ref.manifest_path
+    try:
+        marketplace_payload = _build_plugins_marketplace_list_payload_from_source(
+            marketplace_ref
         )
-    install_path = _resolve_marketplace_plugin_install_path(
-        manifest_path=manifest_path,
-        source=match.get("source"),
-        plugin_name=marketplace_plugin,
-    )
-    return {
-        "pluginId": plugin_id,
-        "manifestPath": manifest_path,
-        "installPath": install_path,
-        "marketplaceName": _optional_cli_string(marketplace_payload.get("name")),
-        "currentVersion": _optional_cli_string(current_record.get("version")),
-        "nextVersion": _optional_cli_string(match.get("version")),
-    }
+        plugins = marketplace_payload.get("plugins")
+        plugin_rows = plugins if isinstance(plugins, list) else []
+        match = next(
+            (
+                plugin
+                for plugin in plugin_rows
+                if isinstance(plugin, dict)
+                and str(plugin.get("name") or "").strip() == marketplace_plugin
+            ),
+            None,
+        )
+        if match is None:
+            raise ValueError(
+                f'plugin "{marketplace_plugin}" was not found in marketplace {manifest_path}'
+            )
+        install_path = _resolve_marketplace_plugin_install_path(
+            manifest_path=manifest_path,
+            source=match.get("source"),
+            plugin_name=marketplace_plugin,
+        )
+        current_version = _optional_cli_string(current_record.get("version"))
+        next_version = _optional_cli_string(match.get("version"))
+        same_version = (
+            current_version is not None
+            and next_version is not None
+            and current_version == next_version
+        )
+        if marketplace_ref.origin == "remote" and copy_remote and not same_version:
+            install_path = _copy_cli_remote_marketplace_plugin_install(
+                services=services,
+                plugin_id=plugin_id,
+                source_path=install_path,
+            )
+        return {
+            "pluginId": plugin_id,
+            "manifestPath": manifest_path,
+            "marketplaceSource": marketplace_ref.source_label,
+            "installPath": install_path,
+            "marketplaceName": _optional_cli_string(marketplace_payload.get("name")),
+            "currentVersion": current_version,
+            "nextVersion": next_version,
+        }
+    finally:
+        if marketplace_ref.cleanup is not None:
+            marketplace_ref.cleanup()
 
 
 def _model_aliases_from_config_snapshot(snapshot: dict[str, object]) -> dict[str, str]:

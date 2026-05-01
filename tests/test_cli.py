@@ -9173,6 +9173,125 @@ def test_plugins_update_json_refreshes_local_marketplace_install(
     assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
 
 
+def test_plugins_update_json_refreshes_remote_marketplace_install(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "plugins" / "marketplace" / "frontend-design"
+    install_dir.mkdir(parents=True)
+    (install_dir / "plugin.json").write_text("old", encoding="utf-8")
+    repo_dir = tmp_path / "repo"
+    plugin_dir = repo_dir / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text("new", encoding="utf-8")
+    manifest_dir = repo_dir / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "Remote Marketplace",
+                "plugins": [
+                    {
+                        "name": "frontend-design",
+                        "version": "0.4.0",
+                        "source": "./plugins/frontend-design",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["frontend-design"],
+                    "entries": {"frontend-design": {"enabled": True}},
+                    "installs": {
+                        "frontend-design": {
+                            "source": "marketplace",
+                            "installPath": str(install_dir),
+                            "version": "0.3.0",
+                            "marketplaceName": "Remote Marketplace",
+                            "marketplaceSource": "owner/repo",
+                            "marketplacePlugin": "frontend-design",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(install_dir)]},
+                },
+            }
+        )
+    )
+    cleanup_calls: list[str] = []
+
+    def fake_clone_marketplace_source(source: str) -> SimpleNamespace:
+        assert source == "owner/repo"
+        return SimpleNamespace(
+            root_dir=repo_dir,
+            label="owner/repo",
+            cleanup=lambda: cleanup_calls.append("cleanup"),
+        )
+
+    monkeypatch.setattr(
+        "openzues.cli._clone_cli_plugins_marketplace_source",
+        fake_clone_marketplace_source,
+        raising=False,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    update = runner.invoke(
+        app,
+        ["plugins", "update", "frontend-design", "--json"],
+    )
+
+    assert update.exit_code == 0, update.stdout
+    update_payload = json.loads(update.stdout)
+    assert update_payload["ok"] is True
+    assert update_payload["changed"] is True
+    assert update_payload["outcomes"] == [
+        {
+            "pluginId": "frontend-design",
+            "status": "updated",
+            "currentVersion": "0.3.0",
+            "nextVersion": "0.4.0",
+            "message": "Updated frontend-design: 0.3.0 -> 0.4.0.",
+        }
+    ]
+    assert (install_dir / "plugin.json").read_text(encoding="utf-8") == "new"
+    assert cleanup_calls == ["cleanup"]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["version"] == "0.4.0"
+    assert stored["plugins"]["installs"]["frontend-design"]["installPath"] == str(
+        install_dir.resolve()
+    )
+    assert stored["plugins"]["installs"]["frontend-design"]["marketplaceSource"] == (
+        "owner/repo"
+    )
+
+
 def test_plugins_enable_disable_json_persists_openclaw_config(
     tmp_path,
     monkeypatch,
