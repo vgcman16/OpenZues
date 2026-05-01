@@ -520,8 +520,12 @@ Matrix `message.action react remove` and `message.action reactions` now use
 OpenClaw's relation-history path: v1 relations reads summarize reaction keys and
 unique senders, Matrix `whoami` resolves the current bot user, and only matching
 current-user reaction events are redacted for remove/clear requests.
+Matrix `message.action pinMessage`, `unpinMessage`, and `listPins` now use
+OpenClaw's `m.room.pinned_events` state behavior: current pins are read from room
+state, pin/unpin writes the updated state, and listPins returns pinned ids plus
+summaries for resolvable pinned message events.
 Remaining Matrix provider parity is media upload/encryption metadata, alias and
-direct-room resolution, profile/account probes, and read/pin action breadth.
+direct-room resolution, profile/account probes, and read action breadth.
 Gateway `message.action` now has a fakeable native action dispatcher that
 receives OpenClaw-shaped channel/action params, normalized routing metadata,
 trusted-owner posture, tool context, and idempotency key, returning the

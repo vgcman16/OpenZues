@@ -2337,6 +2337,33 @@ def _matrix_whoami_endpoint(target: str | None) -> str:
     return f"{_matrix_base_url(target)}/_matrix/client/v3/account/whoami"
 
 
+def _matrix_state_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_type: str,
+    state_key: str = "",
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/state/{quote(event_type, safe='')}/{quote(state_key, safe='')}"
+    )
+
+
+def _matrix_event_endpoint(
+    target: str | None,
+    *,
+    room_id: str,
+    event_id: str,
+) -> str:
+    base_url = _matrix_base_url(target)
+    return (
+        f"{base_url}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
+        f"/event/{quote(event_id, safe='')}"
+    )
+
+
 def _matrix_reaction_relations_endpoint(
     target: str | None,
     *,
@@ -2447,6 +2474,59 @@ def _matrix_reaction_summaries(events: list[dict[str, object]]) -> list[dict[str
         if sender and isinstance(users, list) and sender not in users:
             users.append(sender)
     return list(summaries.values())
+
+
+def _matrix_pinned_event_ids(result: object) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    pinned = result.get("pinned")
+    if not isinstance(pinned, list):
+        return []
+    return [str(event_id).strip() for event_id in pinned if str(event_id).strip()]
+
+
+def _matrix_message_summary(result: object) -> dict[str, object] | None:
+    if not isinstance(result, dict):
+        return None
+    unsigned = result.get("unsigned")
+    if isinstance(unsigned, dict) and unsigned.get("redacted_because") is not None:
+        return None
+    event_id = result.get("event_id") or result.get("eventId")
+    if not isinstance(event_id, str) or not event_id.strip():
+        return None
+    content = result.get("content")
+    if not isinstance(content, dict):
+        content = {}
+    summary: dict[str, object] = {"eventId": event_id.strip()}
+    sender = result.get("sender")
+    if isinstance(sender, str) and sender.strip():
+        summary["sender"] = sender.strip()
+    body = content.get("body")
+    if isinstance(body, str):
+        summary["body"] = body
+    msgtype = content.get("msgtype")
+    if isinstance(msgtype, str) and msgtype.strip():
+        summary["msgtype"] = msgtype.strip()
+    timestamp = result.get("origin_server_ts") or result.get("timestamp")
+    if isinstance(timestamp, int) and not isinstance(timestamp, bool):
+        summary["timestamp"] = timestamp
+    relates = content.get("m.relates_to")
+    if isinstance(relates, dict):
+        rel_type = relates.get("rel_type")
+        related_event_id = relates.get("event_id")
+        in_reply_to = relates.get("m.in_reply_to")
+        if not isinstance(related_event_id, str) and isinstance(in_reply_to, dict):
+            maybe_reply_id = in_reply_to.get("event_id")
+            if isinstance(maybe_reply_id, str):
+                related_event_id = maybe_reply_id
+        relates_to: dict[str, object] = {}
+        if isinstance(rel_type, str) and rel_type.strip():
+            relates_to["relType"] = rel_type.strip()
+        if isinstance(related_event_id, str) and related_event_id.strip():
+            relates_to["eventId"] = related_event_id.strip()
+        if relates_to:
+            summary["relatesTo"] = relates_to
+    return summary
 
 
 def _matrix_poll_fallback_text(question: str, options: list[str]) -> str:
@@ -7889,6 +7969,38 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "matrix" and action in {"pinMessage", "unpinMessage"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Matrix route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_pin_mutation_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "matrix" and action == "listPins":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Matrix route is configured for message.action listPins."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_matrix_list_pins_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "whatsapp" and action == "react":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -8882,6 +8994,134 @@ class OpsMeshService:
                 secret_token=_matrix_bearer_token(secret_token),
             )
         return len(redaction_ids)
+
+    def _dispatch_matrix_pin_mutation_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix pin")
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Matrix pin requires messageId.")
+        pinned = self._matrix_pinned_events(
+            route,
+            room_id=room_id,
+            secret_token=secret_token,
+        )
+        if request.action == "pinMessage":
+            next_pinned = pinned if message_id in pinned else [*pinned, message_id]
+        else:
+            next_pinned = [event_id for event_id in pinned if event_id != message_id]
+        self._put_json_provider(
+            _matrix_state_endpoint(
+                str(route.get("target") or ""),
+                room_id=room_id,
+                event_type="m.room.pinned_events",
+            ),
+            {"pinned": next_pinned},
+            secret_header_name="Authorization",
+            secret_token=_matrix_bearer_token(secret_token),
+        )
+        return {
+            "ok": True,
+            "pinned": next_pinned,
+        }
+
+    def _dispatch_matrix_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        room_id = self._matrix_action_room_id(request, "Matrix pins")
+        pinned = self._matrix_pinned_events(
+            route,
+            room_id=room_id,
+            secret_token=secret_token,
+        )
+        events: list[dict[str, object]] = []
+        for event_id in pinned:
+            summary = self._matrix_fetch_event_summary(
+                route,
+                room_id=room_id,
+                event_id=event_id,
+                secret_token=secret_token,
+            )
+            if summary is not None:
+                events.append(summary)
+        return {
+            "ok": True,
+            "pinned": pinned,
+            "events": events,
+        }
+
+    def _matrix_action_room_id(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+        label: str,
+    ) -> str:
+        room_target = (
+            _message_action_param_string(request.params, "roomId")
+            or _message_action_param_string(request.params, "channelId")
+            or _message_action_param_string(request.params, "to", required=True)
+        )
+        if room_target is None:
+            raise RuntimeError(f"{label} requires roomId.")
+        room_id = _matrix_room_id(room_target)
+        if room_id is None:
+            raise RuntimeError(f"{label} requires roomId.")
+        return room_id
+
+    def _matrix_pinned_events(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        secret_token: str | None,
+    ) -> list[str]:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_state_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_type="m.room.pinned_events",
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError as exc:
+            if "404" in str(exc):
+                return []
+            raise
+        return _matrix_pinned_event_ids(result)
+
+    def _matrix_fetch_event_summary(
+        self,
+        route: dict[str, Any],
+        *,
+        room_id: str,
+        event_id: str,
+        secret_token: str | None,
+    ) -> dict[str, object] | None:
+        try:
+            result = self._get_json_provider_url(
+                _matrix_event_endpoint(
+                    str(route.get("target") or ""),
+                    room_id=room_id,
+                    event_id=event_id,
+                ),
+                secret_header_name="Authorization",
+                secret_token=_matrix_bearer_token(secret_token),
+            )
+        except RuntimeError:
+            return None
+        return _matrix_message_summary(result)
 
     def _dispatch_whatsapp_react_message_action(
         self,

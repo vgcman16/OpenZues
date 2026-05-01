@@ -5478,6 +5478,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   message_action_dispatches_slack_react_remove_route"` (`12 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+- Matrix route-backed pin action parity now uses OpenClaw's
+  `m.room.pinned_events` state behavior for `pinMessage`, `unpinMessage`, and
+  `listPins`, including idempotent pin append, targeted unpin filtering, and
+  pinned-event summaries for resolvable message events.
+- Verified the Matrix pin action slice with `python -m pytest
+  tests\test_ops_mesh.py -q -k "matrix_pin_mutation_route or
+  matrix_list_pins_route"` (`3 passed`), adjacent action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k
+  "message_action_dispatches_matrix_pin_mutation_route or
+  message_action_dispatches_matrix_list_pins_route or
+  message_action_dispatches_matrix_reactions_list_route or
+  message_action_dispatches_matrix_react_remove_route or
+  message_action_dispatches_matrix_react_route or
+  message_action_dispatches_matrix_delete_route or
+  message_action_dispatches_matrix_edit_route or
+  message_action_dispatches_matrix_send_route or matrix_native_route or
+  message_action_dispatches_discord_pin_mutation_route or
+  message_action_dispatches_discord_list_pins_route or
+  message_action_dispatches_slack_pin_route or
+  message_action_dispatches_slack_unpin_route or
+  message_action_dispatches_slack_list_pins_route"` (`17 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
 
 ## References
 

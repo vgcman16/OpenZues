@@ -6906,6 +6906,257 @@ async def test_ops_mesh_service_message_action_dispatches_matrix_react_remove_ro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "seed", "expected"),
+    [
+        ("pinMessage", ["$a"], ["$a", "$b"]),
+        ("unpinMessage", ["$a", "$b", "$c"], ["$a", "$c"]),
+    ],
+)
+async def test_ops_mesh_service_message_action_dispatches_matrix_pin_mutation_route(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    seed: list[str],
+    expected: list[str],
+) -> None:
+    tmp_path = Path.cwd() / f".tmp-pytest-local/ops-mesh-message-action-matrix-{action}"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+    matrix_puts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        return {"pinned": seed}
+
+    def fake_put_json_provider(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        matrix_puts.append((target, payload, secret_header_name, secret_token))
+        return {"event_id": "$pin-state"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_put_json_provider",
+        fake_put_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action=action,
+            params={
+                "roomId": "room:!ops:matrix.example",
+                "messageId": "$b",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key=f"idem-matrix-{action}-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "pinned": expected,
+    }
+    state_endpoint = (
+        "https://matrix.example.org/_matrix/client/v3/rooms/"
+        "%21ops%3Amatrix.example/state/m.room.pinned_events/"
+    )
+    assert matrix_gets == [
+        (
+            state_endpoint,
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+    assert matrix_puts == [
+        (
+            state_endpoint,
+            {
+                "pinned": expected,
+            },
+            "Authorization",
+            "Bearer matrix-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_matrix_list_pins_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-matrix-list-pins"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Matrix Native Action Provider",
+        kind="matrix",
+        target="https://matrix.example.org",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="matrix-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "matrix",
+            "account_id": "matrix-bot",
+            "peer_kind": "channel",
+            "peer_id": "room:!ops:matrix.example",
+        },
+    )
+    matrix_gets: list[tuple[str, str | None, str | None]] = []
+
+    def fake_get_json_provider(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, timeout_seconds
+        matrix_gets.append((target, secret_header_name, secret_token))
+        if target.endswith("/state/m.room.pinned_events/"):
+            return {"pinned": ["$a", "$missing"]}
+        if target.endswith("/event/%24a"):
+            return {
+                "event_id": "$a",
+                "sender": "@alice:matrix.example",
+                "type": "m.room.message",
+                "origin_server_ts": 123,
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "hello pinned",
+                },
+            }
+        raise RuntimeError("missing event")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_get_json_provider_url",
+        fake_get_json_provider,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="matrix",
+            action="listPins",
+            params={
+                "roomId": "room:!ops:matrix.example",
+            },
+            account_id="matrix-bot",
+            requester_sender_id="@alice:matrix.example",
+            sender_is_owner=True,
+            session_key="agent:main:matrix:channel:!ops:matrix.example",
+            idempotency_key="idem-matrix-list-pins-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "pinned": ["$a", "$missing"],
+        "events": [
+            {
+                "eventId": "$a",
+                "sender": "@alice:matrix.example",
+                "body": "hello pinned",
+                "msgtype": "m.text",
+                "timestamp": 123,
+            }
+        ],
+    }
+    assert matrix_gets == [
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/state/m.room.pinned_events/"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/event/%24a"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+        (
+            (
+                "https://matrix.example.org/_matrix/client/v3/rooms/"
+                "%21ops%3Amatrix.example/event/%24missing"
+            ),
+            "Authorization",
+            "Bearer matrix-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_discord_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
