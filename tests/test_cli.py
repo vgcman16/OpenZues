@@ -19044,6 +19044,62 @@ def test_doctor_json_reports_channel_mutable_allowlist_warnings(
     ]
 
 
+def test_doctor_json_reports_channel_config_sequence_notes(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        async def run_config_sequence(self, **kwargs: object) -> dict[str, object]:
+            calls.append(
+                {
+                    "cfg": json.loads(json.dumps(kwargs["cfg"])),
+                    "shouldRepair": kwargs["shouldRepair"],
+                    "hasEnv": isinstance(kwargs["env"], dict),
+                }
+            )
+            return {
+                "changeNotes": ["channels.telegram: normalized setup defaults."],
+                "warningNotes": ["channels.telegram: setup still needs bot token."],
+            }
+
+    snapshot = {
+        "channels": {
+            "telegram": {
+                "enabled": True,
+                "groupPolicy": "allowlist",
+            }
+        }
+    }
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        channel_doctor_adapters={"telegram": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["sequenceChanges"] == [
+        "channels.telegram: normalized setup defaults."
+    ]
+    assert channel_doctor["sequenceWarnings"] == [
+        "channels.telegram: setup still needs bot token."
+    ]
+    assert channel_doctor["changes"] == [
+        "channels.telegram: normalized setup defaults."
+    ]
+    assert channel_doctor["warnings"] == ["channels.telegram: setup still needs bot token."]
+    assert "channels.telegram: setup still needs bot token." in payload["warnings"]
+    assert calls == [
+        {
+            "cfg": snapshot,
+            "shouldRepair": False,
+            "hasEnv": True,
+        }
+    ]
+
+
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
     monkeypatch,
 ) -> None:

@@ -5382,6 +5382,38 @@ async def _doctor_channel_mutable_allowlist_warnings(
     return [str(item) for item in result if str(item).strip()]
 
 
+async def _doctor_channel_config_sequence(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+    should_repair: bool,
+) -> dict[str, list[str]]:
+    run_sequence = getattr(adapter, "run_config_sequence", None) or getattr(
+        adapter,
+        "runConfigSequence",
+        None,
+    )
+    if not callable(run_sequence):
+        return {"changeNotes": [], "warningNotes": []}
+    result = run_sequence(
+        cfg=snapshot,
+        env=dict(os.environ),
+        shouldRepair=should_repair,
+    )
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return {"changeNotes": [], "warningNotes": []}
+    return {
+        "changeNotes": [
+            str(item) for item in _object_list(result.get("changeNotes")) if str(item).strip()
+        ],
+        "warningNotes": [
+            str(item) for item in _object_list(result.get("warningNotes")) if str(item).strip()
+        ],
+    }
+
+
 async def _build_doctor_channel_doctor_payload(
     config_service: object | None,
     adapters: object | None,
@@ -5392,6 +5424,8 @@ async def _build_doctor_channel_doctor_payload(
     channel_ids = _doctor_configured_channel_ids(snapshot)
     warnings: list[str] = []
     changes: list[str] = []
+    sequence_changes: list[str] = []
+    sequence_warnings: list[str] = []
     adapter_count = 0
     changed = False
     next_snapshot = snapshot
@@ -5401,6 +5435,17 @@ async def _build_doctor_channel_doctor_payload(
             continue
         adapter_count += 1
         try:
+            sequence = await _doctor_channel_config_sequence(
+                adapter=adapter,
+                snapshot=next_snapshot,
+                should_repair=should_repair,
+            )
+            current_sequence_changes = sequence["changeNotes"]
+            current_sequence_warnings = sequence["warningNotes"]
+            sequence_changes.extend(current_sequence_changes)
+            sequence_warnings.extend(current_sequence_warnings)
+            changes.extend(current_sequence_changes)
+            warnings.extend(current_sequence_warnings)
             if should_repair:
                 mutation = await _doctor_channel_repair_mutation(
                     adapter=adapter,
@@ -5488,6 +5533,8 @@ async def _build_doctor_channel_doctor_payload(
         "adapterCount": adapter_count,
         "changed": changed,
         "changes": changes,
+        "sequenceChanges": sequence_changes,
+        "sequenceWarnings": sequence_warnings,
         "warnings": warnings,
         "path": path,
     }
