@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.0% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -31,7 +31,7 @@ Current percentage rollup:
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
   hook-pack npm install fallback, native manifest activation-planner reason projection,
   plugin registry inspect/refresh persistence, plugin list registry-source
-  projection,
+  projection, plugin inspect runtime-inspection flag,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -49,7 +49,8 @@ Current percentage rollup:
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
   install fallback, native manifest activation planning reason projection, plugin
   registry inspect/refresh persistence, plugin list registry-source projection,
-  active-registry executor projection, and runtime activation doctor posture;
+  plugin inspect runtime-inspection flag, active-registry executor projection,
+  and runtime activation doctor posture;
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
@@ -125,6 +126,14 @@ inventory, and falls back to derived-source diagnostics when the persisted
 index is missing or stale. Verified on 2026-05-02 with the focused plugin list
 registry-source CLI test, adjacent plugin CLI proof, `ruff check`, and `mypy`;
 checkpointed in `6468e305`.
+Plugin inspect runtime-inspection flag parity now mirrors OpenClaw's
+`src/cli/plugins-cli.ts` `--runtime` inspect surface and
+`src/plugins/status.ts` module-loading report distinction: `plugins inspect`
+and `plugins info` accept `--runtime`, default inspect stays on the static
+metadata path, and loaded non-bundle rows are marked imported only when runtime
+inspection is explicitly requested. Verified on 2026-05-02 with the focused
+plugin inspect runtime CLI test, adjacent plugin inspect/runtime inventory
+proof, `ruff check`, and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4648,6 +4657,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%. Verified with the focused plugin list registry-source CLI test,
   adjacent plugin CLI proof, `ruff check`, and `mypy`; checkpointed in
   `6468e305`.
+- Closed the plugin inspect runtime-inspection flag seam from OpenClaw
+  `src/cli/plugins-cli.ts`, `src/cli/plugins-cli.list.test.ts`, and
+  `src/plugins/status.ts`: native `plugins inspect --runtime --json` and
+  `plugins info --runtime --json` now use an explicit runtime-inspection
+  posture while default inspect remains metadata-only; loaded non-bundle
+  plugin rows are marked imported for the runtime inspect path without
+  importing OpenClaw's TypeScript runtime. Repo-wide parity is now estimated at
+  ~54.0%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused plugin inspect runtime CLI test, adjacent
+  plugin inspect/runtime inventory proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

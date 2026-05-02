@@ -13055,6 +13055,7 @@ async def _build_plugins_inventory_payload(
     services: CliServices,
     *,
     enabled_only: bool,
+    runtime_inspection: bool = False,
 ) -> dict[str, object]:
     view = await services.hermes_platform.get_doctor_view()
     view_payload = _model_payload(view)
@@ -13098,7 +13099,11 @@ async def _build_plugins_inventory_payload(
             if str(plugin.get("status") or "").strip() == "loaded"
         ]
     runtime_specs = _plugin_runtime_specs_from_services(services)
-    _mark_plugin_import_state(plugins, runtime_specs)
+    _mark_plugin_import_state(
+        plugins,
+        runtime_specs,
+        loaded_non_bundle_imported=runtime_inspection,
+    )
     warnings = view_payload.get("warnings")
     diagnostics: list[dict[str, object]] = [
         {"level": "warn", "message": str(warning)}
@@ -16272,8 +16277,13 @@ async def _build_plugin_inspect_payload(
     *,
     plugin_id: str | None,
     inspect_all: bool,
+    runtime_inspection: bool = False,
 ) -> dict[str, object] | list[dict[str, object]]:
-    inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    inventory = await _build_plugins_inventory_payload(
+        services,
+        enabled_only=False,
+        runtime_inspection=runtime_inspection,
+    )
     runtime_specs = _plugin_runtime_specs_from_services(services)
     plugins = inventory.get("plugins")
     plugin_rows = [plugin for plugin in plugins if isinstance(plugin, dict)] if isinstance(
@@ -22433,6 +22443,7 @@ def _plugins_inspect_command_impl(
     plugin_id: str | None,
     *,
     inspect_all: bool,
+    runtime_inspection: bool,
     json_output: bool,
 ) -> None:
     if inspect_all and _optional_cli_string(plugin_id) is not None:
@@ -22443,6 +22454,7 @@ def _plugins_inspect_command_impl(
             services,
             plugin_id=plugin_id,
             inspect_all=inspect_all,
+            runtime_inspection=runtime_inspection,
         )
 
     try:
@@ -22461,11 +22473,17 @@ def _plugins_inspect_command_impl(
 def plugins_inspect_command(
     plugin_id: str | None = typer.Argument(None, help="Plugin id."),
     inspect_all: bool = typer.Option(False, "--all", help="Inspect all plugins."),
+    runtime_inspection: bool = typer.Option(
+        False,
+        "--runtime",
+        help="Use the runtime-loaded plugin inspection posture.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit plugin details as JSON."),
 ) -> None:
     _plugins_inspect_command_impl(
         plugin_id,
         inspect_all=inspect_all,
+        runtime_inspection=runtime_inspection,
         json_output=json_output,
     )
 
@@ -22474,11 +22492,17 @@ def plugins_inspect_command(
 def plugins_info_command(
     plugin_id: str | None = typer.Argument(None, help="Plugin id."),
     inspect_all: bool = typer.Option(False, "--all", help="Inspect all plugins."),
+    runtime_inspection: bool = typer.Option(
+        False,
+        "--runtime",
+        help="Use the runtime-loaded plugin inspection posture.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit plugin details as JSON."),
 ) -> None:
     _plugins_inspect_command_impl(
         plugin_id,
         inspect_all=inspect_all,
+        runtime_inspection=runtime_inspection,
         json_output=json_output,
     )
 

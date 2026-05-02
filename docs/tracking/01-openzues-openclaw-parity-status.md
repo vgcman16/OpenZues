@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~54.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -80,6 +80,11 @@ may lag behind this tracker.
   --json`, including persisted/derived registry source metadata and
   OpenClaw-shaped registry diagnostics.
   - Status: checkpointed in `6468e305`
+
+- [x] Plugin inspect runtime-inspection flag in `plugins inspect --runtime`,
+  including explicit runtime posture and imported-state projection for loaded
+  non-bundle metadata rows.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -254,9 +259,22 @@ may lag behind this tracker.
   - Status: open; manifest activation-plan reason projection child slice
     checkpointed in `721ec0f2`, plugin registry inspect/refresh child slice
     checkpointed in `cdb3035e`, and plugin list registry-source child slice
-    checkpointed in `6468e305`, but deeper module import/runtime activation
-    remains.
+    checkpointed in `6468e305`, and plugin inspect runtime flag child slice
+    verified, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin inspect runtime-inspection flag.
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state
+    -q` (`1 passed`), adjacent plugin inspect/runtime inventory proof (`6
+    passed`), `ruff check`, and `mypy`.
 
 - [x] Plugin list persisted-registry source projection.
   - Source: `openclaw-main/src/cli/plugins-list-command.ts`,

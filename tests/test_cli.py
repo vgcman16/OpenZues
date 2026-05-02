@@ -8466,13 +8466,64 @@ def test_plugins_inspect_json_projects_runtime_executor_tools(
     ]
 
 
+def test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "metadata-runtime"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="metadata-runtime",
+        contracts={"tools": ["metadata_runtime.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    baseline = runner.invoke(app, ["plugins", "inspect", "metadata-runtime", "--json"])
+    result = runner.invoke(
+        app,
+        ["plugins", "inspect", "metadata-runtime", "--runtime", "--json"],
+    )
+
+    assert baseline.exit_code == 0, baseline.stdout
+    assert json.loads(baseline.stdout)["plugin"]["imported"] is False
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["imported"] is True
+    assert payload["capabilityMode"] == "inventory"
+    assert payload["tools"] == []
+
+
 def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) -> None:
     async def fake_inventory(
         _services: object,
         *,
         enabled_only: bool,
+        runtime_inspection: bool = False,
     ) -> dict[str, object]:
         assert enabled_only is False
+        assert runtime_inspection is False
         return {
             "workspaceDir": None,
             "plugins": [
