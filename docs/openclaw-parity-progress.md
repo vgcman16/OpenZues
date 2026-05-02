@@ -224,7 +224,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `plugins list --json` includes `activated`, `explicitlyEnabled`,
   `activationSource`, and `activationReason`, and globally disabled plugin
   activation turns an explicitly enabled installed record into a disabled row.
-  Checkpoint pending.
+  This slice is checkpointed in `78658f29`.
 - Verified the installed activation-state slice with `python -m pytest
   tests\test_cli.py::test_plugins_list_json_projects_installed_plugin_activation_state
   -q` (`1 passed`), adjacent plugin config/install list and doctor proof
@@ -8458,8 +8458,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugin record activation decision fields: installed/config-backed plugin rows
   now carry `activated`, `explicitlyEnabled`, `activationSource`, and
   `activationReason`, and global plugin disablement overrides an explicitly
-  enabled installed plugin with a disabled activation state. Checkpoint
-  pending.
+  enabled installed plugin with a disabled activation state. Checkpointed in
+  `78658f29`.
 - Progress estimates are now roughly 54.3% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

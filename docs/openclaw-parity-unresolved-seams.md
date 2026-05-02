@@ -161,7 +161,7 @@ plugin rows include `activated`, `explicitlyEnabled`, `activationSource`, and
 enabled installed plugins disabled while preserving explicit-selection
 metadata. Verified on 2026-05-02 with the focused installed activation-state
 CLI test, adjacent plugin config/install list and doctor proof, `ruff check`,
-and `mypy`; checkpoint pending.
+and `mypy`; checkpointed in `78658f29`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4725,7 +4725,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~54.3%; runtime/CLI/doctor and CLI/operator-control bounded
   paths remain ~99.9%. Verified with the focused installed activation-state
   CLI test, adjacent plugin config/install list and doctor proof, `ruff check`,
-  and `mypy`; checkpoint pending.
+  and `mypy`; checkpointed in `78658f29`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

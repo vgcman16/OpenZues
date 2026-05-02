@@ -98,7 +98,7 @@ may lag behind this tracker.
 - [x] Installed plugin activation-state projection for config/install records,
   preserving OpenClaw-shaped `activated`, `explicitlyEnabled`,
   `activationSource`, and `activationReason` fields.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `78658f29`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -277,8 +277,8 @@ may lag behind this tracker.
     checkpointed in `5fce4371`, and missing-target static preflight child
     slice checkpointed in `9a9e89f2`, and runtime target-scoped inventory
     child slice checkpointed in `c412b98b`, and installed plugin
-    activation-state child slice verified, but deeper module import/runtime
-    activation remains.
+    activation-state child slice checkpointed in `78658f29`, but deeper module
+    import/runtime activation remains.
   - Weight: 5
 
 - [x] Installed plugin activation-state projection.
@@ -288,7 +288,7 @@ may lag behind this tracker.
     `openclaw-main/src/cli/plugins-cli.list.test.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `78658f29`.
   - Weight: 1
   - Last verified: 2026-05-02, focused installed plugin activation-state test
     (`1 passed`), adjacent plugin config/install list and doctor proof (`6
