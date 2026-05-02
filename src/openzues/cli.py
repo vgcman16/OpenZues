@@ -13111,6 +13111,63 @@ def _is_cli_bare_npm_package_name(raw: str) -> bool:
     return _CLI_BARE_NPM_PACKAGE_RE.match(raw.strip()) is not None
 
 
+def _cli_has_usable_bundled_plugin_tree(plugins_dir: Path) -> bool:
+    if not plugins_dir.is_dir():
+        return False
+    try:
+        children = sorted(plugins_dir.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return False
+    for child in children:
+        if not child.is_dir():
+            continue
+        if (child / "openclaw.plugin.json").is_file() or (child / "package.json").is_file():
+            return True
+    return False
+
+
+def _cli_is_source_checkout_package_root(package_root: Path) -> bool:
+    return (
+        (package_root / ".git").exists()
+        and (package_root / "src").is_dir()
+        and (package_root / "extensions").is_dir()
+    )
+
+
+def _cli_bundled_tree_from_package_root(package_root: Path) -> Path | None:
+    source_checkout = _cli_is_source_checkout_package_root(package_root)
+    source_extensions = package_root / "extensions"
+    built_extensions = package_root / "dist" / "extensions"
+    runtime_extensions = package_root / "dist-runtime" / "extensions"
+    runtime_usable = (
+        _cli_has_usable_bundled_plugin_tree(runtime_extensions)
+        if source_checkout
+        else runtime_extensions.is_dir()
+    )
+    built_usable = (
+        _cli_has_usable_bundled_plugin_tree(built_extensions)
+        if source_checkout
+        else built_extensions.is_dir()
+    )
+    if runtime_usable and built_usable:
+        return runtime_extensions
+    if built_usable:
+        return built_extensions
+    if source_checkout and source_extensions.is_dir():
+        return source_extensions
+    return None
+
+
+def _cli_bundled_plugin_root_candidates(root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    if _cli_has_usable_bundled_plugin_tree(root):
+        candidates.append(root)
+    package_tree = _cli_bundled_tree_from_package_root(root)
+    if package_tree is not None:
+        candidates.append(package_tree)
+    return candidates
+
+
 def _cli_bundled_plugin_roots() -> list[Path]:
     roots: list[Path] = []
     for env_key in ("OPENCLAW_BUNDLED_PLUGINS_DIR", "OPENZUES_BUNDLED_PLUGINS_DIR"):
@@ -13118,8 +13175,9 @@ def _cli_bundled_plugin_roots() -> list[Path]:
         if raw_root is None:
             continue
         root = _bundled_lookup_path(raw_root)
-        if root.is_dir() and root not in roots:
-            roots.append(root)
+        for candidate in _cli_bundled_plugin_root_candidates(root):
+            if candidate.is_dir() and candidate not in roots:
+                roots.append(candidate)
     return roots
 
 

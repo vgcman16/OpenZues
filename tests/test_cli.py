@@ -9054,6 +9054,58 @@ def test_plugins_install_json_uses_bundled_plugin_for_bare_id(
     assert isinstance(install["installedAt"], str)
 
 
+def test_plugins_install_prefers_dist_runtime_bundled_tree_for_package_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    (package_root / ".git").mkdir(parents=True)
+    (package_root / "src").mkdir()
+    (package_root / "extensions").mkdir()
+    built_plugin_dir = package_root / "dist" / "extensions" / "feishu"
+    runtime_plugin_dir = package_root / "dist-runtime" / "extensions" / "feishu"
+    _write_openclaw_runtime_plugin(built_plugin_dir, plugin_id="feishu")
+    _write_openclaw_runtime_plugin(runtime_plugin_dir, plugin_id="feishu")
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(package_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "install", "feishu", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    bundled_path = str(runtime_plugin_dir.resolve())
+    assert payload["pluginId"] == "feishu"
+    assert payload["install"]["sourcePath"] == bundled_path
+    assert payload["install"]["installPath"] == bundled_path
+    assert payload["warning"] == (
+        f'Using bundled plugin "feishu" from {bundled_path} for bare install spec '
+        '"feishu". To install an npm package with the same name, use a scoped '
+        "package name (for example @scope/feishu)."
+    )
+
+
 def test_plugins_install_human_warns_for_bundled_bare_id(
     tmp_path,
     monkeypatch,

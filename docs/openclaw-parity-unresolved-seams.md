@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~50.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~50.3% overall, with a reasonable
   band of ~46-55%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -12,9 +12,10 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.5% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.6% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
-  plugin runtime executor inventory, exec safe-bin coverage/repair, and manifest command/activation/setup/auth/QA/
+  plugin runtime executor inventory, exec safe-bin coverage/repair, packaged
+  bundled runtime root preference, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
   plus MCP/LSP server projection, known Claude marketplace shortcut, remote
@@ -27,10 +28,10 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The CLI/operator control-plane family is estimated at ~99.5% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.6% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, exec
-  safe-bin coverage/repair, local path link/copy installs, missing
-  local-looking install-spec guard, and
+  safe-bin coverage/repair, packaged bundled runtime root preference, local
+  path link/copy installs, missing local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
   API/archive install/update, fakeable plus production-wired npm install/update,
   update spec-overrides,
@@ -1409,7 +1410,10 @@ boundary.
 pre-npm branch: native bundled sources resolve from
 `OPENCLAW_BUNDLED_PLUGINS_DIR` / `OPENZUES_BUNDLED_PLUGINS_DIR`, persist path
 install records with the raw `spec`, and warn operators that scoped npm package
-names bypass the bundled plugin. Remaining non-marketplace install parity is
+names bypass the bundled plugin. Packaged bundle-root discovery now also
+prefers `dist-runtime/extensions` over `dist/extensions` when both usable
+trees are present under the same package root, matching OpenClaw's staged
+runtime-wrapper preference. Remaining non-marketplace install parity is
 explicit/preferred ClawHub install, npm install/update behavior, and deeper
 runtime activation/import metadata.
 `plugins install clawhub:<name>[@version]` now mirrors OpenClaw's explicit
