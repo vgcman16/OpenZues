@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~54.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~54.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -107,6 +107,11 @@ may lag behind this tracker.
 - [x] Installed plugin slot activation reasons for config/install records,
   preserving OpenClaw's `selected memory slot` activation decision.
   - Status: checkpointed in `209dced0`
+
+- [x] Plugin doctor failure-phase projection for loader error records,
+  preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
+  and human doctor output.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -288,8 +293,21 @@ may lag behind this tracker.
     activation-state child slice checkpointed in `78658f29`, and installed
     plugin allowlist activation guard child slice checkpointed in `73089117`,
     and installed plugin slot activation reason child slice checkpointed in
-    `209dced0`, but deeper module import/runtime activation remains.
+    `209dced0`, and plugin doctor failure-phase projection verified pending
+    checkpoint, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin doctor failure-phase projection.
+  - Source: `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`,
+    `openclaw-main/src/cli/plugins-cli.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin doctor failure-phase test (`1
+    passed`), adjacent plugin doctor/activation proof (`5 passed`), `ruff
+    check`, and `mypy`.
 
 - [x] Installed plugin slot activation reason.
   - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,

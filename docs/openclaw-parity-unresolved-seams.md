@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~54.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.6% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -34,7 +34,8 @@ Current percentage rollup:
   projection, plugin inspect runtime-inspection flag, missing-target static
   preflight, target-scoped runtime inventory, and installed plugin
   activation-state projection, installed plugin allowlist activation guard,
-  installed plugin slot activation reason,
+  installed plugin slot activation reason, plugin doctor failure-phase
+  projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -55,7 +56,7 @@ Current percentage rollup:
   plugin inspect runtime-inspection flag, missing-target static preflight, and
   target-scoped runtime inventory, installed plugin activation-state
   projection, installed plugin allowlist activation guard, installed plugin
-  slot activation reason,
+  slot activation reason, plugin doctor failure-phase projection,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -180,6 +181,15 @@ rows activate before the allowlist guard and project upstream reason text such
 as `selected memory slot`. Verified on 2026-05-02 with the focused installed
 slot activation CLI test, adjacent plugin config/install list and doctor proof,
 `ruff check`, and `mypy`; checkpointed in `209dced0`.
+Plugin doctor failure-phase projection now mirrors OpenClaw's plugin loader
+error phase reporting from `src/plugins/loader-records.ts`,
+`src/plugins/registry-types.ts`, and `src/cli/plugins-cli.ts`: native
+inventory rows preserve `failurePhase` values (`validation`, `load`,
+`register`), `plugins doctor --json` includes the phase on plugin error
+entries, and human doctor output renders the phase marker beside the plugin id.
+Verified on 2026-05-02 with the focused doctor failure-phase CLI test,
+adjacent plugin doctor/activation proof, `ruff check`, and `mypy`; checkpoint
+pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4766,6 +4776,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with the focused installed slot activation CLI test, adjacent plugin
   config/install list and doctor proof, `ruff check`, and `mypy`; checkpoint
   in `209dced0`.
+- Closed the plugin doctor failure-phase projection seam from OpenClaw
+  `src/plugins/loader-records.ts`, `src/plugins/registry-types.ts`, and
+  `src/cli/plugins-cli.ts`: native plugin records now preserve loader
+  `failurePhase` values, `plugins doctor --json` returns the phase on error
+  entries, and human doctor output renders `[validation]`, `[load]`, or
+  `[register]` beside plugin ids when present. Repo-wide parity is now
+  estimated at ~54.6%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused doctor failure-phase CLI test,
+  adjacent plugin doctor/activation proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

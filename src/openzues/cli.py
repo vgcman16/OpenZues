@@ -10488,8 +10488,10 @@ def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> No
             plugin_id = str(entry.get("id") or "").strip()
             error = str(entry.get("error") or "failed to load").strip()
             source = str(entry.get("source") or "").strip()
+            phase = _plugin_failure_phase(entry.get("failurePhase"))
             suffix = f" ({source})" if source else ""
-            typer.echo(f"- {plugin_id}: {error}{suffix}")
+            phase_marker = f" [{phase}]" if phase is not None else ""
+            typer.echo(f"- {plugin_id}{phase_marker}: {error}{suffix}")
     if diagnostic_rows:
         if error_rows:
             typer.echo("")
@@ -13292,13 +13294,15 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
             continue
         if str(plugin.get("status") or "").strip() != "error":
             continue
-        errors.append(
-            {
-                "id": str(plugin.get("id") or "").strip(),
-                "source": str(plugin.get("source") or "").strip(),
-                "error": str(plugin.get("description") or "failed to load").strip(),
-            }
-        )
+        error_entry: dict[str, object] = {
+            "id": str(plugin.get("id") or "").strip(),
+            "source": str(plugin.get("source") or "").strip(),
+            "error": str(plugin.get("description") or "failed to load").strip(),
+        }
+        failure_phase = _plugin_failure_phase(plugin.get("failurePhase"))
+        if failure_phase is not None:
+            error_entry["failurePhase"] = failure_phase
+        errors.append(error_entry)
     raw_diagnostics = inventory.get("diagnostics")
     diagnostic_rows = raw_diagnostics if isinstance(raw_diagnostics, list) else []
     diagnostics = [
@@ -16693,6 +16697,11 @@ def _plugin_compatibility_notices(plugin: dict[str, object]) -> list[dict[str, o
     return notices
 
 
+def _plugin_failure_phase(value: object) -> str | None:
+    phase = _optional_cli_string(value)
+    return phase if phase in {"validation", "load", "register"} else None
+
+
 def _format_plugin_compatibility_notice(notice: dict[str, object]) -> str:
     plugin_id = str(notice.get("pluginId") or "").strip()
     message = str(notice.get("message") or "").strip()
@@ -16751,6 +16760,9 @@ def _plugin_record_from_deck_item(
         record["usesLegacyBeforeAgentStart"] = True
     if item.get("imported") is True:
         record["imported"] = True
+    failure_phase = _plugin_failure_phase(item.get("failurePhase"))
+    if failure_phase is not None:
+        record["failurePhase"] = failure_phase
     item_root_dir = _optional_cli_string(item.get("rootDir"))
     for metadata_key, metadata_value in _plugin_manifest_root_metadata(
         item,
