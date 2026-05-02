@@ -5439,8 +5439,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~59.3%; the active gateway/session/tool-contract family is now estimated
   at ~99.8%, and runtime/CLI/doctor plus CLI/operator-control bounded paths
   remain ~99.9%. Verified with the focused Telegram GIF send pytest, adjacent
-  Telegram native send/poll/media proof, `ruff check`, and `mypy`; checkpoint
-  pending commit.
+  Telegram native send/poll/media proof, `ruff check`, and `mypy`;
+  checkpointed in `51ee9573`.
 - Next repo-wide queue head: continue provider-specific send/poll/replay edge
   cases or return to deeper bundled plugin runtime activation, whichever is the
   strongest source-backed seam after the next discovery pass.

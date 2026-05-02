@@ -9552,7 +9552,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   direct sends detect GIF media from URL/content kind (or `gifPlayback=true`)
   and call Bot API `sendAnimation` instead of `sendPhoto` unless
   `forceDocument=true`, while preserving caption, reply, silent, thread, and
-  animation `mediaIds` metadata. Checkpoint pending commit.
+  animation `mediaIds` metadata. Checkpoint in `51ee9573`.
 - Progress estimates are now roughly 59.3% repo-wide and 99.8% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the provider queue

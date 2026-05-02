@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Telegram GIF media send slice is verified and awaiting checkpoint commit.
+The Telegram GIF media send slice is checkpointed in `51ee9573`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled plugin-SDK alias context checkpointed in `e6b506db` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram GIF media send verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram GIF media send checkpointed in `51ee9573` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
 
@@ -1768,7 +1768,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     provider metadata.
   - Evidence required: focused Telegram GIF send test, adjacent Telegram
     native send/poll/media tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `51ee9573`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media

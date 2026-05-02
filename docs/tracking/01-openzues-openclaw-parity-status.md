@@ -160,7 +160,7 @@ may lag behind this tracker.
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
   caption, reply, silent, thread, and animation `mediaIds` metadata.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `51ee9573`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -1034,8 +1034,8 @@ may lag behind this tracker.
     query placement checkpointed in `0d40be27`; WhatsApp document filename
     projection checkpointed in `05c4f0fc`; Discord media iteration
     checkpointed in `b5371fd9`; native provider result metadata passthrough
-    checkpointed in `fb9c9763`; Telegram GIF media send verified and pending
-    checkpoint
+    checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
+    `51ee9573`
   - Weight: 3
 
 - [x] Telegram GIF media send animation routing.
@@ -1044,7 +1044,7 @@ may lag behind this tracker.
     `openclaw-main/extensions/telegram/src/outbound-adapter.ts`
   - Target: `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `51ee9573`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media
