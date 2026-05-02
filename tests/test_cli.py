@@ -8409,6 +8409,66 @@ def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
     assert "No plugin issues detected." in result.stdout
 
 
+def test_plugins_doctor_json_reports_metadata_only_tool_activation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "metadata-tools"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "metadata-tools",
+                "name": "Metadata Tools",
+                "description": "Manifest-only tools.",
+                "version": "1.0.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {"tools": ["metadata.search"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeActivation"] == {
+        "status": "metadata_only",
+        "manifestToolPlugins": [
+            {"pluginId": "metadata-tools", "tools": ["metadata.search"]}
+        ],
+        "runtimeExecutorPlugins": [],
+        "missingExecutorPlugins": [
+            {"pluginId": "metadata-tools", "tools": ["metadata.search"]}
+        ],
+    }
+
+
 def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

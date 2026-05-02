@@ -6476,6 +6476,53 @@ def _build_doctor_runtime_bridge_plugin_executors_payload(
     }
 
 
+def _plugin_runtime_activation_payload(
+    plugin_rows: list[object],
+    services: object,
+) -> dict[str, object]:
+    manifest_tool_plugins: list[dict[str, object]] = []
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        if plugin_id is None:
+            continue
+        contracts = plugin.get("contracts")
+        contract_payload = contracts if isinstance(contracts, dict) else {}
+        tools = _plugin_manifest_string_list(contract_payload.get("tools"))
+        if tools:
+            manifest_tool_plugins.append({"pluginId": plugin_id, "tools": tools})
+    runtime_tool_map: dict[str, list[str]] = {}
+    for spec in _plugin_runtime_specs_from_services(services):
+        plugin_id = _optional_cli_string(spec.plugin_id)
+        if plugin_id is None:
+            continue
+        runtime_tool_map.setdefault(plugin_id, []).append(spec.tool)
+    runtime_executor_plugins = [
+        {"pluginId": plugin_id, "tools": sorted(_dedupe_cli_strings(tools))}
+        for plugin_id, tools in sorted(runtime_tool_map.items())
+    ]
+    missing_executor_plugins = [
+        entry
+        for entry in manifest_tool_plugins
+        if _optional_cli_string(entry.get("pluginId")) not in runtime_tool_map
+    ]
+    if not manifest_tool_plugins:
+        status = "ok"
+    elif missing_executor_plugins and runtime_executor_plugins:
+        status = "partial"
+    elif missing_executor_plugins:
+        status = "metadata_only"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "manifestToolPlugins": manifest_tool_plugins,
+        "runtimeExecutorPlugins": runtime_executor_plugins,
+        "missingExecutorPlugins": missing_executor_plugins,
+    }
+
+
 def _build_doctor_runtime_bridge_acp_payload(
     config_service: object | None,
     gateway_node_methods: object | None,
@@ -11951,6 +11998,7 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "diagnostics": diagnostics,
         "compatibility": compatibility,
         "runtimeDependencies": runtime_dependency_payload,
+        "runtimeActivation": _plugin_runtime_activation_payload(plugin_rows, services),
         "docs": "https://docs.openclaw.ai/plugin",
     }
 
