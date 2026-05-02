@@ -9741,6 +9741,12 @@ def test_plugins_inspect_human_reports_base_metadata(monkeypatch) -> None:
     assert "Version: 1.2.3" in result.stdout
     assert "Capability mode: inventory" in result.stdout
     assert "Legacy before_agent_start: yes" in result.stdout
+    assert "Compatibility warnings:" in result.stdout
+    assert (
+        "- metadata_plugin still uses legacy before_agent_start; keep regression "
+        "coverage on this plugin, and prefer before_model_resolve/before_prompt_build "
+        "for new work."
+    ) in result.stdout
 
 
 def test_plugins_inspect_human_reports_capability_sections(monkeypatch) -> None:

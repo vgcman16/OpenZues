@@ -12280,6 +12280,15 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
                 f"{kind}: {', '.join(ids) if ids else '(registered)'}"
             )
     _emit_plugin_inspect_section("Capabilities", capability_lines)
+    compatibility = payload.get("compatibility")
+    compatibility_lines: list[str] = []
+    for entry in compatibility if isinstance(compatibility, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        notice = _format_plugin_compatibility_notice(entry)
+        if notice:
+            compatibility_lines.append(notice)
+    _emit_plugin_inspect_section("Compatibility warnings", compatibility_lines)
     tools = payload.get("tools")
     tool_lines: list[str] = []
     for entry in tools if isinstance(tools, list) else []:
