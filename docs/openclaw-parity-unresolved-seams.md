@@ -5411,6 +5411,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   import/activation queue, especially bundled package plugin-sdk
   import/runtime activation. The provider-native adapter breadth queue remains
   the next alternate after that slice.
+- Closed the bundled plugin-SDK alias context seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/plugin-sdk-dist-alias.ts`, and
+  `src/plugins/sdk-alias.ts`: bundled package runtime entries loaded from
+  `dist/extensions` or staged `dist-runtime/extensions` now project
+  `pluginSdkResolution="dist"`, `pluginSdkPackageRoot`, `pluginSdkDistRoot`,
+  and `pluginSdkAliasRoot` metadata to activation adapters when SDK imports
+  are present, allowing a native adapter to resolve OpenClaw-style plugin-SDK
+  aliases before reporting runtime tools. Repo-wide parity is now estimated at
+  ~59.2%; the active gateway/session/tool-contract family is now estimated at
+  ~99.7%, and runtime/CLI/doctor plus CLI/operator-control bounded paths
+  remain ~99.9%. Verified with the focused SDK alias activation-adapter test,
+  adjacent SDK import/runtime-entry/runtime-transform proof, `ruff check`, and
+  `mypy`; checkpoint pending.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -10354,6 +10354,110 @@ def test_plugins_list_json_projects_bundled_runtime_plugin_sdk_imports(
     ]
 
 
+def test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activation_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    dist_root = package_root / "dist"
+    plugin_dir = dist_root / "extensions" / "discord"
+    (dist_root / "plugin-sdk").mkdir(parents=True)
+    (dist_root / "plugin-sdk" / "text-runtime.js").write_text(
+        "export const normalizeLowercaseStringOrEmpty = (value) => String(value).toLowerCase();\n",
+        encoding="utf-8",
+    )
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "import { normalizeLowercaseStringOrEmpty } from "
+        '"openclaw/plugin-sdk/text-runtime";\n'
+        "export default { register() {} };\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(dist_root / "extensions"))
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            plugin = context["plugins"][0]
+            expected_alias_root = (
+                dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+            )
+            if (
+                plugin.get("pluginSdkResolution") == "dist"
+                and plugin.get("pluginSdkDistRoot")
+                == str(dist_root.resolve(strict=False))
+                and plugin.get("pluginSdkAliasRoot")
+                == str(expected_alias_root.resolve(strict=False))
+                and plugin.get("pluginSdkImports")
+                == ["openclaw/plugin-sdk/text-runtime"]
+            ):
+                return {
+                    "tools": [
+                        {
+                            "pluginId": "discord",
+                            "pluginName": "discord",
+                            "source": "openclaw-plugin",
+                            "names": ["discord.send"],
+                            "executor": fake_executor,
+                        }
+                    ]
+                }
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+
+
 def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
     tmp_path,
     monkeypatch,

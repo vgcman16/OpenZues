@@ -18678,6 +18678,12 @@ def _plugin_package_openclaw_record_metadata(
         plugin_sdk_imports = _plugin_runtime_entry_sdk_imports(runtime_entry_sources)
         if plugin_sdk_imports:
             metadata["pluginSdkImports"] = plugin_sdk_imports
+            metadata.update(
+                _plugin_runtime_entry_sdk_alias_metadata(
+                    plugin_root,
+                    plugin_sdk_imports,
+                )
+            )
     metadata.update(_plugin_public_surface_artifacts(plugin_root, value))
     startup = value.get("startup")
     if (
@@ -18689,6 +18695,40 @@ def _plugin_package_openclaw_record_metadata(
     if channel_catalog_meta:
         metadata["channelCatalogMeta"] = channel_catalog_meta
     return metadata
+
+
+def _plugin_runtime_entry_sdk_alias_metadata(
+    plugin_root: Path,
+    plugin_sdk_imports: Sequence[str],
+) -> dict[str, object]:
+    if not plugin_sdk_imports:
+        return {}
+    dist_root = _plugin_runtime_entry_dist_root(plugin_root)
+    if dist_root is None:
+        return {}
+    plugin_sdk_root = dist_root / "plugin-sdk"
+    if not plugin_sdk_root.is_dir():
+        return {}
+    alias_root = dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+    return {
+        "pluginSdkResolution": "dist",
+        "pluginSdkPackageRoot": str(dist_root.parent.resolve(strict=False)),
+        "pluginSdkDistRoot": str(dist_root.resolve(strict=False)),
+        "pluginSdkAliasRoot": str(alias_root.resolve(strict=False)),
+    }
+
+
+def _plugin_runtime_entry_dist_root(plugin_root: Path) -> Path | None:
+    extensions_root = plugin_root.parent
+    if extensions_root.name.lower() != "extensions":
+        return None
+    bundle_root = extensions_root.parent
+    bundle_root_name = bundle_root.name.lower()
+    if bundle_root_name == "dist":
+        return bundle_root
+    if bundle_root_name == "dist-runtime":
+        return bundle_root.parent / "dist"
+    return None
 
 
 def _plugin_semver_tuple(value: object) -> tuple[int, int, int] | None:

@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.6% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.7% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The bundled runtime plugin-SDK import metadata slice is checkpointed in
-`54fb7bf8`. Any follow-up changes should target the next queue head only:
+The bundled plugin-SDK alias context slice is verified and pending checkpoint.
+Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `tests/test_cli.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled runtime plugin-SDK import metadata checkpointed in `54fb7bf8` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled plugin-SDK alias context verified pending checkpoint | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1508,6 +1508,33 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     or plugins_install_prefers_dist_runtime_bundled_tree_for_package_root or
     runtime_text_transform_plugins"` (`6 passed`), `ruff check
     src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BD` bundled plugin-SDK alias context
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/plugin-sdk-dist-alias.ts`, and
+    `openclaw-main/src/plugins/sdk-alias.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled package runtime entries loaded from `dist/extensions`
+    or staged `dist-runtime/extensions` project `pluginSdkResolution="dist"`,
+    `pluginSdkPackageRoot`, `pluginSdkDistRoot`, and `pluginSdkAliasRoot`
+    metadata to activation adapters when SDK imports are present, allowing a
+    native adapter to resolve OpenClaw-style plugin-SDK aliases before
+    reporting runtime tools.
+  - Evidence required: focused SDK alias activation-adapter test, adjacent SDK
+    import/runtime-entry/runtime-transform tests, ruff, mypy
+  - Status: verified pending checkpoint
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activation_adapter
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugin_sdk_alias_to_activation_adapter or bundled_runtime_plugin_sdk_imports
+    or runtime_entry_source or
+    plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    runtime_text_transform_plugins or
+    plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,

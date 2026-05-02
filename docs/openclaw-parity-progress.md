@@ -9525,6 +9525,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   runtime_text_transform_plugins"` (`6 passed`), `ruff check
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
+- Bundled plugin-SDK alias context is now landed: bundled package runtime
+  entries loaded from `dist/extensions` or staged `dist-runtime/extensions`
+  project `pluginSdkResolution="dist"`, `pluginSdkPackageRoot`,
+  `pluginSdkDistRoot`, and `pluginSdkAliasRoot` metadata to activation
+  adapters when SDK imports are present. Checkpoint pending.
+- Progress estimates are now roughly 59.2% repo-wide and 99.7% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the bundled plugin-SDK alias context slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activation_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugin_sdk_alias_to_activation_adapter or bundled_runtime_plugin_sdk_imports
+  or runtime_entry_source or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  runtime_text_transform_plugins or
+  plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
