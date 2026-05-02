@@ -8928,7 +8928,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   cold metadata inventory path: manifest and bundle plugin records discovered
   through `plugins.load.paths` project `activated`, `explicitlyEnabled`,
   `activationSource`, and optional `activationReason` without forcing runtime
-  module import. Checkpoint pending.
+  module import. Checkpointed in `54bf33aa`.
 - Progress estimates are now roughly 56.5% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

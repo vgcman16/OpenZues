@@ -190,7 +190,7 @@ may lag behind this tracker.
 
 - [x] Manifest load-path activation-state projection for OpenClaw plugin and
   bundle records discovered through `plugins.load.paths`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `54bf33aa`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -391,8 +391,8 @@ may lag behind this tracker.
     `df4d586c`, plugin list verbose activation/import state checkpointed
     in `83146bc1`, plugin list human enabled label checkpointed in
     `bc362484`, plugin list human enabled count checkpointed in `cc9983c3`,
-    and manifest load-path activation-state projection verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    and manifest load-path activation-state projection checkpointed in
+    `54bf33aa`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Manifest load-path activation-state projection.
@@ -400,7 +400,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/config-state.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `54bf33aa`.
   - Weight: 1
   - Last verified: 2026-05-02, focused manifest load-path test (`1 passed`),
     adjacent plugin activation/manifest inventory proof (`8 passed`), `ruff
