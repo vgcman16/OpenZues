@@ -227,7 +227,7 @@ may lag behind this tracker.
   - Status: checkpointed in `26e55209`
 
 - [x] Installed plugin disabled activation gate in plugin doctor/list posture.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `457021d6`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -439,8 +439,8 @@ may lag behind this tracker.
     configured-channel workspace owner activation gate checkpointed in
     `bb9ef28a`, and manifest toolMetadata availability gate checkpointed in
     `78d905c6`, and installed plugin runtime activation adapter checkpointed
-    in `26e55209`, and installed plugin disabled activation gate verified with
-    checkpoint pending, but deeper module import/runtime activation remains.
+    in `26e55209`, and installed plugin disabled activation gate checkpointed
+    in `457021d6`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Installed plugin disabled activation gate.
@@ -449,7 +449,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `457021d6`.
   - Weight: 1
   - Last verified: 2026-05-02, focused disabled activation adapter test (`1
     passed`), adjacent plugin runtime CLI proof (`7 passed`), `ruff check`,

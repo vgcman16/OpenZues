@@ -9162,7 +9162,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Installed plugin disabled activation gate is now landed for the native
   installed-plugin activation adapter: disabled manifest/load-path plugin rows
   are excluded before adapter dispatch, do not count as missing executor gaps,
-  and remain `imported=false` in plugin list output. Checkpoint pending.
+  and remain `imported=false` in plugin list output. Checkpoint in `457021d6`.
 - Progress estimates are now roughly 57.5% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper production module import and
