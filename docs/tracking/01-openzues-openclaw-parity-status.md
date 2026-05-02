@@ -236,7 +236,7 @@ may lag behind this tracker.
   - Status: checkpointed in `0ebf7884`
 
 - [x] Installed plugin activation adapter failure diagnostic projection.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `baa32232`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -452,8 +452,8 @@ may lag behind this tracker.
     in `457021d6`, installed plugin inspect runtime activation adapter
     tool projection checkpointed in `fb4fca1b`, and installed plugin scoped
     runtime activation load context checkpointed in `0ebf7884`, and installed
-    plugin activation adapter failure diagnostics verified with checkpoint
-    pending, but deeper module import/runtime activation remains.
+    plugin activation adapter failure diagnostics checkpointed in `baa32232`,
+    but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Installed plugin activation adapter failure diagnostic projection.
@@ -462,7 +462,7 @@ may lag behind this tracker.
     `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `baa32232`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin doctor activation adapter error
     test (`1 passed`), adjacent plugin runtime CLI proof (`7 passed`), `ruff

@@ -9232,7 +9232,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   native installed-plugin activation adapter exceptions are projected as
   plugin `status=error` rows with `failurePhase=load`, matching diagnostics,
   and `plugins doctor --json` stays structured instead of crashing.
-  Checkpoint pending.
+  Checkpoint in `baa32232`.
 - Progress estimates are now roughly 57.8% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper production module import and
