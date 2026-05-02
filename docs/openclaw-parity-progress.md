@@ -186,6 +186,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   that checks the static plugin snapshot before runtime inspection: missing
   targets return `Plugin not found` without entering the runtime-inspection
   inventory path.
+  This slice is checkpointed in `9a9e89f2`.
 - Verified the missing-target runtime inspect slice with `python -m pytest
   tests\test_cli.py::test_plugins_inspect_runtime_missing_target_uses_static_inventory
   -q` (`1 passed`), focused runtime inspect pair (`2 passed`), adjacent
@@ -8401,7 +8402,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect runtime missing-target preflight is now landed for OpenClaw's
   `plugins inspect --runtime` guard: native inspect checks the static metadata
   inventory first, returns `Plugin not found` for absent targets, and only then
-  enters the runtime-inspection path for existing plugins. Checkpoint pending.
+  enters the runtime-inspection path for existing plugins. Checkpointed in
+  `9a9e89f2`.
 - Progress estimates are now roughly 54.1% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

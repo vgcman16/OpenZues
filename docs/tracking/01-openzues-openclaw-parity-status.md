@@ -89,7 +89,7 @@ may lag behind this tracker.
 - [x] Plugin inspect runtime missing-target static preflight, preserving the
   OpenClaw guard that avoids runtime inspection when the target plugin is
   absent.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `9a9e89f2`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -266,7 +266,8 @@ may lag behind this tracker.
     checkpointed in `cdb3035e`, and plugin list registry-source child slice
     checkpointed in `6468e305`, plugin inspect runtime flag child slice
     checkpointed in `5fce4371`, and missing-target static preflight child
-    slice verified, but deeper module import/runtime activation remains.
+    slice checkpointed in `9a9e89f2`, but deeper module import/runtime
+    activation remains.
   - Weight: 5
 
 - [x] Plugin inspect runtime missing-target static preflight.
@@ -275,7 +276,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/status.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `9a9e89f2`.
   - Weight: 1
   - Last verified: 2026-05-02, focused missing-target runtime inspect test
     (`1 passed`), focused runtime inspect pair (`2 passed`), adjacent plugin
