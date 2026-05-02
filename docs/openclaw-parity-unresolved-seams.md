@@ -5274,7 +5274,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~58.1%; runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   plugin doctor load-options test, adjacent plugin runtime CLI proof, `ruff
-  check`, and `mypy`; checkpoint pending.
+  check`, and `mypy`; checkpointed in `ee12d2d4`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the deeper boundary that turns installed
   manifest/load-path registry records into native runtime executor or honest

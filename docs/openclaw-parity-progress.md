@@ -9304,7 +9304,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   native activation adapters receive `rawConfig`, `config`,
   `activationSourceConfig`, `autoEnabledReasons`, `env`, scoped
   `onlyPluginIds`, optional `workspaceDir`, and `throwOnLoadError=true`,
-  matching the OpenClaw runtime loader option envelope. Checkpoint pending.
+  matching the OpenClaw runtime loader option envelope. Checkpoint in
+  `ee12d2d4`.
 - Progress estimates are now roughly 58.1% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

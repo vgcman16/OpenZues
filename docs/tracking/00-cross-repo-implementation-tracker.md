@@ -30,8 +30,8 @@ Hermes or Warp integration.
 ## Current Worktree Boundary
 
 The installed activation-adapter OpenClaw runtime load-options slice is
-verified and awaiting checkpoint. Any follow-up changes should target the next
-queue head only:
+checkpointed in `ee12d2d4`. Any follow-up changes should target the next queue
+head only:
 
 - `src/openzues/cli.py`
 - `tests/test_cli.py`
@@ -49,7 +49,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed adapter runtime load options verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed adapter runtime load options checkpointed in `ee12d2d4` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1245,7 +1245,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     `throwOnLoadError=true`.
   - Evidence required: focused plugin doctor load-options test, adjacent
     plugin runtime CLI tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `ee12d2d4`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
