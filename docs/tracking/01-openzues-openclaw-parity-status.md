@@ -73,7 +73,7 @@ may lag behind this tracker.
 - [x] Realtime voice gateway methods for `talk.realtime.session`,
   `relayAudio`, `relayMark`, `relayStop`, and `relayToolResult`, including
   fakeable adapter dispatch and upstream-shaped unavailable boundaries.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `75d03a6c`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -155,7 +155,7 @@ may lag behind this tracker.
     `src/openzues/services/gateway_method_policy.py`
   - Test: `tests/test_gateway_node_methods.py`,
     `tests/test_gateway_method_policy.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `75d03a6c`.
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway realtime tests (`2 passed`),
     focused talk/TTS policy proof (`2 passed`), adjacent gateway talk tests (`6

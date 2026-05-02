@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `talk.realtime.*` gateway method parity slice is verified and ready for
-checkpointing with these intended files:
+The `talk.realtime.*` gateway method parity slice is checkpointed in
+`75d03a6c`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_method_policy.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Active | Repo-wide +0.1%, active gateway/method +0.1% | `talk.realtime.*` verified; next small base-method gaps are `channels.stop` and `node.pair.remove` |
+| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `75d03a6c` | Repo-wide +0.1%, active gateway/method +0.1% | `talk.realtime.*` done; next small base-method gaps are `channels.stop` and `node.pair.remove` |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -144,7 +144,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     is wired.
   - Evidence required: focused gateway/policy tests, adjacent talk gateway
     tests, ruff, mypy
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `75d03a6c`
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway realtime tests (`2 passed`),
     focused talk/TTS policy proof (`2 passed`), adjacent `python -m pytest

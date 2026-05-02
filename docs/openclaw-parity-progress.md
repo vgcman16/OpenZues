@@ -114,7 +114,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Realtime voice gateway methods now mirror OpenClaw's gateway method layer:
   session creation and relay operations validate the same params, dispatch to
   a registered native realtime adapter, return `{ok: true}` relay results, and
-  keep precise unavailable responses for missing provider/relay runtime.
+  keep precise unavailable responses for missing provider/relay runtime. This
+  slice is checkpointed in `75d03a6c`.
 - Verified the realtime voice gateway slice with focused gateway tests (`2
   passed`), focused talk/TTS policy tests (`2 passed`), adjacent `python -m
   pytest tests\test_gateway_node_methods.py -q -k "talk_realtime or talk_speak
@@ -8111,6 +8112,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `talk.realtime.session`, `relayAudio`, `relayMark`, `relayStop`, and
   `relayToolResult` methods through a fakeable native realtime adapter with
   upstream-shaped unavailable responses when no runtime is wired.
+  Checkpointed in `75d03a6c`.
 - Progress estimates are now roughly 52.9% repo-wide and ~98.4% for the active
   gateway/session/tool-contract family after this realtime voice gateway slice.
 - Verified the realtime voice gateway slice with focused gateway/policy proofs,

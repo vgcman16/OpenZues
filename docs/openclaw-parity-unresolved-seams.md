@@ -113,7 +113,7 @@ params are validated natively, a registered fakeable realtime adapter owns
 session/relay execution, relay calls return `{ok: true}`, and missing runtime
 paths preserve upstream-shaped unavailable errors. Verified on 2026-05-02 with
 focused gateway/policy proofs, adjacent talk gateway tests, `ruff check`, and
-`mypy`.
+`mypy`; checkpointed in `75d03a6c`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4493,6 +4493,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~98.4%. Verified with focused
   gateway and policy proofs, adjacent gateway talk tests, `ruff check`, and
   `mypy`.
+  Checkpointed in `75d03a6c`.
 - Next repo-wide queue head: the broader method-policy sweep exposed
   source-backed small base-method gaps for `channels.stop` and
   `node.pair.remove`. Source anchors are OpenClaw
