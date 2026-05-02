@@ -9047,7 +9047,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   OpenClaw's manifest-owner policy surface: explicit channel configuration can
   activate a bundled manifest owner even when `plugins.allow` is restrictive
   and omits that owner, while explicit disable/denylist policy still wins.
-  Checkpoint pending.
+  Checkpointed in `6ad518d4`.
 - Progress estimates are now roughly 57.0% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

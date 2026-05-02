@@ -209,7 +209,7 @@ may lag behind this tracker.
 
 - [x] Configured-channel bundled-owner allowlist bypass in runtime activation
   planning.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `6ad518d4`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -416,7 +416,7 @@ may lag behind this tracker.
     checkpointed in `2acd2736`, and configured-channel owner activation
     projection checkpointed in `ae5c3986`, and configured-channel disabled
     owner policy checkpointed in `d2d0e9c3`, and configured-channel bundled
-    owner allowlist bypass verified with checkpoint pending, but deeper
+    owner allowlist bypass checkpointed in `6ad518d4`, but deeper
     module import/runtime activation remains.
   - Weight: 5
 
@@ -425,7 +425,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/manifest-owner-policy.ts`
   - Target: `src/openzues/services/gateway_plugin_activation.py`
   - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `6ad518d4`.
   - Weight: 1
   - Last verified: 2026-05-02, focused bundled-owner allowlist-bypass helper
     test (`1 passed`), full activation helper suite (`7 passed`), adjacent
