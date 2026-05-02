@@ -8534,7 +8534,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect failure-phase projection is now landed for OpenClaw's
   `plugins inspect` error details: JSON inspect payloads preserve
   `plugin.failurePhase` and human inspect output renders the upstream
-  `Failure phase: <phase>` line for errored plugin records. Checkpoint pending.
+  `Failure phase: <phase>` line for errored plugin records. Checkpointed in
+  `6f4d1ad8`.
 - Progress estimates are now roughly 54.7% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
