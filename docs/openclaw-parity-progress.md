@@ -149,7 +149,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   scope, strict `nodeId` params, paired-node removal through the native pairing
   store, `{nodeId}` response projection, unknown-node errors, and
   `node.pair.resolved` broadcasts with `decision="removed"`. This slice is
-  verified; checkpoint commit pending.
+  checkpointed in `8a0e6ac6`.
 - Verified the `node.pair.remove` slice with focused gateway remove tests (`2
   passed`), focused node/voice policy test (`1 passed`), adjacent `python -m
   pytest tests\test_gateway_node_methods.py -q -k "node_pair_remove or
@@ -8168,7 +8168,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `node.pair.remove` method: pairing scope, strict `nodeId` validation,
   paired-node deletion, `{nodeId}` response projection, unknown-node errors,
   and `node.pair.resolved` removal broadcasts.
-  Checkpoint commit pending.
+  Checkpointed in `8a0e6ac6`.
 - Progress estimates are now roughly 53.1% repo-wide and ~98.6% for the active
   gateway/session/tool-contract family after this `node.pair.remove` slice.
 - Verified the `node.pair.remove` slice with focused gateway/policy proofs,

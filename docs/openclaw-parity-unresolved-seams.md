@@ -126,7 +126,7 @@ the method returns `{nodeId}`, unknown nodes raise the upstream-shaped
 `unknown nodeId` error, and `node.pair.resolved` broadcasts carry
 `decision="removed"` with an empty request id. Verified on 2026-05-02 with
 focused gateway/policy proofs, adjacent node-pair lifecycle tests, `ruff
-check`, and `mypy`; checkpoint commit pending.
+check`, and `mypy`; checkpointed in `8a0e6ac6`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4522,7 +4522,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   pairing-scoped. Repo-wide parity is now estimated at ~53.1%; active
   gateway/session/tool-contract parity is ~98.6%. Verified with focused
   gateway and policy proofs, adjacent node-pair lifecycle tests, `ruff check`,
-  and `mypy`; checkpoint commit pending.
+  and `mypy`; checkpointed in `8a0e6ac6`.
 - Next repo-wide queue head: rotate from small gateway base-method closures
   back to the source-backed provider-native adapter breadth queue, starting
   with remaining OpenClaw channel/provider send, poll, replay, direct announce,

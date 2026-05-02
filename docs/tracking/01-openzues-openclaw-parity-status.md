@@ -82,7 +82,7 @@ may lag behind this tracker.
 - [x] `node.pair.remove` pairing-scoped gateway method with paired-node removal,
   `{nodeId}` projection, unknown-node guard, and `node.pair.resolved` removal
   broadcasts.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `8a0e6ac6`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -192,7 +192,7 @@ may lag behind this tracker.
     `src/openzues/services/gateway_method_policy.py`
   - Test: `tests/test_gateway_node_methods.py`,
     `tests/test_gateway_method_policy.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `8a0e6ac6`.
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway remove tests (`2 passed`),
     focused node/voice policy proof (`1 passed`), adjacent node-pair lifecycle
