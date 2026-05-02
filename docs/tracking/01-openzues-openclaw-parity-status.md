@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~55.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~55.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -155,6 +155,10 @@ may lag behind this tracker.
 - [x] Plugin inspect human policy section, rendering native inspect policy
   fields.
   - Status: checkpointed in `e0af8199`
+
+- [x] Plugin inspect human diagnostics section, rendering scoped diagnostic
+  rows.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -346,9 +350,20 @@ may lag behind this tracker.
     `f2221877`, plugin inspect human tools section checkpointed in `5ac316c1`,
     plugin inspect human MCP/LSP sections checkpointed in `6fc67848`, and
     plugin inspect human HTTP routes section checkpointed in `efef8270`, and
-    plugin inspect human policy section checkpointed in `e0af8199`, but deeper
+    plugin inspect human policy section checkpointed in `e0af8199`, and plugin
+    inspect human diagnostics section verified pending checkpoint, but deeper
     module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin inspect human diagnostics section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect scoped-diagnostics test
+    (`1 passed`), adjacent plugin inspect proof (`8 passed`), `ruff check`,
+    and `mypy`.
 
 - [x] Plugin inspect human policy section.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`

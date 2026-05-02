@@ -8812,8 +8812,10 @@ def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) ->
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
 
     result = runner.invoke(app, ["plugins", "inspect", "google", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "google"])
 
     assert result.exit_code == 0, result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
     payload = json.loads(result.stdout)
     assert payload["diagnostics"] == [
         {
@@ -8822,6 +8824,10 @@ def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) ->
             "message": "watch this surface",
         }
     ]
+    assert "Diagnostics:" in human_result.stdout
+    assert "- WARN: watch this surface" in human_result.stdout
+    assert "ignore this surface" not in human_result.stdout
+    assert "global diagnostic" not in human_result.stdout
 
 
 def test_plugins_inspect_json_preserves_runtime_executor_optional_metadata(

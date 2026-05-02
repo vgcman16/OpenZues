@@ -12341,6 +12341,17 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
             else:
                 policy_lines.append("allowedModels: (configured but empty)")
     _emit_plugin_inspect_section("Policy", policy_lines)
+    diagnostic_lines: list[str] = []
+    diagnostics = payload.get("diagnostics")
+    for entry in diagnostics if isinstance(diagnostics, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        message = _optional_cli_string(entry.get("message"))
+        if message is None:
+            continue
+        level = (_optional_cli_string(entry.get("level")) or "info").upper()
+        diagnostic_lines.append(f"{level}: {message}")
+    _emit_plugin_inspect_section("Diagnostics", diagnostic_lines)
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")

@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~55.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~55.7% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -40,7 +40,8 @@ Current percentage rollup:
   plugin inspect human base metadata, plugin inspect human capability sections,
   plugin inspect human runtime surface sections, plugin inspect human tools
   section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP
-  route count, plugin inspect human policy section,
+  route count, plugin inspect human policy section, plugin inspect human
+  diagnostics section,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -67,7 +68,8 @@ Current percentage rollup:
   human base metadata, plugin inspect human capability sections, plugin inspect
   human runtime surface sections, plugin inspect human tools section, plugin
   inspect human MCP/LSP sections, plugin inspect human HTTP route count,
-  plugin inspect human policy section,
+  plugin inspect human policy section, plugin inspect human diagnostics
+  section,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -263,6 +265,12 @@ policy rows for prompt-injection, conversation access, model override, and
 configured allowed-model fields from the native inspect payload. Verified on
 2026-05-02 with the focused config-policy inspect CLI test, adjacent plugin
 inspect proof, `ruff check`, and `mypy`; checkpoint in `e0af8199`.
+Plugin inspect human diagnostics section now mirrors OpenClaw's
+`src/cli/plugins-inspect-command.ts` diagnostics output: human inspect renders
+plugin-scoped diagnostics while excluding diagnostics for other plugins or
+global scope. Verified on 2026-05-02 with the focused scoped-diagnostics
+inspect CLI test, adjacent plugin inspect proof, `ruff check`, and `mypy`;
+checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4939,6 +4947,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~55.6%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
   ~99.9%. Verified with the focused config-policy inspect CLI test, adjacent
   plugin inspect proof, `ruff check`, and `mypy`; checkpoint in `e0af8199`.
+- Closed the plugin inspect human diagnostics section seam from OpenClaw
+  `src/cli/plugins-inspect-command.ts`: human inspect output now renders
+  `Diagnostics` rows for plugin-scoped diagnostics while excluding
+  other-plugin and global diagnostics. Repo-wide parity is now estimated at
+  ~55.7%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused scoped-diagnostics inspect CLI test,
+  adjacent plugin inspect proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
