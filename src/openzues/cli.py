@@ -12982,11 +12982,12 @@ async def _build_plugins_inventory_payload(
         if plugin is not None:
             plugins.append(plugin)
     gateway_config = getattr(services, "gateway_config", None)
+    config_snapshot = _doctor_config_snapshot(gateway_config)
     if isinstance(gateway_config, GatewayConfigService):
         existing_ids = {str(plugin.get("id") or "") for plugin in plugins}
         config_diagnostics: list[dict[str, object]] = []
         for plugin in _plugin_records_from_config_snapshot(
-            gateway_config.build_snapshot(),
+            config_snapshot,
             diagnostics=config_diagnostics,
         ):
             plugin_id = str(plugin.get("id") or "")
@@ -12995,6 +12996,10 @@ async def _build_plugins_inventory_payload(
                 existing_ids.add(plugin_id)
     else:
         config_diagnostics = []
+    _normalize_bundled_plugin_reported_versions(
+        plugins,
+        host_version=_plugin_report_host_version(config_snapshot),
+    )
     if enabled_only:
         plugins = [
             plugin
@@ -16141,6 +16146,35 @@ def _mark_plugin_import_state(
         )
 
 
+def _normalize_bundled_plugin_reported_versions(
+    plugins: list[dict[str, object]],
+    *,
+    host_version: str | None,
+) -> None:
+    host_base = _openclaw_version_base(host_version)
+    for plugin in plugins:
+        if _optional_cli_string(plugin.get("origin")) != "bundled":
+            continue
+        raw_version = _optional_cli_string(plugin.get("version"))
+        reported = host_base or _openclaw_version_base(raw_version) or raw_version
+        if reported is not None:
+            plugin["version"] = reported
+
+
+def _plugin_report_host_version(config_snapshot: Mapping[str, object]) -> str | None:
+    return _optional_cli_string(config_snapshot.get("serverVersion")) or __version__
+
+
+def _openclaw_version_base(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", text)
+    if match is None:
+        return None
+    return f"{match.group(1)}.{match.group(2)}.{match.group(3)}"
+
+
 def _plugin_record_string_list(plugin: dict[str, object], key: str) -> list[str]:
     value = plugin.get(key)
     if not isinstance(value, list):
@@ -16393,6 +16427,12 @@ def _plugin_record_from_deck_item(
             if workspace_dir is not None and plugin_name
             else "hermes_source"
         )
+    origin = _optional_cli_string(item.get("origin"))
+    if origin is not None:
+        record["origin"] = origin
+    version = _optional_cli_string(item.get("version"))
+    if version is not None:
+        record["version"] = version
     shape = _optional_cli_string(item.get("shape"))
     if shape is not None:
         record["shape"] = shape

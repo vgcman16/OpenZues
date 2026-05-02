@@ -6148,6 +6148,69 @@ def test_plugins_list_json_preserves_facade_imported_plugin_state(monkeypatch) -
     assert plugins["cold-plugin"]["imported"] is False
 
 
+def test_plugins_list_json_normalizes_bundled_plugin_reported_version(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.3.23-1",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.3.23-1",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "whatsapp",
+                            "label": "WhatsApp",
+                            "status": "ready",
+                            "summary": "Bundled channel plugin.",
+                            "origin": "bundled",
+                            "version": "2026.3.22",
+                        }
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["origin"] == "bundled"
+    assert plugin["version"] == "2026.3.23"
+
+
 def test_plugins_list_enabled_filters_loaded_plugins(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
