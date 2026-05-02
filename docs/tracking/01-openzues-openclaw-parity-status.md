@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~53.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -70,6 +70,11 @@ may lag behind this tracker.
   harnesses, channels, routes, and capability triggers with upstream
   `activation-*` and `manifest-*` reason strings.
   - Status: checkpointed in `721ec0f2`
+
+- [x] Plugin registry inspect/refresh CLI parity for persisted native plugin
+  registry state, including `missing`/`fresh`/`stale` state projection,
+  refresh reasons, and JSON-capable registry refresh persistence.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -242,9 +247,23 @@ may lag behind this tracker.
 - [ ] Real installed plugin module import/activation.
   - Source: OpenClaw plugin lifecycle and activation runtime.
   - Status: open; manifest activation-plan reason projection child slice
-    checkpointed in `721ec0f2`, but deeper module import/runtime activation
-    remains.
+    checkpointed in `721ec0f2` and plugin registry inspect/refresh child slice
+    verified, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin registry inspect/refresh CLI.
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry
+    -q` (`1 passed`), focused `python -m pytest
+    tests\test_cli.py::test_plugins_registry_refresh_json_persists_current_index
+    -q` (`1 passed`), adjacent plugin CLI proof (`4 passed`), `ruff check`,
+    and `mypy`.
 
 - [~] Provider-native adapter breadth.
   - Source: OpenClaw channel/provider send, poll, replay, direct announce, media,

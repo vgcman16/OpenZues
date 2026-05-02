@@ -9026,6 +9026,135 @@ def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(
     ]
 
 
+def test_plugins_registry_json_reports_missing_persisted_registry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    enabled_dir = tmp_path / "plugins" / "enabled-plugin"
+    disabled_dir = tmp_path / "plugins" / "disabled-plugin"
+    enabled_dir.mkdir(parents=True)
+    disabled_dir.mkdir(parents=True)
+    (enabled_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "enabled-plugin",
+                "name": "Enabled Plugin",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (disabled_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "disabled-plugin",
+                "name": "Disabled Plugin",
+                "enabledByDefault": False,
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(enabled_dir), str(disabled_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "registry", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "state": "missing",
+        "refreshReasons": ["missing-registry"],
+        "persisted": None,
+        "current": {
+            "plugins": [
+                {"pluginId": "disabled-plugin", "enabled": False},
+                {"pluginId": "enabled-plugin", "enabled": True},
+            ]
+        },
+    }
+
+
+def test_plugins_registry_refresh_json_persists_current_index(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "native-runtime",
+                "name": "Native Runtime",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    refresh = runner.invoke(app, ["plugins", "registry", "--refresh", "--json"])
+    inspect = runner.invoke(app, ["plugins", "registry", "--json"])
+
+    assert refresh.exit_code == 0, refresh.stdout
+    assert inspect.exit_code == 0, inspect.stdout
+    assert json.loads(refresh.stdout) == {
+        "refreshed": True,
+        "registry": {"plugins": [{"pluginId": "native-runtime", "enabled": True}]},
+    }
+    assert json.loads(inspect.stdout) == {
+        "state": "fresh",
+        "refreshReasons": [],
+        "persisted": {"plugins": [{"pluginId": "native-runtime", "enabled": True}]},
+        "current": {"plugins": [{"pluginId": "native-runtime", "enabled": True}]},
+    }
+
+
 def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin manifest activation-plan parity slice is checkpointed in
-`721ec0f2`. Any follow-up changes should target the next queue head only:
+The plugin registry inspect/refresh parity slice is verified and pending a
+checkpoint commit. Any follow-up changes should target the next queue head
+only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Activation-plan reason projection checkpointed in `721ec0f2` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin registry inspect/refresh verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -135,6 +136,31 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_list_json_marks_runtime_executor_plugins_imported"` (`5 passed`),
     adjacent `python -m pytest tests\test_gateway_plugin_activation.py -q` (`4
     passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001C` plugin registry inspect/refresh CLI
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins registry --json` compares current native manifest/load
+    path plugin inventory with a persisted registry index and reports
+    `missing`/`fresh`/`stale` plus refresh reasons; `plugins registry
+    --refresh --json` writes the current index under the OpenZues settings
+    data directory and returns `{refreshed: true, registry}`.
+  - Evidence required: focused registry inspect/refresh tests, adjacent plugin
+    CLI tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry
+    -q` (`1 passed`), `python -m pytest
+    tests\test_cli.py::test_plugins_registry_refresh_json_persists_current_index
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_registry or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`4
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,

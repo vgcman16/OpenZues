@@ -10416,6 +10416,57 @@ def _emit_plugins_inventory(
                 typer.echo(" ".join(parts))
 
 
+def _plugin_registry_counts(registry: dict[str, object] | None) -> tuple[int, int]:
+    if registry is None:
+        return (0, 0)
+    raw_plugins = registry.get("plugins")
+    plugins = raw_plugins if isinstance(raw_plugins, list) else []
+    total = len([plugin for plugin in plugins if isinstance(plugin, dict)])
+    enabled = sum(
+        1
+        for plugin in plugins
+        if isinstance(plugin, dict) and plugin.get("enabled") is True
+    )
+    return (total, enabled)
+
+
+def _emit_plugins_registry(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    if payload.get("refreshed") is True:
+        registry = payload.get("registry")
+        total, enabled = _plugin_registry_counts(
+            registry if isinstance(registry, dict) else None
+        )
+        typer.echo(
+            f"Plugin registry refreshed: {enabled}/{total} enabled plugins indexed."
+        )
+        return
+    state = _optional_cli_string(payload.get("state")) or "unknown"
+    current = payload.get("current")
+    persisted = payload.get("persisted")
+    current_total, current_enabled = _plugin_registry_counts(
+        current if isinstance(current, dict) else None
+    )
+    typer.echo(f"State: {state}")
+    typer.echo(f"Current: {current_enabled}/{current_total} enabled plugins")
+    if isinstance(persisted, dict):
+        persisted_total, persisted_enabled = _plugin_registry_counts(persisted)
+        typer.echo(f"Persisted: {persisted_enabled}/{persisted_total} enabled plugins")
+    else:
+        typer.echo("Persisted: missing")
+    refresh_reasons = payload.get("refreshReasons")
+    reasons = [
+        str(reason)
+        for reason in (refresh_reasons if isinstance(refresh_reasons, list) else [])
+        if str(reason).strip()
+    ]
+    if reasons:
+        typer.echo("Refresh reasons: " + ", ".join(reasons))
+        typer.echo("Repair: openzues plugins registry --refresh")
+
+
 def _emit_plugins_doctor(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -13060,6 +13111,117 @@ async def _build_plugins_inventory_payload(
         "plugins": plugins,
         "runtimeExecutors": _build_doctor_runtime_bridge_plugin_executors_payload(services),
         "diagnostics": diagnostics,
+    }
+
+
+def _plugin_registry_storage_path(services: CliServices) -> Path | None:
+    gateway_config = getattr(services, "gateway_config", None)
+    if not isinstance(gateway_config, GatewayConfigService):
+        return None
+    data_dir = getattr(gateway_config, "_data_dir", None)
+    if not isinstance(data_dir, Path):
+        return None
+    return data_dir / "settings" / "plugin-registry.json"
+
+
+def _normalize_plugin_registry_index(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_plugins = value.get("plugins")
+    if not isinstance(raw_plugins, list):
+        return None
+    plugins: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_plugin in raw_plugins:
+        if not isinstance(raw_plugin, dict):
+            continue
+        plugin_id = _optional_cli_string(raw_plugin.get("pluginId")) or _optional_cli_string(
+            raw_plugin.get("id")
+        )
+        if plugin_id is None or plugin_id in seen:
+            continue
+        seen.add(plugin_id)
+        plugins.append(
+            {
+                "pluginId": plugin_id,
+                "enabled": raw_plugin.get("enabled") is True,
+            }
+        )
+    plugins.sort(key=lambda plugin: str(plugin.get("pluginId") or ""))
+    return {"plugins": plugins}
+
+
+def _plugin_registry_index_from_plugins(
+    plugin_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    plugins: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for plugin in plugin_rows:
+        plugin_id = _optional_cli_string(plugin.get("id")) or _optional_cli_string(
+            plugin.get("pluginId")
+        )
+        if plugin_id is None or plugin_id in seen:
+            continue
+        seen.add(plugin_id)
+        plugins.append(
+            {
+                "pluginId": plugin_id,
+                "enabled": _optional_cli_string(plugin.get("status")) == "loaded",
+            }
+        )
+    plugins.sort(key=lambda entry: str(entry.get("pluginId") or ""))
+    return {"plugins": plugins}
+
+
+def _read_plugin_registry_index(path: Path | None) -> dict[str, object] | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return _normalize_plugin_registry_index(parsed)
+
+
+def _write_plugin_registry_index(path: Path, index: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+
+
+async def _build_plugins_registry_payload(
+    services: CliServices,
+    *,
+    refresh: bool,
+) -> dict[str, object]:
+    inventory = await _build_plugins_inventory_payload(services, enabled_only=False)
+    raw_plugins = inventory.get("plugins")
+    plugin_rows = [
+        dict(plugin)
+        for plugin in (raw_plugins if isinstance(raw_plugins, list) else [])
+        if isinstance(plugin, dict)
+    ]
+    current = _plugin_registry_index_from_plugins(plugin_rows)
+    registry_path = _plugin_registry_storage_path(services)
+    if refresh:
+        if registry_path is None:
+            raise ValueError("plugin registry storage is unavailable.")
+        _write_plugin_registry_index(registry_path, current)
+        return {"refreshed": True, "registry": current}
+    persisted = _read_plugin_registry_index(registry_path)
+    if persisted is None:
+        state = "missing"
+        refresh_reasons = ["missing-registry"]
+    elif persisted == current:
+        state = "fresh"
+        refresh_reasons = []
+    else:
+        state = "stale"
+        refresh_reasons = ["stale-manifest"]
+    return {
+        "state": state,
+        "refreshReasons": refresh_reasons,
+        "persisted": persisted,
+        "current": current,
     }
 
 
@@ -21835,6 +21997,33 @@ def plugins_list_command(
 
     payload = _run(_run_with_services(_action))
     _emit_plugins_inventory(payload, json_output=json_output, verbose=verbose)
+
+
+@plugins_app.command("registry")
+def plugins_registry_command(
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Refresh the persisted plugin registry index.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit plugin registry state as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_plugins_registry_payload(services, refresh=refresh)
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_plugins_registry(payload, json_output=json_output)
 
 
 def _plugins_toggle_command_impl(

@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.8% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -30,6 +30,7 @@ Current percentage rollup:
   install/update, fakeable plus production-wired npm install/update, update
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
   hook-pack npm install fallback, native manifest activation-planner reason projection,
+  plugin registry inspect/refresh persistence,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -45,8 +46,9 @@ Current percentage rollup:
   API/archive install/update, fakeable plus production-wired npm install/update,
   update spec-overrides,
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
-  install fallback, native manifest activation planning reason projection, active-registry
-  executor projection, and runtime activation doctor posture; remaining CLI
+  install fallback, native manifest activation planning reason projection, plugin
+  registry inspect/refresh persistence, active-registry executor projection, and
+  runtime activation doctor posture; remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
 - Fully locked bounded slices are now tracked in
@@ -105,6 +107,13 @@ and capability triggers, including upstream-shaped `activation-*` and
 2026-05-02 with the focused activation-plan CLI pytest, focused activation
 service reason-plan pytest, adjacent plugin CLI and activation service proofs,
 `ruff check`, and `mypy`; checkpointed in `721ec0f2`.
+Plugin registry inspect/refresh CLI parity now mirrors OpenClaw's
+`src/cli/plugins-cli.ts` registry surface: `plugins registry --json` compares
+current native manifest/load-path inventory with a persisted registry index,
+reports `missing`/`fresh`/`stale` state plus refresh reasons, and `plugins
+registry --refresh --json` writes the current index under the OpenZues settings
+data directory. Verified on 2026-05-02 with focused registry CLI tests,
+adjacent plugin CLI proof, `ruff check`, and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4608,11 +4617,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   paths remain ~99.9%. Verified with focused CLI and activation service tests,
   adjacent plugin CLI and activation service proofs, `ruff check`, and `mypy`;
   checkpointed in `721ec0f2`.
+- Closed the plugin registry inspect/refresh seam from OpenClaw
+  `src/cli/plugins-cli.ts` and `src/cli/plugins-cli.list.test.ts`: native
+  `plugins registry --json` now reports persisted plugin registry state for
+  current manifest/load-path inventory, including `missing`/`fresh`/`stale`
+  states and refresh reasons, and `plugins registry --refresh --json` writes
+  the current canonical index under the OpenZues settings data directory.
+  Repo-wide parity is now estimated at ~53.8%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with focused
+  registry CLI tests, adjacent plugin CLI proof, `ruff check`, and `mypy`;
+  checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
-  installed manifest/load-path records into native runtime executor or honest
-  unavailable activation posture. The provider-native adapter breadth queue
-  remains the next alternate after that slice.
+  installed manifest/load-path registry records into native runtime executor or
+  honest unavailable activation posture. The provider-native adapter breadth
+  queue remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~53.7% overall, with a reasonable band of ~49-58%.
+- Estimated repo-wide parity: ~53.8% overall, with a reasonable band of ~49-58%.
 - Estimated active gateway/session/tool-contract family parity: ~99.1% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -134,6 +134,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_plugin_activation.py -q` (`4 passed`), `ruff check`, and
   `mypy src\openzues\cli.py
   src\openzues\services\gateway_plugin_activation.py`.
+- Plugin registry inspect/refresh CLI parity now mirrors OpenClaw's `plugins
+  registry` command: `plugins registry --json` compares the current native
+  manifest/load-path inventory with a persisted settings index and reports
+  `missing`, `fresh`, or `stale` plus refresh reasons, while `plugins registry
+  --refresh --json` writes the current index and returns the refreshed
+  registry payload.
+- Verified the plugin registry slice with `python -m pytest
+  tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry
+  -q` (`1 passed`), `python -m pytest
+  tests\test_cli.py::test_plugins_registry_refresh_json_persists_current_index
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_registry or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`4
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 - TTS persona gateway/CLI methods now mirror OpenClaw's
   `tts.personas`/`tts.setPersona` contract: configured personas are projected
   with `id`, `label`, `description`, `provider`, `fallbackPolicy`, and
@@ -8296,6 +8312,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Verified the plugin activation-plan reason projection slice with focused CLI
   and activation-service tests (`2 passed` total), adjacent plugin CLI tests
   (`5 passed`), adjacent activation service tests (`4 passed`), `ruff check`,
+  and `mypy`.
+- Plugin registry inspect/refresh CLI parity is now landed for OpenClaw's
+  `plugins registry` surface: native plugin inventory is canonicalized into a
+  persisted registry index, inspect reports `missing`/`fresh`/`stale` state
+  with refresh reasons, and refresh writes the current index under the
+  OpenZues settings data directory. Checkpoint pending.
+- Progress estimates are now roughly 53.8% repo-wide while the
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
+  the remaining plugin queue head is still deeper real installed module import
+  and runtime activation wiring.
+- Verified the plugin registry inspect/refresh slice with focused registry CLI
+  tests (`2 passed`), adjacent plugin CLI tests (`4 passed`), `ruff check`,
   and `mypy`.
 
 ## References
