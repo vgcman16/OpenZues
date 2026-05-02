@@ -3,8 +3,8 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~53.3% overall, with a reasonable band of ~49-58%.
-- Estimated active gateway/session/tool-contract family parity: ~98.8% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~53.4% overall, with a reasonable band of ~49-58%.
+- Estimated active gateway/session/tool-contract family parity: ~98.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
@@ -50,6 +50,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native Slack media parity now iterates multi-media uploads with the
   caption on the first upload, returns the final media id as `messageId`, and
   preserves the ordered `mediaIds`/`mediaUrls` result metadata.
+- Provider-native Discord webhook parity now sends `threadId` as the webhook
+  execution query parameter `thread_id`, keeps `wait=true` in the URL, and
+  leaves reply message references plus silent flags in the JSON body without a
+  body-level `thread_id`.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -8222,6 +8226,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Verified the Slack multi-media slice with focused Slack media route tests (`2
   passed`), adjacent Slack native/media route tests (`7 passed`), `ruff check`,
   and `mypy`.
+- Discord provider-native webhook thread query parity is now landed for direct
+  route-backed sends: `threadId` is encoded as the webhook execution
+  `thread_id` query parameter alongside `wait=true`, while `replyToId` and
+  `silent` remain body-level Discord message options. Checkpoint pending.
+- Progress estimates are now roughly 53.4% repo-wide and ~98.9% for the active
+  gateway/session/tool-contract family after this Discord provider slice.
+- Verified the Discord thread query slice with focused Discord thread/reply
+  tests (`2 passed`), adjacent Discord native send/poll route tests (`4
+  passed`), `ruff check`, and `mypy`.
 
 ## References
 

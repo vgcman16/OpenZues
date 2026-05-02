@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -2514,14 +2514,23 @@ def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
     }
 
 
-def _discord_webhook_url(target: str | None) -> str:
+def _discord_webhook_url(target: str | None, *, thread_id: object | None = None) -> str:
     normalized = str(target or "").strip()
     if _normalized_http_webhook_url(normalized) is None:
         raise RuntimeError("Discord route target must be an http(s) webhook URL.")
-    if "wait=" in (urlparse(normalized).query or ""):
-        return normalized
-    separator = "&" if "?" in normalized else "?"
-    return f"{normalized}{separator}wait=true"
+    parsed = urlparse(normalized)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    if not any(key == "wait" for key, _value in query_pairs):
+        query_pairs.append(("wait", "true"))
+    normalized_thread_id = str(thread_id or "").strip()
+    if normalized_thread_id:
+        query_pairs = [
+            (key, value)
+            for key, value in query_pairs
+            if key != "thread_id"
+        ]
+        query_pairs.append(("thread_id", normalized_thread_id))
+    return parsed._replace(query=urlencode(query_pairs)).geturl()
 
 
 def _discord_message_id(result: object) -> str | None:
@@ -18543,10 +18552,8 @@ class OpsMeshService:
                 "message_id": reply_to_id,
                 "fail_if_not_exists": False,
             }
-        if thread_id:
-            payload["thread_id"] = thread_id
         result = self._post_json_webhook(
-            _discord_webhook_url(str(route.get("target") or "")),
+            _discord_webhook_url(str(route.get("target") or ""), thread_id=thread_id),
             payload,
         )
         if not isinstance(result, dict):

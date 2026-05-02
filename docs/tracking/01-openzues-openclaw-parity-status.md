@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.3% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.8% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~53.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -93,6 +93,11 @@ may lag behind this tracker.
   uploads, first-upload captioning, final-id `messageId`, and ordered media
   metadata projection.
   - Status: checkpointed in `e3b5bbc0`
+
+- [x] Discord provider-native webhook sends with OpenClaw-shaped thread
+  execution query placement, preserving reply message references and silent
+  flags in the body while omitting `thread_id` from the body.
+  - Status: verified; checkpoint pending
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn

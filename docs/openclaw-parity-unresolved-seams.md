@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.4% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~98.8% of the
+- The active gateway/session/tool-contract family is estimated at ~98.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,8 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~98.8% after the
-  latest Slack provider-native multi-media result route slice.
+- The gateway session/tool-contract family is estimated at ~98.9% after the
+  latest Discord provider-native webhook thread query route slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -4555,6 +4555,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~53.3%; active gateway/session/tool-contract parity is ~98.8%.
   Verified with focused and adjacent Slack native/media route tests, `ruff
   check`, and `mypy`; checkpointed in `e3b5bbc0`.
+- Closed the Discord provider-native webhook thread query seam from OpenClaw
+  `extensions/discord/src/send.webhook.ts`,
+  `extensions/discord/src/outbound-adapter.ts`, and
+  `extensions/discord/src/outbound-adapter.test.ts`: route-backed Discord
+  direct sends now pass `threadId` as webhook execution query parameter
+  `thread_id` alongside `wait=true`, while keeping reply message references
+  and silent flags in the JSON body and omitting body-level `thread_id`.
+  Repo-wide parity is now estimated at ~53.4%; active
+  gateway/session/tool-contract parity is ~98.9%. Verified with focused and
+  adjacent Discord native route tests, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.
