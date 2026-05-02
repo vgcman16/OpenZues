@@ -5361,6 +5361,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   import/activation queue, especially bundled package plugin-sdk import/runtime
   activation and standalone text-transform projection. The provider-native
   adapter breadth queue remains the next alternate after that slice.
+- Closed the runtime text-transform plugin projection seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/registry.ts`, and
+  `src/plugins/text-transforms.runtime.ts`: activation adapters that return
+  active registry `textTransforms` now surface `runtimeTextTransformPlugins`
+  in `plugins doctor --json`, preserving plugin id/name/source/root plus safe
+  input/output replacement counts without requiring tool executor
+  registrations. Repo-wide parity is now estimated at ~58.9%; the active
+  gateway/session/tool-contract family is now estimated at ~99.4%, and
+  runtime/CLI/doctor plus CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused runtime text-transform doctor projection test,
+  adjacent runtime adapter and metadata-only activation proof, `ruff check`,
+  and `mypy`; checkpoint pending.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

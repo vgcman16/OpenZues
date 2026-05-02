@@ -7588,10 +7588,12 @@ def _plugin_runtime_activation_payload(
                     )
             manifest_tool_plugins.append(entry)
     runtime_tool_map: dict[str, list[str]] = {}
+    runtime_text_transform_plugins: list[dict[str, object]] = []
     for spec in _plugin_runtime_specs_from_services(
         services,
         plugin_rows=active_manifest_plugins,
         config_snapshot=config_snapshot,
+        runtime_text_transform_plugins=runtime_text_transform_plugins,
     ):
         plugin_id = _optional_cli_string(spec.plugin_id)
         if plugin_id is None:
@@ -7634,6 +7636,8 @@ def _plugin_runtime_activation_payload(
     activation_plans = _plugin_manifest_activation_plans(plugin_rows)
     if activation_plans:
         payload["activationPlans"] = activation_plans
+    if runtime_text_transform_plugins:
+        payload["runtimeTextTransformPlugins"] = runtime_text_transform_plugins
     configured_channel_plan = resolve_configured_channel_plugin_plan(
         plugins=manifest_plugins,
         config=config_snapshot,
@@ -17092,6 +17096,7 @@ def _plugin_runtime_specs_from_services(
     config_snapshot: Mapping[str, object] | None = None,
     workspace_dir: str | None = None,
     diagnostics: list[dict[str, object]] | None = None,
+    runtime_text_transform_plugins: list[dict[str, object]] | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     specs: list[GatewayPluginRuntimeExecutorSpec] = []
     seen_tools: set[str] = set()
@@ -17115,6 +17120,7 @@ def _plugin_runtime_specs_from_services(
         existing_tool_names=seen_tools,
         workspace_dir=workspace_dir,
         diagnostics=diagnostics,
+        runtime_text_transform_plugins=runtime_text_transform_plugins,
     )
     _extend_plugin_runtime_specs(specs, seen_tools, adapter_specs)
     return tuple(specs)
@@ -17143,6 +17149,7 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     existing_tool_names: Iterable[str],
     workspace_dir: str | None,
     diagnostics: list[dict[str, object]] | None,
+    runtime_text_transform_plugins: list[dict[str, object]] | None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     if not plugin_rows:
         return ()
@@ -17199,6 +17206,10 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     elif isinstance(result, Mapping):
         registry = result.get("registry")
         registry_payload = registry if isinstance(registry, Mapping) else result
+        if runtime_text_transform_plugins is not None:
+            runtime_text_transform_plugins.extend(
+                _plugin_runtime_text_transform_plugins_from_registry(registry_payload)
+            )
         raw_specs = build_plugin_runtime_executor_specs_from_active_registry(
             registry_payload,
             existing_tool_names=existing_tool_names,
@@ -17240,6 +17251,54 @@ def _plugin_auto_enabled_reasons_from_rows(
         ]
         reasons_by_plugin[plugin_id] = _dedupe_cli_strings(merged)
     return reasons_by_plugin
+
+
+def _plugin_runtime_text_transform_plugins_from_registry(
+    registry: Mapping[str, object],
+) -> list[dict[str, object]]:
+    raw_entries = registry.get("textTransforms")
+    if not isinstance(raw_entries, list):
+        return []
+    plugins: list[dict[str, object]] = []
+    for entry in raw_entries:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_cli_string(
+            entry.get("pluginId", entry.get("plugin_id"))
+        )
+        if plugin_id is None:
+            continue
+        transforms = entry.get("transforms")
+        transform_payload = transforms if isinstance(transforms, Mapping) else {}
+        input_count = _plugin_runtime_text_transform_count(
+            transform_payload.get("input")
+        )
+        output_count = _plugin_runtime_text_transform_count(
+            transform_payload.get("output")
+        )
+        if input_count == 0 and output_count == 0:
+            continue
+        payload: dict[str, object] = {
+            "pluginId": plugin_id,
+            "transforms": {"input": input_count, "output": output_count},
+        }
+        plugin_name = _optional_cli_string(
+            entry.get("pluginName", entry.get("plugin_name"))
+        )
+        if plugin_name is not None:
+            payload["pluginName"] = plugin_name
+        source = _optional_cli_string(entry.get("source"))
+        if source is not None:
+            payload["source"] = source
+        root_dir = _optional_cli_string(entry.get("rootDir", entry.get("root_dir")))
+        if root_dir is not None:
+            payload["rootDir"] = root_dir
+        plugins.append(payload)
+    return plugins
+
+
+def _plugin_runtime_text_transform_count(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def _filter_plugin_runtime_specs_by_manifest_contracts(

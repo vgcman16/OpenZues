@@ -9036,6 +9036,82 @@ def test_plugins_doctor_json_activation_adapter_receives_auto_enabled_channel_re
     }
 
 
+def test_plugins_doctor_json_projects_runtime_text_transform_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "text-shim"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="text-shim",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            return {
+                "registry": {
+                    "textTransforms": [
+                        {
+                            "pluginId": "text-shim",
+                            "pluginName": "Text Shim",
+                            "source": "openclaw-plugin",
+                            "rootDir": str(plugin_dir),
+                            "transforms": {
+                                "input": [
+                                    {"from": "red basket", "to": "blue basket"}
+                                ],
+                                "output": [
+                                    {"from": "blue basket", "to": "red basket"}
+                                ],
+                            },
+                        }
+                    ]
+                }
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["runtimeTextTransformPlugins"] == [
+        {
+            "pluginId": "text-shim",
+            "pluginName": "Text Shim",
+            "source": "openclaw-plugin",
+            "rootDir": str(plugin_dir),
+            "transforms": {"input": 1, "output": 1},
+        }
+    ]
+
+
 def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatch) -> None:
     runtime_flags: list[bool] = []
 

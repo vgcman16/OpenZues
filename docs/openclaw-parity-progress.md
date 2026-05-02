@@ -9471,6 +9471,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 
+- Runtime text-transform plugin projection is now landed: activation adapters
+  that return active registry `textTransforms` now surface
+  `runtimeTextTransformPlugins` in `plugins doctor --json`, preserving plugin
+  id/name/source/root plus safe input/output replacement counts without
+  requiring tool executor registrations. Checkpoint pending.
+- Progress estimates are now roughly 58.9% repo-wide and 99.4% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the runtime text-transform projection slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_projects_runtime_text_transform_plugins
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "runtime_text_transform_plugins or installed_plugin_runtime_activation_adapter
+  or activation_adapter_receives_openclaw_runtime_load_options or
+  auto_enabled_channel_reasons or metadata_only_tool_activation"` (`5
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

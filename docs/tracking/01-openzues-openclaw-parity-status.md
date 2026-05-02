@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~58.8% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~99.3% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~58.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.4% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -137,6 +137,11 @@ may lag behind this tracker.
   OpenClaw's `autoEnabledReasons` map when runtime activation adapters load
   bundled channel plugins auto-enabled from channel config/env discovery.
   - Status: checkpointed in `b44685b1`
+
+- [x] Runtime text-transform plugin projection, preserving standalone
+  `textTransforms` registrations from activation adapter registries in plugin
+  doctor runtime activation metadata.
+  - Status: verified pending checkpoint
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
