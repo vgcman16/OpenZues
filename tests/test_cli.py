@@ -9733,6 +9733,41 @@ def test_plugins_inspect_reports_loader_error_text(monkeypatch) -> None:
     assert "Error: register boom" in human_result.stdout
 
 
+def test_plugins_inspect_runtime_marks_error_plugin_imported(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "broken_plugin",
+                            "label": "Broken Plugin",
+                            "status": "error",
+                            "summary": "failed to load plugin: boom",
+                            "error": "load boom",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "inspect", "broken_plugin", "--runtime", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugin"]
+    assert plugin["status"] == "error"
+    assert plugin["imported"] is True
+
+
 def test_plugins_inspect_human_reports_base_metadata(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

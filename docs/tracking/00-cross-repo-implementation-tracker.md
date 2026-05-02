@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~56.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~56.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The manifest load-path activation-state slice is checkpointed in `54bf33aa`.
-Any follow-up changes should target the next queue head only:
+The errored runtime-imported plugin projection slice is verified and awaiting a
+checkpoint hash. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Manifest load-path activation state checkpointed in `54bf33aa` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Errored runtime-imported plugin projection verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -870,6 +870,32 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_list_json_discovers_manifestless_claude_bundle_load_paths or
     plugins_list_json_accepts_json5_bundle_manifests"` (`8 passed`), `ruff
     check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AE` errored runtime-imported plugin projection
+  - Source: `openclaw-main/src/plugins/status.test.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: runtime diagnostics/inspect paths mark non-bundle plugins as
+    `imported=true` when the plugin module was evaluated even if the final
+    plugin status is `error`, preserving the error status and metadata.
+  - Evidence required: focused runtime inspect error-import test, adjacent
+    loader-error/workspace-status tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_runtime_marks_error_plugin_imported
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_runtime_marks_error_plugin_imported or
+    plugins_inspect_reports_loader_error_text or
+    plugins_inspect_reports_error_failure_phase or
+    plugins_inspect_reports_error_failed_at or
+    plugins_doctor_reports_error_failure_phase or
+    doctor_json_workspace_status_marks_diagnostics_loaded_plugins_imported or
+    doctor_json_workspace_status_counts_runtime_imported_plugins"` (`7
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods

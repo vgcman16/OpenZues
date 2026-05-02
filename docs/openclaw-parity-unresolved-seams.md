@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~56.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~56.6% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -53,7 +53,7 @@ Current percentage rollup:
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -335,6 +335,13 @@ metadata-only and not forcing runtime module import. Verified on 2026-05-02
 with the focused manifest load-path CLI test, adjacent plugin
 activation/manifest inventory proof, `ruff check`, and `mypy`; checkpoint
 in `54bf33aa`.
+Errored runtime-imported plugin projection now mirrors OpenClaw's
+`src/plugins/status.test.ts` diagnostics-loaded import contract: runtime
+inspect/diagnostics marks non-bundle plugin rows as `imported=true` when the
+plugin module was evaluated, even if the final plugin status is `error`.
+Verified on 2026-05-02 with the focused runtime inspect error-import test,
+adjacent loader-error/workspace-status proof, `ruff check`, and `mypy`;
+checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -5083,6 +5090,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   paths remain ~99.9%. Verified with the focused manifest load-path CLI test,
   adjacent plugin activation/manifest inventory proof, `ruff check`, and
   `mypy`; checkpoint in `54bf33aa`.
+- Closed the errored runtime-imported plugin projection seam from OpenClaw
+  `src/plugins/status.test.ts`: runtime inspect/diagnostics now marks
+  non-bundle plugins as `imported=true` when the module was evaluated even if
+  the final status is `error`. Repo-wide parity is now estimated at ~56.6%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused runtime inspect error-import test, adjacent
+  loader-error/workspace-status proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

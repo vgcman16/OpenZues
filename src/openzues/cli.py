@@ -16671,9 +16671,10 @@ def _mark_plugin_import_state(
             _plugin_runtime_tool_entries(plugin, runtime_specs)
         )
         is_bundle = str(plugin.get("format") or "").strip() == "bundle"
+        plugin_status = str(plugin.get("status") or "").strip()
         is_diagnostics_loaded = (
             loaded_non_bundle_imported
-            and str(plugin.get("status") or "").strip() == "loaded"
+            and plugin_status in {"loaded", "error"}
         )
         plugin["imported"] = (
             not is_bundle
