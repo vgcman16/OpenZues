@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.4% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.9% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~53.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.0% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -98,6 +98,10 @@ may lag behind this tracker.
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
   - Status: checkpointed in `0d40be27`
+
+- [x] WhatsApp provider-native document sends with OpenClaw-shaped filename
+  derivation from outbound media URLs, including reply-context preservation.
+  - Status: verified; checkpoint pending
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn

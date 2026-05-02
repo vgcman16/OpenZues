@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.5% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~98.9% of the
+- The active gateway/session/tool-contract family is estimated at ~99.0% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,8 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~98.9% after the
-  latest Discord provider-native webhook thread query route slice.
+- The gateway session/tool-contract family is estimated at ~99.0% after the
+  latest WhatsApp provider-native document filename route slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -4566,6 +4566,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~98.9%. Verified with focused and
   adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
   in `0d40be27`.
+- Closed the WhatsApp provider-native document filename seam from OpenClaw
+  `extensions/whatsapp/src/send.ts`,
+  `extensions/whatsapp/src/outbound-media-contract.ts`, and
+  `extensions/whatsapp/src/inbound/send-api.test.ts`: route-backed WhatsApp
+  document sends now derive decoded filenames from media URLs, fall back to
+  `file`, include the Cloud API document `filename` field, and preserve reply
+  context plus split media behavior. Repo-wide parity is now estimated at
+  ~53.5%; active gateway/session/tool-contract parity is ~99.0%. Verified with
+  focused and adjacent WhatsApp native route tests, `ruff check`, and `mypy`;
+  checkpoint pending.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.

@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.0% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Discord provider-native webhook thread query parity slice is checkpointed
-in `0d40be27`. Any follow-up changes should target the next queue head only:
+The WhatsApp provider-native document filename parity slice is verified locally
+and awaiting checkpoint. Any follow-up changes should target the next queue
+head only:
 
 - `src/openzues/services/ops_mesh.py`
 - `tests/test_ops_mesh.py`
@@ -50,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord webhook thread query checkpointed in `0d40be27` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp document filename verified locally | Repo-wide +0.1%, active gateway/method +0.1% | Checkpoint, then continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -250,6 +251,26 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     "discord_native_route or discord_thread_query or discord_reply_and_silent
     or send_direct_channel_poll_uses_discord"` (`4 passed`), `ruff check`,
     and `mypy`.
+
+- [x] `OZ-PROV-001D` WhatsApp document filename projection
+  - Source: `openclaw-main/extensions/whatsapp/src/send.ts`,
+    `openclaw-main/extensions/whatsapp/src/outbound-media-contract.ts`, and
+    `openclaw-main/extensions/whatsapp/src/inbound/send-api.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: WhatsApp route-backed document sends derive a filename from the
+    outbound media URL path, decode URL escapes, fall back to `file`, preserve
+    reply context, and include the Cloud API document `filename` field on
+    single and split document sends.
+  - Evidence required: focused WhatsApp native document route test, adjacent
+    WhatsApp native media/reply/gif/poll route tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused WhatsApp document route test (`1
+    passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "whatsapp_native_route or whatsapp_media or whatsapp_reply_document or
+    whatsapp_gif_video or send_direct_channel_poll_uses_whatsapp"` (`5
+    passed`), `ruff check`, and `mypy`.
 
 ## Canonical Checklist Format
 

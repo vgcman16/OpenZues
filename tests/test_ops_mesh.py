@@ -19179,6 +19179,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_r
                 "document": {
                     "link": "https://example.com/report.pdf",
                     "caption": "Ship doc reply.",
+                    "filename": "report.pdf",
                 },
             },
             "Authorization",

@@ -2761,6 +2761,19 @@ def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> 
         payload["context"] = {"message_id": normalized_reply_to_id}
 
 
+def _whatsapp_document_filename(media_url: str, *, fallback: str = "file") -> str:
+    normalized = str(media_url or "").strip()
+    filename = ""
+    if normalized:
+        parsed = urlparse(normalized)
+        if parsed.scheme or parsed.netloc:
+            filename = unquote((parsed.path or "").rsplit("/", 1)[-1])
+        else:
+            without_query = normalized.split("?", 1)[0].split("#", 1)[0]
+            filename = unquote(without_query.replace("\\", "/").rsplit("/", 1)[-1])
+    return filename.strip() or fallback
+
+
 def _fixed_text_chunks(text: str, *, limit: int) -> list[str]:
     if not text:
         return [""]
@@ -18663,6 +18676,8 @@ class OpsMeshService:
                     delivered_contact = recipient_id
                     for index, media_url in enumerate(media_urls):
                         media_payload: dict[str, Any] = {"link": media_url}
+                        if media_payload_key == "document":
+                            media_payload["filename"] = _whatsapp_document_filename(media_url)
                         if index == 0 and text:
                             media_payload["caption"] = text[:1024]
                         message_payload: dict[str, Any] = {
@@ -18708,6 +18723,8 @@ class OpsMeshService:
                 media_payload = {
                     "link": media_urls[0],
                 }
+                if media_payload_key == "document":
+                    media_payload["filename"] = _whatsapp_document_filename(media_urls[0])
                 if text:
                     media_payload["caption"] = text[:1024]
                 payload = {
