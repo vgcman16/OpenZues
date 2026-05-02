@@ -6106,6 +6106,48 @@ def test_plugins_list_json_projects_hermes_plugin_inventory(monkeypatch) -> None
     ]
 
 
+def test_plugins_list_json_preserves_facade_imported_plugin_state(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "facade-loaded",
+                            "label": "Facade Loaded",
+                            "status": "ready",
+                            "summary": "Loaded through a plugin facade.",
+                            "imported": True,
+                        },
+                        {
+                            "key": "cold-plugin",
+                            "label": "Cold Plugin",
+                            "status": "ready",
+                            "summary": "Metadata-only plugin.",
+                            "imported": False,
+                        },
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["facade-loaded"]["imported"] is True
+    assert plugins["cold-plugin"]["imported"] is False
+
+
 def test_plugins_list_enabled_filters_loaded_plugins(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

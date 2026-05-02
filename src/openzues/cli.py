@@ -16383,6 +16383,8 @@ def _plugin_record_from_deck_item(
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
+    if item.get("imported") is True:
+        record["imported"] = True
     item_root_dir = _optional_cli_string(item.get("rootDir"))
     for metadata_key, metadata_value in _plugin_manifest_root_metadata(
         item,
