@@ -6640,6 +6640,8 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             "manifestPath": str(manifest_path),
             "configSchema": True,
             "setupSource": str((plugin_dir / "setup-entry.ts").resolve(strict=False)),
+            "runtimeEntrySource": str((plugin_dir / "index.ts").resolve(strict=False)),
+            "runtimeEntrySources": [str((plugin_dir / "index.ts").resolve(strict=False))],
             "publicSurfaceArtifacts": ["api.js", "runtime-api.js"],
             "runtimeSidecarArtifacts": ["runtime-api.js"],
             "contracts": {
@@ -9783,6 +9785,81 @@ def test_plugins_doctor_json_activates_installed_record_manifest_without_load_pa
     assert plugin["imported"] is True
     assert plugin["contracts"] == {"tools": ["installed_record.search"]}
     assert plugin["install"]["installPath"] == str(plugin_dir)
+
+
+def test_plugins_doctor_json_installed_record_activation_context_includes_runtime_entry_source(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-entry-tools"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-entry-tools",
+        contracts={"tools": ["installed_entry.search"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text("module.exports = { register() {} };\n", encoding="utf-8")
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"installed-entry-tools": {"enabled": True}},
+                    "installs": {
+                        "installed-entry-tools": {
+                            "source": "git",
+                            "installPath": str(plugin_dir),
+                            "version": "1.0.0",
+                        }
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls
+    plugin_rows = calls[0]["plugins"]
+    assert isinstance(plugin_rows, list)
+    plugin = plugin_rows[0]
+    assert isinstance(plugin, dict)
+    expected_entry = str(entry_path.resolve(strict=False))
+    assert plugin["rootDir"] == str(plugin_dir)
+    assert plugin["manifestPath"] == str(manifest_path)
+    assert plugin["runtimeEntrySource"] == expected_entry
+    assert plugin["runtimeEntrySources"] == [expected_entry]
 
 
 def test_plugins_list_json_discovers_bundled_plugins_disabled_by_default(

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~58.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~58.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.2% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -112,6 +112,12 @@ may lag behind this tracker.
   `OPENCLAW_BUNDLED_PLUGINS_DIR` manifests while keeping bundled plugins
   disabled by default unless upstream activation rules enable them.
   - Status: checkpointed in `3de3621e`
+
+- [x] Installed plugin runtime entry-source metadata, exposing
+  `runtimeEntrySource` / `runtimeEntrySources` from package
+  `openclaw.extensions` or default `index.*` candidates to native activation
+  adapters.
+  - Status: verified pending checkpoint
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON

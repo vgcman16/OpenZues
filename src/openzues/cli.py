@@ -18435,6 +18435,40 @@ def _plugin_public_surface_artifacts(
     return metadata
 
 
+def _plugin_runtime_entry_sources(
+    plugin_root: Path,
+    package_openclaw: dict[str, object],
+) -> list[str]:
+    raw_extensions = package_openclaw.get("extensions")
+    raw_entries = raw_extensions if isinstance(raw_extensions, list) else []
+    entries = [
+        text
+        for entry in raw_entries
+        if (text := _optional_cli_string(entry)) is not None
+    ]
+    if not entries:
+        entries = [
+            candidate
+            for candidate in _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES
+            if (plugin_root / candidate).is_file()
+        ][:1]
+
+    sources: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        entry_path = plugin_root / entry
+        if entry_path.suffix not in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS:
+            continue
+        if not entry_path.is_file():
+            continue
+        resolved = str(entry_path.resolve(strict=False))
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        sources.append(resolved)
+    return sources
+
+
 def _plugin_package_openclaw_record_metadata(
     value: object,
     *,
@@ -18446,6 +18480,10 @@ def _plugin_package_openclaw_record_metadata(
     setup_entry = _optional_cli_string(value.get("setupEntry"))
     if setup_entry is not None:
         metadata["setupSource"] = str((plugin_root / setup_entry).resolve(strict=False))
+    runtime_entry_sources = _plugin_runtime_entry_sources(plugin_root, value)
+    if runtime_entry_sources:
+        metadata["runtimeEntrySource"] = runtime_entry_sources[0]
+        metadata["runtimeEntrySources"] = runtime_entry_sources
     metadata.update(_plugin_public_surface_artifacts(plugin_root, value))
     startup = value.get("startup")
     if (

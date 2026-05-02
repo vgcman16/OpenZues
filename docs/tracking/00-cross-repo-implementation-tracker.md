@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~58.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~58.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The bundled plugin env discovery/default-disable slice is checkpointed in
-`3de3621e`. Any follow-up changes should target the next queue head only:
+The installed plugin runtime entry-source metadata slice is verified and
+pending checkpoint. Any follow-up changes should target the next queue head
+only:
 
 - `src/openzues/cli.py`
 - `tests/test_cli.py`
@@ -48,7 +49,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled env discovery/default-disable checkpointed in `3de3621e` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation or standalone text-transform depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed plugin runtime entry-source metadata verified pending checkpoint | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation or standalone text-transform depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1313,6 +1314,31 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
     passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AV` installed plugin runtime entry-source metadata
+  - Source: `openclaw-main/src/plugins/discovery.ts`,
+    `openclaw-main/src/plugins/package-entry-resolution.ts`, and
+    `openclaw-main/src/plugins/loader.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: manifest-backed plugin records discovered from install records
+    or load paths expose resolved runtime entry files from package
+    `openclaw.extensions` or default `index.*` candidates as
+    `runtimeEntrySource` and `runtimeEntrySources`, so native activation
+    adapters can import the same module entry OpenClaw would load.
+  - Evidence required: focused installed-record runtime entry-source adapter
+    context test, adjacent plugin metadata/runtime tests, ruff, mypy
+  - Status: verified pending checkpoint
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_installed_record_activation_context_includes_runtime_entry_source
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "runtime_entry_source or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    bundled_plugins_disabled_by_default"` (`5 passed`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,
