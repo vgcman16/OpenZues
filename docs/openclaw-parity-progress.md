@@ -8711,7 +8711,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`.
 - Plugin inspect human HTTP routes section is now landed for OpenClaw's inspect
   detail surface: human `plugins inspect <id>` renders `HTTP routes` with the
-  positive route count from the native inspect payload. Checkpoint pending.
+  positive route count from the native inspect payload. Checkpointed in
+  `efef8270`.
 - Progress estimates are now roughly 55.5% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
