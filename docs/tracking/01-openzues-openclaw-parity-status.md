@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~59.2% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~99.7% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~59.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.8% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -156,6 +156,11 @@ may lag behind this tracker.
 - [x] Bundled plugin-SDK alias context, preserving dist package SDK root and
   extension-local alias root metadata for native activation adapters.
   - Status: checkpointed in `e6b506db`
+
+- [x] Telegram GIF media send animation routing, preserving OpenClaw's
+  `sendAnimation` behavior for GIF media while keeping document forcing,
+  caption, reply, silent, thread, and animation `mediaIds` metadata.
+  - Status: verified; checkpoint pending
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -1029,8 +1034,22 @@ may lag behind this tracker.
     query placement checkpointed in `0d40be27`; WhatsApp document filename
     projection checkpointed in `05c4f0fc`; Discord media iteration
     checkpointed in `b5371fd9`; native provider result metadata passthrough
-    checkpointed in `fb9c9763`
+    checkpointed in `fb9c9763`; Telegram GIF media send verified and pending
+    checkpoint
   - Weight: 3
+
+- [x] Telegram GIF media send animation routing.
+  - Source: `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/send.test.ts`, and
+    `openclaw-main/extensions/telegram/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media
+    -q` (`1 passed`), adjacent Telegram native send/poll/media proof (`5
+    passed`), `ruff check`, and `mypy`.
 
 - [x] Native provider result metadata passthrough.
   - Source: `openclaw-main/src/infra/outbound/deliver.ts`,

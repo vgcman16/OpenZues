@@ -1966,6 +1966,33 @@ def _telegram_media_ids(result: object) -> list[str]:
     return media_ids
 
 
+def _telegram_media_is_gif(media_url: str, *, media_kind: object, gif_playback: object) -> bool:
+    normalized_kind = str(media_kind or "").strip().lower()
+    if normalized_kind in {"animation", "gif"} or gif_playback is True:
+        return True
+    parsed_path = unquote(urlparse(str(media_url)).path)
+    content_type = str(mimetypes.guess_type(parsed_path)[0] or "").split(";", 1)[0].lower()
+    return content_type == "image/gif" or parsed_path.lower().endswith(".gif")
+
+
+def _telegram_media_send_shape(
+    media_url: str,
+    *,
+    media_kind: object,
+    force_document: bool,
+    gif_playback: object,
+) -> tuple[str, str]:
+    if force_document:
+        return "document", "sendDocument"
+    if _telegram_media_is_gif(
+        media_url,
+        media_kind=media_kind,
+        gif_playback=gif_playback,
+    ):
+        return "animation", "sendAnimation"
+    return "photo", "sendPhoto"
+
+
 def _telegram_channel_data_should_pin(channel_data: object) -> bool:
     if not isinstance(channel_data, dict):
         return False
@@ -18317,6 +18344,8 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
+        gif_playback = _optional_bool_payload_value(event, "gifPlayback")
+        media_kind = event.get("mediaKind")
         inline_keyboard = _telegram_inline_keyboard(event.get("channelData"))
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
@@ -18385,9 +18414,15 @@ class OpsMeshService:
             if len(media_urls) > 1:
                 result_items: list[dict[str, Any]] = []
                 for index, media_url in enumerate(media_urls):
+                    media_payload_key, telegram_method = _telegram_media_send_shape(
+                        media_url,
+                        media_kind=media_kind,
+                        force_document=force_document,
+                        gif_playback=gif_playback,
+                    )
                     media_payload = dict(payload)
-                    media_payload["document" if force_document else "photo"] = media_url
-                    if force_document:
+                    media_payload[media_payload_key] = media_url
+                    if media_payload_key == "document" and force_document:
                         media_payload["disable_content_type_detection"] = True
                     if index == 0 and text:
                         media_payload["caption"] = text[:1024]
@@ -18397,7 +18432,7 @@ class OpsMeshService:
                         _telegram_api_endpoint(
                             str(route.get("target") or ""),
                             token,
-                            "sendDocument" if force_document else "sendPhoto",
+                            telegram_method,
                         ),
                         media_payload,
                     )
@@ -18419,8 +18454,14 @@ class OpsMeshService:
                         )
                 result = {"ok": True, "result": result_items}
             elif media_urls:
-                payload["document" if force_document else "photo"] = media_urls[0]
-                if force_document:
+                media_payload_key, telegram_method = _telegram_media_send_shape(
+                    media_urls[0],
+                    media_kind=media_kind,
+                    force_document=force_document,
+                    gif_playback=gif_playback,
+                )
+                payload[media_payload_key] = media_urls[0]
+                if media_payload_key == "document" and force_document:
                     payload["disable_content_type_detection"] = True
                 if text:
                     payload["caption"] = text[:1024]
@@ -18430,7 +18471,7 @@ class OpsMeshService:
                     _telegram_api_endpoint(
                         str(route.get("target") or ""),
                         token,
-                        "sendDocument" if force_document else "sendPhoto",
+                        telegram_method,
                     ),
                     payload,
                 )

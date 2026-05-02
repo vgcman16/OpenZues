@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~58.7% overall, with a reasonable
-  band of ~50-59%.
-- The active gateway/session/tool-contract family is estimated at ~99.2% of the
+- Repo-wide OpenClaw parity is estimated at ~59.3% overall, with a reasonable
+  band of ~50-60%.
+- The active gateway/session/tool-contract family is estimated at ~99.8% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -57,8 +57,8 @@ Current percentage rollup:
   installed plugin disabled activation gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~99.2% after the
-  latest native provider result metadata passthrough slice.
+- The gateway session/tool-contract family is estimated at ~99.8% after the
+  latest Telegram GIF media send slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5428,6 +5428,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   import/activation queue, especially bundled package plugin-sdk
   import/runtime activation. The provider-native adapter breadth queue remains
   the next alternate after that slice.
+- Closed the Telegram GIF media send seam from OpenClaw
+  `extensions/telegram/src/send.ts`,
+  `extensions/telegram/src/send.test.ts`, and
+  `extensions/telegram/src/outbound-adapter.ts`: native Telegram route-backed
+  direct sends now detect GIF media from URL/content kind (or
+  `gifPlayback=true`) and call Bot API `sendAnimation` instead of `sendPhoto`
+  unless `forceDocument=true`, while preserving caption, reply, silent, thread,
+  and animation `mediaIds` provider metadata. Repo-wide parity is now estimated
+  at ~59.3%; the active gateway/session/tool-contract family is now estimated
+  at ~99.8%, and runtime/CLI/doctor plus CLI/operator-control bounded paths
+  remain ~99.9%. Verified with the focused Telegram GIF send pytest, adjacent
+  Telegram native send/poll/media proof, `ruff check`, and `mypy`; checkpoint
+  pending commit.
+- Next repo-wide queue head: continue provider-specific send/poll/replay edge
+  cases or return to deeper bundled plugin runtime activation, whichever is the
+  strongest source-backed seam after the next discovery pass.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
