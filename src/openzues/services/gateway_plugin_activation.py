@@ -80,6 +80,50 @@ def resolve_manifest_activation_plugin_ids(
     return [str(plugin_id) for plugin_id in plugin_ids]
 
 
+def resolve_configured_channel_plugin_plan(
+    *,
+    plugins: Iterable[Mapping[str, object]],
+    config: Mapping[str, object],
+) -> dict[str, object]:
+    channel_ids = _configured_channel_ids(config)
+    plugin_rows = tuple(plugins)
+    entries: list[dict[str, object]] = []
+    plugin_ids: list[str] = []
+    for channel_id in channel_ids:
+        owner_ids = resolve_manifest_activation_plugin_ids(
+            plugins=plugin_rows,
+            trigger={"kind": "channel", "channel": channel_id},
+        )
+        plugin_ids.extend(owner_ids)
+        entries.append(
+            {
+                "channelId": channel_id,
+                "sources": ["explicit-config"],
+                "effective": bool(owner_ids),
+                "pluginIds": owner_ids,
+                "blockedReasons": [] if owner_ids else ["no-channel-owner"],
+            }
+        )
+    scoped_plugin_ids = _dedupe(plugin_ids)
+    payload: dict[str, object] = {
+        "scope": "configured-channels",
+        "channelIds": channel_ids,
+        "pluginIds": scoped_plugin_ids,
+        "entries": entries,
+        "diagnostics": [],
+    }
+    if scoped_plugin_ids:
+        payload["activationConfig"] = {
+            "plugins": {
+                "allow": scoped_plugin_ids,
+                "entries": {
+                    plugin_id: {"enabled": True} for plugin_id in scoped_plugin_ids
+                },
+            }
+        }
+    return payload
+
+
 def _manifest_activation_triggers(
     plugins: Iterable[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -484,6 +528,44 @@ def _dedupe(values: Iterable[str]) -> list[str]:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _configured_channel_ids(config: Mapping[str, object]) -> list[str]:
+    channels = _mapping(config.get("channels"))
+    channel_ids: list[str] = []
+    for channel_id, value in channels.items():
+        normalized_channel_id = _normalize_command_id(channel_id)
+        if not normalized_channel_id or normalized_channel_id in {
+            "defaults",
+            "modelbychannel",
+        }:
+            continue
+        if _configured_channel_enabled(value):
+            channel_ids.append(normalized_channel_id)
+    return _dedupe(channel_ids)
+
+
+def _configured_channel_enabled(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("enabled") is False:
+        return False
+    if value.get("enabled") is True:
+        return True
+    return any(
+        key != "enabled" and _channel_config_value_present(config_value)
+        for key, config_value in value.items()
+    )
+
+
+def _channel_config_value_present(value: object) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Mapping | list | tuple | set):
+        return bool(value)
+    return True
 
 
 def _mapping_items(value: object) -> list[Mapping[str, object]]:

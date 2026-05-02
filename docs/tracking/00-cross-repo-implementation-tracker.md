@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~56.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~56.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin public-surface/runtime-sidecar artifact metadata slice is
-checkpointed in `2acd2736`. Any follow-up changes should target the next queue
+The configured-channel plugin owner activation projection slice is verified
+with checkpoint pending. Any follow-up changes should target the next queue
 head only:
 
 - `src/openzues/cli.py`
@@ -51,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Public-surface/runtime-sidecar artifact metadata checkpointed in `2acd2736` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Configured-channel owner activation projection verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -926,6 +926,37 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_inspect_json_projects_record_runtime_surfaces"` (`7 passed`),
     `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AG` configured-channel plugin owner activation projection
+  - Source: `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/channel-presence-policy.ts`, and
+    `openclaw-main/src/plugins/activation-context.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`,
+    `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins doctor --json` projects the configured-channel runtime
+    scope by resolving explicit configured channel ids to manifest-owning
+    plugin ids, preserving channel policy entries, and showing the
+    OpenClaw-shaped temporary activation config that would allow scoped owner
+    loading without importing the TypeScript runtime.
+  - Evidence required: focused configured-channel doctor test, adjacent
+    plugin doctor/manifest tests, activation helper tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_projects_configured_channel_plugin_activation
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_projects_configured_channel_plugin_activation or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons or
+    plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_list_json_preserves_manifest_activation_and_setup"` (`5 passed`),
+    `python -m pytest
+    tests\test_gateway_plugin_activation.py::test_resolve_configured_channel_plugin_plan_projects_activation_config
+    -q` (`1 passed`), `python -m pytest
+    tests\test_gateway_plugin_activation.py -q` (`5 passed`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,

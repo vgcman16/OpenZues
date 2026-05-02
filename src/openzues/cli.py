@@ -85,7 +85,10 @@ from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
-from openzues.services.gateway_plugin_activation import resolve_manifest_activation_plans
+from openzues.services.gateway_plugin_activation import (
+    resolve_configured_channel_plugin_plan,
+    resolve_manifest_activation_plans,
+)
 from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
@@ -7540,10 +7543,9 @@ def _plugin_runtime_activation_payload(
     plugin_rows: list[object],
     services: object,
 ) -> dict[str, object]:
+    manifest_plugins = [plugin for plugin in plugin_rows if isinstance(plugin, Mapping)]
     manifest_tool_plugins: list[dict[str, object]] = []
-    for plugin in plugin_rows:
-        if not isinstance(plugin, dict):
-            continue
+    for plugin in manifest_plugins:
         plugin_id = _optional_cli_string(plugin.get("id"))
         if plugin_id is None:
             continue
@@ -7584,6 +7586,12 @@ def _plugin_runtime_activation_payload(
     activation_plans = _plugin_manifest_activation_plans(plugin_rows)
     if activation_plans:
         payload["activationPlans"] = activation_plans
+    configured_channel_plan = resolve_configured_channel_plugin_plan(
+        plugins=manifest_plugins,
+        config=_doctor_config_snapshot(getattr(services, "gateway_config", None)),
+    )
+    if configured_channel_plan.get("entries"):
+        payload["configuredChannelPlugins"] = configured_channel_plan
     return payload
 
 

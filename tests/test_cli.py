@@ -9401,6 +9401,78 @@ def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(
     ]
 
 
+def test_plugins_doctor_json_projects_configured_channel_plugin_activation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "telegram-native"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "telegram-native",
+                "name": "Telegram Native",
+                "description": "Manifest-only Telegram channel.",
+                "version": "1.0.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "channels": ["telegram"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+                "channels": {"telegram": {"enabled": True, "botToken": "configured"}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeActivation"]["configuredChannelPlugins"] == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": ["telegram-native"],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": True,
+                "pluginIds": ["telegram-native"],
+                "blockedReasons": [],
+            }
+        ],
+        "activationConfig": {
+            "plugins": {
+                "allow": ["telegram-native"],
+                "entries": {"telegram-native": {"enabled": True}},
+            }
+        },
+        "diagnostics": [],
+    }
+
+
 def test_plugins_registry_json_reports_missing_persisted_registry(
     tmp_path,
     monkeypatch,

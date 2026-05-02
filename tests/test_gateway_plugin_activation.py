@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from openzues.services.gateway_plugin_activation import (
+    resolve_configured_channel_plugin_plan,
     resolve_manifest_activation_plan,
     resolve_manifest_activation_plugin_ids,
 )
@@ -166,3 +167,38 @@ def test_resolve_manifest_activation_plan_projects_reason_entries() -> None:
         "manifest-provider-owner",
         "manifest-setup-provider-owner",
     ]
+
+
+def test_resolve_configured_channel_plugin_plan_projects_activation_config() -> None:
+    plugins = _activation_plugins()
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "channels": {
+                "telegram": {"enabled": True},
+                "defaults": {"account": "primary"},
+                "modelByChannel": {"telegram": "codex"},
+            }
+        },
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": ["demo-channel"],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": True,
+                "pluginIds": ["demo-channel"],
+                "blockedReasons": [],
+            }
+        ],
+        "diagnostics": [],
+        "activationConfig": {
+            "plugins": {
+                "allow": ["demo-channel"],
+                "entries": {"demo-channel": {"enabled": True}},
+            }
+        },
+    }

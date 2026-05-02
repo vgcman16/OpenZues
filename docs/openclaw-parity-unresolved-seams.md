@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~56.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~56.8% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -47,6 +47,7 @@ Current percentage rollup:
   verbose activation/import state, plugin list human enabled label, plugin list
   human enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
+  configured-channel owner activation projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -80,6 +81,7 @@ Current percentage rollup:
   activation/import state, plugin list human enabled label, plugin list human
   enabled count, manifest load-path activation-state projection,
   plugin public-surface/runtime-sidecar artifact metadata projection,
+  configured-channel owner activation projection,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -5111,6 +5113,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with the focused manifest load-path CLI test, adjacent
   manifest/bundle inventory proof, `ruff check`, and `mypy`; checkpoint
   in `2acd2736`.
+- Closed the configured-channel plugin owner activation projection seam from
+  OpenClaw `src/plugins/runtime/runtime-registry-loader.test.ts`,
+  `src/plugins/channel-presence-policy.ts`, and
+  `src/plugins/activation-context.ts`: `plugins doctor --json` now resolves
+  explicit configured channel ids to manifest-owning plugin ids, preserves
+  channel policy entries, and projects the temporary activation config that
+  would allow scoped owner loading while staying native to OpenZues. Repo-wide
+  parity is now estimated at ~56.8%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  configured-channel doctor CLI test, adjacent plugin doctor/manifest proof,
+  activation helper focused/full proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
