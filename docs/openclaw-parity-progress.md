@@ -204,6 +204,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `buildPluginDiagnosticsReport({ onlyPluginIds })` inspect path: after static
   target preflight, the native runtime-inspection inventory is filtered to the
   requested plugin id.
+  This slice is checkpointed in `c412b98b`.
 - Verified the scoped runtime inspect slice with `python -m pytest
   tests\test_cli.py::test_plugins_inspect_runtime_scopes_runtime_inventory_to_target
   -q` (`1 passed`), focused runtime inspect trio (`3 passed`), adjacent
@@ -8433,7 +8434,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect runtime target-scoped inventory is now landed for OpenClaw's
   `onlyPluginIds` diagnostics-report behavior: after the static preflight, the
   runtime-inspection inventory is filtered to the requested plugin id.
-  Checkpoint pending.
+  Checkpointed in `c412b98b`.
 - Progress estimates are now roughly 54.2% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

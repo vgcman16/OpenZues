@@ -150,7 +150,7 @@ static preflight confirms the target exists, native runtime-inspection
 inventory is filtered to the requested plugin id. Verified on 2026-05-02 with
 the focused scoped runtime inspect CLI test, focused runtime inspect trio,
 adjacent plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
-checkpoint pending.
+checkpointed in `c412b98b`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4703,7 +4703,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~54.2%; runtime/CLI/doctor and CLI/operator-control
   bounded paths remain ~99.9%. Verified with the focused scoped runtime inspect
   CLI test, focused runtime inspect trio, adjacent plugin inspect/runtime
-  inventory proof, `ruff check`, and `mypy`; checkpoint pending.
+  inventory proof, `ruff check`, and `mypy`; checkpointed in `c412b98b`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

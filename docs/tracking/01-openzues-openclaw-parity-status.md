@@ -93,7 +93,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect runtime target-scoped inventory, matching OpenClaw's
   `onlyPluginIds` diagnostics-report posture for `plugins inspect --runtime`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `c412b98b`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -271,7 +271,8 @@ may lag behind this tracker.
     checkpointed in `6468e305`, plugin inspect runtime flag child slice
     checkpointed in `5fce4371`, and missing-target static preflight child
     slice checkpointed in `9a9e89f2`, and runtime target-scoped inventory
-    child slice verified, but deeper module import/runtime activation remains.
+    child slice checkpointed in `c412b98b`, but deeper module import/runtime
+    activation remains.
   - Weight: 5
 
 - [x] Plugin inspect runtime target-scoped inventory.
@@ -279,7 +280,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/status.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `c412b98b`.
   - Weight: 1
   - Last verified: 2026-05-02, focused scoped runtime inspect test (`1
     passed`), focused runtime inspect trio (`3 passed`), adjacent plugin
