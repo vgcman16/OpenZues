@@ -9040,6 +9040,121 @@ def test_plugins_install_human_warns_for_bundled_bare_id(
     assert "Restart the gateway to apply changes." in result.stdout
 
 
+def test_plugins_install_json_uses_clawhub_installer_for_explicit_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "plugins" / "clawhub" / "demo"
+    install_dir.mkdir(parents=True)
+    calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "clawhub": {
+                    "source": "clawhub",
+                    "clawhubUrl": "https://clawhub.ai",
+                    "clawhubPackage": "demo",
+                    "clawhubFamily": "code-plugin",
+                    "clawhubChannel": "official",
+                    "version": "1.2.3",
+                    "integrity": "sha256-demo",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "clawhub:demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert calls == [{"spec": "clawhub:demo", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["pluginId"] == "demo"
+    assert payload["source"] == "clawhub"
+    assert payload["install"]["source"] == "clawhub"
+    assert payload["install"]["spec"] == "clawhub:demo@1.2.3"
+    assert payload["install"]["installPath"] == str(install_dir)
+    assert payload["install"]["clawhubPackage"] == "demo"
+    assert payload["install"]["clawhubFamily"] == "code-plugin"
+    assert payload["install"]["clawhubChannel"] == "official"
+    assert payload["install"]["integrity"] == "sha256-demo"
+    assert payload["install"]["resolvedAt"] == "2026-05-01T00:00:00Z"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["demo"]
+    assert stored["plugins"]["entries"]["demo"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "clawhub"
+    assert install["spec"] == "clawhub:demo@1.2.3"
+    assert install["installPath"] == str(install_dir)
+    assert install["clawhubUrl"] == "https://clawhub.ai"
+    assert isinstance(install["installedAt"], str)
+
+
+def test_plugins_install_clawhub_reports_unavailable_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "clawhub:demo", "--json"])
+
+    assert result.exit_code == 1
+    assert "ClawHub plugin install runtime is unavailable." in result.stderr
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,

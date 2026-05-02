@@ -12629,6 +12629,12 @@ class _CliBundledPluginSource:
     npm_spec: str | None = None
 
 
+@dataclass(frozen=True)
+class _CliClawHubPluginSpec:
+    name: str
+    version: str | None = None
+
+
 def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
     text = raw.strip()
     if not text:
@@ -12734,6 +12740,25 @@ def _cli_bundled_install_warning(source: _CliBundledPluginSource, raw_spec: str)
     )
 
 
+def _parse_cli_clawhub_plugin_spec(raw: str) -> _CliClawHubPluginSpec | None:
+    trimmed = raw.strip()
+    if not trimmed.lower().startswith("clawhub:"):
+        return None
+    spec = trimmed[len("clawhub:") :].strip()
+    if not spec:
+        return None
+    at_index = spec.rfind("@")
+    if at_index <= 0 or at_index >= len(spec) - 1:
+        return _CliClawHubPluginSpec(name=spec)
+    name = spec[:at_index].strip()
+    version = spec[at_index + 1 :].strip() or None
+    return _CliClawHubPluginSpec(name=name, version=version)
+
+
+def _format_cli_clawhub_spec(name: str, version: str | None = None) -> str:
+    return f"clawhub:{name}{f'@{version}' if version else ''}"
+
+
 async def _build_plugins_path_install_payload(
     services: CliServices,
     *,
@@ -12776,6 +12801,91 @@ async def _build_plugins_path_install_payload(
         "path": result.get("path"),
         "hash": result.get("hash"),
         "restart": result.get("restart") or "gateway",
+    }
+
+
+async def _call_cli_clawhub_plugin_installer(
+    services: CliServices,
+    *,
+    spec: str,
+    force: bool,
+) -> dict[str, object]:
+    installer = getattr(services, "plugin_clawhub_installer", None)
+    install = getattr(installer, "install", None)
+    if not callable(install):
+        raise RuntimeError("ClawHub plugin install runtime is unavailable.")
+    result = install(spec=spec, mode="update" if force else "install")
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        raise RuntimeError("ClawHub plugin install runtime returned an invalid result.")
+    return result
+
+
+async def _build_plugins_clawhub_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    force: bool,
+) -> dict[str, object]:
+    parsed = _parse_cli_clawhub_plugin_spec(raw_spec)
+    if parsed is None:
+        raise ValueError(f"invalid ClawHub plugin spec: {raw_spec}")
+    result = await _call_cli_clawhub_plugin_installer(
+        services,
+        spec=raw_spec,
+        force=force,
+    )
+    if result.get("ok") is False:
+        raise ValueError(str(result.get("error") or "ClawHub plugin install failed."))
+    plugin_id = _optional_cli_string(result.get("pluginId"))
+    install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
+        result.get("installPath")
+    )
+    clawhub = result.get("clawhub")
+    clawhub_payload = clawhub if isinstance(clawhub, dict) else {}
+    clawhub_package = _optional_cli_string(clawhub_payload.get("clawhubPackage")) or parsed.name
+    clawhub_version = (
+        _optional_cli_string(clawhub_payload.get("version"))
+        or _optional_cli_string(result.get("version"))
+        or parsed.version
+    )
+    clawhub_family = _optional_cli_string(clawhub_payload.get("clawhubFamily"))
+    if plugin_id is None:
+        raise RuntimeError("ClawHub plugin install result is missing pluginId.")
+    if install_path is None:
+        raise RuntimeError("ClawHub plugin install result is missing targetDir.")
+    if clawhub_family is None:
+        raise RuntimeError("ClawHub plugin install result is missing package family.")
+    install_spec = _format_cli_clawhub_spec(clawhub_package, clawhub_version)
+    result_payload = services.gateway_config.record_clawhub_plugin_install(
+        plugin_id=plugin_id,
+        install_path=install_path,
+        spec=install_spec,
+        clawhub_url=(
+            _optional_cli_string(clawhub_payload.get("clawhubUrl"))
+            or "https://clawhub.ai"
+        ),
+        clawhub_package=clawhub_package,
+        clawhub_family=clawhub_family,
+        clawhub_channel=_optional_cli_string(clawhub_payload.get("clawhubChannel")),
+        version=clawhub_version,
+        integrity=_optional_cli_string(clawhub_payload.get("integrity")),
+        resolved_at=_optional_cli_string(clawhub_payload.get("resolvedAt")),
+        force=force,
+    )
+    install = result_payload.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result_payload.get("pluginId") or plugin_id,
+        "source": "clawhub",
+        "install": install_payload,
+        "loadPath": result_payload.get("loadPath"),
+        "path": result_payload.get("path"),
+        "hash": result_payload.get("hash"),
+        "restart": result_payload.get("restart") or "gateway",
     }
 
 
@@ -19675,6 +19785,25 @@ def plugins_install_command(
 
             try:
                 payload = _run(_run_with_services(_bundled_action))
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
+        if _parse_cli_clawhub_plugin_spec(plugin_id) is not None:
+
+            async def _clawhub_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_clawhub_install_payload(
+                    services,
+                    raw_spec=plugin_id,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_clawhub_action))
             except ValueError as exc:
                 typer.echo(str(exc), err=True)
                 raise typer.Exit(code=1) from exc

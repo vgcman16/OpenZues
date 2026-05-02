@@ -21,12 +21,12 @@ Current percentage rollup:
   marketplace listing, remote marketplace path-entry install/update,
   Git/GitHub entry-source install, URL/archive entry-source install, local
   path link/copy install, missing local-looking install-spec guard, and bundled
-  pre-npm install slices.
+  pre-npm plus explicit ClawHub install slices.
 - The CLI/operator control-plane family is estimated at ~98% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
-  bundled pre-npm install; remaining CLI gaps are now dominated by
-  explicit/preferred ClawHub install, npm install/update breadth, runtime
+  bundled pre-npm plus explicit ClawHub install; remaining CLI gaps are now
+  dominated by preferred ClawHub fallback, npm install/update breadth, runtime
   activation/import depth, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
@@ -1397,6 +1397,13 @@ install records with the raw `spec`, and warn operators that scoped npm package
 names bypass the bundled plugin. Remaining non-marketplace install parity is
 explicit/preferred ClawHub install, npm install/update behavior, and deeper
 runtime activation/import metadata.
+`plugins install clawhub:<name>[@version]` now mirrors OpenClaw's explicit
+ClawHub branch through a fakeable native installer and persists
+`source="clawhub"` install records with canonical specs, package
+family/channel/url, integrity, resolved-at metadata, and load/allow/entry
+state. Remaining non-marketplace install parity is preferred ClawHub fallback
+before npm, npm install/update behavior, and deeper runtime activation/import
+metadata.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
