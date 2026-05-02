@@ -8691,8 +8691,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py`.
 - Plugin inspect human MCP/LSP server sections are now landed for OpenClaw's
   inspect detail surface: human `plugins inspect <id>` renders `MCP servers`
-  and `LSP servers` sections from the native inspect payload. Checkpoint
-  pending.
+  and `LSP servers` sections from the native inspect payload. Checkpointed in
+  `6fc67848`.
 - Progress estimates are now roughly 55.4% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

@@ -248,7 +248,7 @@ Plugin inspect human MCP/LSP server sections now mirror OpenClaw's
 `MCP servers` and `LSP servers` sections from the native inspect payload.
 Verified on 2026-05-02 with the focused inspect bundle MCP/LSP CLI test,
 adjacent plugin inspect bundle/runtime proof, `ruff check`, and `mypy`;
-checkpoint pending.
+checkpoint in `6fc67848`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4910,7 +4910,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~55.4%; runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   inspect bundle MCP/LSP CLI test, adjacent plugin inspect bundle/runtime
-  proof, `ruff check`, and `mypy`; checkpoint pending.
+  proof, `ruff check`, and `mypy`; checkpoint in `6fc67848`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

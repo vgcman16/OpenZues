@@ -146,7 +146,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human MCP/LSP sections, rendering server names from bundle
   and native inspect payloads.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `6fc67848`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -336,7 +336,7 @@ may lag behind this tracker.
     `c11085d1`, plugin inspect human capability sections checkpointed in
     `2b161d5a`, plugin inspect human runtime surface sections checkpointed in
     `f2221877`, plugin inspect human tools section checkpointed in `5ac316c1`,
-    and plugin inspect human MCP/LSP sections verified pending checkpoint, but
+    and plugin inspect human MCP/LSP sections checkpointed in `6fc67848`, but
     deeper module import/runtime activation remains.
   - Weight: 5
 
@@ -344,7 +344,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `6fc67848`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect MCP/LSP test (`1
     passed`), adjacent plugin inspect bundle/runtime proof (`7 passed`),
