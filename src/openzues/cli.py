@@ -12226,6 +12226,9 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     plugin_id = str(plugin.get("id") or "").strip()
     if plugin_id:
         typer.echo(f"id: {plugin_id}")
+    description = _optional_cli_string(plugin.get("description"))
+    if description is not None:
+        typer.echo(description)
     status = str(plugin.get("status") or "").strip()
     if status:
         typer.echo(f"status: {status}")
@@ -12241,9 +12244,22 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     source = str(plugin.get("source") or "").strip()
     if source:
         typer.echo(f"source: {source}")
+    origin = _optional_cli_string(plugin.get("origin"))
+    if origin is not None:
+        typer.echo(f"Origin: {origin}")
+    version = _optional_cli_string(plugin.get("version"))
+    if version is not None:
+        typer.echo(f"Version: {version}")
     shape = str(payload.get("shape") or "").strip()
     if shape:
         typer.echo(f"shape: {shape}")
+    capability_mode = _optional_cli_string(payload.get("capabilityMode"))
+    if capability_mode is not None:
+        typer.echo(f"Capability mode: {capability_mode}")
+    typer.echo(
+        "Legacy before_agent_start: "
+        + ("yes" if plugin.get("usesLegacyBeforeAgentStart") is True else "no")
+    )
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")

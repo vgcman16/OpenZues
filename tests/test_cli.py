@@ -9678,6 +9678,42 @@ def test_plugins_inspect_reports_loader_error_text(monkeypatch) -> None:
     assert "Error: register boom" in human_result.stdout
 
 
+def test_plugins_inspect_human_reports_base_metadata(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "metadata_plugin",
+                            "label": "Metadata Plugin",
+                            "status": "ready",
+                            "summary": "Native metadata plugin.",
+                            "origin": "config",
+                            "version": "1.2.3",
+                            "usesLegacyBeforeAgentStart": True,
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "metadata_plugin"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Native metadata plugin." in result.stdout
+    assert "Origin: config" in result.stdout
+    assert "Version: 1.2.3" in result.stdout
+    assert "Capability mode: inventory" in result.stdout
+    assert "Legacy before_agent_start: yes" in result.stdout
+
+
 def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
