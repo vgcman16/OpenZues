@@ -8666,7 +8666,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect human tools section is now landed for OpenClaw's inspect
   detail surface: human `plugins inspect <id>` renders `Tools` rows from
   native runtime executor specs, including optional tool markers. Checkpoint
-  pending.
+  in `5ac316c1`.
 - Progress estimates are now roughly 55.3% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

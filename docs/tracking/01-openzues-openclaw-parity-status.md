@@ -142,7 +142,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human tools section, rendering runtime tools plus optional
   markers.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `5ac316c1`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -331,15 +331,15 @@ may lag behind this tracker.
     `88ff1768`, plugin inspect human base metadata checkpointed in
     `c11085d1`, plugin inspect human capability sections checkpointed in
     `2b161d5a`, plugin inspect human runtime surface sections checkpointed in
-    `f2221877`, and plugin inspect human tools section verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    `f2221877`, and plugin inspect human tools section checkpointed in
+    `5ac316c1`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin inspect human tools section.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `5ac316c1`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect human tools test (`1
     passed`), adjacent plugin inspect/doctor proof (`13 passed`), `ruff
