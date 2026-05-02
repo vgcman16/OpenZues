@@ -9691,6 +9691,100 @@ def test_plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter(
     assert [plugin["id"] for plugin in calls[0]["plugins"]] == ["installed-tools"]
 
 
+def test_plugins_doctor_json_activates_installed_record_manifest_without_load_path(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-record-tools"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-record-tools",
+        contracts={"tools": ["installed_record.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"installed-record-tools": {"enabled": True}},
+                    "installs": {
+                        "installed-record-tools": {
+                            "source": "git",
+                            "spec": "git:file:///tmp/installed-record-tools.git@abc123",
+                            "installPath": str(plugin_dir),
+                            "version": "1.0.0",
+                        }
+                    },
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-record-tools",
+                        "pluginName": "Installed Record Tools",
+                        "source": "installed-runtime",
+                        "names": ["installed_record.search"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    runtime_activation = payload["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["manifestToolPlugins"] == [
+        {"pluginId": "installed-record-tools", "tools": ["installed_record.search"]}
+    ]
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "installed-record-tools", "tools": ["installed_record.search"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    plugin = plugins["installed-record-tools"]
+    assert plugin["imported"] is True
+    assert plugin["contracts"] == {"tools": ["installed_record.search"]}
+    assert plugin["install"]["installPath"] == str(plugin_dir)
+
+
 def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
     tmp_path,
     monkeypatch,

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~58.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~58.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,9 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The installed activation-adapter OpenClaw runtime load-options slice is
-checkpointed in `ee12d2d4`. Any follow-up changes should target the next queue
-head only:
+The installed-record manifest runtime activation slice is verified and awaiting
+checkpoint. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `tests/test_cli.py`
@@ -49,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed adapter runtime load options checkpointed in `ee12d2d4` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed-record manifest runtime activation verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1257,6 +1256,34 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
     plugins_doctor_json_projects_installed_activation_adapter_errors or
     plugins_inspect_runtime_json_uses_installed_activation_adapter_tools"` (`7
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AT` installed-record manifest runtime activation
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/loader.ts`, and
+    `openclaw-main/src/plugins/discovery.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: persisted `plugins.installs.<id>.installPath` records are
+    discovered as manifest-backed plugin records even when the path is absent
+    from `plugins.load.paths`, preserving manifest `contracts.tools`, install
+    metadata, enabled status, and native activation-adapter runtime executor
+    projection.
+  - Evidence required: focused plugin doctor install-record activation test,
+    adjacent installed-plugin activation/list tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+    or plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+    or plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_keeps_installed_plugin_allowlist_authoritative"` (`7
     passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
 

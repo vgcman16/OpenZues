@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~58.1% overall, with a reasonable band of ~50-59%.
+- Estimated repo-wide parity: ~58.2% overall, with a reasonable band of ~50-59%.
 - Estimated active gateway/session/tool-contract family parity: ~99.2% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9321,6 +9321,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
   plugins_doctor_json_projects_installed_activation_adapter_errors or
   plugins_inspect_runtime_json_uses_installed_activation_adapter_tools"` (`7
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Installed-record manifest runtime activation is now landed: persisted
+  `plugins.installs.<id>.installPath` entries are discovered as manifest-backed
+  plugin records even when absent from `plugins.load.paths`, preserving
+  manifest `contracts.tools`, install metadata, enabled status, and native
+  activation-adapter executor projection. Checkpoint pending.
+- Progress estimates are now roughly 58.2% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper production module import/runtime executor wiring.
+- Verified the installed-record manifest activation slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_doctor_json_activates_installed_record_manifest_without_load_path
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_activates_installed_record_manifest_without_load_path
+  or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+  or plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+  or plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+  plugins_list_json_projects_installed_plugin_activation_state or
+  plugins_list_json_keeps_installed_plugin_allowlist_authoritative"` (`7
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 

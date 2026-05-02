@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~58.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~58.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.2% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -244,6 +244,9 @@ may lag behind this tracker.
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Status: checkpointed in `ee12d2d4`
 
+- [x] Installed-record manifest runtime activation.
+  - Status: verified; checkpoint pending
+
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
   and `capability/infer tts personas` plus `set-persona` JSON output.
@@ -461,9 +464,22 @@ may lag behind this tracker.
     plugin activation adapter failure diagnostics checkpointed in `baa32232`,
     and installed activation-adapter manifest tool contract enforcement
     checkpointed in `aac25d80`, and installed activation-adapter runtime load
-    options checkpointed in `ee12d2d4`, but deeper module import/runtime
-    activation remains.
+    options checkpointed in `ee12d2d4`, and installed-record manifest runtime
+    activation verified with checkpoint pending, but deeper module
+    import/runtime activation remains.
   - Weight: 5
+
+- [x] Installed-record manifest runtime activation.
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/discovery.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed-record activation test (`1
+    passed`), adjacent installed-plugin CLI proof (`7 passed`), `ruff check`,
+    and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,

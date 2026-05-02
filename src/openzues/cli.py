@@ -19575,6 +19575,45 @@ def _plugin_manifest_records_from_config_snapshot(
     return records
 
 
+def _plugin_manifest_record_from_install_path(
+    plugin_id: str,
+    install_path: str | None,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object],
+    diagnostics: list[dict[str, object]] | None,
+) -> dict[str, object] | None:
+    if install_path is None:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(install_path))
+    try:
+        load_path = Path(expanded).resolve(strict=False)
+    except OSError:
+        load_path = Path(expanded)
+    manifest_path = _plugin_manifest_path_for_load_path(load_path)
+    if manifest_path is not None:
+        record = _plugin_record_from_openclaw_manifest(
+            manifest_path,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+            diagnostics=diagnostics,
+        )
+    elif bundle_match := _plugin_bundle_manifest_path_for_load_path(load_path):
+        bundle_format, bundle_manifest_path, bundle_root_dir = bundle_match
+        record = _plugin_bundle_manifest_record(
+            bundle_format,
+            bundle_manifest_path,
+            bundle_root_dir,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+        )
+    else:
+        return None
+    if record is None or str(record.get("id") or "") != plugin_id:
+        return None
+    return record
+
+
 def _plugin_records_from_config_snapshot(
     snapshot: dict[str, object],
     *,
@@ -19611,6 +19650,18 @@ def _plugin_records_from_config_snapshot(
         install_path = _optional_cli_string(install_payload.get("installPath"))
         source_path = _optional_cli_string(install_payload.get("sourcePath"))
         version = _optional_cli_string(install_payload.get("version"))
+        if plugin_id not in records_by_id:
+            for candidate_path in (install_path, source_path):
+                install_manifest_record = _plugin_manifest_record_from_install_path(
+                    plugin_id,
+                    candidate_path,
+                    plugins_config=plugins_config,
+                    config_snapshot=snapshot,
+                    diagnostics=diagnostics,
+                )
+                if install_manifest_record is not None:
+                    records_by_id[plugin_id] = install_manifest_record
+                    break
         status = _plugin_configured_record_status(
             plugin_id=plugin_id,
             plugins_config=plugins_config,
