@@ -93,6 +93,10 @@ from openzues.services.missions import MissionService
 from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService
 from openzues.services.playbooks import PlaybookService
+from openzues.services.plugin_npm_installers import (
+    CliNpmHookPackInstaller,
+    CliNpmPluginInstaller,
+)
 from openzues.services.projects import ProjectService
 from openzues.services.recall import RecallService
 from openzues.services.remote_ops import RemoteOpsService
@@ -957,6 +961,8 @@ class CliServices:
     gateway_bootstrap: GatewayBootstrapService
     runtime_updates: RuntimeUpdateService
     setup: SetupService
+    plugin_npm_installer: CliNpmPluginInstaller
+    hook_npm_installer: CliNpmHookPackInstaller
 
 
 async def _build_services(app_settings: Settings) -> CliServices:
@@ -998,6 +1004,8 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_commands = GatewayCommandsService()
     gateway_node_pairing = GatewayNodePairingService(database)
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
+    plugin_npm_installer = CliNpmPluginInstaller(data_dir=app_settings.data_dir)
+    hook_npm_installer = CliNpmHookPackInstaller(data_dir=app_settings.data_dir)
     onboarding = OnboardingService(
         database,
         manager,
@@ -1169,6 +1177,8 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_bootstrap=gateway_bootstrap,
         runtime_updates=runtime_updates,
         setup=setup,
+        plugin_npm_installer=plugin_npm_installer,
+        hook_npm_installer=hook_npm_installer,
     )
 
 
