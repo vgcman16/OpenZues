@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~52.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.4% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.5% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `talk.realtime.*` gateway method parity slice is checkpointed in
-`75d03a6c`. Any follow-up changes should target the next queue head only:
+The `channels.stop` gateway method parity slice is verified and ready for
+checkpointing with these intended files:
 
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_method_policy.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `75d03a6c` | Repo-wide +0.1%, active gateway/method +0.1% | `talk.realtime.*` done; next small base-method gaps are `channels.stop` and `node.pair.remove` |
+| OZ-RT-001 | Runtime-control hard gaps | Active | Repo-wide +0.1%, active gateway/method +0.1% | `channels.stop` verified; next small base-method gap is `node.pair.remove` |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -152,6 +152,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     talk_config"` (`6 passed`), `ruff check`, and `mypy`. A broader policy
     selection exposed unrelated existing gaps for `channels.stop` and
     `node.pair.remove`.
+
+- [x] `OZ-RT-001D` `channels.stop` gateway method
+  - Source: `openclaw-main/src/gateway/server-methods/channels.ts` and
+    `openclaw-main/src/gateway/method-scopes.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Contract: `channels.stop` is admin-scoped, validates `channel` and optional
+    `accountId`, normalizes known channel ids, returns `{channel, accountId,
+    stopped: true}` as an idempotent native stop boundary, and preserves
+    OpenClaw-shaped invalid-channel errors.
+  - Evidence required: focused gateway/policy tests, adjacent channel mutation
+    tests, ruff, mypy
+  - Status: verified; checkpoint commit pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused gateway stop tests (`2 passed`),
+    focused channel policy proof (`1 passed`), adjacent `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "channels_stop or channels_start
+    or channels_logout"` (`7 passed`), `ruff check`, and `mypy`. A broader
+    channel-status selection exposed an unrelated older catalog expectation for
+    Zalo/LINE/Matrix.
 
 ## Canonical Checklist Format
 

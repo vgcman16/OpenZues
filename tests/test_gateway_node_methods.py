@@ -809,6 +809,36 @@ async def test_talk_realtime_methods_return_openclaw_unavailable_without_runtime
 
 
 @pytest.mark.asyncio
+async def test_channels_stop_returns_idempotent_stopped_payload() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call(
+        "channels.stop",
+        {"channel": "Slack", "accountId": "team-a"},
+    )
+
+    assert payload == {
+        "channel": "slack",
+        "accountId": "team-a",
+        "stopped": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_channels_stop_rejects_invalid_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="invalid channels.stop params: channel must be a non-empty string",
+    ) as exc_info:
+        await service.call("channels.stop", {"channel": "   "})
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_tts_status_and_providers_surface_disabled_empty_runtime() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 

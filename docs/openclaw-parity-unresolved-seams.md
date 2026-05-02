@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.9% overall, with a reasonable
-  band of ~48-57%.
-- The active gateway/session/tool-contract family is estimated at ~98.4% of the
+- Repo-wide OpenClaw parity is estimated at ~53.0% overall, with a reasonable
+  band of ~49-58%.
+- The active gateway/session/tool-contract family is estimated at ~98.5% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -114,6 +114,12 @@ session/relay execution, relay calls return `{ok: true}`, and missing runtime
 paths preserve upstream-shaped unavailable errors. Verified on 2026-05-02 with
 focused gateway/policy proofs, adjacent talk gateway tests, `ruff check`, and
 `mypy`; checkpointed in `75d03a6c`.
+`channels.stop` now mirrors OpenClaw's admin-scoped channel stop gateway layer:
+params validate `channel` plus optional `accountId`, known channel ids are
+normalized, invalid channel input returns OpenClaw-shaped invalid-channel
+errors, and the native boundary returns idempotent `{channel, accountId,
+stopped: true}` payloads. Verified on 2026-05-02 with focused gateway/policy
+proofs, adjacent channel start/logout/stop tests, `ruff check`, and `mypy`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4494,12 +4500,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway and policy proofs, adjacent gateway talk tests, `ruff check`, and
   `mypy`.
   Checkpointed in `75d03a6c`.
-- Next repo-wide queue head: the broader method-policy sweep exposed
-  source-backed small base-method gaps for `channels.stop` and
-  `node.pair.remove`. Source anchors are OpenClaw
-  `src/gateway/server-methods/channels.ts`,
-  `src/gateway/server-methods/nodes.ts`, and OpenZues' gateway node method and
-  channel/pairing service owners.
+- Closed the `channels.stop` gateway method seam from OpenClaw
+  `src/gateway/server-methods/channels.ts` and
+  `src/gateway/method-scopes.ts`: native channel stop now validates params,
+  normalizes known channel ids, returns idempotent stopped payloads, and is
+  admin-scoped. Repo-wide parity is now estimated at ~53.0%; active
+  gateway/session/tool-contract parity is ~98.5%. Verified with focused
+  gateway and policy proofs, adjacent start/logout/stop tests, `ruff check`,
+  and `mypy`.
+- Next repo-wide queue head: the broader method-policy sweep still exposes the
+  source-backed small base-method gap `node.pair.remove`. Source anchors are
+  OpenClaw `src/gateway/server-methods/nodes.ts`,
+  `src/gateway/method-scopes.ts`, and OpenZues' gateway node method plus
+  pairing service owners.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

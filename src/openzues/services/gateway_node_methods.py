@@ -5766,6 +5766,41 @@ class GatewayNodeMethodService:
                 status_code=400,
             )
 
+        if resolved_method == "channels.stop":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("channel", "accountId"),
+            )
+            raw_channel = payload.get("channel")
+            if not isinstance(raw_channel, str) or not raw_channel.strip():
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="invalid channels.stop params: channel must be a non-empty string",
+                    status_code=400,
+                )
+            channel = raw_channel.strip()
+            normalized_channel = _normalize_gateway_chat_channel_id(channel)
+            if normalized_channel is None:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="invalid channels.stop channel",
+                    status_code=400,
+                )
+            channel_stop_account_id = DEFAULT_ACCOUNT_ID
+            if "accountId" in payload and payload.get("accountId") is not None:
+                channel_stop_account_id = _require_string(
+                    payload.get("accountId"),
+                    label="accountId",
+                ).strip()
+                if not channel_stop_account_id:
+                    channel_stop_account_id = DEFAULT_ACCOUNT_ID
+            return {
+                "channel": normalized_channel,
+                "accountId": channel_stop_account_id,
+                "stopped": True,
+            }
+
         if resolved_method == "channels.logout":
             _validate_exact_keys(
                 resolved_method,

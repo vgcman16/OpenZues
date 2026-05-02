@@ -320,6 +320,7 @@ def test_gateway_method_policy_covers_openclaw_channels_handlers() -> None:
 
     assert channel_methods == {
         "channels.start",
+        "channels.stop",
         "channels.logout",
         "channels.status",
     }
@@ -335,6 +336,7 @@ def test_gateway_method_policy_covers_openclaw_channels_handlers() -> None:
     } == {
         "channels.logout",
         "channels.start",
+        "channels.stop",
     }
 
 

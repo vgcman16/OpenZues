@@ -286,6 +286,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     ADMIN_GATEWAY_METHOD_SCOPE: (
         "channels.start",
+        "channels.stop",
         "channels.logout",
         "agents.create",
         "agents.update",
