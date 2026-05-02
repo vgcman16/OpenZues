@@ -4,14 +4,15 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.5% overall, with a reasonable
-  band of ~48-57%.
-- The active gateway/session/tool-contract family is estimated at ~98% of the
+- Repo-wide OpenClaw parity is estimated at ~53.6% overall, with a reasonable
+  band of ~49-58%.
+- The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.2% after the latest
+- The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
-  `sessions.patch`, `sessions.delete`, `sessions.spawn`, sandboxed remote
-  media staging, and `tools.invoke` runtime seams.
+  `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
+  `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
+  runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
@@ -31,8 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~97.2% after the
-  latest sandboxed remote inbound provider media staging slice.
+- The gateway session/tool-contract family is estimated at ~99.1% after the
+  latest Discord provider-native media iteration route slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -78,6 +79,68 @@ default, missing targets return `errorCode="target_agent_required"`, and
 `errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
 now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
 resolved target agent id in session metadata.
+
+Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered plugin
+session extension mutation path: admin-scoped callers can patch only registered
+plugin id/namespace pairs, values are validated with OpenClaw-shaped plugin JSON
+limits, extension state persists under session metadata by plugin id and
+namespace, registered extension values project on session rows, and
+`unset=true` removes empty plugin extension state. Verified on 2026-05-02 with
+the focused `sessions.pluginPatch` pytest, adjacent `sessions_plugin_patch or
+sessions_patch or sessions_resolve` proof, `ruff check`, and `mypy`.
+Plugin-host `plugins.uiDescriptors` now mirrors OpenClaw's active-registry
+control UI descriptor gateway method: params must be `{}`, descriptors are
+projected from the fakeable plugin runtime registry, rows are stamped with
+registry-owned `pluginId` and optional `pluginName`, JSON-compatible descriptor
+schemas and valid required scopes are preserved, and invalid or disabled
+registrations are skipped before projection. Verified on 2026-05-02 with the
+focused `plugins.uiDescriptors` pytest, adjacent plugin-runtime proof, `ruff
+check`, and `mypy`; checkpointed in `9fb5098b`.
+TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
+`tts.setPersona` contract: native persona descriptors can come from config or
+fakeable service state, selected persona persists in TTS prefs, `status`
+projects active persona metadata, `off`/`none`/`default` clears the selection,
+unknown persona ids return the upstream invalid-persona error, and
+`capability`/`infer tts` expose JSON-capable `personas` and `set-persona`
+commands. Verified on 2026-05-02 with focused gateway, policy, and CLI tests,
+adjacent gateway/API/CLI TTS proofs, `ruff check`, and `mypy`; checkpointed in
+`3819d03a`.
+Realtime voice gateway methods now mirror OpenClaw's `talk.realtime.session`,
+`talk.realtime.relayAudio`, `talk.realtime.relayMark`,
+`talk.realtime.relayStop`, and `talk.realtime.relayToolResult` gateway layer:
+params are validated natively, a registered fakeable realtime adapter owns
+session/relay execution, relay calls return `{ok: true}`, and missing runtime
+paths preserve upstream-shaped unavailable errors. Verified on 2026-05-02 with
+focused gateway/policy proofs, adjacent talk gateway tests, `ruff check`, and
+`mypy`; checkpointed in `75d03a6c`.
+`channels.stop` now mirrors OpenClaw's admin-scoped channel stop gateway layer:
+params validate `channel` plus optional `accountId`, known channel ids are
+normalized, invalid channel input returns OpenClaw-shaped invalid-channel
+errors, and the native boundary returns idempotent `{channel, accountId,
+stopped: true}` payloads. Verified on 2026-05-02 with focused gateway/policy
+proofs, adjacent channel start/logout/stop tests, `ruff check`, and `mypy`;
+checkpointed in `64f6937a`.
+`node.pair.remove` now mirrors OpenClaw's node-pair lifecycle gateway layer:
+params validate `nodeId`, the native pairing store deletes the paired node,
+the method returns `{nodeId}`, unknown nodes raise the upstream-shaped
+`unknown nodeId` error, and `node.pair.resolved` broadcasts carry
+`decision="removed"` with an empty request id. Verified on 2026-05-02 with
+focused gateway/policy proofs, adjacent node-pair lifecycle tests, `ruff
+check`, and `mypy`; checkpointed in `8a0e6ac6`.
+Slack provider-native route sends now mirror OpenClaw's Slack thread timestamp
+resolution: only Slack timestamp-shaped `replyToId` values become
+`thread_ts`, invalid internal reply ids fall back to valid Slack timestamp
+`threadId` values, and invalid non-Slack ids are omitted instead of being sent
+to Slack. Verified on 2026-05-02 with focused Slack native route tests,
+adjacent Slack native route tests, `ruff check`, and `mypy`;
+checkpointed in `a461e5eb`.
+Slack provider-native media sends now mirror OpenClaw's outbound payload media
+contract: multi-media URLs upload one file at a time, raw payload text is used
+as the first Slack caption, subsequent uploads omit captions, the final media
+id becomes canonical `messageId`, and ordered `mediaIds`/`mediaUrls` metadata is
+preserved. Verified on 2026-05-02 with focused Slack media route tests,
+adjacent Slack native/media route tests, `ruff check`, and `mypy`;
+checkpointed in `e3b5bbc0`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4424,12 +4487,109 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~52.5%; chat/session contract parity is ~98.2%, and
   gateway session/tool-contract parity is ~97.2%. Verified with focused and
   adjacent sandbox attachment proofs, `ruff check`, and `mypy`.
-- Next repo-wide queue head: broader runtime command/packaging breadth remains
-  open while the next source-backed seam is selected. Source anchors remain
-  OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
-  and doctor/runtime owners; the next likely runtime seam is another
-  source-backed session/runtime mismatch or packaging/installed-plugin
-  activation gap from the tracking workspace.
+- Closed the `plugins.uiDescriptors` plugin-host gateway seam from OpenClaw
+  `src/gateway/server-methods/plugin-host-hooks.ts`,
+  `src/gateway/protocol/schema/plugins.ts`, and `src/plugins/registry.ts`:
+  native gateway methods now expose active plugin control UI descriptors from
+  the fakeable plugin runtime registry, enforce empty params, stamp
+  `pluginId`/`pluginName` from the registry entry, preserve JSON-compatible
+  schemas plus valid required scopes, and skip invalid or disabled descriptor
+  registrations before projection. Repo-wide parity is now estimated at
+  ~52.7%; active gateway/session/tool-contract parity is ~98.2%, and gateway
+  session/tool-contract parity is ~97.4%. Verified with focused and adjacent
+  plugin-runtime gateway proofs, `ruff check`, and `mypy`; checkpointed in
+  `9fb5098b`.
+- Closed the TTS persona gateway/CLI seam from OpenClaw
+  `src/gateway/server-methods/tts.ts`, `src/config/types.tts.ts`, and
+  `src/cli/capability-cli.ts`: native `tts.personas` now lists configured
+  personas and active selection, `tts.setPersona` persists selected persona in
+  TTS prefs, `tts.status` projects persona metadata, invalid persona ids use
+  the upstream error, and `capability`/`infer tts personas` plus
+  `set-persona` provide JSON-capable CLI coverage. Repo-wide parity is now
+  estimated at ~52.8%; active gateway/session/tool-contract parity is ~98.3%.
+  Verified with focused gateway, policy, and CLI proofs, adjacent gateway/API/
+  CLI TTS tests, `ruff check`, and `mypy`; checkpointed in `3819d03a`.
+- Closed the realtime voice gateway method seam from OpenClaw
+  `src/gateway/server-methods/talk.ts`,
+  `src/gateway/protocol/schema/channels.ts`, and `src/gateway/method-scopes.ts`:
+  native `talk.realtime.session`, `relayAudio`, `relayMark`, `relayStop`, and
+  `relayToolResult` now validate OpenClaw-shaped params, dispatch through a
+  fakeable realtime runtime adapter, preserve `{ok: true}` relay results, and
+  keep the upstream unavailable messages when no provider/relay runtime is
+  wired. Repo-wide parity is now estimated at ~52.9%; active
+  gateway/session/tool-contract parity is ~98.4%. Verified with focused
+  gateway and policy proofs, adjacent gateway talk tests, `ruff check`, and
+  `mypy`.
+  Checkpointed in `75d03a6c`.
+- Closed the `channels.stop` gateway method seam from OpenClaw
+  `src/gateway/server-methods/channels.ts` and
+  `src/gateway/method-scopes.ts`: native channel stop now validates params,
+  normalizes known channel ids, returns idempotent stopped payloads, and is
+  admin-scoped. Repo-wide parity is now estimated at ~53.0%; active
+  gateway/session/tool-contract parity is ~98.5%. Verified with focused
+  gateway and policy proofs, adjacent start/logout/stop tests, `ruff check`,
+  and `mypy`; checkpointed in `64f6937a`.
+- Closed the `node.pair.remove` gateway method seam from OpenClaw
+  `src/gateway/server-methods/nodes.ts` and
+  `src/gateway/method-scopes.ts`: native node pairing now removes paired nodes,
+  returns `{nodeId}`, broadcasts the `node.pair.resolved` removal event, and is
+  pairing-scoped. Repo-wide parity is now estimated at ~53.1%; active
+  gateway/session/tool-contract parity is ~98.6%. Verified with focused
+  gateway and policy proofs, adjacent node-pair lifecycle tests, `ruff check`,
+  and `mypy`; checkpointed in `8a0e6ac6`.
+- Closed the Slack provider-native thread timestamp seam from OpenClaw
+  `extensions/slack/src/thread-ts.ts`,
+  `extensions/slack/src/thread-ts.test.ts`, and
+  `extensions/slack/src/outbound-adapter.ts`: route-backed Slack direct sends
+  now validate `thread_ts`, fall back from internal reply ids to valid Slack
+  thread ids, and keep invalid ids out of API payloads. Repo-wide parity is now
+  estimated at ~53.2%; active gateway/session/tool-contract parity is ~98.7%.
+  Verified with focused and adjacent Slack native route tests, `ruff check`,
+  and `mypy`; checkpointed in `a461e5eb`.
+- Closed the Slack provider-native multi-media result seam from OpenClaw
+  `test/helpers/channels/outbound-payload-contract.ts`,
+  `src/channels/plugins/outbound/direct-text-media.ts`, and
+  `extensions/slack/src/outbound-adapter.ts`: route-backed Slack direct sends
+  now iterate media uploads, caption only the first upload, return the final
+  media id, and preserve ordered media metadata. Repo-wide parity is now
+  estimated at ~53.3%; active gateway/session/tool-contract parity is ~98.8%.
+  Verified with focused and adjacent Slack native/media route tests, `ruff
+  check`, and `mypy`; checkpointed in `e3b5bbc0`.
+- Closed the Discord provider-native webhook thread query seam from OpenClaw
+  `extensions/discord/src/send.webhook.ts`,
+  `extensions/discord/src/outbound-adapter.ts`, and
+  `extensions/discord/src/outbound-adapter.test.ts`: route-backed Discord
+  direct sends now pass `threadId` as webhook execution query parameter
+  `thread_id` alongside `wait=true`, while keeping reply message references
+  and silent flags in the JSON body and omitting body-level `thread_id`.
+  Repo-wide parity is now estimated at ~53.4%; active
+  gateway/session/tool-contract parity is ~98.9%. Verified with focused and
+  adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
+  in `0d40be27`.
+- Closed the WhatsApp provider-native document filename seam from OpenClaw
+  `extensions/whatsapp/src/send.ts`,
+  `extensions/whatsapp/src/outbound-media-contract.ts`, and
+  `extensions/whatsapp/src/inbound/send-api.test.ts`: route-backed WhatsApp
+  document sends now derive decoded filenames from media URLs, fall back to
+  `file`, include the Cloud API document `filename` field, and preserve reply
+  context plus split media behavior. Repo-wide parity is now estimated at
+  ~53.5%; active gateway/session/tool-contract parity is ~99.0%. Verified with
+  focused and adjacent WhatsApp native route tests, `ruff check`, and `mypy`;
+  checkpointed in `05c4f0fc`.
+- Closed the Discord provider-native media iteration seam from OpenClaw
+  `src/channels/plugins/outbound/direct-text-media.ts`,
+  `src/plugin-sdk/reply-payload.ts`, and
+  `extensions/discord/src/outbound-payload.ts`: route-backed Discord media
+  sends now follow the shared media sequence contract, sending one webhook
+  message per media URL, carrying text only on the first send, preserving
+  ordered provider `messageIds`, and returning the final id as `messageId`.
+  Repo-wide parity is now estimated at ~53.6%; active
+  gateway/session/tool-contract parity is ~99.1%. Verified with focused and
+  adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
+  in `b5371fd9`.
+- Next repo-wide queue head: continue the source-backed provider-native
+  adapter breadth queue, especially remaining channel/provider send, poll,
+  replay, direct announce, media, reply, thread, and result metadata behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

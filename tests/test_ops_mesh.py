@@ -8162,6 +8162,82 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_reply_to_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_slack_native_route_falls_back_from_internal_reply_to_thread_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-slack-thread-fallback"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Thread Fallback Native Provider",
+        kind="slack",
+        target="https://slack.com/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-route-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        slack_posts.append((target, payload))
+        return {
+            "ok": True,
+            "channel": "C123",
+            "ts": "1713980000.000301",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Reply using the valid Slack thread timestamp.",
+        account_id="workspace-bot",
+        reply_to_id="msg-internal-1",
+        thread_id="1712000000.000002",
+        idempotency_key="idem-native-slack-thread-fallback",
+    )
+
+    assert slack_posts == [
+        (
+            "https://slack.com/api/chat.postMessage",
+            {
+                "channel": "C123",
+                "text": "Reply using the valid Slack thread timestamp.",
+                "thread_ts": "1712000000.000002",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_matrix_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -14223,9 +14299,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
             {
                 "files": '[{"id": "F111", "title": "slack.png"}]',
                 "channel_id": "C123",
-                "initial_comment": (
-                    "Ship native Slack parity.\n\nMedia:\n1. https://example.com/slack.png"
-                ),
+                "initial_comment": "Ship native Slack parity.",
             },
             "xoxb-route-token",
         ),
@@ -14241,6 +14315,145 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
         "mediaIds": ["F111"],
         "mediaUrls": ["https://example.com/slack.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_iterates_slack_media_like_openclaw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-slack-multi-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Multi Media Provider",
+        kind="slack",
+        target="https://slack.com/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-route-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_forms: list[tuple[str, dict[str, object], str]] = []
+    uploaded_files: list[tuple[str, bytes]] = []
+    upload_ids = iter(("F111", "F222"))
+
+    def fake_post_slack_form(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_token: str,
+    ) -> dict[str, object]:
+        del self
+        slack_forms.append((target, payload, secret_token))
+        if target.endswith("/files.getUploadURLExternal"):
+            file_id = next(upload_ids)
+            return {
+                "ok": True,
+                "upload_url": f"https://upload.slack.test/{file_id}",
+                "file_id": file_id,
+            }
+        return {"ok": True}
+
+    def fake_download_slack_media_url(self: OpsMeshService, media_url: str) -> bytes:
+        del self
+        return {
+            "https://example.com/slack-1.png": b"fake-one",
+            "https://example.com/slack-2.png": b"fake-two",
+        }[media_url]
+
+    def fake_upload_slack_file_bytes(
+        self: OpsMeshService,
+        *,
+        upload_url: str,
+        file_bytes: bytes,
+    ) -> None:
+        del self
+        uploaded_files.append((upload_url, file_bytes))
+
+    monkeypatch.setattr(OpsMeshService, "_post_slack_form", fake_post_slack_form)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_slack_media_url",
+        fake_download_slack_media_url,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_slack_file_bytes",
+        fake_upload_slack_file_bytes,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Ship multi media Slack parity.",
+        media_urls=[
+            "https://example.com/slack-1.png",
+            "https://example.com/slack-2.png",
+        ],
+        account_id="workspace-bot",
+        idempotency_key="idem-native-slack-multi-media",
+    )
+
+    assert result["messageId"] == "F222"
+    assert result["mediaIds"] == ["F111", "F222"]
+    assert slack_forms == [
+        (
+            "https://slack.com/api/files.getUploadURLExternal",
+            {
+                "filename": "slack-1.png",
+                "length": "8",
+            },
+            "xoxb-route-token",
+        ),
+        (
+            "https://slack.com/api/files.completeUploadExternal",
+            {
+                "files": '[{"id": "F111", "title": "slack-1.png"}]',
+                "channel_id": "C123",
+                "initial_comment": "Ship multi media Slack parity.",
+            },
+            "xoxb-route-token",
+        ),
+        (
+            "https://slack.com/api/files.getUploadURLExternal",
+            {
+                "filename": "slack-2.png",
+                "length": "8",
+            },
+            "xoxb-route-token",
+        ),
+        (
+            "https://slack.com/api/files.completeUploadExternal",
+            {
+                "files": '[{"id": "F222", "title": "slack-2.png"}]',
+                "channel_id": "C123",
+            },
+            "xoxb-route-token",
+        ),
+    ]
+    assert uploaded_files == [
+        ("https://upload.slack.test/F111", b"fake-one"),
+        ("https://upload.slack.test/F222", b"fake-two"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -15310,7 +15523,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_native_
         (
             "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
             {
-                "content": "Ship native Discord parity.\n\nMedia:\n1. https://example.com/discord.png",
+                "content": "Ship native Discord parity.",
                 "embeds": [{"image": {"url": "https://example.com/discord.png"}}],
             },
         )
@@ -15324,6 +15537,97 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_native_
         "channelId": "987654321",
         "mediaUrls": ["https://example.com/discord.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_iterates_discord_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-discord-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Media Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-webhook",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        discord_posts.append((target, payload))
+        return {
+            "id": f"discord-media-{len(discord_posts)}",
+            "channel_id": "987654321",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="discord",
+        to="channel:987654321",
+        message="Ship the Discord media bundle.",
+        media_urls=[
+            "https://example.com/one.png",
+            "https://example.com/two.png",
+        ],
+        account_id="discord-webhook",
+        idempotency_key="idem-native-discord-media",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "discord-media-2"
+    assert result["mediaUrls"] == [
+        "https://example.com/one.png",
+        "https://example.com/two.png",
+    ]
+    assert discord_posts == [
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "Ship the Discord media bundle.",
+                "embeds": [{"image": {"url": "https://example.com/one.png"}}],
+            },
+        ),
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "",
+                "embeds": [{"image": {"url": "https://example.com/two.png"}}],
+            },
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "discord-media-2"
 
 
 @pytest.mark.asyncio
@@ -15391,6 +15695,91 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_discord_re
             "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
             {
                 "content": "Reply without notifying everyone.",
+                "flags": 1 << 12,
+                "message_reference": {
+                    "message_id": "parent-message-1",
+                    "fail_if_not_exists": False,
+                },
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-direct-send-discord-thread-query"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Thread Native Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-webhook",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        discord_posts.append((target, payload))
+        return {"id": "discord-thread-1", "channel_id": "thread-123"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="discord",
+        to="channel:987654321",
+        message="Reply inside the thread.",
+        account_id="discord-webhook",
+        thread_id="thread-123",
+        reply_to_id="parent-message-1",
+        silent=True,
+        idempotency_key="idem-native-discord-thread-query",
+    )
+
+    assert result["messageId"] == "discord-thread-1"
+    assert result["chatId"] == "thread-123"
+    assert discord_posts == [
+        (
+            (
+                "https://discord.com/api/webhooks/webhook-id/webhook-token"
+                "?wait=true&thread_id=thread-123"
+            ),
+            {
+                "content": "Reply inside the thread.",
                 "flags": 1 << 12,
                 "message_reference": {
                     "message_id": "parent-message-1",
@@ -18881,6 +19270,7 @@ async def test_ops_mesh_service_send_direct_channel_message_preserves_whatsapp_r
                 "document": {
                     "link": "https://example.com/report.pdf",
                     "caption": "Ship doc reply.",
+                    "filename": "report.pdf",
                 },
             },
             "Authorization",

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from openzues.database import Database
+from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeService
 from openzues.services.session_keys import (
     build_launch_session_key,
     canonicalize_session_key,
@@ -75,8 +76,14 @@ class _SessionIdMatchCandidate:
 
 
 class GatewaySessionsService:
-    def __init__(self, database: Database) -> None:
+    def __init__(
+        self,
+        database: Database,
+        *,
+        plugin_runtime_service: GatewayPluginRuntimeService | None = None,
+    ) -> None:
         self._database = database
+        self._plugin_runtime_service = plugin_runtime_service
 
     async def build_snapshot(
         self,
@@ -817,6 +824,16 @@ class GatewaySessionsService:
                 delivery_context["threadId"] = origin_thread_id
         if delivery_context:
             payload["deliveryContext"] = delivery_context
+        if self._plugin_runtime_service is not None:
+            plugin_extension_projections = self._plugin_runtime_service.project_session_extensions(
+                session_key=session.current_session_key,
+                session_id=session.current_session_id,
+                plugin_extensions=metadata.get("pluginExtensions")
+                if isinstance(metadata.get("pluginExtensions"), dict)
+                else None,
+            )
+            if plugin_extension_projections:
+                payload["pluginExtensions"] = [dict(item) for item in plugin_extension_projections]
         child_sessions = await self._child_session_keys(session.current_session_key)
         if child_sessions:
             payload["childSessions"] = child_sessions

@@ -45,6 +45,7 @@ from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
+    READ_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
 )
 from openzues.services.gateway_models import GatewayModelsService
@@ -60,8 +61,10 @@ from openzues.services.gateway_node_registry import (
     KnownNode,
 )
 from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginControlUiDescriptorSpec,
     GatewayPluginRuntimeExecutorSpec,
     GatewayPluginRuntimeService,
+    GatewayPluginSessionExtensionSpec,
 )
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
@@ -660,6 +663,182 @@ async def test_talk_config_requires_talk_secrets_scope_for_remote_secret_reads()
 
 
 @pytest.mark.asyncio
+async def test_talk_realtime_methods_dispatch_to_registered_runtime() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeTalkRealtimeService:
+        async def create_session(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("session", dict(params)))
+            return {
+                "provider": "openai",
+                "transport": "gateway-relay",
+                "relaySessionId": "relay-1",
+                "audio": {
+                    "inputEncoding": "pcm16",
+                    "inputSampleRateHz": 24000,
+                    "outputEncoding": "pcm16",
+                    "outputSampleRateHz": 24000,
+                },
+                "model": params.get("model"),
+                "voice": params.get("voice"),
+            }
+
+        async def relay_audio(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("audio", dict(params)))
+            return {"ok": True}
+
+        async def relay_mark(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("mark", dict(params)))
+            return {"ok": True}
+
+        async def relay_stop(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("stop", dict(params)))
+            return {"ok": True}
+
+        async def relay_tool_result(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("tool", dict(params)))
+            return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        talk_realtime_service=FakeTalkRealtimeService(),
+    )
+
+    session = await service.call(
+        "talk.realtime.session",
+        {
+            "sessionKey": "agent:main:main",
+            "provider": "openai",
+            "model": "gpt-4o-realtime",
+            "voice": "alloy",
+        },
+    )
+    audio = await service.call(
+        "talk.realtime.relayAudio",
+        {
+            "relaySessionId": "relay-1",
+            "audioBase64": "AAAA",
+            "timestamp": 12.5,
+        },
+    )
+    mark = await service.call(
+        "talk.realtime.relayMark",
+        {"relaySessionId": "relay-1", "markName": "m1"},
+    )
+    stop = await service.call("talk.realtime.relayStop", {"relaySessionId": "relay-1"})
+    tool = await service.call(
+        "talk.realtime.relayToolResult",
+        {
+            "relaySessionId": "relay-1",
+            "callId": "call-1",
+            "result": {"ok": True, "text": "done"},
+        },
+    )
+
+    assert session == {
+        "provider": "openai",
+        "transport": "gateway-relay",
+        "relaySessionId": "relay-1",
+        "audio": {
+            "inputEncoding": "pcm16",
+            "inputSampleRateHz": 24000,
+            "outputEncoding": "pcm16",
+            "outputSampleRateHz": 24000,
+        },
+        "model": "gpt-4o-realtime",
+        "voice": "alloy",
+    }
+    assert audio == {"ok": True}
+    assert mark == {"ok": True}
+    assert stop == {"ok": True}
+    assert tool == {"ok": True}
+    assert calls == [
+        (
+            "session",
+            {
+                "sessionKey": "agent:main:main",
+                "provider": "openai",
+                "model": "gpt-4o-realtime",
+                "voice": "alloy",
+            },
+        ),
+        (
+            "audio",
+            {
+                "relaySessionId": "relay-1",
+                "audioBase64": "AAAA",
+                "timestamp": 12.5,
+            },
+        ),
+        ("mark", {"relaySessionId": "relay-1", "markName": "m1"}),
+        ("stop", {"relaySessionId": "relay-1"}),
+        (
+            "tool",
+            {
+                "relaySessionId": "relay-1",
+                "callId": "call-1",
+                "result": {"ok": True, "text": "done"},
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_talk_realtime_methods_return_openclaw_unavailable_without_runtime() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="No realtime voice provider registered",
+    ) as session_exc:
+        await service.call("talk.realtime.session", {})
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="realtime relay unavailable",
+    ) as relay_exc:
+        await service.call(
+            "talk.realtime.relayAudio",
+            {"relaySessionId": "relay-1", "audioBase64": "AAAA"},
+        )
+
+    assert session_exc.value.code == "UNAVAILABLE"
+    assert session_exc.value.status_code == 503
+    assert relay_exc.value.code == "UNAVAILABLE"
+    assert relay_exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_channels_stop_returns_idempotent_stopped_payload() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    payload = await service.call(
+        "channels.stop",
+        {"channel": "Slack", "accountId": "team-a"},
+    )
+
+    assert payload == {
+        "channel": "slack",
+        "accountId": "team-a",
+        "stopped": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_channels_stop_rejects_invalid_channel() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="invalid channels.stop params: channel must be a non-empty string",
+    ) as exc_info:
+        await service.call("channels.stop", {"channel": "   "})
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_tts_status_and_providers_surface_disabled_empty_runtime() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -670,6 +849,8 @@ async def test_tts_status_and_providers_surface_disabled_empty_runtime() -> None
         "enabled": False,
         "auto": "off",
         "provider": None,
+        "persona": None,
+        "personas": [],
         "fallbackProvider": None,
         "fallbackProviders": [],
         "prefsPath": None,
@@ -744,6 +925,75 @@ async def test_tts_pref_methods_persist_local_state_and_surface_status(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_tts_personas_and_set_persona_persist_local_state(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(
+            tmp_path,
+            personas={
+                "alfred": {
+                    "label": "Alfred",
+                    "description": "Calm assistant voice.",
+                    "provider": "microsoft",
+                    "fallbackPolicy": "provider-defaults",
+                    "providers": {
+                        "microsoft": {"voice": "en-GB-RyanNeural"},
+                        "openai": {"voice": "alloy"},
+                    },
+                }
+            },
+        ),
+    )
+
+    personas = await service.call("tts.personas", {})
+    selected = await service.call("tts.setPersona", {"persona": "ALFRED"})
+    status = await service.call("tts.status", {})
+    reloaded_personas = await GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(
+            tmp_path,
+            personas={
+                "alfred": {
+                    "label": "Alfred",
+                    "description": "Calm assistant voice.",
+                    "provider": "microsoft",
+                    "fallbackPolicy": "provider-defaults",
+                    "providers": {"microsoft": {"voice": "en-GB-RyanNeural"}},
+                }
+            },
+        ),
+    ).call("tts.personas", {})
+    cleared = await service.call("tts.setPersona", {"persona": "default"})
+
+    assert personas == {
+        "active": None,
+        "personas": [
+            {
+                "id": "alfred",
+                "label": "Alfred",
+                "description": "Calm assistant voice.",
+                "provider": "microsoft",
+                "fallbackPolicy": "provider-defaults",
+                "providers": ["microsoft", "openai"],
+            }
+        ],
+    }
+    assert selected == {"persona": "alfred"}
+    assert status["persona"] == "alfred"
+    assert status["personas"] == [
+        {
+            "id": "alfred",
+            "label": "Alfred",
+            "description": "Calm assistant voice.",
+            "provider": "microsoft",
+        }
+    ]
+    assert reloaded_personas["active"] == "alfred"
+    assert cleared == {"persona": None}
+    assert (await service.call("tts.personas", {}))["active"] is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["   ", "not-a-real-provider"])
 async def test_tts_set_provider_rejects_blank_or_unknown_provider_ids(
     tmp_path,
@@ -763,6 +1013,27 @@ async def test_tts_set_provider_rejects_blank_or_unknown_provider_ids(
     assert exc_info.value.code == "INVALID_REQUEST"
     assert exc_info.value.status_code == 400
     assert (await service.call("tts.status", {}))["provider"] is None
+
+
+@pytest.mark.asyncio
+async def test_tts_set_persona_rejects_unknown_persona_ids(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(
+            tmp_path,
+            personas={"alfred": {"label": "Alfred"}},
+        ),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Invalid persona\\. Use a configured TTS persona id\\.",
+    ) as exc_info:
+        await service.call("tts.setPersona", {"persona": "moriarty"})
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+    assert (await service.call("tts.personas", {}))["active"] is None
 
 
 @pytest.mark.asyncio
@@ -6310,6 +6581,95 @@ async def test_tools_invoke_skips_disabled_registry_plugin_executor(
 
     assert payload == {"ok": True, "result": {"ok": True, "executor": "enabled"}}
     assert observed_calls == ["enabled"]
+
+
+@pytest.mark.asyncio
+async def test_plugins_ui_descriptors_returns_registered_control_ui_descriptors(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-plugins-ui-descriptors.db")
+    await database.initialize()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            control_ui_descriptors=(
+                GatewayPluginControlUiDescriptorSpec(
+                    plugin_id="session-tools",
+                    plugin_name="Session Tools",
+                    descriptor={
+                        "id": "session-actions",
+                        "surface": "session",
+                        "label": "Session Actions",
+                        "description": "Session controls exposed by a plugin.",
+                        "placement": "sidebar",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"mode": {"type": "string"}},
+                        },
+                        "requiredScopes": [READ_GATEWAY_METHOD_SCOPE],
+                    },
+                ),
+                {
+                    "pluginId": "disabled-tools",
+                    "pluginName": "Disabled Tools",
+                    "enabled": False,
+                    "descriptor": {
+                        "id": "disabled-actions",
+                        "surface": "session",
+                        "label": "Disabled Actions",
+                    },
+                },
+                {
+                    "pluginId": "invalid-tools",
+                    "descriptor": {
+                        "id": "invalid-actions",
+                        "surface": "session",
+                        "label": "Invalid Actions",
+                        "requiredScopes": ["operator.not-real"],
+                    },
+                },
+                {
+                    "pluginId": "invalid-null-tools",
+                    "descriptor": {
+                        "id": "invalid-null-actions",
+                        "surface": "session",
+                        "label": "Invalid Null Actions",
+                        "description": None,
+                    },
+                },
+            ),
+        ),
+    )
+
+    payload = await service.call("plugins.uiDescriptors", {})
+
+    assert payload == {
+        "ok": True,
+        "descriptors": [
+            {
+                "id": "session-actions",
+                "pluginId": "session-tools",
+                "pluginName": "Session Tools",
+                "surface": "session",
+                "label": "Session Actions",
+                "description": "Session controls exposed by a plugin.",
+                "placement": "sidebar",
+                "schema": {
+                    "type": "object",
+                    "properties": {"mode": {"type": "string"}},
+                },
+                "requiredScopes": [READ_GATEWAY_METHOD_SCOPE],
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="plugins.uiDescriptors does not accept: pluginId",
+    ):
+        await service.call("plugins.uiDescriptors", {"pluginId": "session-tools"})
 
 
 @pytest.mark.asyncio
@@ -32421,6 +32781,105 @@ async def test_sessions_resolve_by_key_respects_spawned_by_filter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sessions_plugin_patch_persists_registered_extension_state(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-plugin-patch.db")
+    await database.initialize()
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    plugin_runtime = GatewayPluginRuntimeService(
+        session_extensions=[
+            GatewayPluginSessionExtensionSpec(
+                plugin_id="memory-core",
+                namespace="focus",
+                description="Focus state shown on session rows.",
+            )
+        ]
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    with pytest.raises(GatewayNodeMethodError, match="sessions.pluginPatch requires gateway scope"):
+        await service.call(
+            "sessions.pluginPatch",
+            {
+                "key": session_key,
+                "pluginId": "memory-core",
+                "namespace": "focus",
+                "value": {"state": "active"},
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,)),
+        )
+
+    payload = await service.call(
+        "sessions.pluginPatch",
+        {
+            "key": session_key,
+            "pluginId": "memory-core",
+            "namespace": "focus",
+            "value": {"state": "active", "score": 3},
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert payload == {
+        "ok": True,
+        "key": session_key,
+        "value": {"state": "active", "score": 3},
+    }
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["pluginExtensions"] == {
+        "memory-core": {"focus": {"state": "active", "score": 3}}
+    }
+    snapshot = await service.call("sessions.list", {"includeGlobal": True})
+    session = next(item for item in snapshot["sessions"] if item["key"] == session_key)
+    assert session["pluginExtensions"] == [
+        {
+            "pluginId": "memory-core",
+            "namespace": "focus",
+            "value": {"state": "active", "score": 3},
+        }
+    ]
+
+    unset_payload = await service.call(
+        "sessions.pluginPatch",
+        {
+            "key": session_key,
+            "pluginId": "memory-core",
+            "namespace": "focus",
+            "unset": True,
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert unset_payload == {"ok": True, "key": session_key}
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is None
+
+    with pytest.raises(ValueError, match="unknown plugin session extension: memory-core/missing"):
+        await service.call(
+            "sessions.pluginPatch",
+            {
+                "key": session_key,
+                "pluginId": "memory-core",
+                "namespace": "missing",
+                "value": {"state": "active"},
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+        )
+
+
+@pytest.mark.asyncio
 async def test_commands_list_returns_bounded_native_operator_inventory() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
@@ -37958,6 +38417,72 @@ async def test_node_pair_resolution_broadcasts_openclaw_resolved_event(
         "ts": 2_000,
     }
     assert isinstance(broadcast["createdAt"], str)
+
+
+@pytest.mark.asyncio
+async def test_node_pair_remove_revokes_paired_node_and_broadcasts_event(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+        hub=hub,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-remove",
+            "displayName": "Remove Me",
+            "platform": "macos",
+            "commands": ["system.run"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "node.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    async with hub.subscribe() as queue:
+        removed = await service.call(
+            "node.pair.remove",
+            {"nodeId": "pair-node-remove"},
+            now_ms=3_000,
+        )
+        broadcast = await asyncio.wait_for(queue.get(), timeout=1.0)
+
+    assert removed == {"nodeId": "pair-node-remove"}
+    assert await service.call("node.pair.list", {}) == {"pending": [], "paired": []}
+    assert broadcast["type"] == "gateway_event"
+    assert broadcast["event"] == "node.pair.resolved"
+    assert broadcast["payload"] == {
+        "requestId": "",
+        "nodeId": "pair-node-remove",
+        "decision": "removed",
+        "ts": 3_000,
+    }
+    assert isinstance(broadcast["createdAt"], str)
+
+
+@pytest.mark.asyncio
+async def test_node_pair_remove_rejects_unknown_node_id(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    with pytest.raises(ValueError, match="unknown nodeId"):
+        await service.call("node.pair.remove", {"nodeId": "missing-node"})
 
 
 @pytest.mark.asyncio

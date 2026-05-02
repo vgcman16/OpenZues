@@ -77,6 +77,8 @@ from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorResolution,
     GatewayPluginRuntimeService,
+    copy_plugin_json_value,
+    is_plugin_json_value,
 )
 from openzues.services.gateway_sandbox_spawn import (
     FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
@@ -1398,6 +1400,7 @@ class GatewayNodeMethodService:
         system_presence_service: GatewaySystemPresenceService | None = None,
         talk_config_service: GatewayTalkConfigService | None = None,
         talk_mode_service: GatewayTalkModeService | None = None,
+        talk_realtime_service: object | None = None,
         tts_service: GatewayTtsService | None = None,
         tts_runtime_service: GatewayTtsRuntimeService | None = None,
         tools_catalog_service: GatewayToolsCatalogService | None = None,
@@ -1490,9 +1493,23 @@ class GatewayNodeMethodService:
             )
         self._logs_service = logs_service or GatewayLogsService()
         self._models_service = models_service or GatewayModelsService()
+        self._tools_invoke_executors = dict(tools_invoke_executors or {})
+        self._tools_invoke_owner_only = {
+            tool_name.strip()
+            for tool_name in tools_invoke_owner_only
+            if isinstance(tool_name, str) and tool_name.strip()
+        }
+        self._tools_invoke_before_call = tools_invoke_before_call
+        self._plugin_runtime_service = plugin_runtime_service or GatewayPluginRuntimeService(
+            executors=self._tools_invoke_executors,
+            owner_only=self._tools_invoke_owner_only,
+        )
         self._sessions_service = sessions_service
         if self._sessions_service is None and self._database is not None:
-            self._sessions_service = GatewaySessionsService(self._database)
+            self._sessions_service = GatewaySessionsService(
+                self._database,
+                plugin_runtime_service=self._plugin_runtime_service,
+            )
         self._session_compaction_service = session_compaction_service
         if self._session_compaction_service is None and self._database is not None:
             self._session_compaction_service = GatewaySessionCompactionService(self._database)
@@ -1504,7 +1521,12 @@ class GatewayNodeMethodService:
             )
         self._talk_config_service = talk_config_service or GatewayTalkConfigService()
         self._talk_mode_service = talk_mode_service or GatewayTalkModeService()
-        self._tts_service = tts_service or GatewayTtsService()
+        self._talk_realtime_service = talk_realtime_service
+        self._tts_service = tts_service or GatewayTtsService(
+            config_loader=self._config_service.build_snapshot
+            if self._config_service is not None
+            else None,
+        )
         self._tts_runtime_service = tts_runtime_service
         self._tools_catalog_service = tools_catalog_service or GatewayToolsCatalogService()
         self._skill_bins_service = skill_bins_service or GatewaySkillBinsService()
@@ -1562,17 +1584,6 @@ class GatewayNodeMethodService:
         self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
         self._acp_spawn_service = acp_spawn_service
         self._exec_approvals_path = exec_approvals_path
-        self._tools_invoke_executors = dict(tools_invoke_executors or {})
-        self._tools_invoke_owner_only = {
-            tool_name.strip()
-            for tool_name in tools_invoke_owner_only
-            if isinstance(tool_name, str) and tool_name.strip()
-        }
-        self._tools_invoke_before_call = tools_invoke_before_call
-        self._plugin_runtime_service = plugin_runtime_service or GatewayPluginRuntimeService(
-            executors=self._tools_invoke_executors,
-            owner_only=self._tools_invoke_owner_only,
-        )
         self._message_action_dispatcher = message_action_dispatcher
         if tools_catalog_service is None:
             self._tools_catalog_service = GatewayToolsCatalogService(
@@ -2762,6 +2773,81 @@ class GatewayNodeMethodService:
                 raise ValueError(f"missing scope: {TALK_SECRETS_GATEWAY_METHOD_SCOPE}")
             return self._talk_config_service.build_snapshot(include_secrets=include_secrets)
 
+        if resolved_method == "talk.realtime.session":
+            realtime_session_params = _talk_realtime_session_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="No realtime voice provider registered",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "create_session",
+                realtime_session_params,
+                unavailable_message="No realtime voice provider registered",
+            )
+
+        if resolved_method == "talk.realtime.relayAudio":
+            realtime_audio_params = _talk_realtime_relay_audio_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_audio",
+                realtime_audio_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
+        if resolved_method == "talk.realtime.relayMark":
+            realtime_mark_params = _talk_realtime_relay_mark_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_mark",
+                realtime_mark_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
+        if resolved_method == "talk.realtime.relayStop":
+            realtime_stop_params = _talk_realtime_relay_stop_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_stop",
+                realtime_stop_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
+        if resolved_method == "talk.realtime.relayToolResult":
+            realtime_tool_params = _talk_realtime_relay_tool_result_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_tool_result",
+                realtime_tool_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
         if resolved_method == "tts.status":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return self._tts_service.build_status()
@@ -2769,6 +2855,20 @@ class GatewayNodeMethodService:
         if resolved_method == "tts.providers":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return self._tts_service.build_provider_catalog()
+
+        if resolved_method == "tts.personas":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return self._tts_service.build_personas()
+
+        if resolved_method == "plugins.uiDescriptors":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return {
+                "ok": True,
+                "descriptors": [
+                    dict(descriptor)
+                    for descriptor in self._plugin_runtime_service.control_ui_descriptors()
+                ],
+            }
 
         if resolved_method == "commands.list":
             _validate_exact_keys(
@@ -5382,6 +5482,20 @@ class GatewayNodeMethodService:
                 now_ms=_timestamp_ms(now_ms),
             )
 
+        if resolved_method == "tts.setPersona":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("persona",))
+            try:
+                return self._tts_service.set_persona(
+                    payload.get("persona"),
+                    now_ms=_timestamp_ms(now_ms),
+                )
+            except ValueError as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc).strip() or "Invalid persona. Use a configured TTS persona id.",
+                    status_code=400,
+                ) from exc
+
         if resolved_method == "tts.convert":
             _validate_exact_keys(
                 resolved_method,
@@ -5651,6 +5765,41 @@ class GatewayNodeMethodService:
                 message=f"channel {normalized_channel} does not support runtime start",
                 status_code=400,
             )
+
+        if resolved_method == "channels.stop":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("channel", "accountId"),
+            )
+            raw_channel = payload.get("channel")
+            if not isinstance(raw_channel, str) or not raw_channel.strip():
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="invalid channels.stop params: channel must be a non-empty string",
+                    status_code=400,
+                )
+            channel = raw_channel.strip()
+            normalized_channel = _normalize_gateway_chat_channel_id(channel)
+            if normalized_channel is None:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message="invalid channels.stop channel",
+                    status_code=400,
+                )
+            channel_stop_account_id = DEFAULT_ACCOUNT_ID
+            if "accountId" in payload and payload.get("accountId") is not None:
+                channel_stop_account_id = _require_string(
+                    payload.get("accountId"),
+                    label="accountId",
+                ).strip()
+                if not channel_stop_account_id:
+                    channel_stop_account_id = DEFAULT_ACCOUNT_ID
+            return {
+                "channel": normalized_channel,
+                "accountId": channel_stop_account_id,
+                "stopped": True,
+            }
 
         if resolved_method == "channels.logout":
             _validate_exact_keys(
@@ -9118,6 +9267,105 @@ class GatewayNodeMethodService:
                 },
             }
 
+        if resolved_method == "sessions.pluginPatch":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("key", "pluginId", "namespace", "value", "unset"),
+            )
+            if (
+                resolved_requester.caller_scopes is not None
+                and ADMIN_GATEWAY_METHOD_SCOPE not in resolved_requester.caller_scopes
+            ):
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=(
+                        "sessions.pluginPatch requires gateway scope: "
+                        f"{ADMIN_GATEWAY_METHOD_SCOPE}"
+                    ),
+                    status_code=400,
+                )
+            _reject_webchat_session_mutation(
+                action="patch",
+                requester=resolved_requester,
+            )
+            if self._database is None or self._sessions_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.pluginPatch is unavailable until session patch storage is wired"
+                    ),
+                    status_code=503,
+                )
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            plugin_id = _require_non_empty_string(payload.get("pluginId"), label="pluginId")
+            namespace = _require_non_empty_string(payload.get("namespace"), label="namespace")
+            unset = _optional_bool(payload.get("unset"), label="unset")
+            has_value = "value" in payload
+            if unset is True and has_value:
+                raise ValueError("sessions.pluginPatch cannot specify both unset and value")
+            if unset is not True and not has_value:
+                raise ValueError(
+                    "plugin session extension value is required unless unset is true"
+                )
+            patch_value = payload.get("value")
+            if has_value and not is_plugin_json_value(patch_value):
+                raise ValueError("sessions.pluginPatch value must be JSON-compatible")
+            if not self._plugin_runtime_service.has_session_extension(plugin_id, namespace):
+                raise ValueError(f"unknown plugin session extension: {plugin_id}/{namespace}")
+            canonical_key = await self._resolve_existing_session_key(
+                session_key,
+                now_ms=now_ms,
+            )
+            existing_entry = await self._sessions_service.build_session_payload_for_key(
+                session_key=canonical_key,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            if existing_entry is None:
+                raise ValueError(f"unknown session key: {session_key}")
+            canonical_key = str(existing_entry.get("key") or canonical_key)
+            existing_plugin_metadata_row = await self._database.get_gateway_session_metadata(
+                canonical_key
+            )
+            existing_plugin_metadata: dict[str, Any] = {}
+            if isinstance(existing_plugin_metadata_row, dict):
+                metadata_value = existing_plugin_metadata_row.get("metadata")
+                if isinstance(metadata_value, dict):
+                    existing_plugin_metadata = dict(metadata_value)
+            next_metadata = dict(existing_plugin_metadata)
+            plugin_extensions = _session_plugin_extensions_metadata(
+                next_metadata.get("pluginExtensions")
+            )
+            plugin_state = dict(plugin_extensions.get(plugin_id) or {})
+            plugin_patch_result: dict[str, Any] = {"ok": True, "key": canonical_key}
+            if unset is True:
+                plugin_state.pop(namespace, None)
+            else:
+                copied_value = copy_plugin_json_value(patch_value)
+                plugin_state[namespace] = copied_value
+                plugin_patch_result["value"] = copied_value
+            if plugin_state:
+                plugin_extensions[plugin_id] = plugin_state
+            else:
+                plugin_extensions.pop(plugin_id, None)
+            if plugin_extensions:
+                next_metadata["pluginExtensions"] = plugin_extensions
+            else:
+                next_metadata.pop("pluginExtensions", None)
+            if next_metadata:
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=canonical_key,
+                    metadata=next_metadata,
+                )
+            else:
+                await self._database.delete_gateway_session_metadata(canonical_key)
+            await self._publish_sessions_changed_event(
+                session_key=canonical_key,
+                reason="plugin-patch",
+                now_ms=now_ms,
+            )
+            return plugin_patch_result
+
         if resolved_method == "chat.abort":
             _validate_exact_keys(
                 resolved_method,
@@ -10274,6 +10522,34 @@ class GatewayNodeMethodService:
             )
             return rejected
 
+        if resolved_method == "node.pair.remove":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("nodeId",))
+            if self._pairing_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="node pairing storage unavailable",
+                    status_code=503,
+                )
+            removed = await self._pairing_service.remove_node(
+                _require_non_empty_string(payload.get("nodeId"), label="nodeId")
+            )
+            if removed is None:
+                raise ValueError("unknown nodeId")
+            removed_node_id = _require_non_empty_string(
+                removed.get("nodeId"),
+                label="nodeId",
+            )
+            await self._publish_gateway_event(
+                "node.pair.resolved",
+                {
+                    "requestId": "",
+                    "nodeId": removed_node_id,
+                    "decision": "removed",
+                    "ts": _timestamp_ms(now_ms),
+                },
+            )
+            return removed
+
         if resolved_method == "node.pair.approve":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("requestId",))
             if self._pairing_service is None:
@@ -11272,7 +11548,10 @@ class GatewayNodeMethodService:
                     "twoPhase",
                 ),
             )
-            plugin_id = _optional_non_empty_string(payload.get("pluginId"), label="pluginId")
+            approval_plugin_id = _optional_non_empty_string(
+                payload.get("pluginId"),
+                label="pluginId",
+            )
             title = _require_non_empty_string(payload.get("title"), label="title")
             description = _require_non_empty_string(
                 payload.get("description"),
@@ -11289,8 +11568,14 @@ class GatewayNodeMethodService:
                 label="toolCallId",
             )
             agent_id = _optional_normalized_string(payload.get("agentId"), label="agentId")
-            session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
-            session_key = await self._resolve_known_session_key(session_key, now_ms=now_ms)
+            approval_session_key = _optional_normalized_string(
+                payload.get("sessionKey"),
+                label="sessionKey",
+            )
+            approval_session_key = await self._resolve_known_session_key(
+                approval_session_key,
+                now_ms=now_ms,
+            )
             turn_source_channel = _optional_normalized_string(
                 payload.get("turnSourceChannel"),
                 label="turnSourceChannel",
@@ -11324,14 +11609,14 @@ class GatewayNodeMethodService:
             self._prune_plugin_approvals(timestamp_ms)
             approval_id = f"plugin:{secrets.token_hex(16)}"
             approval_request: dict[str, Any] = {
-                "pluginId": plugin_id,
+                "pluginId": approval_plugin_id,
                 "title": title,
                 "description": description,
                 "severity": severity,
                 "toolName": tool_name,
                 "toolCallId": tool_call_id,
                 "agentId": agent_id,
-                "sessionKey": session_key,
+                "sessionKey": approval_session_key,
                 "turnSourceChannel": turn_source_channel,
                 "turnSourceTo": turn_source_to,
                 "turnSourceAccountId": turn_source_account_id,
@@ -13404,6 +13689,25 @@ def _string_or_none(value: object) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _session_plugin_extensions_metadata(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, Mapping):
+        return {}
+    plugin_extensions: dict[str, dict[str, object]] = {}
+    for raw_plugin_id, raw_plugin_state in value.items():
+        plugin_id = _string_or_none(raw_plugin_id)
+        if plugin_id is None or not isinstance(raw_plugin_state, Mapping):
+            continue
+        plugin_state: dict[str, object] = {}
+        for raw_namespace, raw_state in raw_plugin_state.items():
+            namespace = _string_or_none(raw_namespace)
+            if namespace is None or not is_plugin_json_value(raw_state):
+                continue
+            plugin_state[namespace] = copy_plugin_json_value(raw_state)
+        if plugin_state:
+            plugin_extensions[plugin_id] = plugin_state
+    return plugin_extensions
 
 
 def _requester_route_context(
@@ -17317,6 +17621,124 @@ def _validate_exact_keys(
     if unexpected:
         joined = ", ".join(unexpected)
         raise ValueError(f"{method} does not accept: {joined}")
+
+
+def _talk_realtime_session_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.session",
+        params,
+        allowed_keys=("sessionKey", "provider", "model", "voice"),
+    )
+    payload: dict[str, object] = {}
+    for key in ("sessionKey", "provider", "model", "voice"):
+        value = _optional_normalized_string(params.get(key), label=key)
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _talk_realtime_relay_audio_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayAudio",
+        params,
+        allowed_keys=("relaySessionId", "audioBase64", "timestamp"),
+    )
+    payload: dict[str, object] = {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        ),
+        "audioBase64": _require_non_empty_string(params.get("audioBase64"), label="audioBase64"),
+    }
+    timestamp = _optional_number(params.get("timestamp"), label="timestamp")
+    if timestamp is not None:
+        payload["timestamp"] = timestamp
+    return payload
+
+
+def _talk_realtime_relay_mark_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayMark",
+        params,
+        allowed_keys=("relaySessionId", "markName"),
+    )
+    payload: dict[str, object] = {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        )
+    }
+    mark_name = _optional_normalized_string(params.get("markName"), label="markName")
+    if mark_name is not None:
+        payload["markName"] = mark_name
+    return payload
+
+
+def _talk_realtime_relay_stop_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayStop",
+        params,
+        allowed_keys=("relaySessionId",),
+    )
+    return {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        )
+    }
+
+
+def _talk_realtime_relay_tool_result_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayToolResult",
+        params,
+        allowed_keys=("relaySessionId", "callId", "result"),
+    )
+    if "result" not in params:
+        raise ValueError("result is required")
+    return {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        ),
+        "callId": _require_non_empty_string(params.get("callId"), label="callId"),
+        "result": params.get("result"),
+    }
+
+
+async def _call_talk_realtime_service(
+    service: object,
+    method_name: str,
+    params: dict[str, object],
+    *,
+    unavailable_message: str,
+) -> dict[str, Any]:
+    method = getattr(service, method_name, None)
+    if not callable(method):
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message=unavailable_message,
+            status_code=503,
+        )
+    try:
+        result = method(params)
+        if isinstance(result, Awaitable):
+            result = await result
+    except GatewayNodeMethodError:
+        raise
+    except Exception as exc:
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message=str(exc).strip() or unavailable_message,
+            status_code=503,
+        ) from exc
+    if not isinstance(result, dict):
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message=unavailable_message,
+            status_code=503,
+        )
+    return cast(dict[str, Any], result)
 
 
 def _require_non_empty_string(value: object, *, label: str) -> str:

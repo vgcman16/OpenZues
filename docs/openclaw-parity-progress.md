@@ -3,9 +3,9 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~52.5% overall, with a reasonable band of ~48-57%.
-- Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
-- Estimated chat/session contract subfamily parity: ~98.2% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
+- Estimated repo-wide parity: ~53.6% overall, with a reasonable band of ~49-58%.
+- Estimated active gateway/session/tool-contract family parity: ~99.1% for the bounded local OpenZues path.
+- Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
@@ -25,10 +25,41 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Cron local scheduling now covers expression schedules, due-run detection, delivery status, fallback announcement, session delivery fallback, system-event session-key wake routing, retry/backoff, one-shot cleanup, and OpenClaw-style CLI add/edit schedule parsing.
 - Browser/canvas/nodes/voice bounded command coverage is effectively locked for the local bridge: native browser commands, action grammar, storage/cookies/HAR, auth profile login/delete/save, batch execution, dashboard lifecycle, plugin node-host browser command/cap inventory, canvas/A2UI/live reload, APNS wake paths, managed attachments, scoped capability URLs, and iOS provider command bridges all have concrete gateway runtimes or honest unavailable boundaries.
 - Chat transcript contracts are locked for the current SQLite-backed store: `chat.history` projection, usage/cost metadata, abort partial metadata, text caps, oversized payload placeholders, untrusted suffix stripping, skip-only hiding, directive cleanup, `chat.send` schema/provenance/timeout/session-key guards, `chat.inject` schema guards, and `chat.abort` run-id plus requester ownership validation.
-- Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
+- Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
-- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, and OpenClaw-style projection/visibility for neighboring session tools.
+- `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, plugin-host `plugins.uiDescriptors` control UI descriptor projection, and OpenClaw-style projection/visibility for neighboring session tools.
 - Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- TTS control-plane parity now includes `tts.personas`, `tts.setPersona`,
+  status persona projection, config/fakeable persona descriptors, prefs-backed
+  selected persona persistence, and JSON-capable `capability` / `infer` Typer
+  commands for listing and setting personas.
+- Realtime voice gateway parity now includes `talk.realtime.session`,
+  `talk.realtime.relayAudio`, `talk.realtime.relayMark`,
+  `talk.realtime.relayStop`, and `talk.realtime.relayToolResult` over a
+  fakeable runtime adapter, with OpenClaw-shaped unavailable errors when no
+  realtime provider/relay runtime is wired.
+- Channel runtime control now includes `channels.stop` as an admin-scoped,
+  idempotent native stop boundary with normalized channel/account projection.
+- Node pairing lifecycle parity now includes `node.pair.remove` as a
+  pairing-scoped removal boundary that revokes paired nodes, returns
+  `{nodeId}`, and publishes the OpenClaw-shaped `node.pair.resolved` removal
+  event.
+- Provider-native Slack route parity now validates Slack `thread_ts` values
+  before setting `thread_ts`, falls back from internal reply ids to valid Slack
+  thread ids, and leaves invalid internal ids out of Slack API payloads.
+- Provider-native Slack media parity now iterates multi-media uploads with the
+  caption on the first upload, returns the final media id as `messageId`, and
+  preserves the ordered `mediaIds`/`mediaUrls` result metadata.
+- Provider-native Discord webhook parity now sends `threadId` as the webhook
+  execution query parameter `thread_id`, keeps `wait=true` in the URL, and
+  leaves reply message references plus silent flags in the JSON body without a
+  body-level `thread_id`.
+- Provider-native WhatsApp document parity now derives and includes document
+  filenames from outbound media URLs while preserving reply context and split
+  media delivery behavior.
+- Provider-native Discord media parity now follows OpenClaw's shared outbound
+  media sequence contract with one webhook send per media URL, text only on the
+  first media send, final-id projection, and ordered provider `messageIds`.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -41,6 +72,112 @@ These are complete within the bounded OpenZues-local parity contract verified in
   saved_path_attachment_stages"` (`5 passed`), `ruff check
   src\openzues\services\gateway_node_methods.py tests\test_gateway_node_methods.py`,
   and `mypy src\openzues\services\gateway_node_methods.py`.
+- Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered
+  plugin session extension mutation path: the method is admin-only, rejects
+  unregistered plugin/namespace pairs, validates plugin JSON values with the
+  upstream depth/node/string/byte limits, persists extension state by plugin id
+  and namespace, projects registered extension values on session rows, and
+  removes state on explicit `unset=true`.
+- Verified the `sessions.pluginPatch` slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state
+  -q` (`1 passed`), adjacent session-control proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_plugin_patch or
+  sessions_patch or sessions_resolve"` (`27 passed`), `ruff check
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_sessions.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_sessions.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`.
+- Plugin-host `plugins.uiDescriptors` now mirrors OpenClaw's active-registry
+  control UI descriptor gateway method: params must be `{}`, descriptors come
+  from the fakeable plugin runtime registry, projected rows are stamped with
+  registry-owned `pluginId` and optional `pluginName`, JSON-compatible
+  descriptor schemas and valid required scopes are preserved, and invalid or
+  disabled descriptor registrations are skipped before clients see them. This
+  slice is checkpointed in `9fb5098b`.
+- Verified the `plugins.uiDescriptors` slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors
+  -q` (`1 passed`), adjacent plugin-runtime proof `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "plugins_ui_descriptors or
+  tools_invoke_uses_plugin_runtime or tools_invoke_runs_registry_plugin_executor
+  or tools_invoke_keeps_registry_owner_only or sessions_plugin_patch"` (`5
+  passed`), `ruff check src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_plugin_runtime.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`.
+- TTS persona gateway/CLI methods now mirror OpenClaw's
+  `tts.personas`/`tts.setPersona` contract: configured personas are projected
+  with `id`, `label`, `description`, `provider`, `fallbackPolicy`, and
+  provider-binding ids, selected persona state persists with TTS prefs,
+  `off`/`none`/`default` clears the selection, unknown personas return the
+  upstream-shaped invalid-persona error, and `capability tts personas` /
+  `capability tts set-persona` share the gateway runtime. This slice is
+  checkpointed in `3819d03a`.
+- Verified the TTS persona slice with focused gateway persona tests (`2
+  passed`), focused policy test (`1 passed`), focused CLI tests (`2 passed`),
+  adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "tts_"`
+  (`9 passed`), adjacent `python -m pytest tests\test_cli.py -q -k "tts_"`
+  (`11 passed`), adjacent `python -m pytest tests\test_gateway_nodes_api.py
+  -q -k "tts"` (`6 passed`), `ruff check
+  src\openzues\services\gateway_tts.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py src\openzues\cli.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py
+  tests\test_cli.py`, and `mypy src\openzues\services\gateway_tts.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py src\openzues\cli.py`.
+- Realtime voice gateway methods now mirror OpenClaw's gateway method layer:
+  session creation and relay operations validate the same params, dispatch to
+  a registered native realtime adapter, return `{ok: true}` relay results, and
+  keep precise unavailable responses for missing provider/relay runtime. This
+  slice is checkpointed in `75d03a6c`.
+- Verified the realtime voice gateway slice with focused gateway tests (`2
+  passed`), focused talk/TTS policy tests (`2 passed`), adjacent `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "talk_realtime or talk_speak
+  or talk_config"` (`6 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`. A broader policy selection
+  exposed unrelated existing gaps for `channels.stop` and `node.pair.remove`.
+- `channels.stop` now mirrors OpenClaw's gateway method layer: admin scope,
+  strict `channel`/`accountId` params, channel normalization, invalid-channel
+  errors, and idempotent `{channel, accountId, stopped: true}` native stop
+  projection. This slice is checkpointed in `64f6937a`.
+- Verified the `channels.stop` slice with focused gateway stop tests (`2
+  passed`), focused channel policy test (`1 passed`), adjacent `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "channels_stop or
+  channels_start or channels_logout"` (`7 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`.
+- `node.pair.remove` now mirrors OpenClaw's gateway method layer: pairing
+  scope, strict `nodeId` params, paired-node removal through the native pairing
+  store, `{nodeId}` response projection, unknown-node errors, and
+  `node.pair.resolved` broadcasts with `decision="removed"`. This slice is
+  checkpointed in `8a0e6ac6`.
+- Verified the `node.pair.remove` slice with focused gateway remove tests (`2
+  passed`), focused node/voice policy test (`1 passed`), adjacent `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "node_pair_remove or
+  node_pair_approve or node_pair_reject or node_pair_list or node_pair_request
+  or node_pair_verify or node_rename"` (`13 passed`), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`, and
+  `mypy src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`.
 - Native configured ACP binding helpers now mirror OpenClaw's
   `persistent-bindings.types.ts` and `persistent-bindings.lifecycle.ts`
   key/record/parse/resolve/ensure contract: session keys use the
@@ -1737,11 +1874,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
-| Gateway session/tool contracts | Active | ~97.2% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, sanitized attachment mount-path hints, sandboxed remote provider media staging, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
+| Gateway session/tool contracts | Active | ~97.4% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `tools.invoke`, `plugins.uiDescriptors`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, registered plugin session extension state, active-registry control UI descriptors, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, sanitized attachment mount-path hints, sandboxed remote provider media staging, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~99% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, direct-announce provider metadata, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Strong partial | ~98.7% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, native `acp client` interactive replay, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, local path link/copy install, ClawHub/npm install, npm-not-found bundled fallback, npm install-record update with explicit npm spec override selection, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Strong partial | ~98.7% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, native `acp client` interactive replay, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/personas/voices/enable/disable/set-provider/set-persona/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, local path link/copy install, ClawHub/npm install, npm-not-found bundled fallback, npm install-record update with explicit npm spec override selection, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
@@ -4307,6 +4444,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_outbound_runtime.py
   src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_node_methods.py`.
+- Provider-native Slack direct send now mirrors OpenClaw's
+  `extensions/slack/src/thread-ts.ts` thread resolution: `replyToId` is used
+  only when it is a Slack timestamp string, otherwise a valid `threadId`
+  supplies `thread_ts`, and internal message ids are never posted as Slack
+  thread timestamps. This slice is checkpointed in `a461e5eb`.
+- Verified the Slack thread timestamp slice with focused Slack native route
+  tests (`2 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "slack_native_route or direct_channel_message_uses_slack or
+  slack_reply_to_thread"` (`5 passed`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+- Provider-native Slack media sends now mirror OpenClaw's outbound payload
+  media contract: `mediaUrls` are uploaded one at a time, only the first upload
+  receives the text caption, Slack media captions use the raw payload text
+  instead of the generic `Media:` fallback body, and the final media id becomes
+  the canonical `messageId` while all media ids remain in `mediaIds`. This
+  slice is checkpointed in `e3b5bbc0`.
+- Verified the Slack multi-media slice with focused Slack media route tests (`2
+  passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "slack_native_route or slack_media or direct_channel_message_uses_slack"` (`7
+  passed`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 - Gateway `send` now runs the bounded OpenClaw outbound payload directive
   normalization for message-body `[[reply_to:...]]`, `[[reply_to_current]]`,
   `[[audio_as_voice]]`, and line-start `MEDIA:` entries before channel
@@ -8011,6 +8170,97 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check src\openzues\services\gateway_node_methods.py
   tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\services\gateway_node_methods.py`.
+- TTS persona gateway/CLI parity is now landed for OpenClaw's
+  `tts.personas` and `tts.setPersona` methods: native persona descriptors are
+  projected from config or fakeable service state, selected persona persists in
+  TTS prefs, `tts.status` includes active persona metadata, and
+  `capability`/`infer tts personas` plus `set-persona` expose JSON-capable CLI
+  coverage. Checkpointed in `3819d03a`.
+- Progress estimates are now roughly 52.8% repo-wide and ~98.3% for the active
+  gateway/session/tool-contract family after this TTS persona slice.
+- Verified the TTS persona slice with focused gateway persona tests (`2
+  passed`), focused policy test (`1 passed`), focused CLI tests (`2 passed`),
+  adjacent gateway TTS tests (`9 passed`), adjacent CLI TTS tests (`11
+  passed`), adjacent API TTS tests (`6 passed`), `ruff check`, and `mypy`.
+- Realtime voice gateway parity is now landed for OpenClaw's
+  `talk.realtime.session`, `relayAudio`, `relayMark`, `relayStop`, and
+  `relayToolResult` methods through a fakeable native realtime adapter with
+  upstream-shaped unavailable responses when no runtime is wired.
+  Checkpointed in `75d03a6c`.
+- Progress estimates are now roughly 52.9% repo-wide and ~98.4% for the active
+  gateway/session/tool-contract family after this realtime voice gateway slice.
+- Verified the realtime voice gateway slice with focused gateway/policy proofs,
+  adjacent gateway talk tests (`6 passed`), `ruff check`, and `mypy`; a broader
+  policy sweep exposed unrelated existing `channels.stop` and
+  `node.pair.remove` gaps for the next queue.
+- Channel stop gateway parity is now landed for OpenClaw's `channels.stop`
+  method: admin scope, channel/account validation, normalized channel id,
+  invalid-channel errors, and idempotent stopped projection.
+  Checkpointed in `64f6937a`.
+- Progress estimates are now roughly 53.0% repo-wide and ~98.5% for the active
+  gateway/session/tool-contract family after this `channels.stop` slice.
+- Verified the `channels.stop` slice with focused gateway/policy proofs,
+  adjacent channel start/logout/stop tests (`7 passed`), `ruff check`, and
+  `mypy`.
+- Node pairing removal parity is now landed for OpenClaw's
+  `node.pair.remove` method: pairing scope, strict `nodeId` validation,
+  paired-node deletion, `{nodeId}` response projection, unknown-node errors,
+  and `node.pair.resolved` removal broadcasts.
+  Checkpointed in `8a0e6ac6`.
+- Progress estimates are now roughly 53.1% repo-wide and ~98.6% for the active
+  gateway/session/tool-contract family after this `node.pair.remove` slice.
+- Verified the `node.pair.remove` slice with focused gateway/policy proofs,
+  adjacent node-pair lifecycle tests (`13 passed`), `ruff check`, and `mypy`.
+- Slack provider-native thread timestamp parity is now landed for direct
+  route-backed sends: invalid internal `replyToId` values are ignored for
+  Slack `thread_ts`, valid Slack timestamp `replyToId` values still win, and
+  valid `threadId` values are used as fallback.
+  Checkpointed in `a461e5eb`.
+- Progress estimates are now roughly 53.2% repo-wide and ~98.7% for the active
+  gateway/session/tool-contract family after this Slack provider slice.
+- Verified the Slack thread timestamp slice with focused Slack native route
+  tests (`2 passed`), adjacent Slack native route tests (`5 passed`), `ruff
+  check`, and `mypy`.
+- Slack provider-native multi-media parity is now landed for direct
+  route-backed sends: multiple media URLs are uploaded as an ordered sequence,
+  caption text is attached only to the first upload, raw payload text is used as
+  the Slack caption, and the final media id is returned as the canonical
+  `messageId` with all ids preserved in `mediaIds`.
+  Checkpointed in `e3b5bbc0`.
+- Progress estimates are now roughly 53.3% repo-wide and ~98.8% for the active
+  gateway/session/tool-contract family after this Slack media result slice.
+- Verified the Slack multi-media slice with focused Slack media route tests (`2
+  passed`), adjacent Slack native/media route tests (`7 passed`), `ruff check`,
+  and `mypy`.
+- Discord provider-native webhook thread query parity is now landed for direct
+  route-backed sends: `threadId` is encoded as the webhook execution
+  `thread_id` query parameter alongside `wait=true`, while `replyToId` and
+  `silent` remain body-level Discord message options. Checkpointed in
+  `0d40be27`.
+- Progress estimates are now roughly 53.4% repo-wide and ~98.9% for the active
+  gateway/session/tool-contract family after this Discord provider slice.
+- Verified the Discord thread query slice with focused Discord thread/reply
+  tests (`2 passed`), adjacent Discord native send/poll route tests (`4
+  passed`), `ruff check`, and `mypy`.
+- WhatsApp provider-native document filename parity is now landed for direct
+  route-backed sends: document media includes a decoded filename derived from
+  the media URL path, with `file` as fallback, and reply context remains in the
+  Cloud API payload. Checkpointed in `05c4f0fc`.
+- Progress estimates are now roughly 53.5% repo-wide and ~99.0% for the active
+  gateway/session/tool-contract family after this WhatsApp provider slice.
+- Verified the WhatsApp document filename slice with a focused WhatsApp
+  document route test (`1 passed`), adjacent WhatsApp media/reply/gif/poll
+  route tests (`5 passed`), `ruff check`, and `mypy`.
+- Discord provider-native media iteration parity is now landed for direct
+  route-backed sends: media URLs are sent as an ordered webhook sequence, the
+  first send carries text, later sends use blank content, and provider metadata
+  preserves ordered `messageIds` while returning the final id as `messageId`.
+  Checkpointed in `b5371fd9`.
+- Progress estimates are now roughly 53.6% repo-wide and ~99.1% for the active
+  gateway/session/tool-contract family after this Discord media slice.
+- Verified the Discord media iteration slice with focused Discord media route
+  tests (`2 passed`), adjacent Discord native route tests (`5 passed`), `ruff
+  check`, and `mypy`.
 
 ## References
 

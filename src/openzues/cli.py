@@ -358,6 +358,13 @@ _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
         "resultShape": "provider ids, configured state, models, voices",
     },
     {
+        "id": "tts.personas",
+        "description": "List TTS personas.",
+        "transports": ["gateway"],
+        "flags": ["--gateway", "--json"],
+        "resultShape": "active persona plus configured persona descriptors",
+    },
+    {
         "id": "tts.status",
         "description": "Show gateway-managed TTS state.",
         "transports": ["gateway"],
@@ -384,6 +391,13 @@ _CAPABILITY_METADATA: tuple[dict[str, object], ...] = (
         "transports": ["local", "gateway"],
         "flags": ["--provider", "--local", "--gateway", "--json"],
         "resultShape": "selected provider",
+    },
+    {
+        "id": "tts.set-persona",
+        "description": "Set the active TTS persona.",
+        "transports": ["gateway"],
+        "flags": ["--persona", "--gateway", "--json"],
+        "resultShape": "selected persona",
     },
     {
         "id": "video.generate",
@@ -11983,15 +11997,24 @@ async def _build_capability_tts_status_payload(
     return {"transport": "gateway", **payload}
 
 
+async def _build_capability_tts_personas_payload(
+    services: CliServices,
+) -> dict[str, object]:
+    return await _call_gateway_node_method(services, "tts.personas", {})
+
+
 async def _build_capability_tts_state_payload(
     services: CliServices,
     *,
     method: str,
     provider: str | None = None,
+    persona: str | None = None,
 ) -> dict[str, object]:
     params: dict[str, object] = {}
     if provider is not None:
         params["provider"] = provider
+    if persona is not None:
+        params["persona"] = persona
     return await _call_gateway_node_method(services, method, params)
 
 
@@ -23038,6 +23061,39 @@ def capability_tts_set_provider_command(
             services,
             method="tts.setProvider",
             provider=provider,
+        )
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("personas")
+def capability_tts_personas_command(
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    _ = gateway
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_personas_payload(services)
+
+    payload = _run(_run_with_services(_action))
+    _emit_capability_provider_summary(payload, json_output=json_output)
+
+
+@capability_tts_app.command("set-persona")
+def capability_tts_set_persona_command(
+    persona: str = typer.Option(..., "--persona", help="TTS persona id."),
+    gateway: bool = typer.Option(False, "--gateway", help="Force gateway execution."),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    _ = gateway
+
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _build_capability_tts_state_payload(
+            services,
+            method="tts.setPersona",
+            persona=persona,
         )
 
     payload = _run(_run_with_services(_action))

@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -253,7 +253,16 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "line",
     "matrix",
 }
-NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {"bluebubbles", "line", "matrix", "whatsapp", "zalo"}
+NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
+    "bluebubbles",
+    "line",
+    "matrix",
+    "discord",
+    "slack",
+    "whatsapp",
+    "zalo",
+}
+SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -942,6 +951,21 @@ def _slack_channel_id(target: str | None) -> str | None:
             continue
         break
     return normalized or None
+
+
+def _normalize_slack_thread_ts_candidate(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized if SLACK_THREAD_TS_PATTERN.fullmatch(normalized) else None
+
+
+def _resolve_slack_thread_ts(*, reply_to_id: object, thread_id: object) -> str | None:
+    return _normalize_slack_thread_ts_candidate(
+        reply_to_id
+    ) or _normalize_slack_thread_ts_candidate(thread_id)
 
 
 def _slack_reaction_name(raw: str | None) -> str:
@@ -2491,14 +2515,23 @@ def _discord_privileged_intents_from_flags(flags: int) -> dict[str, str]:
     }
 
 
-def _discord_webhook_url(target: str | None) -> str:
+def _discord_webhook_url(target: str | None, *, thread_id: object | None = None) -> str:
     normalized = str(target or "").strip()
     if _normalized_http_webhook_url(normalized) is None:
         raise RuntimeError("Discord route target must be an http(s) webhook URL.")
-    if "wait=" in (urlparse(normalized).query or ""):
-        return normalized
-    separator = "&" if "?" in normalized else "?"
-    return f"{normalized}{separator}wait=true"
+    parsed = urlparse(normalized)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    if not any(key == "wait" for key, _value in query_pairs):
+        query_pairs.append(("wait", "true"))
+    normalized_thread_id = str(thread_id or "").strip()
+    if normalized_thread_id:
+        query_pairs = [
+            (key, value)
+            for key, value in query_pairs
+            if key != "thread_id"
+        ]
+        query_pairs.append(("thread_id", normalized_thread_id))
+    return parsed._replace(query=urlencode(query_pairs)).geturl()
 
 
 def _discord_message_id(result: object) -> str | None:
@@ -2727,6 +2760,19 @@ def _whatsapp_apply_reply_context(payload: dict[str, Any], reply_to_id: str) -> 
     normalized_reply_to_id = reply_to_id.strip()
     if normalized_reply_to_id:
         payload["context"] = {"message_id": normalized_reply_to_id}
+
+
+def _whatsapp_document_filename(media_url: str, *, fallback: str = "file") -> str:
+    normalized = str(media_url or "").strip()
+    filename = ""
+    if normalized:
+        parsed = urlparse(normalized)
+        if parsed.scheme or parsed.netloc:
+            filename = unquote((parsed.path or "").rsplit("/", 1)[-1])
+        else:
+            without_query = normalized.split("?", 1)[0].split("#", 1)[0]
+            filename = unquote(without_query.replace("\\", "/").rsplit("/", 1)[-1])
+    return filename.strip() or fallback
 
 
 def _fixed_text_chunks(text: str, *, limit: int) -> list[str]:
@@ -18093,7 +18139,7 @@ class OpsMeshService:
         thread_id: str | None,
         secret_token: str,
     ) -> list[str]:
-        files: list[dict[str, str]] = []
+        file_ids: list[str] = []
         for index, media_url in enumerate(media_urls, start=1):
             filename = _slack_media_filename(media_url, index)
             file_bytes = self._download_slack_media_url(media_url)
@@ -18113,21 +18159,24 @@ class OpsMeshService:
                 upload_url=upload_url,
                 file_bytes=file_bytes,
             )
-            files.append({"id": file_id, "title": filename})
-        complete_payload: dict[str, Any] = {
-            "files": json.dumps(files),
-            "channel_id": channel_id,
-        }
-        if initial_comment:
-            complete_payload["initial_comment"] = initial_comment
-        if thread_id:
-            complete_payload["thread_ts"] = thread_id
-        self._post_slack_form(
-            _slack_api_endpoint(str(route.get("target") or ""), "files.completeUploadExternal"),
-            complete_payload,
-            secret_token=secret_token,
-        )
-        return [file["id"] for file in files]
+            complete_payload: dict[str, Any] = {
+                "files": json.dumps([{"id": file_id, "title": filename}]),
+                "channel_id": channel_id,
+            }
+            if index == 1 and initial_comment:
+                complete_payload["initial_comment"] = initial_comment
+            if thread_id:
+                complete_payload["thread_ts"] = thread_id
+            self._post_slack_form(
+                _slack_api_endpoint(
+                    str(route.get("target") or ""),
+                    "files.completeUploadExternal",
+                ),
+                complete_payload,
+                secret_token=secret_token,
+            )
+            file_ids.append(file_id)
+        return file_ids
 
     def _post_slack_provider_event(
         self,
@@ -18158,8 +18207,6 @@ class OpsMeshService:
             )
         else:
             text = str(event.get("message") or "").strip()
-        if not text:
-            raise RuntimeError("Slack route is missing message text.")
         raw_media_urls = event.get("mediaUrls")
         media_urls = _normalize_direct_channel_media_urls(
             media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
@@ -18169,19 +18216,24 @@ class OpsMeshService:
                 else None
             ),
         )
-        thread_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
+        if not text and not media_urls:
+            raise RuntimeError("Slack route is missing message text.")
+        thread_id = _resolve_slack_thread_ts(
+            reply_to_id=event.get("replyToId"),
+            thread_id=event.get("threadId"),
+        )
         if media_urls and event_type == "gateway/send":
             media_ids = self._upload_slack_media_files(
                 route=route,
                 media_urls=media_urls,
                 channel_id=channel_id,
                 initial_comment=text,
-                thread_id=thread_id or None,
+                thread_id=thread_id,
                 secret_token=secret_token or "",
             )
             return {
                 "runtime": "native-provider-backed",
-                "messageId": media_ids[0],
+                "messageId": media_ids[-1],
                 "chatId": channel_id,
                 "channelId": channel_id,
                 "mediaIds": media_ids,
@@ -18503,10 +18555,53 @@ class OpsMeshService:
             text = str(event.get("message") or "").strip()
             payload = {"content": text[:2000] if text else ""}
             if media_urls:
-                payload["embeds"] = [
-                    {"image": {"url": media_url}}
-                    for media_url in media_urls[:10]
-                ]
+                if len(media_urls) > 1:
+                    message_ids: list[str] = []
+                    delivered_channel = fallback_channel
+                    for index, media_url in enumerate(media_urls):
+                        media_payload: dict[str, Any] = {
+                            "content": text[:2000] if index == 0 and text else "",
+                            "embeds": [{"image": {"url": media_url}}],
+                        }
+                        if silent is True:
+                            media_payload["flags"] = int(media_payload.get("flags") or 0) | (
+                                1 << 12
+                            )
+                        if reply_to_id:
+                            media_payload["message_reference"] = {
+                                "message_id": reply_to_id,
+                                "fail_if_not_exists": False,
+                            }
+                        media_result = self._post_json_webhook(
+                            _discord_webhook_url(
+                                str(route.get("target") or ""),
+                                thread_id=thread_id,
+                            ),
+                            media_payload,
+                        )
+                        if not isinstance(media_result, dict):
+                            raise RuntimeError(
+                                "Discord webhook returned a non-JSON response."
+                            )
+                        message_id = _discord_message_id(media_result)
+                        if message_id is None:
+                            raise RuntimeError(
+                                "Discord webhook response did not include a message id."
+                            )
+                        message_ids.append(message_id)
+                        delivered_channel = _discord_channel_id(
+                            media_result,
+                            delivered_channel,
+                        )
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": message_ids[-1],
+                        "chatId": delivered_channel,
+                        "channelId": delivered_channel,
+                        "messageIds": message_ids,
+                        "mediaUrls": media_urls,
+                    }
+                payload["embeds"] = [{"image": {"url": media_urls[0]}}]
         if silent is True:
             payload["flags"] = int(payload.get("flags") or 0) | (1 << 12)
         if reply_to_id and event_type == "gateway/send":
@@ -18514,10 +18609,8 @@ class OpsMeshService:
                 "message_id": reply_to_id,
                 "fail_if_not_exists": False,
             }
-        if thread_id:
-            payload["thread_id"] = thread_id
         result = self._post_json_webhook(
-            _discord_webhook_url(str(route.get("target") or "")),
+            _discord_webhook_url(str(route.get("target") or ""), thread_id=thread_id),
             payload,
         )
         if not isinstance(result, dict):
@@ -18627,6 +18720,8 @@ class OpsMeshService:
                     delivered_contact = recipient_id
                     for index, media_url in enumerate(media_urls):
                         media_payload: dict[str, Any] = {"link": media_url}
+                        if media_payload_key == "document":
+                            media_payload["filename"] = _whatsapp_document_filename(media_url)
                         if index == 0 and text:
                             media_payload["caption"] = text[:1024]
                         message_payload: dict[str, Any] = {
@@ -18672,6 +18767,8 @@ class OpsMeshService:
                 media_payload = {
                     "link": media_urls[0],
                 }
+                if media_payload_key == "document":
+                    media_payload["filename"] = _whatsapp_document_filename(media_urls[0])
                 if text:
                     media_payload["caption"] = text[:1024]
                 payload = {
