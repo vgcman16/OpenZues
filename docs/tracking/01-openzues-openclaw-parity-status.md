@@ -117,7 +117,7 @@ may lag behind this tracker.
   `runtimeEntrySource` / `runtimeEntrySources` from package
   `openclaw.extensions` or default `index.*` candidates to native activation
   adapters.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `4f732754`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON

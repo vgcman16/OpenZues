@@ -9376,7 +9376,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   expose `runtimeEntrySource` and `runtimeEntrySources` from package
   `openclaw.extensions` or default `index.*` candidates, giving native
   activation adapters the concrete module entry OpenClaw discovery would import.
-  Checkpoint pending.
+  Checkpoint in `4f732754`.
 - Progress estimates are now roughly 58.4% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
