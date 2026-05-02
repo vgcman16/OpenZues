@@ -8771,7 +8771,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 - Plugin inspect human install section is now landed for OpenClaw's inspect
   detail surface: human `plugins inspect <id>` renders `Install` rows for
-  saved install records in OpenClaw field order. Checkpoint pending.
+  saved install records in OpenClaw field order. Checkpointed in `5ca0a5f2`.
 - Progress estimates are now roughly 55.8% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
