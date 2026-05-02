@@ -12,7 +12,7 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~98.7% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~98.8% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
@@ -22,15 +22,15 @@ Current percentage rollup:
   Git/GitHub entry-source install, URL/archive entry-source install, local
   path link/copy install, missing local-looking install-spec guard, and bundled
   pre-npm plus explicit/preferred ClawHub, fakeable npm install/update plus
-  update spec-overrides, npm-not-found bundled fallback, and hook-pack npm
-  update slices.
-- The CLI/operator control-plane family is estimated at ~98.7% after the bundle
+  update spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
+  and hook-pack npm install fallback slices.
+- The CLI/operator control-plane family is estimated at ~98.8% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, fakeable npm install/update
-  plus update spec-overrides, npm-not-found bundled fallback, and hook-pack npm
-  update; remaining CLI gaps are now dominated by hook-pack install fallback
-  breadth, runtime activation/import depth, and packaging surfaces.
+  plus update spec-overrides, npm-not-found bundled fallback, hook-pack npm
+  update, and hook-pack npm install fallback; remaining CLI gaps are now
+  dominated by runtime activation/import depth and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1441,6 +1441,11 @@ adapter refreshes version/resolution/hook metadata, and human restart copy
 matches OpenClaw's plugin-and-hook wording. Remaining npm/plugin CLI parity is
 hook-pack install fallback breadth, production npm/hook installer wiring, and
 deeper runtime activation/import metadata.
+Npm hook-pack install fallback now runs after non-bundled plugin npm install
+failures, persists hook-pack records under `hooks.internal.installs`, and keeps
+bundled plugin fallback ahead of hook fallback. Remaining npm/plugin CLI parity
+is production npm/hook installer wiring and deeper runtime activation/import
+metadata.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories

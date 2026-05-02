@@ -13197,6 +13197,67 @@ async def _build_plugins_npm_install_payload(
     return payload
 
 
+async def _build_hooks_npm_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    force: bool,
+) -> dict[str, object]:
+    result = await _call_cli_hook_npm_installer(
+        services,
+        spec=raw_spec,
+        mode="update" if force else "install",
+    )
+    if result.get("ok") is False:
+        raise ValueError(str(result.get("error") or "hook pack install failed."))
+    hook_id = _optional_cli_string(result.get("hookPackId"))
+    install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
+        result.get("installPath")
+    )
+    if hook_id is None:
+        raise RuntimeError("hook pack install result is missing hookPackId.")
+    if install_path is None:
+        raise RuntimeError("hook pack install result is missing targetDir.")
+    raw_hooks = result.get("hooks")
+    hooks = [str(value) for value in raw_hooks] if isinstance(raw_hooks, list) else []
+    resolution = result.get("npmResolution")
+    resolution_payload = resolution if isinstance(resolution, dict) else {}
+    result_payload = services.gateway_config.record_npm_hook_pack_install(
+        hook_id=hook_id,
+        install_path=install_path,
+        spec=raw_spec,
+        version=_optional_cli_string(result.get("version")),
+        resolved_name=(
+            _optional_cli_string(resolution_payload.get("resolvedName"))
+            or _optional_cli_string(resolution_payload.get("name"))
+        ),
+        resolved_version=(
+            _optional_cli_string(resolution_payload.get("resolvedVersion"))
+            or _optional_cli_string(resolution_payload.get("version"))
+        ),
+        resolved_spec=_optional_cli_string(resolution_payload.get("resolvedSpec")),
+        integrity=_optional_cli_string(resolution_payload.get("integrity")),
+        shasum=_optional_cli_string(resolution_payload.get("shasum")),
+        resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+        hooks=hooks,
+        force=force,
+    )
+    install = result_payload.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "hookId": result_payload.get("hookId") or hook_id,
+        "source": "hook-pack",
+        "install": install_payload,
+        "hooks": hooks,
+        "path": result_payload.get("path"),
+        "hash": result_payload.get("hash"),
+        "restart": result_payload.get("restart") or "gateway",
+        "warning": f"Plugin install failed; installed matching hook pack {hook_id} instead.",
+    }
+
+
 async def _build_plugins_bundled_install_payload(
     services: CliServices,
     *,
@@ -20418,8 +20479,25 @@ def plugins_install_command(
                     code=exc.code,
                 )
                 if bundled_fallback is None:
-                    typer.echo(str(exc), err=True)
-                    raise typer.Exit(code=1) from exc
+                    async def _hook_fallback_action(
+                        services: CliServices,
+                    ) -> dict[str, object]:
+                        return await _build_hooks_npm_install_payload(
+                            services,
+                            raw_spec=plugin_id,
+                            force=force,
+                        )
+
+                    try:
+                        payload = _run(_run_with_services(_hook_fallback_action))
+                    except ValueError as hook_exc:
+                        typer.echo(f"{exc}\nAlso not a valid hook pack: {hook_exc}", err=True)
+                        raise typer.Exit(code=1) from hook_exc
+                    except RuntimeError as hook_exc:
+                        typer.echo(f"{exc}\nAlso not a valid hook pack: {hook_exc}", err=True)
+                        raise typer.Exit(code=1) from hook_exc
+                    _emit_plugins_install(payload, json_output=json_output)
+                    return
 
                 async def _bundled_fallback_action(
                     services: CliServices,

@@ -7,8 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98.7% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable npm install/update plus update spec-overrides, npm-not-found bundled fallback, and hook-pack npm update slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, production npm/hook install fallback breadth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~98.7% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable npm install/update plus update spec-overrides, npm-not-found bundled fallback, and hook-pack npm update; remaining CLI gaps are now dominated by hook-pack install fallback breadth, runtime activation/import depth, and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98.8% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable npm install/update plus update spec-overrides, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, production npm/hook installer wiring, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~98.8% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable npm install/update plus update spec-overrides, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback; remaining CLI gaps are now dominated by production runtime activation/import depth and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7367,6 +7367,34 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_update_json_refreshes_remote_marketplace_install"` (`5 passed`),
   broader adjacent CLI proof including install and hooks doctor checks
   (`9 passed, 405 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- `plugins install <npm-spec>` now falls back to npm hook-pack installation
+  after plugin npm install fails for a non-bundled, non-security reason,
+  matching OpenClaw's hook-pack fallback branch. The native CLI persists
+  hook-pack npm install records under `hooks.internal.installs`, returns a
+  hook-pack JSON payload with installed hooks and npm resolution metadata, and
+  keeps bundled npm fallback ahead of hook fallback.
+- Progress estimates are now roughly 49.5% repo-wide and ~98.8% for the
+  CLI/operator control plane after this hook-pack install fallback slice.
+  Remaining non-marketplace plugin/hook parity is production npm/hook installer
+  wiring and deeper runtime activation/import depth.
+- Verified the hook-pack install fallback slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_falls_back_to_npm_hook_pack -q`
+  (`1 failed` before implementation because the plugin npm error exited
+  directly), then the same command (`1 passed`), adjacent plugin/hook proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_falls_back_to_npm_hook_pack or
+  plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_update_json_refreshes_hook_pack_install_record or
+  plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_npm_install_record or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary"`
+  (`9 passed`), `ruff check src\openzues\cli.py
   src\openzues\services\gateway_config.py src\openzues\schemas.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py src\openzues\schemas.py`.

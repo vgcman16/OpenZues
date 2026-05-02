@@ -9501,6 +9501,120 @@ def test_plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec(
     assert stored["plugins"]["installs"]["voice-call"]["spec"] == "@openclaw/voice-call"
 
 
+def test_plugins_install_json_falls_back_to_npm_hook_pack(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "hooks" / "demo-hooks"
+    install_dir.mkdir(parents=True)
+    clawhub_calls: list[dict[str, object]] = []
+    npm_calls: list[dict[str, object]] = []
+    hook_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            clawhub_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "package.json missing openclaw.plugin.json",
+                "code": "missing_openclaw_extensions",
+            }
+
+    class FakeHookInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            hook_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "hookPackId": "demo-hooks",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "hooks": ["command-audit"],
+                "npmResolution": {
+                    "name": "@acme/demo-hooks",
+                    "version": "1.2.3",
+                    "resolvedSpec": "@acme/demo-hooks@1.2.3",
+                    "integrity": "sha256-demo",
+                    "shasum": "demo-shasum",
+                    "resolvedAt": "2026-05-02T12:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+                plugin_npm_installer=FakeNpmInstaller(),
+                hook_npm_installer=FakeHookInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@acme/demo-hooks", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert clawhub_calls == [{"spec": "clawhub:@acme/demo-hooks", "mode": "install"}]
+    assert npm_calls == [{"spec": "@acme/demo-hooks", "mode": "install"}]
+    assert hook_calls == [{"spec": "@acme/demo-hooks", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["source"] == "hook-pack"
+    assert payload["hookId"] == "demo-hooks"
+    assert payload["hooks"] == ["command-audit"]
+    assert payload["install"]["source"] == "npm"
+    assert payload["install"]["spec"] == "@acme/demo-hooks"
+    assert payload["install"]["installPath"] == str(install_dir)
+    assert payload["install"]["version"] == "1.2.3"
+    assert payload["install"]["resolvedName"] == "@acme/demo-hooks"
+    assert payload["install"]["resolvedVersion"] == "1.2.3"
+    assert payload["install"]["resolvedSpec"] == "@acme/demo-hooks@1.2.3"
+    assert payload["install"]["integrity"] == "sha256-demo"
+    assert payload["warning"] == (
+        "Plugin install failed; installed matching hook pack demo-hooks instead."
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["hooks"]["internal"]["installs"]["demo-hooks"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@acme/demo-hooks"
+    assert install["hooks"] == ["command-audit"]
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,
