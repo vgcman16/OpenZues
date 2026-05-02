@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~58.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~58.7% overall, with a reasonable
   band of ~50-59%.
 - The active gateway/session/tool-contract family is estimated at ~99.2% of the
   bounded OpenZues-local parity path.
@@ -5329,6 +5329,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   paths remain ~99.9%. Verified with the focused bundled configured-channel
   auto-enable test, adjacent bundled channel activation/default proof, `ruff
   check`, and `mypy`; checkpointed in `f1de1e28`.
+- Closed the bundled channel manifest env-var activation seam from OpenClaw
+  `src/plugins/channel-plugin-ids.test.ts`,
+  `src/config/channel-configured-shared.ts`, and
+  `src/plugins/manifest-registry.ts`: bundled channel plugin records with
+  manifest `channelEnvVars` are auto-enabled when one declared env var is
+  present, including external channel ids and case-insensitive env names, while
+  preserving explicit channel-disable blocking. Repo-wide parity is now
+  estimated at ~58.7%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused bundled manifest env-var
+  activation test, adjacent bundled env/config activation proof, `ruff check`,
+  and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially bundled package plugin-sdk import/runtime
   activation and standalone text-transform projection. The provider-native

@@ -10023,6 +10023,65 @@ def test_plugins_list_json_marks_configured_bundled_channel_as_auto_enabled(
     assert plugin["activationReason"] == "telegram configured"
 
 
+def test_plugins_list_json_auto_enables_bundled_channel_from_manifest_env_var(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "external-env-channel"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="external-env-channel",
+        enabled_by_default=False,
+        channels=["external-env-channel"],
+    )
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["channelEnvVars"] = {
+        "external-env-channel": ["EXTERNAL_ENV_CHANNEL_TOKEN"]
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    monkeypatch.setenv("EXTERNAL_ENV_CHANNEL_TOKEN", "configured")
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["external-env-channel"]
+    assert plugin["status"] == "loaded"
+    assert plugin["activated"] is True
+    assert plugin["explicitlyEnabled"] is False
+    assert plugin["activationSource"] == "auto"
+    assert plugin["activationReason"] == "external-env-channel configured"
+
+
 def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
     tmp_path,
     monkeypatch,

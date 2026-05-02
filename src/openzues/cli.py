@@ -18642,7 +18642,9 @@ def _plugin_manifest_has_enabled_channel(
     if not channels_config:
         return False
     for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
-        normalized_channel = _normalize_openclaw_channel_plugin_id(channel_id)
+        normalized_channel = _normalize_openclaw_channel_plugin_id(
+            channel_id
+        ) or channel_id.strip().lower()
         if normalized_channel is None:
             continue
         channel_config = channels_config.get(normalized_channel)
@@ -18655,23 +18657,36 @@ def _plugin_manifest_configured_channel_auto_reason(
     manifest: dict[str, object],
     config_snapshot: dict[str, object] | None,
 ) -> str | None:
-    if config_snapshot is None:
-        return None
-    raw_channels_config = config_snapshot.get("channels")
+    raw_channels_config = (
+        config_snapshot.get("channels") if config_snapshot is not None else None
+    )
     channels_config = raw_channels_config if isinstance(raw_channels_config, dict) else {}
-    if not channels_config:
-        return None
+    channel_env_vars = _plugin_manifest_string_list_record(
+        manifest.get("channelEnvVars")
+    )
+    env_by_lower = {key.lower(): value for key, value in os.environ.items()}
     for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
-        normalized_channel = _normalize_openclaw_channel_plugin_id(channel_id)
+        normalized_channel = _normalize_openclaw_channel_plugin_id(
+            channel_id
+        ) or channel_id.strip().lower()
         if normalized_channel is None:
             continue
         channel_config = channels_config.get(normalized_channel)
-        if not isinstance(channel_config, dict):
+        if isinstance(channel_config, dict) and channel_config.get("enabled") is False:
             continue
-        if channel_config.get("enabled") is False:
-            continue
-        if any(str(key) != "enabled" for key in channel_config):
+        if isinstance(channel_config, dict) and any(
+            str(key) != "enabled" for key in channel_config
+        ):
             return f"{normalized_channel} configured"
+        env_vars = _plugin_manifest_string_list(
+            channel_env_vars.get(normalized_channel)
+        )
+        for env_var in env_vars:
+            env_value = os.environ.get(env_var)
+            if env_value is None:
+                env_value = env_by_lower.get(env_var.lower())
+            if isinstance(env_value, str) and env_value.strip():
+                return f"{normalized_channel} configured"
     return None
 
 
