@@ -29,9 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin inspect failed-at timestamp projection slice is verified and pending
-its checkpoint hash. Any follow-up changes should target the next queue head
-only:
+The plugin inspect failed-at timestamp projection slice is checkpointed in
+`b3bf64a5`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -51,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect failed-at timestamp projection verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect failed-at timestamp projection checkpointed in `b3bf64a5` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -414,7 +413,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     OpenClaw-style `Failed at: <timestamp>` line.
   - Evidence required: focused plugin inspect failed-at test, adjacent plugin
     inspect/doctor tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `b3bf64a5`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_cli.py::test_plugins_inspect_reports_error_failed_at -q` (`1
