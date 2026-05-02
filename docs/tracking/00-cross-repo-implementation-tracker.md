@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~57.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~57.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The manifest toolMetadata availability gate slice is checkpointed in
-`78d905c6`. Any follow-up changes should target the next queue head only:
+The installed plugin runtime activation adapter slice is verified with
+checkpoint pending. Any follow-up changes should target the next queue head
+only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Manifest toolMetadata availability gate checkpointed in `78d905c6` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed plugin runtime activation adapter verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -1074,6 +1075,32 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_doctor_json_projects_manifest_activation_plan_reasons or
     plugins_list_json_discovers_openclaw_manifest_load_paths or
     plugins_list_json_preserves_manifest_auth_and_env_metadata"` (`5 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001AM` installed plugin runtime activation adapter
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/registry.ts`, and
+    `openclaw-main/src/plugins/runtime.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: a fakeable installed-plugin runtime activation adapter can turn
+    enabled manifest/load-path records into native active-registry executor
+    specs; those specs mark matching plugins imported, move tool ownership into
+    `runtimeExecutorPlugins`, and remove matching entries from
+    `missingExecutorPlugins`.
+  - Evidence required: focused plugin doctor installed activation adapter test,
+    adjacent plugin runtime CLI tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    plugins_doctor_json_gates_manifest_tool_activation_on_auth_env or
+    plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_list_json_projects_runtime_executor_inventory or
+    plugins_inspect_json_projects_runtime_executor_tools"` (`6 passed`),
     `ruff check`, and `mypy`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods

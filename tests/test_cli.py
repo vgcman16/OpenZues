@@ -8343,6 +8343,7 @@ def _patch_plugins_cli_services(
     *,
     gateway_config: GatewayConfigService,
     plugin_runtime_service: GatewayPluginRuntimeService | None = None,
+    installed_plugin_runtime_activation_adapter: object | None = None,
 ) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
@@ -8358,6 +8359,7 @@ def _patch_plugins_cli_services(
                 hermes_platform=FakeHermesPlatform(),
                 gateway_config=gateway_config,
                 plugin_runtime_service=plugin_runtime_service,
+                installed_plugin_runtime_activation_adapter=installed_plugin_runtime_activation_adapter,
             )
         )
 
@@ -9371,6 +9373,89 @@ def test_plugins_doctor_json_gates_manifest_tool_activation_on_auth_env(
         {"pluginId": "xai", "tools": ["x_search"]}
     ]
     assert available_payload["unavailableToolPlugins"] == []
+
+
+def test_plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-tools"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-tools",
+        contracts={"tools": ["installed.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-tools",
+                        "pluginName": "Installed Tools",
+                        "source": "installed-runtime",
+                        "names": ["installed.search"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    runtime_activation = payload["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "installed-tools", "tools": ["installed.search"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["installed-tools"]["imported"] is True
+    assert calls
+    assert [plugin["id"] for plugin in calls[0]["plugins"]] == ["installed-tools"]
 
 
 def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(

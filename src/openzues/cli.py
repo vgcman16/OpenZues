@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -89,7 +89,10 @@ from openzues.services.gateway_plugin_activation import (
     resolve_configured_channel_plugin_plan,
     resolve_manifest_activation_plans,
 )
-from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginRuntimeExecutorSpec,
+    build_plugin_runtime_executor_specs_from_active_registry,
+)
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
 from openzues.services.github import GitHubService
@@ -7582,7 +7585,11 @@ def _plugin_runtime_activation_payload(
                     )
             manifest_tool_plugins.append(entry)
     runtime_tool_map: dict[str, list[str]] = {}
-    for spec in _plugin_runtime_specs_from_services(services):
+    for spec in _plugin_runtime_specs_from_services(
+        services,
+        plugin_rows=manifest_plugins,
+        config_snapshot=config_snapshot,
+    ):
         plugin_id = _optional_cli_string(spec.plugin_id)
         if plugin_id is None:
             continue
@@ -13591,7 +13598,11 @@ async def _build_plugins_inventory_payload(
             for plugin in plugins
             if str(plugin.get("status") or "").strip() == "loaded"
         ]
-    runtime_specs = _plugin_runtime_specs_from_services(services)
+    runtime_specs = _plugin_runtime_specs_from_services(
+        services,
+        plugin_rows=plugins,
+        config_snapshot=config_snapshot,
+    )
     _mark_plugin_import_state(
         plugins,
         runtime_specs,
@@ -17028,7 +17039,12 @@ def _plugin_record_custom_hooks(plugin: dict[str, object]) -> list[dict[str, obj
 
 def _plugin_runtime_specs_from_services(
     services: object,
+    *,
+    plugin_rows: Sequence[Mapping[str, object]] = (),
+    config_snapshot: Mapping[str, object] | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    specs: list[GatewayPluginRuntimeExecutorSpec] = []
+    seen_tools: set[str] = set()
     for candidate in (
         getattr(services, "plugin_runtime_service", None),
         getattr(services, "gateway_plugin_runtime", None),
@@ -17038,20 +17054,93 @@ def _plugin_runtime_specs_from_services(
         catalog_specs = getattr(candidate, "catalog_specs", None)
         if not callable(catalog_specs):
             continue
-        specs = catalog_specs(include_owner_only=True)
-        if isinstance(specs, tuple):
-            return tuple(
-                spec
-                for spec in specs
-                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
-            )
-        if isinstance(specs, list):
-            return tuple(
-                spec
-                for spec in specs
-                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
-            )
+        raw_specs = catalog_specs(include_owner_only=True)
+        if isinstance(raw_specs, tuple | list):
+            _extend_plugin_runtime_specs(specs, seen_tools, raw_specs)
+            break
+    adapter_specs = _plugin_runtime_specs_from_installed_activation_adapter(
+        services,
+        plugin_rows=plugin_rows,
+        config_snapshot=config_snapshot or {},
+        existing_tool_names=seen_tools,
+    )
+    _extend_plugin_runtime_specs(specs, seen_tools, adapter_specs)
+    return tuple(specs)
+
+
+def _extend_plugin_runtime_specs(
+    specs: list[GatewayPluginRuntimeExecutorSpec],
+    seen_tools: set[str],
+    candidates: Iterable[object],
+) -> None:
+    for candidate in candidates:
+        if not isinstance(candidate, GatewayPluginRuntimeExecutorSpec):
+            continue
+        tool_key = candidate.tool.strip()
+        if not tool_key or tool_key in seen_tools:
+            continue
+        seen_tools.add(tool_key)
+        specs.append(candidate)
+
+
+def _plugin_runtime_specs_from_installed_activation_adapter(
+    services: object,
+    *,
+    plugin_rows: Sequence[Mapping[str, object]],
+    config_snapshot: Mapping[str, object],
+    existing_tool_names: Iterable[str],
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    if not plugin_rows:
+        return ()
+    adapter = None
+    for attr in (
+        "installed_plugin_runtime_activation_adapter",
+        "plugin_runtime_activation_adapter",
+        "installed_plugin_runtime_loader",
+        "plugin_runtime_loader",
+    ):
+        candidate = getattr(services, attr, None)
+        if candidate is not None:
+            adapter = candidate
+            break
+    if adapter is None:
+        return ()
+    context = {
+        "plugins": [dict(plugin) for plugin in plugin_rows],
+        "config": dict(config_snapshot),
+        "env": dict(os.environ),
+    }
+    result = _call_plugin_runtime_activation_adapter(adapter, context)
+    if result is None:
+        return ()
+    if isinstance(result, tuple | list):
+        return tuple(
+            spec
+            for spec in result
+            if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
+        )
+    if isinstance(result, Mapping):
+        registry = result.get("registry")
+        registry_payload = registry if isinstance(registry, Mapping) else result
+        return build_plugin_runtime_executor_specs_from_active_registry(
+            registry_payload,
+            existing_tool_names=existing_tool_names,
+            tool_allowlist=("group:plugins",),
+        )
     return ()
+
+
+def _call_plugin_runtime_activation_adapter(
+    adapter: object,
+    context: Mapping[str, object],
+) -> object | None:
+    for method_name in ("activate_installed_plugins", "activate", "load"):
+        method = getattr(adapter, method_name, None)
+        if callable(method):
+            return method(dict(context))
+    if callable(adapter):
+        return adapter(dict(context))
+    return None
 
 
 def _plugin_runtime_tool_entries(
