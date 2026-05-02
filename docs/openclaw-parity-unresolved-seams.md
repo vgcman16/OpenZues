@@ -341,7 +341,7 @@ inspect/diagnostics marks non-bundle plugin rows as `imported=true` when the
 plugin module was evaluated, even if the final plugin status is `error`.
 Verified on 2026-05-02 with the focused runtime inspect error-import test,
 adjacent loader-error/workspace-status proof, `ruff check`, and `mypy`;
-checkpoint pending.
+checkpoint in `cc2da90c`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -5097,7 +5097,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused runtime inspect error-import test, adjacent
   loader-error/workspace-status proof, `ruff check`, and `mypy`; checkpoint
-  pending.
+  in `cc2da90c`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

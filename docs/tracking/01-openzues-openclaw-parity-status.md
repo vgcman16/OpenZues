@@ -194,7 +194,7 @@ may lag behind this tracker.
 
 - [x] Errored runtime-imported plugin projection for runtime diagnostics and
   inspect paths.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `cc2da90c`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -396,8 +396,8 @@ may lag behind this tracker.
     in `83146bc1`, plugin list human enabled label checkpointed in
     `bc362484`, plugin list human enabled count checkpointed in `cc9983c3`,
     manifest load-path activation-state projection checkpointed in
-    `54bf33aa`, and errored runtime-imported plugin projection verified
-    pending checkpoint, but deeper module import/runtime activation remains.
+    `54bf33aa`, and errored runtime-imported plugin projection checkpointed
+    in `cc2da90c`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Errored runtime-imported plugin projection.
@@ -405,7 +405,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/status.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `cc2da90c`.
   - Weight: 1
   - Last verified: 2026-05-02, focused runtime inspect error-import test (`1
     passed`), adjacent loader-error/workspace-status proof (`7 passed`),

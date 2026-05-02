@@ -8950,7 +8950,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Errored runtime-imported plugin projection is now landed for OpenClaw's
   diagnostics-loaded status path: runtime inspect/diagnostics marks non-bundle
   plugin rows as `imported=true` when the module was evaluated even if the
-  final status is `error`. Checkpoint pending.
+  final status is `error`. Checkpointed in `cc2da90c`.
 - Progress estimates are now roughly 56.6% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
