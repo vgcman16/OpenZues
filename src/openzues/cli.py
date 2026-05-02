@@ -18314,14 +18314,17 @@ def _plugin_config_string_set(
     }
 
 
-def _plugin_config_slot_values(plugins_config: dict[str, object]) -> set[str]:
+def _plugin_config_slot_reason(
+    plugins_config: dict[str, object],
+    plugin_id: str,
+) -> str | None:
     slots = plugins_config.get("slots")
     slot_payload = slots if isinstance(slots, dict) else {}
-    return {
-        text
-        for key in ("memory", "contextEngine")
-        if (text := _optional_cli_string(slot_payload.get(key))) is not None
-    }
+    if _optional_cli_string(slot_payload.get("memory")) == plugin_id:
+        return "selected memory slot"
+    if _optional_cli_string(slot_payload.get("contextEngine")) == plugin_id:
+        return "selected context engine slot"
+    return None
 
 
 def _plugin_configured_record_status(
@@ -18336,6 +18339,8 @@ def _plugin_configured_record_status(
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     if entry_payload.get("enabled") is False:
         return "disabled"
+    if _plugin_config_slot_reason(plugins_config, plugin_id) is not None:
+        return "loaded"
     allow_values = _plugin_config_string_set(plugins_config, "allow")
     if allow_values and plugin_id not in allow_values:
         return "disabled"
@@ -18350,10 +18355,11 @@ def _plugin_activation_state_payload(
 ) -> dict[str, object]:
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     allow_values = _plugin_config_string_set(plugins_config, "allow")
+    slot_reason = _plugin_config_slot_reason(plugins_config, plugin_id)
     explicitly_enabled = (
         entry_payload.get("enabled") is True
         or plugin_id in allow_values
-        or plugin_id in _plugin_config_slot_values(plugins_config)
+        or slot_reason is not None
     )
     activated = status == "loaded"
     source = "explicit" if activated and explicitly_enabled else "default"
@@ -18370,6 +18376,8 @@ def _plugin_activation_state_payload(
         activated = False
         source = "disabled"
         reason = "disabled in config"
+    elif activated and slot_reason is not None:
+        reason = slot_reason
     elif allow_values and plugin_id not in allow_values:
         activated = False
         source = "disabled"

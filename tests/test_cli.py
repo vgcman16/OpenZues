@@ -6463,6 +6463,60 @@ def test_plugins_list_json_keeps_installed_plugin_allowlist_authoritative(
     assert plugins["frontend-design"]["activationReason"] == "not in allowlist"
 
 
+def test_plugins_list_json_projects_installed_plugin_slot_activation_reason(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "memory-core"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["other-plugin"],
+                    "slots": {"memory": "memory-core"},
+                    "installs": {
+                        "memory-core": {
+                            "source": "marketplace",
+                            "installPath": str(plugin_dir),
+                            "version": "0.2.0",
+                        }
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["memory-core"]["status"] == "loaded"
+    assert plugins["memory-core"]["activated"] is True
+    assert plugins["memory-core"]["explicitlyEnabled"] is True
+    assert plugins["memory-core"]["activationSource"] == "explicit"
+    assert plugins["memory-core"]["activationReason"] == "selected memory slot"
+
+
 def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
     tmp_path,
     monkeypatch,

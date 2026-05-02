@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~54.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.5% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -34,6 +34,7 @@ Current percentage rollup:
   projection, plugin inspect runtime-inspection flag, missing-target static
   preflight, target-scoped runtime inventory, and installed plugin
   activation-state projection, installed plugin allowlist activation guard,
+  installed plugin slot activation reason,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -53,7 +54,8 @@ Current percentage rollup:
   registry inspect/refresh persistence, plugin list registry-source projection,
   plugin inspect runtime-inspection flag, missing-target static preflight, and
   target-scoped runtime inventory, installed plugin activation-state
-  projection, installed plugin allowlist activation guard,
+  projection, installed plugin allowlist activation guard, installed plugin
+  slot activation reason,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -171,6 +173,13 @@ config/install-backed rows outside the allowlist project `status="disabled"`,
 and `activationReason="not in allowlist"`. Verified on 2026-05-02 with the
 focused installed allowlist activation CLI test, adjacent plugin config/install
 list and doctor proof, `ruff check`, and `mypy`; checkpointed in `73089117`.
+Installed plugin slot activation reasons now mirror OpenClaw's explicit
+`plugins.slots.memory` and `plugins.slots.contextEngine` activation path from
+`src/plugins/config-activation-shared.ts`: slot-selected config/install-backed
+rows activate before the allowlist guard and project upstream reason text such
+as `selected memory slot`. Verified on 2026-05-02 with the focused installed
+slot activation CLI test, adjacent plugin config/install list and doctor proof,
+`ruff check`, and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4746,6 +4755,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%. Verified with the focused installed allowlist activation CLI test,
   adjacent plugin config/install list and doctor proof, `ruff check`, and
   `mypy`; checkpointed in `73089117`.
+- Closed the installed plugin slot activation reason seam from OpenClaw
+  `src/plugins/config-activation-shared.ts`,
+  `src/plugins/config-state.test.ts`, `src/plugins/loader-records.ts`, and
+  `src/plugins/status.ts`: native config/install-backed plugin rows now treat
+  memory/context-engine slot selection as explicit activation before the
+  allowlist guard and project upstream reason text such as
+  `selected memory slot`. Repo-wide parity is now estimated at ~54.5%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused installed slot activation CLI test, adjacent plugin
+  config/install list and doctor proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
