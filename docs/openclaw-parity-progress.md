@@ -8907,7 +8907,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin list human enabled counts are now landed for OpenClaw's list command
   surface: human `plugins list --verbose` renders `Plugins (enabled/total
   enabled)` instead of `loaded`, using explicit `enabled` fields when present
-  and status fallback for native OpenZues records. Checkpoint pending.
+  and status fallback for native OpenZues records. Checkpointed in `cc9983c3`.
 - Progress estimates are now roughly 56.4% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

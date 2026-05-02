@@ -186,7 +186,7 @@ may lag behind this tracker.
 
 - [x] Plugin list human enabled count, rendering the header count as
   `Plugins (enabled/total enabled)`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `cc9983c3`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -386,15 +386,15 @@ may lag behind this tracker.
     plugin inspect human header/bundle-format labels checkpointed in
     `df4d586c`, plugin list verbose activation/import state checkpointed
     in `83146bc1`, plugin list human enabled label checkpointed in
-    `bc362484`, and plugin list human enabled count verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    `bc362484`, and plugin list human enabled count checkpointed in
+    `cc9983c3`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin list human enabled count.
   - Source: `openclaw-main/src/cli/plugins-list-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `cc9983c3`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin list runtime-inventory test (`1
     passed`), adjacent plugin list/runtime proof (`6 passed`), `ruff check`,
