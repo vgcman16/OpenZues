@@ -4575,7 +4575,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   context plus split media behavior. Repo-wide parity is now estimated at
   ~53.5%; active gateway/session/tool-contract parity is ~99.0%. Verified with
   focused and adjacent WhatsApp native route tests, `ruff check`, and `mypy`;
-  checkpoint pending.
+  checkpointed in `05c4f0fc`.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.

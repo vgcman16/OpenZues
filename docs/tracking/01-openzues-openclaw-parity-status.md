@@ -101,7 +101,7 @@ may lag behind this tracker.
 
 - [x] WhatsApp provider-native document sends with OpenClaw-shaped filename
   derivation from outbound media URLs, including reply-context preservation.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `05c4f0fc`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn

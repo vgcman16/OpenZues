@@ -8242,7 +8242,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - WhatsApp provider-native document filename parity is now landed for direct
   route-backed sends: document media includes a decoded filename derived from
   the media URL path, with `file` as fallback, and reply context remains in the
-  Cloud API payload. Checkpoint pending.
+  Cloud API payload. Checkpointed in `05c4f0fc`.
 - Progress estimates are now roughly 53.5% repo-wide and ~99.0% for the active
   gateway/session/tool-contract family after this WhatsApp provider slice.
 - Verified the WhatsApp document filename slice with a focused WhatsApp
