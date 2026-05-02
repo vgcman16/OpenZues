@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.0% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The WhatsApp provider-native document filename parity slice is checkpointed in
-`05c4f0fc`. Any follow-up changes should target the next queue head only:
+The Discord provider-native media iteration parity slice is verified locally
+and awaiting checkpoint. Any follow-up changes should target the next queue
+head only:
 
 - `src/openzues/services/ops_mesh.py`
 - `tests/test_ops_mesh.py`
@@ -50,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp document filename checkpointed in `05c4f0fc` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration verified locally | Repo-wide +0.1%, active gateway/method +0.1% | Checkpoint, then continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -269,6 +270,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
     "whatsapp_native_route or whatsapp_media or whatsapp_reply_document or
     whatsapp_gif_video or send_direct_channel_poll_uses_whatsapp"` (`5
+    passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001E` Discord native media iteration
+  - Source: `openclaw-main/src/channels/plugins/outbound/direct-text-media.ts`,
+    `openclaw-main/src/plugin-sdk/reply-payload.ts`, and
+    `openclaw-main/extensions/discord/src/outbound-payload.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: Discord route-backed media sends use the shared OpenClaw media
+    sequence contract: send one webhook message per media URL, keep text only
+    on the first media send, return the final message id, preserve ordered
+    message ids in provider metadata, and keep reply/silent/thread options on
+    each provider call.
+  - Evidence required: focused Discord native media route test, adjacent
+    Discord native send/reply/thread/poll route tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused Discord media route tests (`2
+    passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "discord_native_route or discord_media or discord_thread_query or
+    discord_reply_and_silent or send_direct_channel_poll_uses_discord"` (`5
     passed`), `ruff check`, and `mypy`.
 
 ## Canonical Checklist Format

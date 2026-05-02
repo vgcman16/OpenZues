@@ -15523,7 +15523,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_native_
         (
             "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
             {
-                "content": "Ship native Discord parity.\n\nMedia:\n1. https://example.com/discord.png",
+                "content": "Ship native Discord parity.",
                 "embeds": [{"image": {"url": "https://example.com/discord.png"}}],
             },
         )
@@ -15537,6 +15537,97 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_native_
         "channelId": "987654321",
         "mediaUrls": ["https://example.com/discord.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_iterates_discord_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-discord-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Discord Native Media Provider",
+        kind="discord",
+        target="https://discord.com/api/webhooks/webhook-id/webhook-token",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "discord",
+            "account_id": "discord-webhook",
+            "peer_kind": "channel",
+            "peer_id": "channel:987654321",
+        },
+    )
+    discord_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        discord_posts.append((target, payload))
+        return {
+            "id": f"discord-media-{len(discord_posts)}",
+            "channel_id": "987654321",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="discord",
+        to="channel:987654321",
+        message="Ship the Discord media bundle.",
+        media_urls=[
+            "https://example.com/one.png",
+            "https://example.com/two.png",
+        ],
+        account_id="discord-webhook",
+        idempotency_key="idem-native-discord-media",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "discord-media-2"
+    assert result["mediaUrls"] == [
+        "https://example.com/one.png",
+        "https://example.com/two.png",
+    ]
+    assert discord_posts == [
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "Ship the Discord media bundle.",
+                "embeds": [{"image": {"url": "https://example.com/one.png"}}],
+            },
+        ),
+        (
+            "https://discord.com/api/webhooks/webhook-id/webhook-token?wait=true",
+            {
+                "content": "",
+                "embeds": [{"image": {"url": "https://example.com/two.png"}}],
+            },
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "discord-media-2"
 
 
 @pytest.mark.asyncio

@@ -257,6 +257,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "bluebubbles",
     "line",
     "matrix",
+    "discord",
     "slack",
     "whatsapp",
     "zalo",
@@ -18554,10 +18555,53 @@ class OpsMeshService:
             text = str(event.get("message") or "").strip()
             payload = {"content": text[:2000] if text else ""}
             if media_urls:
-                payload["embeds"] = [
-                    {"image": {"url": media_url}}
-                    for media_url in media_urls[:10]
-                ]
+                if len(media_urls) > 1:
+                    message_ids: list[str] = []
+                    delivered_channel = fallback_channel
+                    for index, media_url in enumerate(media_urls):
+                        media_payload: dict[str, Any] = {
+                            "content": text[:2000] if index == 0 and text else "",
+                            "embeds": [{"image": {"url": media_url}}],
+                        }
+                        if silent is True:
+                            media_payload["flags"] = int(media_payload.get("flags") or 0) | (
+                                1 << 12
+                            )
+                        if reply_to_id:
+                            media_payload["message_reference"] = {
+                                "message_id": reply_to_id,
+                                "fail_if_not_exists": False,
+                            }
+                        media_result = self._post_json_webhook(
+                            _discord_webhook_url(
+                                str(route.get("target") or ""),
+                                thread_id=thread_id,
+                            ),
+                            media_payload,
+                        )
+                        if not isinstance(media_result, dict):
+                            raise RuntimeError(
+                                "Discord webhook returned a non-JSON response."
+                            )
+                        message_id = _discord_message_id(media_result)
+                        if message_id is None:
+                            raise RuntimeError(
+                                "Discord webhook response did not include a message id."
+                            )
+                        message_ids.append(message_id)
+                        delivered_channel = _discord_channel_id(
+                            media_result,
+                            delivered_channel,
+                        )
+                    return {
+                        "runtime": "native-provider-backed",
+                        "messageId": message_ids[-1],
+                        "chatId": delivered_channel,
+                        "channelId": delivered_channel,
+                        "messageIds": message_ids,
+                        "mediaUrls": media_urls,
+                    }
+                payload["embeds"] = [{"image": {"url": media_urls[0]}}]
         if silent is True:
             payload["flags"] = int(payload.get("flags") or 0) | (1 << 12)
         if reply_to_id and event_type == "gateway/send":

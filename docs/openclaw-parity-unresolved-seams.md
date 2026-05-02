@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.6% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~99.0% of the
+- The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,8 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~99.0% after the
-  latest WhatsApp provider-native document filename route slice.
+- The gateway session/tool-contract family is estimated at ~99.1% after the
+  latest Discord provider-native media iteration route slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -4576,6 +4576,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~53.5%; active gateway/session/tool-contract parity is ~99.0%. Verified with
   focused and adjacent WhatsApp native route tests, `ruff check`, and `mypy`;
   checkpointed in `05c4f0fc`.
+- Closed the Discord provider-native media iteration seam from OpenClaw
+  `src/channels/plugins/outbound/direct-text-media.ts`,
+  `src/plugin-sdk/reply-payload.ts`, and
+  `extensions/discord/src/outbound-payload.ts`: route-backed Discord media
+  sends now follow the shared media sequence contract, sending one webhook
+  message per media URL, carrying text only on the first send, preserving
+  ordered provider `messageIds`, and returning the final id as `messageId`.
+  Repo-wide parity is now estimated at ~53.6%; active
+  gateway/session/tool-contract parity is ~99.1%. Verified with focused and
+  adjacent Discord native route tests, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.
