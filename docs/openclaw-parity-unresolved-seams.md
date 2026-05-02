@@ -5389,7 +5389,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor plus CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused resolved auto-enabled config load-context test,
   adjacent activation context/runtime transform/bundled auto-enable proof,
-  `ruff check`, and `mypy`; checkpoint pending.
+  `ruff check`, and `mypy`; checkpointed in `5cfbf4fe`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially bundled package plugin-sdk
   import/runtime activation. The provider-native adapter breadth queue remains

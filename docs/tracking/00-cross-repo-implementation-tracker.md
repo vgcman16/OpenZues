@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The auto-enabled runtime resolved-config slice is verified and pending
-checkpoint. Any follow-up changes should target the next queue head only:
+The auto-enabled runtime resolved-config slice is checkpointed in `5cfbf4fe`.
+Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `tests/test_cli.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Auto-enabled runtime resolved config verified pending checkpoint | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Auto-enabled runtime resolved config checkpointed in `5cfbf4fe` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1474,7 +1474,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
   - Evidence required: focused resolved auto-enabled config load-context test,
     adjacent activation context/runtime transform/bundled auto-enable tests,
     ruff, mypy
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `5cfbf4fe`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config

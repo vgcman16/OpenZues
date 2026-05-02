@@ -146,7 +146,7 @@ may lag behind this tracker.
 - [x] Auto-enabled runtime resolved config, preserving OpenClaw's post-auto
   enable `config` snapshot while keeping `activationSourceConfig` raw for
   activation adapter loads.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `5cfbf4fe`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON

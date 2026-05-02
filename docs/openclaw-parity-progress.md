@@ -9493,7 +9493,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   receive raw config as `activationSourceConfig` and a resolved `config`
   snapshot that materializes auto-enabled bundled channel plugins by setting
   `channels.<id>.enabled` and adding the plugin id to restrictive
-  `plugins.allow` lists. Checkpoint pending.
+  `plugins.allow` lists. Checkpoint in `5cfbf4fe`.
 - Progress estimates are now roughly 59.0% repo-wide and 99.5% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
