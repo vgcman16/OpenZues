@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The source plugin-SDK subpath alias slice is verified and awaiting checkpoint commit.
+The source plugin-SDK subpath alias slice is checkpointed in `55e1fb28`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Source plugin-SDK subpath aliases verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled/source plugin-sdk import/runtime activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Source plugin-SDK subpath aliases checkpointed in `55e1fb28` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled/source plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1548,7 +1548,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     native activation adapters to resolve source runtime shims.
   - Evidence required: focused source SDK alias activation-adapter test,
     adjacent SDK alias/runtime-entry tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `55e1fb28`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter

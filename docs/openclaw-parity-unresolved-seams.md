@@ -5470,8 +5470,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   the active gateway/session/tool-contract family remains estimated at ~99.9%,
   and runtime/CLI/doctor plus CLI/operator-control bounded paths remain
   ~99.9%. Verified with the focused source plugin-SDK alias pytest, adjacent
-  plugin SDK/runtime-entry proof, `ruff check`, and `mypy`; checkpoint pending
-  commit.
+  plugin SDK/runtime-entry proof, `ruff check`, and `mypy`; checkpointed in
+  `55e1fb28`.
 - Next repo-wide queue head: continue deeper plugin runtime import/activation
   breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.

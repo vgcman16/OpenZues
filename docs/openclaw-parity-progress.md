@@ -9595,7 +9595,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   project `pluginSdkResolution="src"`, `pluginSdkSourceRoot`, and a
   `pluginSdkAliasMap` containing both `openclaw/plugin-sdk/<subpath>` and
   `@openclaw/plugin-sdk/<subpath>` aliases for native activation adapters.
-  Checkpoint pending commit.
+  Checkpointed in `55e1fb28`.
 - Progress estimates are now roughly 59.5% repo-wide and 99.9% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the plugin queue

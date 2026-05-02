@@ -159,7 +159,7 @@ may lag behind this tracker.
 
 - [x] Source plugin-SDK subpath alias context, preserving source/git-style
   bundled plugin SDK alias maps for native activation adapters.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `55e1fb28`
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -552,7 +552,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/sdk-alias.test.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `55e1fb28`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
