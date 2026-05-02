@@ -6337,6 +6337,10 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
             "description": "Installed marketplace plugin.",
             "capabilities": [],
             "parityStatus": "configured",
+            "activated": True,
+            "explicitlyEnabled": True,
+            "activationSource": "explicit",
+            "activationReason": "enabled in config",
             "version": "0.2.0",
             "imported": False,
             "install": {
@@ -6349,6 +6353,60 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
             },
         }
     ]
+
+
+def test_plugins_list_json_projects_installed_plugin_activation_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "frontend-design"
+    plugin_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "enabled": False,
+                    "entries": {"frontend-design": {"enabled": True}},
+                    "installs": {
+                        "frontend-design": {
+                            "source": "marketplace",
+                            "installPath": str(plugin_dir),
+                            "version": "0.2.0",
+                        }
+                    },
+                },
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["frontend-design"]["status"] == "disabled"
+    assert plugins["frontend-design"]["activated"] is False
+    assert plugins["frontend-design"]["explicitlyEnabled"] is True
+    assert plugins["frontend-design"]["activationSource"] == "disabled"
+    assert plugins["frontend-design"]["activationReason"] == "plugins disabled"
 
 
 def test_plugins_list_json_discovers_openclaw_manifest_load_paths(

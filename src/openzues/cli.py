@@ -18290,6 +18290,100 @@ def _plugin_manifest_status(
     return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
 
 
+def _plugin_config_entry_payload(
+    plugins_config: dict[str, object],
+    plugin_id: str,
+) -> dict[str, object]:
+    entries = plugins_config.get("entries")
+    entry_records = entries if isinstance(entries, dict) else {}
+    entry = entry_records.get(plugin_id)
+    return entry if isinstance(entry, dict) else {}
+
+
+def _plugin_config_string_set(
+    plugins_config: dict[str, object],
+    key: str,
+) -> set[str]:
+    value = plugins_config.get(key)
+    if not isinstance(value, list):
+        return set()
+    return {
+        text
+        for item in value
+        if (text := _optional_cli_string(item)) is not None
+    }
+
+
+def _plugin_config_slot_values(plugins_config: dict[str, object]) -> set[str]:
+    slots = plugins_config.get("slots")
+    slot_payload = slots if isinstance(slots, dict) else {}
+    return {
+        text
+        for key in ("memory", "contextEngine")
+        if (text := _optional_cli_string(slot_payload.get(key))) is not None
+    }
+
+
+def _plugin_configured_record_status(
+    *,
+    plugin_id: str,
+    plugins_config: dict[str, object],
+) -> str:
+    if plugins_config.get("enabled") is False:
+        return "disabled"
+    if plugin_id in _plugin_config_string_set(plugins_config, "deny"):
+        return "disabled"
+    entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
+    if entry_payload.get("enabled") is False:
+        return "disabled"
+    return "loaded"
+
+
+def _plugin_activation_state_payload(
+    *,
+    plugin_id: str,
+    plugins_config: dict[str, object],
+    status: str,
+) -> dict[str, object]:
+    entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
+    allow_values = _plugin_config_string_set(plugins_config, "allow")
+    explicitly_enabled = (
+        entry_payload.get("enabled") is True
+        or plugin_id in allow_values
+        or plugin_id in _plugin_config_slot_values(plugins_config)
+    )
+    activated = status == "loaded"
+    source = "explicit" if activated and explicitly_enabled else "default"
+    reason: str | None = None
+    if plugins_config.get("enabled") is False:
+        activated = False
+        source = "disabled"
+        reason = "plugins disabled"
+    elif plugin_id in _plugin_config_string_set(plugins_config, "deny"):
+        activated = False
+        source = "disabled"
+        reason = "blocked by denylist"
+    elif entry_payload.get("enabled") is False:
+        activated = False
+        source = "disabled"
+        reason = "disabled in config"
+    elif activated and entry_payload.get("enabled") is True:
+        reason = "enabled in config"
+    elif activated and plugin_id in allow_values:
+        reason = "selected in allowlist"
+    elif not activated:
+        source = "disabled"
+
+    payload: dict[str, object] = {
+        "activated": activated,
+        "explicitlyEnabled": explicitly_enabled,
+        "activationSource": source,
+    }
+    if reason is not None:
+        payload["activationReason"] = reason
+    return payload
+
+
 def _plugin_record_from_openclaw_manifest(
     manifest_path: Path,
     *,
@@ -18496,8 +18590,10 @@ def _plugin_records_from_config_snapshot(
         install_path = _optional_cli_string(install_payload.get("installPath"))
         source_path = _optional_cli_string(install_payload.get("sourcePath"))
         version = _optional_cli_string(install_payload.get("version"))
-        enabled = entry_payload.get("enabled")
-        status = "disabled" if enabled is False else "loaded"
+        status = _plugin_configured_record_status(
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+        )
         description = (
             f"Installed {install_source} plugin."
             if install_source is not None
@@ -18514,6 +18610,13 @@ def _plugin_records_from_config_snapshot(
             "capabilities": [],
             "parityStatus": "configured",
         }
+        record.update(
+            _plugin_activation_state_payload(
+                plugin_id=plugin_id,
+                plugins_config=plugins_config,
+                status=status,
+            )
+        )
         if version is not None:
             record["version"] = version
         if install_payload:
@@ -18526,10 +18629,27 @@ def _plugin_records_from_config_snapshot(
         existing = records_by_id.get(plugin_id)
         if existing is not None:
             merged = dict(existing)
-            if entry_payload.get("enabled") is False:
-                merged["status"] = "disabled"
-            elif entry_payload.get("enabled") is True or install_payload:
-                merged["status"] = "loaded"
+            status = (
+                _plugin_configured_record_status(
+                    plugin_id=plugin_id,
+                    plugins_config=plugins_config,
+                )
+                if install_payload
+                else _plugin_manifest_status(
+                    merged,
+                    plugin_id=plugin_id,
+                    plugins_config=plugins_config,
+                    config_snapshot=snapshot,
+                )
+            )
+            merged["status"] = status
+            merged.update(
+                _plugin_activation_state_payload(
+                    plugin_id=plugin_id,
+                    plugins_config=plugins_config,
+                    status=status,
+                )
+            )
             if version is not None:
                 merged["version"] = version
             if install_payload:
