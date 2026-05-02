@@ -9263,10 +9263,148 @@ def test_plugins_install_preferred_clawhub_not_found_falls_through_to_npm_bounda
 
     assert calls == [{"spec": "clawhub:@openclaw/missing", "mode": "install"}]
     assert result.exit_code == 1
-    assert (
-        "Native plugin install currently supports local marketplace installs via --marketplace."
-        in result.stderr
+    assert "npm plugin install runtime is unavailable." in result.stderr
+
+
+def test_plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
     )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "plugins" / "npm" / "demo"
+    install_dir.mkdir(parents=True)
+    clawhub_calls: list[dict[str, object]] = []
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            clawhub_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "npmResolution": {
+                    "resolvedName": "@openclaw/demo",
+                    "resolvedVersion": "1.2.3",
+                    "resolvedSpec": "@openclaw/demo@1.2.3",
+                    "integrity": "sha512-demo",
+                    "shasum": "demo-shasum",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", "@openclaw/demo", "--pin", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert clawhub_calls == [{"spec": "clawhub:@openclaw/demo", "mode": "install"}]
+    assert npm_calls == [{"spec": "@openclaw/demo", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["source"] == "npm"
+    assert payload["pluginId"] == "demo"
+    assert payload["install"]["source"] == "npm"
+    assert payload["install"]["spec"] == "@openclaw/demo@1.2.3"
+    assert payload["install"]["installPath"] == str(install_dir)
+    assert payload["install"]["version"] == "1.2.3"
+    assert payload["install"]["resolvedName"] == "@openclaw/demo"
+    assert payload["install"]["resolvedVersion"] == "1.2.3"
+    assert payload["install"]["resolvedSpec"] == "@openclaw/demo@1.2.3"
+    assert payload["install"]["integrity"] == "sha512-demo"
+    assert payload["install"]["shasum"] == "demo-shasum"
+    assert payload["install"]["resolvedAt"] == "2026-05-01T00:00:00Z"
+    assert payload["notice"] == "Pinned npm install record to @openclaw/demo@1.2.3."
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["demo"]
+    assert stored["plugins"]["entries"]["demo"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@openclaw/demo@1.2.3"
+    assert install["resolvedSpec"] == "@openclaw/demo@1.2.3"
+    assert isinstance(install["installedAt"], str)
+
+
+def test_plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/demo", "--json"])
+
+    assert result.exit_code == 1
+    assert "npm plugin install runtime is unavailable." in result.stderr
 
 
 def test_plugins_install_json_resolves_known_marketplace_shortcut(

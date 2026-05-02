@@ -9326,6 +9326,9 @@ def _emit_plugins_install(payload: dict[str, object], *, json_output: bool) -> N
     warning = _optional_cli_string(payload.get("warning"))
     if warning is not None:
         typer.echo(warning)
+    notice = _optional_cli_string(payload.get("notice"))
+    if notice is not None:
+        typer.echo(notice)
     plugin_id = str(payload.get("pluginId") or "").strip()
     install = payload.get("install")
     install_payload = install if isinstance(install, dict) else {}
@@ -12951,6 +12954,110 @@ async def _build_plugins_clawhub_install_payload(
         "hash": result_payload.get("hash"),
         "restart": result_payload.get("restart") or "gateway",
     }
+
+
+async def _call_cli_npm_plugin_installer(
+    services: CliServices,
+    *,
+    spec: str,
+    force: bool,
+) -> dict[str, object]:
+    installer = getattr(services, "plugin_npm_installer", None)
+    install = getattr(installer, "install", None)
+    if not callable(install):
+        raise RuntimeError("npm plugin install runtime is unavailable.")
+    result = install(spec=spec, mode="update" if force else "install")
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        raise RuntimeError("npm plugin install runtime returned an invalid result.")
+    return result
+
+
+def _resolve_cli_pinned_npm_record_spec(
+    *,
+    raw_spec: str,
+    pin: bool,
+    resolved_spec: str | None,
+) -> tuple[str, str | None, str | None]:
+    if not pin:
+        return raw_spec, None, None
+    if resolved_spec is None:
+        return (
+            raw_spec,
+            "Could not resolve exact npm version for --pin; storing original npm spec.",
+            None,
+        )
+    return (
+        resolved_spec,
+        None,
+        f"Pinned npm install record to {resolved_spec}.",
+    )
+
+
+async def _build_plugins_npm_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    force: bool,
+    pin: bool,
+) -> dict[str, object]:
+    if _parse_cli_registry_npm_spec(raw_spec) is None:
+        raise ValueError(f"unsupported npm spec: {raw_spec}")
+    result = await _call_cli_npm_plugin_installer(
+        services,
+        spec=raw_spec,
+        force=force,
+    )
+    if result.get("ok") is False:
+        raise ValueError(str(result.get("error") or "npm plugin install failed."))
+    plugin_id = _optional_cli_string(result.get("pluginId"))
+    install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
+        result.get("installPath")
+    )
+    if plugin_id is None:
+        raise RuntimeError("npm plugin install result is missing pluginId.")
+    if install_path is None:
+        raise RuntimeError("npm plugin install result is missing targetDir.")
+    resolution = result.get("npmResolution")
+    resolution_payload = resolution if isinstance(resolution, dict) else {}
+    resolved_spec = _optional_cli_string(resolution_payload.get("resolvedSpec"))
+    record_spec, warning, notice = _resolve_cli_pinned_npm_record_spec(
+        raw_spec=raw_spec,
+        pin=pin,
+        resolved_spec=resolved_spec,
+    )
+    result_payload = services.gateway_config.record_npm_plugin_install(
+        plugin_id=plugin_id,
+        install_path=install_path,
+        spec=record_spec,
+        version=_optional_cli_string(result.get("version")),
+        resolved_name=_optional_cli_string(resolution_payload.get("resolvedName")),
+        resolved_version=_optional_cli_string(resolution_payload.get("resolvedVersion")),
+        resolved_spec=resolved_spec,
+        integrity=_optional_cli_string(resolution_payload.get("integrity")),
+        shasum=_optional_cli_string(resolution_payload.get("shasum")),
+        resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+        force=force,
+    )
+    install = result_payload.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    payload: dict[str, object] = {
+        "ok": True,
+        "action": "install",
+        "pluginId": result_payload.get("pluginId") or plugin_id,
+        "source": "npm",
+        "install": install_payload,
+        "loadPath": result_payload.get("loadPath"),
+        "path": result_payload.get("path"),
+        "hash": result_payload.get("hash"),
+        "restart": result_payload.get("restart") or "gateway",
+    }
+    if warning is not None:
+        payload["warning"] = warning
+    if notice is not None:
+        payload["notice"] = notice
+    return payload
 
 
 async def _build_plugins_bundled_install_payload(
@@ -19901,6 +20008,26 @@ def plugins_install_command(
             else:
                 _emit_plugins_install(payload, json_output=json_output)
                 return
+        if _parse_cli_registry_npm_spec(plugin_id) is not None:
+
+            async def _npm_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_npm_install_payload(
+                    services,
+                    raw_spec=plugin_id,
+                    force=force,
+                    pin=pin,
+                )
+
+            try:
+                payload = _run(_run_with_services(_npm_action))
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",
