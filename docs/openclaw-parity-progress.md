@@ -9209,7 +9209,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   native installed-plugin activation adapter: scoped runtime loads include
   `onlyPluginIds`, `workspaceDir`, and `activationSourceConfig`, matching the
   OpenClaw runtime loader's context contract while preserving target-scoped
-  inspect runtime tool projection. Checkpoint pending.
+  inspect runtime tool projection. Checkpoint in `0ebf7884`.
 - Progress estimates are now roughly 57.7% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper production module import and
