@@ -9044,11 +9044,18 @@ def test_plugins_inspect_all_json_includes_saved_install_records(
     monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
 
     result = runner.invoke(app, ["plugins", "inspect", "--all", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "frontend-design"])
 
     assert result.exit_code == 0, result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
     payload = json.loads(result.stdout)
     assert payload[0]["plugin"]["id"] == "frontend-design"
     assert payload[0]["install"] == install_record
+    assert "Install:" in human_result.stdout
+    assert "- Source: marketplace" in human_result.stdout
+    assert f"- Install path: {plugin_dir}" in human_result.stdout
+    assert "- Recorded version: 0.2.0" in human_result.stdout
+    assert "- Installed at: 2026-04-29T12:00:00Z" in human_result.stdout
 
 
 def test_plugins_inspect_json_projects_config_policy(tmp_path, monkeypatch) -> None:

@@ -12352,9 +12352,42 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         level = (_optional_cli_string(entry.get("level")) or "info").upper()
         diagnostic_lines.append(f"{level}: {message}")
     _emit_plugin_inspect_section("Diagnostics", diagnostic_lines)
+    _emit_plugin_inspect_section("Install", _plugin_inspect_install_lines(payload.get("install")))
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")
+
+
+def _plugin_inspect_install_lines(install: object) -> list[str]:
+    if not isinstance(install, dict):
+        return []
+    lines: list[str] = []
+    for key, label in (
+        ("source", "Source"),
+        ("spec", "Spec"),
+        ("sourcePath", "Source path"),
+        ("installPath", "Install path"),
+        ("version", "Recorded version"),
+        ("clawhubPackage", "ClawHub package"),
+        ("clawhubChannel", "ClawHub channel"),
+        ("clawpackSha256", "ClawPack sha256"),
+    ):
+        value = _optional_cli_string(install.get(key))
+        if value is not None:
+            lines.append(f"{label}: {value}")
+    spec_version = install.get("clawpackSpecVersion")
+    if spec_version is not None and not isinstance(spec_version, bool):
+        lines.append(f"ClawPack spec: {spec_version}")
+    manifest_sha = _optional_cli_string(install.get("clawpackManifestSha256"))
+    if manifest_sha is not None:
+        lines.append(f"ClawPack manifest sha256: {manifest_sha}")
+    size = install.get("clawpackSize")
+    if size is not None and not isinstance(size, bool):
+        lines.append(f"ClawPack size: {size} bytes")
+    installed_at = _optional_cli_string(install.get("installedAt"))
+    if installed_at is not None:
+        lines.append(f"Installed at: {installed_at}")
+    return lines
 
 
 def _emit_plugin_inspect_section(title: str, rows: Sequence[str]) -> None:
