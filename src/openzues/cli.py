@@ -13056,6 +13056,7 @@ async def _build_plugins_inventory_payload(
     *,
     enabled_only: bool,
     runtime_inspection: bool = False,
+    only_plugin_ids: Sequence[str] | None = None,
 ) -> dict[str, object]:
     view = await services.hermes_platform.get_doctor_view()
     view_payload = _model_payload(view)
@@ -13088,6 +13089,17 @@ async def _build_plugins_inventory_payload(
                 existing_ids.add(plugin_id)
     else:
         config_diagnostics = []
+    only_plugin_id_set: set[str] = set()
+    for raw_plugin_id in only_plugin_ids or ():
+        normalized_plugin_id = _optional_cli_string(raw_plugin_id)
+        if normalized_plugin_id is not None:
+            only_plugin_id_set.add(normalized_plugin_id)
+    if only_plugin_id_set:
+        plugins = [
+            plugin
+            for plugin in plugins
+            if _optional_cli_string(plugin.get("id")) in only_plugin_id_set
+        ]
     _normalize_bundled_plugin_reported_versions(
         plugins,
         host_version=_plugin_report_host_version(config_snapshot),
@@ -16332,6 +16344,7 @@ async def _build_plugin_inspect_payload(
             services,
             enabled_only=False,
             runtime_inspection=True,
+            only_plugin_ids=(normalized_id,),
         )
         runtime_plugin_rows, diagnostics = parse_inventory(runtime_inventory)
         plugin = _find_plugin_record(runtime_plugin_rows, normalized_id) or plugin

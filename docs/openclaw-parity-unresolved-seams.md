@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~54.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.2% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -31,8 +31,8 @@ Current percentage rollup:
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
   hook-pack npm install fallback, native manifest activation-planner reason projection,
   plugin registry inspect/refresh persistence, plugin list registry-source
-  projection, plugin inspect runtime-inspection flag and missing-target static
-  preflight,
+  projection, plugin inspect runtime-inspection flag, missing-target static
+  preflight, and target-scoped runtime inventory,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -50,8 +50,9 @@ Current percentage rollup:
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
   install fallback, native manifest activation planning reason projection, plugin
   registry inspect/refresh persistence, plugin list registry-source projection,
-  plugin inspect runtime-inspection flag plus missing-target static preflight,
-  active-registry executor projection, and runtime activation doctor posture;
+  plugin inspect runtime-inspection flag, missing-target static preflight, and
+  target-scoped runtime inventory, active-registry executor projection, and
+  runtime activation doctor posture;
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
@@ -143,6 +144,13 @@ entering the runtime-inspection path. Verified on 2026-05-02 with the focused
 missing-target runtime inspect CLI test, focused runtime inspect pair, adjacent
 plugin inspect/runtime inventory proof, `ruff check`, and `mypy`; checkpoint
 in `9a9e89f2`.
+Plugin inspect runtime target-scoped inventory now mirrors OpenClaw's
+`buildPluginDiagnosticsReport({ onlyPluginIds })` inspect behavior: once the
+static preflight confirms the target exists, native runtime-inspection
+inventory is filtered to the requested plugin id. Verified on 2026-05-02 with
+the focused scoped runtime inspect CLI test, focused runtime inspect trio,
+adjacent plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
+checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4687,6 +4695,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   missing-target runtime inspect CLI test, focused runtime inspect pair,
   adjacent plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
   checkpointed in `9a9e89f2`.
+- Closed the plugin inspect runtime target-scoped inventory seam from OpenClaw
+  `src/cli/plugins-cli.list.test.ts` and `src/plugins/status.ts`: after static
+  target preflight succeeds, native `plugins inspect <id> --runtime` now
+  filters runtime-inspection inventory to the requested plugin id, matching
+  the upstream `onlyPluginIds` diagnostics-report call shape. Repo-wide parity
+  is now estimated at ~54.2%; runtime/CLI/doctor and CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused scoped runtime inspect
+  CLI test, focused runtime inspect trio, adjacent plugin inspect/runtime
+  inventory proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

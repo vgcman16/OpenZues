@@ -8544,6 +8544,55 @@ def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatc
     assert runtime_flags == [False]
 
 
+def test_plugins_inspect_runtime_scopes_runtime_inventory_to_target(monkeypatch) -> None:
+    calls: list[tuple[bool, tuple[str, ...]]] = []
+
+    async def fake_inventory(
+        _services: object,
+        *,
+        enabled_only: bool,
+        runtime_inspection: bool = False,
+        only_plugin_ids: tuple[str, ...] | None = None,
+    ) -> dict[str, object]:
+        assert enabled_only is False
+        scoped_ids = tuple(only_plugin_ids or ())
+        calls.append((runtime_inspection, scoped_ids))
+        imported = runtime_inspection and scoped_ids == ("runtime-target",)
+        return {
+            "workspaceDir": None,
+            "plugins": [
+                {
+                    "id": "runtime-target",
+                    "name": "Runtime Target",
+                    "status": "loaded",
+                    "format": "openclaw",
+                    "source": "plugin://runtime-target",
+                    "origin": "config",
+                    "description": "Runtime target.",
+                    "capabilities": [],
+                    "parityStatus": "metadata",
+                    "imported": imported,
+                }
+            ],
+            "diagnostics": [],
+        }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace())
+
+    monkeypatch.setattr(cli_module, "_build_plugins_inventory_payload", fake_inventory)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "inspect", "runtime-target", "--runtime", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["plugin"]["imported"] is True
+    assert calls == [(False, ()), (True, ("runtime-target",))]
+
+
 def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) -> None:
     async def fake_inventory(
         _services: object,
