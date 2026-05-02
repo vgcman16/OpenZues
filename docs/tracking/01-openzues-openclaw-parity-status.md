@@ -158,7 +158,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human diagnostics section, rendering scoped diagnostic
   rows.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `667182c7`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -351,7 +351,7 @@ may lag behind this tracker.
     plugin inspect human MCP/LSP sections checkpointed in `6fc67848`, and
     plugin inspect human HTTP routes section checkpointed in `efef8270`, and
     plugin inspect human policy section checkpointed in `e0af8199`, and plugin
-    inspect human diagnostics section verified pending checkpoint, but deeper
+    inspect human diagnostics section checkpointed in `667182c7`, but deeper
     module import/runtime activation remains.
   - Weight: 5
 
@@ -359,7 +359,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `667182c7`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect scoped-diagnostics test
     (`1 passed`), adjacent plugin inspect proof (`8 passed`), `ruff check`,

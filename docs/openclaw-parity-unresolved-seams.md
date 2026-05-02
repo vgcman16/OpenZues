@@ -270,7 +270,7 @@ Plugin inspect human diagnostics section now mirrors OpenClaw's
 plugin-scoped diagnostics while excluding diagnostics for other plugins or
 global scope. Verified on 2026-05-02 with the focused scoped-diagnostics
 inspect CLI test, adjacent plugin inspect proof, `ruff check`, and `mypy`;
-checkpoint pending.
+checkpoint in `667182c7`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4953,7 +4953,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   other-plugin and global diagnostics. Repo-wide parity is now estimated at
   ~55.7%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
   ~99.9%. Verified with the focused scoped-diagnostics inspect CLI test,
-  adjacent plugin inspect proof, `ruff check`, and `mypy`; checkpoint pending.
+  adjacent plugin inspect proof, `ruff check`, and `mypy`; checkpoint in
+  `667182c7`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
