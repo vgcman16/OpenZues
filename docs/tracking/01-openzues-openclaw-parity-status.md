@@ -154,7 +154,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human policy section, rendering native inspect policy
   fields.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `e0af8199`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -346,7 +346,7 @@ may lag behind this tracker.
     `f2221877`, plugin inspect human tools section checkpointed in `5ac316c1`,
     plugin inspect human MCP/LSP sections checkpointed in `6fc67848`, and
     plugin inspect human HTTP routes section checkpointed in `efef8270`, and
-    plugin inspect human policy section verified pending checkpoint, but deeper
+    plugin inspect human policy section checkpointed in `e0af8199`, but deeper
     module import/runtime activation remains.
   - Weight: 5
 
@@ -354,7 +354,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `e0af8199`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect config-policy test (`1
     passed`), adjacent plugin inspect proof (`7 passed`), `ruff check`, and

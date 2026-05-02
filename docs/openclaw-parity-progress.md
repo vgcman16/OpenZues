@@ -8732,8 +8732,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect human policy section is now landed for OpenClaw's inspect
   detail surface: human `plugins inspect <id>` renders `Policy` rows for
   prompt-injection, conversation access, model override, and configured
-  allowed-model policy fields from the native inspect payload. Checkpoint
-  pending.
+  allowed-model policy fields from the native inspect payload. Checkpointed in
+  `e0af8199`.
 - Progress estimates are now roughly 55.6% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
