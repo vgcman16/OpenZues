@@ -18992,6 +18992,58 @@ def test_doctor_fix_runs_channel_plugin_repair_config(
     ]
 
 
+def test_doctor_json_reports_channel_mutable_allowlist_warnings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        async def collect_mutable_allowlist_warnings(
+            self,
+            **kwargs: object,
+        ) -> list[str]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            return [
+                "- channels.zalouser.groups: mutable group names need "
+                "dangerouslyAllowNameMatching=true.",
+            ]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "zalouser": {
+                    "enabled": True,
+                    "groups": {"team-name": {"allow": True}},
+                }
+            }
+        },
+        channel_doctor_adapters={"zalouser": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = (
+        "- channels.zalouser.groups: mutable group names need "
+        "dangerouslyAllowNameMatching=true."
+    )
+    assert payload["channelDoctor"]["status"] == "warning"
+    assert payload["channelDoctor"]["warnings"] == [warning]
+    assert warning in payload["warnings"]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "zalouser": {
+                        "enabled": True,
+                        "groups": {"team-name": {"allow": True}},
+                    }
+                }
+            }
+        }
+    ]
+
+
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
     monkeypatch,
 ) -> None:

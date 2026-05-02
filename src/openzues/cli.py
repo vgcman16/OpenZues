@@ -5362,6 +5362,26 @@ async def _doctor_channel_repair_mutation(
     }
 
 
+async def _doctor_channel_mutable_allowlist_warnings(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> list[str]:
+    collect = getattr(adapter, "collect_mutable_allowlist_warnings", None) or getattr(
+        adapter,
+        "collectMutableAllowlistWarnings",
+        None,
+    )
+    if not callable(collect):
+        return []
+    result = collect(cfg=snapshot)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, list):
+        return []
+    return [str(item) for item in result if str(item).strip()]
+
+
 async def _build_doctor_channel_doctor_payload(
     config_service: object | None,
     adapters: object | None,
@@ -5434,6 +5454,21 @@ async def _build_doctor_channel_doctor_payload(
                 "warnings": warnings,
                 "path": path,
             }
+    for channel_id in channel_ids:
+        adapter = _doctor_channel_adapter(adapters, channel_id)
+        if adapter is None:
+            continue
+        try:
+            warnings.extend(
+                await _doctor_channel_mutable_allowlist_warnings(
+                    adapter=adapter,
+                    snapshot=next_snapshot,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            warnings.append(
+                f"- channels.{channel_id} mutable allowlist doctor hook failed: {exc}"
+            )
     return {
         "status": "warning" if warnings else "ok",
         "summary": (
