@@ -10352,9 +10352,10 @@ def _emit_plugins_inventory(
         name = str(plugin.get("name") or plugin.get("id") or "").strip()
         plugin_id = str(plugin.get("id") or "").strip()
         status = str(plugin.get("status") or "").strip()
+        display_status = "enabled" if status == "loaded" else status
         format_name = str(plugin.get("format") or "openzues").strip()
         description = _first_text_line(plugin.get("description"), limit=72)
-        heading = f"- {name or plugin_id} {status} [{format_name}]".strip()
+        heading = f"- {name or plugin_id} {display_status} [{format_name}]".strip()
         if plugin_id and name and plugin_id != name:
             heading += f" ({plugin_id})"
         if description:

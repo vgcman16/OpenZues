@@ -8251,6 +8251,8 @@ def test_plugins_list_verbose_reports_runtime_executor_inventory(
     result = runner.invoke(app, ["plugins", "list", "--verbose"])
 
     assert result.exit_code == 0, result.stdout
+    assert "- native-runtime enabled [openclaw-native]" in result.stdout
+    assert "- native-runtime loaded [openclaw-native]" not in result.stdout
     assert "Runtime executors (2 registered, 1 owner-only)" in result.stdout
     assert "- native_runtime.search [native-runtime] source=registry" in result.stdout
     assert (

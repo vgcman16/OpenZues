@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~56.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~56.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -179,6 +179,10 @@ may lag behind this tracker.
 - [x] Plugin list verbose activation/import state, rendering activation and
   import metadata rows.
   - Status: checkpointed in `83146bc1`
+
+- [x] Plugin list human enabled label, rendering active registry rows as
+  `enabled` instead of leaking the internal `loaded` status label.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -376,9 +380,20 @@ may lag behind this tracker.
     inspect human compatibility warnings section checkpointed in `38b85a1a`,
     plugin inspect typed/custom hook sections checkpointed in `0a6e8bcd`, and
     plugin inspect human header/bundle-format labels checkpointed in
-    `df4d586c`, and plugin list verbose activation/import state checkpointed
-    in `83146bc1`, but deeper module import/runtime activation remains.
+    `df4d586c`, plugin list verbose activation/import state checkpointed
+    in `83146bc1`, and plugin list human enabled label verified pending
+    checkpoint, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin list human enabled label.
+  - Source: `openclaw-main/src/cli/plugins-list-format.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin list runtime-inventory test (`1
+    passed`), adjacent plugin list/runtime proof (`6 passed`), `ruff check`,
+    and `mypy`.
 
 - [x] Plugin list verbose activation/import state.
   - Source: `openclaw-main/src/cli/plugins-list-format.test.ts`

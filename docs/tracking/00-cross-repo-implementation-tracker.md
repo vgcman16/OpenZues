@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~56.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~56.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin list verbose activation/import state slice is checkpointed in
-`83146bc1`. Any follow-up changes should target the next queue head only:
+The plugin list human enabled-label slice is verified and awaiting a checkpoint
+hash. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin list verbose activation/import state checkpointed in `83146bc1` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin list human enabled label verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -793,6 +793,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     "plugins_list_json_projects_installed_plugin_activation_state or
     plugins_list_json_marks_runtime_executor_plugins_imported or
     plugins_list_verbose_reports_runtime_executor_inventory or
+    plugins_list_json_keeps_installed_plugin_allowlist_authoritative or
+    plugins_list_json_projects_installed_plugin_slot_activation_reason or
+    plugins_list_json_includes_saved_config_install_records"` (`6 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AB` plugin list human enabled label
+  - Source: `openclaw-main/src/cli/plugins-list-format.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human `plugins list --verbose` renders active registry entries
+    as `enabled` rather than leaking OpenZues' internal `loaded` status while
+    preserving JSON status fields and loaded counts.
+  - Evidence required: focused plugin list runtime-inventory test, adjacent
+    plugin list/runtime tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_verbose_reports_runtime_executor_inventory
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_list_verbose_reports_runtime_executor_inventory or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
     plugins_list_json_keeps_installed_plugin_allowlist_authoritative or
     plugins_list_json_projects_installed_plugin_slot_activation_reason or
     plugins_list_json_includes_saved_config_install_records"` (`6 passed`),
