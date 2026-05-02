@@ -744,13 +744,20 @@ def test_gateway_method_policy_covers_openclaw_talk_and_tts_handlers() -> None:
     assert extracted_methods == {
         "talk.config",
         "talk.mode",
+        "talk.realtime.relayAudio",
+        "talk.realtime.relayMark",
+        "talk.realtime.relayStop",
+        "talk.realtime.relayToolResult",
+        "talk.realtime.session",
         "talk.speak",
         "tts.status",
         "tts.enable",
         "tts.disable",
         "tts.convert",
         "tts.setProvider",
+        "tts.setPersona",
         "tts.providers",
+        "tts.personas",
     }
 
     assert {
@@ -759,6 +766,7 @@ def test_gateway_method_policy_covers_openclaw_talk_and_tts_handlers() -> None:
         if resolve_gateway_method_scope(method) == READ_GATEWAY_METHOD_SCOPE
     } == {
         "talk.config",
+        "tts.personas",
         "tts.providers",
         "tts.status",
     }
@@ -768,11 +776,17 @@ def test_gateway_method_policy_covers_openclaw_talk_and_tts_handlers() -> None:
         if resolve_gateway_method_scope(method) == WRITE_GATEWAY_METHOD_SCOPE
     } == {
         "talk.mode",
+        "talk.realtime.relayAudio",
+        "talk.realtime.relayMark",
+        "talk.realtime.relayStop",
+        "talk.realtime.relayToolResult",
+        "talk.realtime.session",
         "talk.speak",
         "tts.convert",
         "tts.disable",
         "tts.enable",
         "tts.setProvider",
+        "tts.setPersona",
     }
     assert {
         method

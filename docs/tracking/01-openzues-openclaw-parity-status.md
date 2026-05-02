@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~52.8% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.3% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~52.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.4% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -69,6 +69,11 @@ may lag behind this tracker.
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
   and `capability/infer tts personas` plus `set-persona` JSON output.
   - Status: checkpointed in `3819d03a`
+
+- [x] Realtime voice gateway methods for `talk.realtime.session`,
+  `relayAudio`, `relayMark`, `relayStop`, and `relayToolResult`, including
+  fakeable adapter dispatch and upstream-shaped unavailable boundaries.
+  - Status: verified; checkpoint commit pending
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -141,6 +146,21 @@ may lag behind this tracker.
     focused policy test (`1 passed`), focused CLI tests (`2 passed`),
     adjacent gateway TTS tests (`9 passed`), adjacent CLI TTS tests (`11
     passed`), adjacent API TTS tests (`6 passed`), `ruff check`, and `mypy`.
+
+- [x] Realtime voice gateway session and relay methods.
+  - Source: `openclaw-main/src/gateway/server-methods/talk.ts`,
+    `openclaw-main/src/gateway/protocol/schema/channels.ts`,
+    `openclaw-main/src/gateway/method-scopes.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Test: `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Status: verified; checkpoint commit pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused gateway realtime tests (`2 passed`),
+    focused talk/TTS policy proof (`2 passed`), adjacent gateway talk tests (`6
+    passed`), `ruff check`, and `mypy`. Broader policy selection exposed
+    unrelated existing gaps for `channels.stop` and `node.pair.remove`.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.

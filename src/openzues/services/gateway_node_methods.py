@@ -1400,6 +1400,7 @@ class GatewayNodeMethodService:
         system_presence_service: GatewaySystemPresenceService | None = None,
         talk_config_service: GatewayTalkConfigService | None = None,
         talk_mode_service: GatewayTalkModeService | None = None,
+        talk_realtime_service: object | None = None,
         tts_service: GatewayTtsService | None = None,
         tts_runtime_service: GatewayTtsRuntimeService | None = None,
         tools_catalog_service: GatewayToolsCatalogService | None = None,
@@ -1520,6 +1521,7 @@ class GatewayNodeMethodService:
             )
         self._talk_config_service = talk_config_service or GatewayTalkConfigService()
         self._talk_mode_service = talk_mode_service or GatewayTalkModeService()
+        self._talk_realtime_service = talk_realtime_service
         self._tts_service = tts_service or GatewayTtsService(
             config_loader=self._config_service.build_snapshot
             if self._config_service is not None
@@ -2770,6 +2772,81 @@ class GatewayNodeMethodService:
             ):
                 raise ValueError(f"missing scope: {TALK_SECRETS_GATEWAY_METHOD_SCOPE}")
             return self._talk_config_service.build_snapshot(include_secrets=include_secrets)
+
+        if resolved_method == "talk.realtime.session":
+            realtime_session_params = _talk_realtime_session_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="No realtime voice provider registered",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "create_session",
+                realtime_session_params,
+                unavailable_message="No realtime voice provider registered",
+            )
+
+        if resolved_method == "talk.realtime.relayAudio":
+            realtime_audio_params = _talk_realtime_relay_audio_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_audio",
+                realtime_audio_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
+        if resolved_method == "talk.realtime.relayMark":
+            realtime_mark_params = _talk_realtime_relay_mark_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_mark",
+                realtime_mark_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
+        if resolved_method == "talk.realtime.relayStop":
+            realtime_stop_params = _talk_realtime_relay_stop_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_stop",
+                realtime_stop_params,
+                unavailable_message="realtime relay unavailable",
+            )
+
+        if resolved_method == "talk.realtime.relayToolResult":
+            realtime_tool_params = _talk_realtime_relay_tool_result_params(payload)
+            if self._talk_realtime_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="realtime relay unavailable",
+                    status_code=503,
+                )
+            return await _call_talk_realtime_service(
+                self._talk_realtime_service,
+                "relay_tool_result",
+                realtime_tool_params,
+                unavailable_message="realtime relay unavailable",
+            )
 
         if resolved_method == "tts.status":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -17481,6 +17558,124 @@ def _validate_exact_keys(
     if unexpected:
         joined = ", ".join(unexpected)
         raise ValueError(f"{method} does not accept: {joined}")
+
+
+def _talk_realtime_session_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.session",
+        params,
+        allowed_keys=("sessionKey", "provider", "model", "voice"),
+    )
+    payload: dict[str, object] = {}
+    for key in ("sessionKey", "provider", "model", "voice"):
+        value = _optional_normalized_string(params.get(key), label=key)
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _talk_realtime_relay_audio_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayAudio",
+        params,
+        allowed_keys=("relaySessionId", "audioBase64", "timestamp"),
+    )
+    payload: dict[str, object] = {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        ),
+        "audioBase64": _require_non_empty_string(params.get("audioBase64"), label="audioBase64"),
+    }
+    timestamp = _optional_number(params.get("timestamp"), label="timestamp")
+    if timestamp is not None:
+        payload["timestamp"] = timestamp
+    return payload
+
+
+def _talk_realtime_relay_mark_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayMark",
+        params,
+        allowed_keys=("relaySessionId", "markName"),
+    )
+    payload: dict[str, object] = {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        )
+    }
+    mark_name = _optional_normalized_string(params.get("markName"), label="markName")
+    if mark_name is not None:
+        payload["markName"] = mark_name
+    return payload
+
+
+def _talk_realtime_relay_stop_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayStop",
+        params,
+        allowed_keys=("relaySessionId",),
+    )
+    return {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        )
+    }
+
+
+def _talk_realtime_relay_tool_result_params(params: dict[str, Any]) -> dict[str, object]:
+    _validate_exact_keys(
+        "talk.realtime.relayToolResult",
+        params,
+        allowed_keys=("relaySessionId", "callId", "result"),
+    )
+    if "result" not in params:
+        raise ValueError("result is required")
+    return {
+        "relaySessionId": _require_non_empty_string(
+            params.get("relaySessionId"),
+            label="relaySessionId",
+        ),
+        "callId": _require_non_empty_string(params.get("callId"), label="callId"),
+        "result": params.get("result"),
+    }
+
+
+async def _call_talk_realtime_service(
+    service: object,
+    method_name: str,
+    params: dict[str, object],
+    *,
+    unavailable_message: str,
+) -> dict[str, Any]:
+    method = getattr(service, method_name, None)
+    if not callable(method):
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message=unavailable_message,
+            status_code=503,
+        )
+    try:
+        result = method(params)
+        if isinstance(result, Awaitable):
+            result = await result
+    except GatewayNodeMethodError:
+        raise
+    except Exception as exc:
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message=str(exc).strip() or unavailable_message,
+            status_code=503,
+        ) from exc
+    if not isinstance(result, dict):
+        raise GatewayNodeMethodError(
+            code="UNAVAILABLE",
+            message=unavailable_message,
+            status_code=503,
+        )
+    return cast(dict[str, Any], result)
 
 
 def _require_non_empty_string(value: object, *, label: str) -> str:

@@ -3,8 +3,8 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~52.8% overall, with a reasonable band of ~48-57%.
-- Estimated active gateway/session/tool-contract family parity: ~98.3% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~52.9% overall, with a reasonable band of ~48-57%.
+- Estimated active gateway/session/tool-contract family parity: ~98.4% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
@@ -33,6 +33,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   status persona projection, config/fakeable persona descriptors, prefs-backed
   selected persona persistence, and JSON-capable `capability` / `infer` Typer
   commands for listing and setting personas.
+- Realtime voice gateway parity now includes `talk.realtime.session`,
+  `talk.realtime.relayAudio`, `talk.realtime.relayMark`,
+  `talk.realtime.relayStop`, and `talk.realtime.relayToolResult` over a
+  fakeable runtime adapter, with OpenClaw-shaped unavailable errors when no
+  realtime provider/relay runtime is wired.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -106,6 +111,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, and `mypy src\openzues\services\gateway_tts.py
   src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py src\openzues\cli.py`.
+- Realtime voice gateway methods now mirror OpenClaw's gateway method layer:
+  session creation and relay operations validate the same params, dispatch to
+  a registered native realtime adapter, return `{ok: true}` relay results, and
+  keep precise unavailable responses for missing provider/relay runtime.
+- Verified the realtime voice gateway slice with focused gateway tests (`2
+  passed`), focused talk/TTS policy tests (`2 passed`), adjacent `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "talk_realtime or talk_speak
+  or talk_config"` (`6 passed`), `ruff check
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`, and
+  `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`. A broader policy selection
+  exposed unrelated existing gaps for `channels.stop` and `node.pair.remove`.
 - Native configured ACP binding helpers now mirror OpenClaw's
   `persistent-bindings.types.ts` and `persistent-bindings.lifecycle.ts`
   key/record/parse/resolve/ensure contract: session keys use the
@@ -8088,6 +8107,16 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), focused policy test (`1 passed`), focused CLI tests (`2 passed`),
   adjacent gateway TTS tests (`9 passed`), adjacent CLI TTS tests (`11
   passed`), adjacent API TTS tests (`6 passed`), `ruff check`, and `mypy`.
+- Realtime voice gateway parity is now landed for OpenClaw's
+  `talk.realtime.session`, `relayAudio`, `relayMark`, `relayStop`, and
+  `relayToolResult` methods through a fakeable native realtime adapter with
+  upstream-shaped unavailable responses when no runtime is wired.
+- Progress estimates are now roughly 52.9% repo-wide and ~98.4% for the active
+  gateway/session/tool-contract family after this realtime voice gateway slice.
+- Verified the realtime voice gateway slice with focused gateway/policy proofs,
+  adjacent gateway talk tests (`6 passed`), `ruff check`, and `mypy`; a broader
+  policy sweep exposed unrelated existing `channels.stop` and
+  `node.pair.remove` gaps for the next queue.
 
 ## References
 

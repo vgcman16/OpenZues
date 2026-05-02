@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.9% overall, with a reasonable
   band of ~48-57%.
-- The active gateway/session/tool-contract family is estimated at ~98.3% of the
+- The active gateway/session/tool-contract family is estimated at ~98.4% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -106,6 +106,14 @@ unknown persona ids return the upstream invalid-persona error, and
 commands. Verified on 2026-05-02 with focused gateway, policy, and CLI tests,
 adjacent gateway/API/CLI TTS proofs, `ruff check`, and `mypy`; checkpointed in
 `3819d03a`.
+Realtime voice gateway methods now mirror OpenClaw's `talk.realtime.session`,
+`talk.realtime.relayAudio`, `talk.realtime.relayMark`,
+`talk.realtime.relayStop`, and `talk.realtime.relayToolResult` gateway layer:
+params are validated natively, a registered fakeable realtime adapter owns
+session/relay execution, relay calls return `{ok: true}`, and missing runtime
+paths preserve upstream-shaped unavailable errors. Verified on 2026-05-02 with
+focused gateway/policy proofs, adjacent talk gateway tests, `ruff check`, and
+`mypy`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4474,12 +4482,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~52.8%; active gateway/session/tool-contract parity is ~98.3%.
   Verified with focused gateway, policy, and CLI proofs, adjacent gateway/API/
   CLI TTS tests, `ruff check`, and `mypy`; checkpointed in `3819d03a`.
-- Next repo-wide queue head: OpenClaw's `talk.realtime.*` gateway handlers are
-  now the clearest source-backed base-method gap exposed by the adjacent
-  method-policy proof. Source anchors are
-  `openclaw-main/src/gateway/server-methods/talk.ts` and OpenZues'
-  `src/openzues/services/gateway_node_methods.py` plus talk/runtime adapter
-  owners.
+- Closed the realtime voice gateway method seam from OpenClaw
+  `src/gateway/server-methods/talk.ts`,
+  `src/gateway/protocol/schema/channels.ts`, and `src/gateway/method-scopes.ts`:
+  native `talk.realtime.session`, `relayAudio`, `relayMark`, `relayStop`, and
+  `relayToolResult` now validate OpenClaw-shaped params, dispatch through a
+  fakeable realtime runtime adapter, preserve `{ok: true}` relay results, and
+  keep the upstream unavailable messages when no provider/relay runtime is
+  wired. Repo-wide parity is now estimated at ~52.9%; active
+  gateway/session/tool-contract parity is ~98.4%. Verified with focused
+  gateway and policy proofs, adjacent gateway talk tests, `ruff check`, and
+  `mypy`.
+- Next repo-wide queue head: the broader method-policy sweep exposed
+  source-backed small base-method gaps for `channels.stop` and
+  `node.pair.remove`. Source anchors are OpenClaw
+  `src/gateway/server-methods/channels.ts`,
+  `src/gateway/server-methods/nodes.ts`, and OpenZues' gateway node method and
+  channel/pairing service owners.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

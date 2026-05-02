@@ -663,6 +663,152 @@ async def test_talk_config_requires_talk_secrets_scope_for_remote_secret_reads()
 
 
 @pytest.mark.asyncio
+async def test_talk_realtime_methods_dispatch_to_registered_runtime() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeTalkRealtimeService:
+        async def create_session(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("session", dict(params)))
+            return {
+                "provider": "openai",
+                "transport": "gateway-relay",
+                "relaySessionId": "relay-1",
+                "audio": {
+                    "inputEncoding": "pcm16",
+                    "inputSampleRateHz": 24000,
+                    "outputEncoding": "pcm16",
+                    "outputSampleRateHz": 24000,
+                },
+                "model": params.get("model"),
+                "voice": params.get("voice"),
+            }
+
+        async def relay_audio(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("audio", dict(params)))
+            return {"ok": True}
+
+        async def relay_mark(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("mark", dict(params)))
+            return {"ok": True}
+
+        async def relay_stop(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("stop", dict(params)))
+            return {"ok": True}
+
+        async def relay_tool_result(self, params: dict[str, object]) -> dict[str, object]:
+            calls.append(("tool", dict(params)))
+            return {"ok": True}
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        talk_realtime_service=FakeTalkRealtimeService(),
+    )
+
+    session = await service.call(
+        "talk.realtime.session",
+        {
+            "sessionKey": "agent:main:main",
+            "provider": "openai",
+            "model": "gpt-4o-realtime",
+            "voice": "alloy",
+        },
+    )
+    audio = await service.call(
+        "talk.realtime.relayAudio",
+        {
+            "relaySessionId": "relay-1",
+            "audioBase64": "AAAA",
+            "timestamp": 12.5,
+        },
+    )
+    mark = await service.call(
+        "talk.realtime.relayMark",
+        {"relaySessionId": "relay-1", "markName": "m1"},
+    )
+    stop = await service.call("talk.realtime.relayStop", {"relaySessionId": "relay-1"})
+    tool = await service.call(
+        "talk.realtime.relayToolResult",
+        {
+            "relaySessionId": "relay-1",
+            "callId": "call-1",
+            "result": {"ok": True, "text": "done"},
+        },
+    )
+
+    assert session == {
+        "provider": "openai",
+        "transport": "gateway-relay",
+        "relaySessionId": "relay-1",
+        "audio": {
+            "inputEncoding": "pcm16",
+            "inputSampleRateHz": 24000,
+            "outputEncoding": "pcm16",
+            "outputSampleRateHz": 24000,
+        },
+        "model": "gpt-4o-realtime",
+        "voice": "alloy",
+    }
+    assert audio == {"ok": True}
+    assert mark == {"ok": True}
+    assert stop == {"ok": True}
+    assert tool == {"ok": True}
+    assert calls == [
+        (
+            "session",
+            {
+                "sessionKey": "agent:main:main",
+                "provider": "openai",
+                "model": "gpt-4o-realtime",
+                "voice": "alloy",
+            },
+        ),
+        (
+            "audio",
+            {
+                "relaySessionId": "relay-1",
+                "audioBase64": "AAAA",
+                "timestamp": 12.5,
+            },
+        ),
+        ("mark", {"relaySessionId": "relay-1", "markName": "m1"}),
+        ("stop", {"relaySessionId": "relay-1"}),
+        (
+            "tool",
+            {
+                "relaySessionId": "relay-1",
+                "callId": "call-1",
+                "result": {"ok": True, "text": "done"},
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_talk_realtime_methods_return_openclaw_unavailable_without_runtime() -> None:
+    service = GatewayNodeMethodService(GatewayNodeRegistry())
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="No realtime voice provider registered",
+    ) as session_exc:
+        await service.call("talk.realtime.session", {})
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="realtime relay unavailable",
+    ) as relay_exc:
+        await service.call(
+            "talk.realtime.relayAudio",
+            {"relaySessionId": "relay-1", "audioBase64": "AAAA"},
+        )
+
+    assert session_exc.value.code == "UNAVAILABLE"
+    assert session_exc.value.status_code == 503
+    assert relay_exc.value.code == "UNAVAILABLE"
+    assert relay_exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_tts_status_and_providers_surface_disabled_empty_runtime() -> None:
     service = GatewayNodeMethodService(GatewayNodeRegistry())
 
