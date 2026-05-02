@@ -2720,7 +2720,22 @@ def test_acp_bridge_command_passes_options_to_registered_runner(
     ]
 
 
-def test_acp_client_command_reports_native_runtime_unavailable() -> None:
+def test_acp_client_command_runs_native_interactive_runtime(monkeypatch) -> None:
+    from openzues.services.acp_client_runtime import AcpClientSpawnPlan
+
+    calls: list[AcpClientSpawnPlan] = []
+
+    async def fake_run_acp_client_interactive(plan: AcpClientSpawnPlan) -> int:
+        calls.append(plan)
+        return 4
+
+    monkeypatch.setattr(cli_module, "_acp_client_runner", None)
+    monkeypatch.setattr(
+        cli_module,
+        "run_acp_client_interactive",
+        fake_run_acp_client_interactive,
+    )
+
     result = runner.invoke(
         app,
         [
@@ -2734,9 +2749,13 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
         ],
     )
 
-    assert result.exit_code == 1
-    assert "ACP client bridge is not available" in result.stderr
-    assert r"C:\work\OpenZues" in result.stderr
+    assert result.exit_code == 4
+    assert len(calls) == 1
+    plan = calls[0]
+    assert plan.cwd == r"C:\work\OpenZues"
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp",)
+    assert plan.verbose is True
 
 
 def test_acp_status_json_and_human_output_uses_saved_metadata(monkeypatch) -> None:
@@ -3075,6 +3094,54 @@ def test_acp_bridge_warns_for_inline_secrets() -> None:
     assert "--token can be exposed via process listings" in result.stderr
     assert "--password can be exposed via process listings" in result.stderr
     assert "ACP Gateway bridge is not available" in result.stderr
+
+
+def test_secrets_reload_json_calls_gateway_method(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "warningCount": 1}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["secrets", "reload", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("secrets.reload", {})]
+    assert json.loads(result.stdout) == {"ok": True, "warningCount": 1}
+
+
+def test_secrets_reload_human_reports_warning_count(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "warningCount": 2}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["secrets", "reload"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("secrets.reload", {})]
+    assert "Secrets reloaded with 2 warning(s)." in result.stdout
 
 
 def test_capability_list_json_surfaces_openclaw_capability_metadata() -> None:
@@ -6041,6 +6108,7 @@ def test_plugins_list_json_projects_hermes_plugin_inventory(monkeypatch) -> None
             "description": "Connected lanes currently expose 2 plugin surface(s).",
             "capabilities": ["plugin inventory"],
             "parityStatus": "ready",
+            "imported": False,
         },
         {
             "id": "hermes_plugin:slack",
@@ -6052,8 +6120,114 @@ def test_plugins_list_json_projects_hermes_plugin_inventory(monkeypatch) -> None
             "description": "Hermes source tree includes this plugin family.",
             "capabilities": ["plugin discovery"],
             "parityStatus": "advisory",
+            "imported": False,
         },
     ]
+
+
+def test_plugins_list_json_preserves_facade_imported_plugin_state(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "facade-loaded",
+                            "label": "Facade Loaded",
+                            "status": "ready",
+                            "summary": "Loaded through a plugin facade.",
+                            "imported": True,
+                        },
+                        {
+                            "key": "cold-plugin",
+                            "label": "Cold Plugin",
+                            "status": "ready",
+                            "summary": "Metadata-only plugin.",
+                            "imported": False,
+                        },
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["facade-loaded"]["imported"] is True
+    assert plugins["cold-plugin"]["imported"] is False
+
+
+def test_plugins_list_json_normalizes_bundled_plugin_reported_version(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="2026.3.23-1",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "2026.3.23-1",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+            }
+        )
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "whatsapp",
+                            "label": "WhatsApp",
+                            "status": "ready",
+                            "summary": "Bundled channel plugin.",
+                            "origin": "bundled",
+                            "version": "2026.3.22",
+                        }
+                    ]
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["origin"] == "bundled"
+    assert plugin["version"] == "2026.3.23"
 
 
 def test_plugins_list_enabled_filters_loaded_plugins(monkeypatch) -> None:
@@ -6164,6 +6338,7 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
             "capabilities": [],
             "parityStatus": "configured",
             "version": "0.2.0",
+            "imported": False,
             "install": {
                 "source": "marketplace",
                 "installPath": str(plugin_dir),
@@ -6271,6 +6446,7 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
                 "webSearchProviders": ["native-search"],
             },
             "toolNames": ["native_runtime.search"],
+            "imported": False,
         }
     ]
 
@@ -6420,6 +6596,7 @@ def test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths(
         "skills": ["skills"],
         "hooks": ["hooks"],
         "mcpServers": ["sample"],
+        "imported": False,
     }
     assert plugins["claude-sample"]["bundleFormat"] == "claude"
     assert plugins["claude-sample"]["bundleCapabilities"] == [
@@ -6516,6 +6693,7 @@ def test_plugins_list_json_discovers_manifestless_claude_bundle_load_paths(
             "skills": ["skills", "commands"],
             "hooks": [],
             "settingsFiles": ["settings.json"],
+            "imported": False,
         }
     ]
 
@@ -7291,6 +7469,100 @@ def test_plugins_list_json_preserves_manifest_config_contracts(
     }
 
 
+def test_plugins_list_json_prefers_doctor_contract_api_artifact(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "matrix"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "matrix",
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / "contract-api.js").write_text("export default {};\n", encoding="utf-8")
+    doctor_contract_path = plugin_dir / "doctor-contract-api.js"
+    doctor_contract_path.write_text("export default {};\n", encoding="utf-8")
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["doctorContractApi"] == {
+        "path": str(doctor_contract_path),
+        "artifact": "doctor-contract-api.js",
+        "kind": "doctor-contract-api",
+    }
+
+
+def test_doctor_contract_relevant_plugin_ids_narrow_touched_paths() -> None:
+    raw_config = {
+        "channels": {
+            "discord": {},
+            "telegram": {},
+        },
+        "plugins": {
+            "entries": {
+                "memory-wiki": {},
+            },
+        },
+        "talk": {
+            "voiceId": "legacy-voice",
+        },
+    }
+
+    assert cli_module._collect_relevant_doctor_plugin_ids_for_touched_paths(
+        raw_config,
+        [
+            ["channels", "discord", "token"],
+            ["plugins", "entries", "memory-wiki", "enabled"],
+            ["talk", "voiceId"],
+        ],
+    ) == ["discord", "elevenlabs", "memory-wiki"]
+    assert cli_module._collect_relevant_doctor_plugin_ids_for_touched_paths(
+        {
+            "channels": {
+                "discord": {},
+                "telegram": {},
+            },
+            "plugins": {
+                "entries": {
+                    "memory-wiki": {},
+                },
+            },
+        },
+        [["channels"]],
+    ) == ["discord", "memory-wiki", "telegram"]
+
+
 def test_plugins_list_json_preserves_manifest_identity_and_classification(
     tmp_path,
     monkeypatch,
@@ -7627,6 +7899,99 @@ def test_plugins_list_json_projects_runtime_executor_inventory(
     }
 
 
+def test_plugins_list_json_marks_runtime_executor_plugins_imported(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    native_dir = tmp_path / "plugins" / "native-runtime"
+    _write_openclaw_runtime_plugin(
+        native_dir,
+        plugin_id="native-runtime",
+        contracts={"tools": ["native_runtime.search"]},
+    )
+    bundle_dir = tmp_path / "plugins" / "bundle-loaded"
+    (bundle_dir / ".codex-plugin").mkdir(parents=True)
+    (bundle_dir / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Bundle Loaded",
+                "description": "Bundle fixture.",
+                "version": "1.0.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {
+                        "native-runtime": {"enabled": True},
+                        "bundle-loaded": {"enabled": True},
+                    },
+                    "load": {"paths": [str(native_dir), str(bundle_dir)]},
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="bundle.loaded",
+                executor=fake_executor,
+                plugin_id="bundle-loaded",
+                plugin_name="Bundle Loaded",
+                source="registry",
+            ),
+        ]
+    )
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["native-runtime"]["imported"] is True
+    assert plugins["bundle-loaded"]["format"] == "bundle"
+    assert plugins["bundle-loaded"]["imported"] is False
+
+
 def test_plugins_list_verbose_reports_runtime_executor_inventory(
     tmp_path,
     monkeypatch,
@@ -7719,21 +8084,23 @@ def _write_openclaw_runtime_plugin(
     optional_dependencies: dict[str, object] | None = None,
     enabled_by_default: bool = True,
     channels: list[str] | None = None,
+    contracts: dict[str, object] | None = None,
 ) -> Path:
     plugin_dir.mkdir(parents=True)
+    manifest_payload: dict[str, object] = {
+        "id": plugin_id,
+        "name": plugin_id,
+        "description": f"{plugin_id} runtime plugin.",
+        "version": "1.0.0",
+        "enabledByDefault": enabled_by_default,
+        "channels": list(channels or []),
+        "configSchema": {"type": "object"},
+    }
+    if contracts is not None:
+        manifest_payload["contracts"] = contracts
     manifest_path = plugin_dir / "openclaw.plugin.json"
     manifest_path.write_text(
-        json.dumps(
-            {
-                "id": plugin_id,
-                "name": plugin_id,
-                "description": f"{plugin_id} runtime plugin.",
-                "version": "1.0.0",
-                "enabledByDefault": enabled_by_default,
-                "channels": list(channels or []),
-                "configSchema": {"type": "object"},
-            }
-        ),
+        json.dumps(manifest_payload),
         encoding="utf-8",
     )
     package_payload: dict[str, object] = {}
@@ -7752,6 +8119,7 @@ def _patch_plugins_cli_services(
     monkeypatch,
     *,
     gateway_config: GatewayConfigService,
+    plugin_runtime_service: GatewayPluginRuntimeService | None = None,
 ) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
@@ -7766,6 +8134,7 @@ def _patch_plugins_cli_services(
             SimpleNamespace(
                 hermes_platform=FakeHermesPlatform(),
                 gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime_service,
             )
         )
 
@@ -8097,6 +8466,63 @@ def test_plugins_inspect_json_projects_runtime_executor_tools(
     ]
 
 
+def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) -> None:
+    async def fake_inventory(
+        _services: object,
+        *,
+        enabled_only: bool,
+    ) -> dict[str, object]:
+        assert enabled_only is False
+        return {
+            "workspaceDir": None,
+            "plugins": [
+                {
+                    "id": "google",
+                    "name": "Google",
+                    "status": "loaded",
+                    "format": "openclaw",
+                    "source": "plugin://google",
+                    "origin": "bundled",
+                    "description": "Google provider plugin.",
+                    "capabilities": ["web-search:google"],
+                    "parityStatus": "ready",
+                    "imported": True,
+                }
+            ],
+            "diagnostics": [
+                {
+                    "level": "warn",
+                    "pluginId": "google",
+                    "message": "watch this surface",
+                },
+                {
+                    "level": "warn",
+                    "pluginId": "other",
+                    "message": "ignore this surface",
+                },
+                {"level": "warn", "message": "global diagnostic"},
+            ],
+        }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace())
+
+    monkeypatch.setattr(cli_module, "_build_plugins_inventory_payload", fake_inventory)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "google", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["diagnostics"] == [
+        {
+            "level": "warn",
+            "pluginId": "google",
+            "message": "watch this surface",
+        }
+    ]
+
+
 def test_plugins_inspect_json_preserves_runtime_executor_optional_metadata(
     tmp_path,
     monkeypatch,
@@ -8407,6 +8833,66 @@ def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:
 
     assert result.exit_code == 0, result.stdout
     assert "No plugin issues detected." in result.stdout
+
+
+def test_plugins_doctor_json_reports_metadata_only_tool_activation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "metadata-tools"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "metadata-tools",
+                "name": "Metadata Tools",
+                "description": "Manifest-only tools.",
+                "version": "1.0.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "contracts": {"tools": ["metadata.search"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["runtimeActivation"] == {
+        "status": "metadata_only",
+        "manifestToolPlugins": [
+            {"pluginId": "metadata-tools", "tools": ["metadata.search"]}
+        ],
+        "runtimeExecutorPlugins": [],
+        "missingExecutorPlugins": [
+            {"pluginId": "metadata-tools", "tools": ["metadata.search"]}
+        ],
+    }
 
 
 def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
@@ -8901,6 +9387,774 @@ def test_plugins_install_json_copies_local_plugin_path(
     assert stored["plugins"]["installs"]["frontend-design"]["installPath"] == str(
         install_path
     )
+
+
+def test_plugins_install_reports_missing_local_like_spec(tmp_path) -> None:
+    missing_archive = tmp_path / "missing-plugin.tgz"
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", str(missing_archive), "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert f"Path not found: {missing_archive}" in result.stderr
+
+
+def test_plugins_install_reports_missing_absolute_local_like_spec(tmp_path) -> None:
+    missing_path = tmp_path / "missing-plugin"
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", str(missing_path), "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert f"Path not found: {missing_path}" in result.stderr
+
+
+def test_plugins_install_json_uses_bundled_plugin_for_bare_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    extensions_dir = tmp_path / "openclaw-runtime" / "dist" / "extensions"
+    plugin_dir = extensions_dir / "feishu"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="feishu")
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(extensions_dir))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "install", "feishu", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    bundled_path = str(plugin_dir.resolve())
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["pluginId"] == "feishu"
+    assert payload["source"] == "path"
+    assert payload["install"]["source"] == "path"
+    assert payload["install"]["spec"] == "feishu"
+    assert payload["install"]["sourcePath"] == bundled_path
+    assert payload["install"]["installPath"] == bundled_path
+    assert payload["install"]["version"] == "1.0.0"
+    assert payload["restart"] == "gateway"
+    assert payload["warning"] == (
+        f'Using bundled plugin "feishu" from {bundled_path} for bare install spec '
+        '"feishu". To install an npm package with the same name, use a scoped '
+        "package name (for example @scope/feishu)."
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["feishu"]
+    assert stored["plugins"]["entries"]["feishu"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [bundled_path]
+    install = stored["plugins"]["installs"]["feishu"]
+    assert install["source"] == "path"
+    assert install["spec"] == "feishu"
+    assert install["sourcePath"] == bundled_path
+    assert install["installPath"] == bundled_path
+    assert isinstance(install["installedAt"], str)
+
+
+def test_plugins_install_prefers_dist_runtime_bundled_tree_for_package_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    (package_root / ".git").mkdir(parents=True)
+    (package_root / "src").mkdir()
+    (package_root / "extensions").mkdir()
+    built_plugin_dir = package_root / "dist" / "extensions" / "feishu"
+    runtime_plugin_dir = package_root / "dist-runtime" / "extensions" / "feishu"
+    _write_openclaw_runtime_plugin(built_plugin_dir, plugin_id="feishu")
+    _write_openclaw_runtime_plugin(runtime_plugin_dir, plugin_id="feishu")
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(package_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "install", "feishu", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    bundled_path = str(runtime_plugin_dir.resolve())
+    assert payload["pluginId"] == "feishu"
+    assert payload["install"]["sourcePath"] == bundled_path
+    assert payload["install"]["installPath"] == bundled_path
+    assert payload["warning"] == (
+        f'Using bundled plugin "feishu" from {bundled_path} for bare install spec '
+        '"feishu". To install an npm package with the same name, use a scoped '
+        "package name (for example @scope/feishu)."
+    )
+
+
+def test_plugins_install_human_warns_for_bundled_bare_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    extensions_dir = tmp_path / "openclaw-runtime" / "dist" / "extensions"
+    plugin_dir = extensions_dir / "feishu"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="feishu")
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(extensions_dir))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "install", "feishu"])
+
+    bundled_path = str(plugin_dir.resolve())
+    assert result.exit_code == 0, result.stderr
+    assert (
+        f'Using bundled plugin "feishu" from {bundled_path} for bare install spec '
+        '"feishu". To install an npm package with the same name, use a scoped '
+        "package name (for example @scope/feishu)."
+    ) in result.stdout
+    assert 'Installed plugin "feishu" from path.' in result.stdout
+    assert f"path: {bundled_path}" in result.stdout
+    assert "Restart the gateway to apply changes." in result.stdout
+
+
+def test_plugins_install_json_uses_clawhub_installer_for_explicit_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "plugins" / "clawhub" / "demo"
+    install_dir.mkdir(parents=True)
+    calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "clawhub": {
+                    "source": "clawhub",
+                    "clawhubUrl": "https://clawhub.ai",
+                    "clawhubPackage": "demo",
+                    "clawhubFamily": "code-plugin",
+                    "clawhubChannel": "official",
+                    "version": "1.2.3",
+                    "integrity": "sha256-demo",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "clawhub:demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert calls == [{"spec": "clawhub:demo", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["pluginId"] == "demo"
+    assert payload["source"] == "clawhub"
+    assert payload["install"]["source"] == "clawhub"
+    assert payload["install"]["spec"] == "clawhub:demo@1.2.3"
+    assert payload["install"]["installPath"] == str(install_dir)
+    assert payload["install"]["clawhubPackage"] == "demo"
+    assert payload["install"]["clawhubFamily"] == "code-plugin"
+    assert payload["install"]["clawhubChannel"] == "official"
+    assert payload["install"]["integrity"] == "sha256-demo"
+    assert payload["install"]["resolvedAt"] == "2026-05-01T00:00:00Z"
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["demo"]
+    assert stored["plugins"]["entries"]["demo"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "clawhub"
+    assert install["spec"] == "clawhub:demo@1.2.3"
+    assert install["installPath"] == str(install_dir)
+    assert install["clawhubUrl"] == "https://clawhub.ai"
+    assert isinstance(install["installedAt"], str)
+
+
+def test_cli_services_declares_clawhub_plugin_installer() -> None:
+    assert "plugin_clawhub_installer" in cli_module.CliServices.__dataclass_fields__
+
+
+def test_plugins_install_clawhub_reports_unavailable_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_config=gateway_config))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "clawhub:demo", "--json"])
+
+    assert result.exit_code == 1
+    assert "ClawHub plugin install runtime is unavailable." in result.stderr
+
+
+def test_plugins_install_json_prefers_clawhub_for_registry_npm_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "plugins" / "clawhub" / "demo"
+    install_dir.mkdir(parents=True)
+    calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "clawhub": {
+                    "source": "clawhub",
+                    "clawhubUrl": "https://clawhub.ai",
+                    "clawhubPackage": "demo",
+                    "clawhubFamily": "code-plugin",
+                    "clawhubChannel": "community",
+                    "version": "1.2.3",
+                    "integrity": "sha256-demo",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert calls == [{"spec": "clawhub:@openclaw/demo", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["source"] == "clawhub"
+    assert payload["pluginId"] == "demo"
+    assert payload["install"]["source"] == "clawhub"
+    assert payload["install"]["spec"] == "clawhub:demo@1.2.3"
+    assert payload["install"]["clawhubChannel"] == "community"
+
+
+def test_plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/missing", "--json"])
+
+    assert calls == [{"spec": "clawhub:@openclaw/missing", "mode": "install"}]
+    assert result.exit_code == 1
+    assert "npm plugin install runtime is unavailable." in result.stderr
+
+
+def test_plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "plugins" / "npm" / "demo"
+    install_dir.mkdir(parents=True)
+    clawhub_calls: list[dict[str, object]] = []
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            clawhub_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "npmResolution": {
+                    "resolvedName": "@openclaw/demo",
+                    "resolvedVersion": "1.2.3",
+                    "resolvedSpec": "@openclaw/demo@1.2.3",
+                    "integrity": "sha512-demo",
+                    "shasum": "demo-shasum",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", "@openclaw/demo", "--pin", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert clawhub_calls == [{"spec": "clawhub:@openclaw/demo", "mode": "install"}]
+    assert npm_calls == [{"spec": "@openclaw/demo", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["source"] == "npm"
+    assert payload["pluginId"] == "demo"
+    assert payload["install"]["source"] == "npm"
+    assert payload["install"]["spec"] == "@openclaw/demo@1.2.3"
+    assert payload["install"]["installPath"] == str(install_dir)
+    assert payload["install"]["version"] == "1.2.3"
+    assert payload["install"]["resolvedName"] == "@openclaw/demo"
+    assert payload["install"]["resolvedVersion"] == "1.2.3"
+    assert payload["install"]["resolvedSpec"] == "@openclaw/demo@1.2.3"
+    assert payload["install"]["integrity"] == "sha512-demo"
+    assert payload["install"]["shasum"] == "demo-shasum"
+    assert payload["install"]["resolvedAt"] == "2026-05-01T00:00:00Z"
+    assert payload["notice"] == "Pinned npm install record to @openclaw/demo@1.2.3."
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["demo"]
+    assert stored["plugins"]["entries"]["demo"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@openclaw/demo@1.2.3"
+    assert install["resolvedSpec"] == "@openclaw/demo@1.2.3"
+    assert isinstance(install["installedAt"], str)
+
+
+def test_plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/demo", "--json"])
+
+    assert result.exit_code == 1
+    assert "npm plugin install runtime is unavailable." in result.stderr
+
+
+def test_plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    extensions_dir = tmp_path / "openclaw-runtime" / "dist" / "extensions"
+    plugin_dir = extensions_dir / "voice-call"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="voice-call")
+    (plugin_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/voice-call",
+                "version": "1.2.3",
+                "openclaw": {"install": {"npmSpec": "@openclaw/voice-call"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(extensions_dir))
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on npm: @openclaw/voice-call.",
+                "code": "npm_package_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/voice-call", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert npm_calls == [{"spec": "@openclaw/voice-call", "mode": "install"}]
+    bundled_path = str(plugin_dir.resolve())
+    payload = json.loads(result.stdout)
+    assert payload["source"] == "path"
+    assert payload["pluginId"] == "voice-call"
+    assert payload["install"]["source"] == "path"
+    assert payload["install"]["spec"] == "@openclaw/voice-call"
+    assert payload["install"]["sourcePath"] == bundled_path
+    assert payload["install"]["installPath"] == bundled_path
+    assert payload["warning"] == (
+        "npm package unavailable for @openclaw/voice-call; "
+        f"using bundled plugin at {bundled_path}."
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["load"]["paths"] == [bundled_path]
+    assert stored["plugins"]["installs"]["voice-call"]["spec"] == "@openclaw/voice-call"
+
+
+def test_plugins_install_json_falls_back_to_npm_hook_pack(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "hooks" / "demo-hooks"
+    install_dir.mkdir(parents=True)
+    clawhub_calls: list[dict[str, object]] = []
+    npm_calls: list[dict[str, object]] = []
+    hook_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            clawhub_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "package.json missing openclaw.plugin.json",
+                "code": "missing_openclaw_extensions",
+            }
+
+    class FakeHookInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            hook_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "hookPackId": "demo-hooks",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "hooks": ["command-audit"],
+                "npmResolution": {
+                    "name": "@acme/demo-hooks",
+                    "version": "1.2.3",
+                    "resolvedSpec": "@acme/demo-hooks@1.2.3",
+                    "integrity": "sha256-demo",
+                    "shasum": "demo-shasum",
+                    "resolvedAt": "2026-05-02T12:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+                plugin_npm_installer=FakeNpmInstaller(),
+                hook_npm_installer=FakeHookInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@acme/demo-hooks", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert clawhub_calls == [{"spec": "clawhub:@acme/demo-hooks", "mode": "install"}]
+    assert npm_calls == [{"spec": "@acme/demo-hooks", "mode": "install"}]
+    assert hook_calls == [{"spec": "@acme/demo-hooks", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["source"] == "hook-pack"
+    assert payload["hookId"] == "demo-hooks"
+    assert payload["hooks"] == ["command-audit"]
+    assert payload["install"]["source"] == "npm"
+    assert payload["install"]["spec"] == "@acme/demo-hooks"
+    assert payload["install"]["installPath"] == str(install_dir)
+    assert payload["install"]["version"] == "1.2.3"
+    assert payload["install"]["resolvedName"] == "@acme/demo-hooks"
+    assert payload["install"]["resolvedVersion"] == "1.2.3"
+    assert payload["install"]["resolvedSpec"] == "@acme/demo-hooks@1.2.3"
+    assert payload["install"]["integrity"] == "sha256-demo"
+    assert payload["warning"] == (
+        "Plugin install failed; installed matching hook pack demo-hooks instead."
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["hooks"]["internal"]["installs"]["demo-hooks"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@acme/demo-hooks"
+    assert install["hooks"] == ["command-audit"]
 
 
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
@@ -9520,6 +10774,443 @@ def test_plugins_update_json_refreshes_local_marketplace_install(
     )
     assert stored["plugins"]["load"]["paths"] == [str(plugin_dir.resolve())]
     assert isinstance(stored["plugins"]["installs"]["frontend-design"]["installedAt"], str)
+
+
+def test_plugins_update_json_refreshes_npm_install_record(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "plugins" / "npm" / "demo"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "npm",
+                            "spec": "@openclaw/demo@beta",
+                            "installPath": str(install_dir),
+                            "version": "1.2.2",
+                            "resolvedName": "@openclaw/demo",
+                            "resolvedSpec": "@openclaw/demo@1.2.2",
+                            "integrity": "sha512-old",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(install_dir)]},
+                },
+            }
+        )
+    )
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "npmResolution": {
+                    "resolvedName": "@openclaw/demo",
+                    "resolvedVersion": "1.2.3",
+                    "resolvedSpec": "@openclaw/demo@1.2.3",
+                    "integrity": "sha512-new",
+                    "shasum": "demo-next",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert npm_calls == [{"spec": "@openclaw/demo@beta", "mode": "update"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["dryRun"] is False
+    assert payload["changed"] is True
+    assert payload["restart"] == "gateway"
+    assert payload["outcomes"] == [
+        {
+            "pluginId": "demo",
+            "status": "updated",
+            "currentVersion": "1.2.2",
+            "nextVersion": "1.2.3",
+            "message": "Updated demo: 1.2.2 -> 1.2.3.",
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@openclaw/demo@beta"
+    assert install["installPath"] == str(install_dir)
+    assert install["version"] == "1.2.3"
+    assert install["resolvedName"] == "@openclaw/demo"
+    assert install["resolvedVersion"] == "1.2.3"
+    assert install["resolvedSpec"] == "@openclaw/demo@1.2.3"
+    assert install["integrity"] == "sha512-new"
+    assert install["shasum"] == "demo-next"
+    assert install["resolvedAt"] == "2026-05-01T00:00:00Z"
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+
+
+def test_plugins_update_json_refreshes_clawhub_install_record(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "plugins" / "clawhub" / "demo"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "clawhub",
+                            "spec": "clawhub:demo",
+                            "installPath": str(install_dir),
+                            "version": "1.2.2",
+                            "integrity": "sha256-old",
+                            "clawhubUrl": "https://clawhub.ai",
+                            "clawhubPackage": "demo",
+                            "clawhubFamily": "code-plugin",
+                            "clawhubChannel": "official",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(install_dir)]},
+                },
+            }
+        )
+    )
+    clawhub_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            clawhub_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "clawhub": {
+                    "source": "clawhub",
+                    "clawhubUrl": "https://clawhub.ai",
+                    "clawhubPackage": "demo",
+                    "clawhubFamily": "code-plugin",
+                    "clawhubChannel": "official",
+                    "version": "1.2.3",
+                    "integrity": "sha256-new",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert clawhub_calls == [
+        {
+            "spec": "clawhub:demo",
+            "mode": "update",
+            "baseUrl": "https://clawhub.ai",
+            "expectedPluginId": "demo",
+        }
+    ]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["dryRun"] is False
+    assert payload["changed"] is True
+    assert payload["restart"] == "gateway"
+    assert payload["outcomes"] == [
+        {
+            "pluginId": "demo",
+            "status": "updated",
+            "currentVersion": "1.2.2",
+            "nextVersion": "1.2.3",
+            "message": "Updated demo: 1.2.2 -> 1.2.3.",
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "clawhub"
+    assert install["spec"] == "clawhub:demo@1.2.3"
+    assert install["installPath"] == str(install_dir)
+    assert install["version"] == "1.2.3"
+    assert install["integrity"] == "sha256-new"
+    assert install["resolvedAt"] == "2026-05-01T00:00:00Z"
+    assert install["clawhubUrl"] == "https://clawhub.ai"
+    assert install["clawhubPackage"] == "demo"
+    assert install["clawhubFamily"] == "code-plugin"
+    assert install["clawhubChannel"] == "official"
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+
+
+def test_plugins_update_json_maps_npm_spec_override_to_tracked_install(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "plugins" / "npm" / "demo"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "npm",
+                            "spec": "@openclaw/demo",
+                            "installPath": str(install_dir),
+                            "version": "1.2.2",
+                            "resolvedName": "@openclaw/demo",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(install_dir)]},
+                },
+            }
+        )
+    )
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.3.0-beta.1",
+                "npmResolution": {
+                    "resolvedName": "@openclaw/demo",
+                    "resolvedVersion": "1.3.0-beta.1",
+                    "resolvedSpec": "@openclaw/demo@1.3.0-beta.1",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "@openclaw/demo@beta", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert npm_calls == [{"spec": "@openclaw/demo@beta", "mode": "update"}]
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert payload["outcomes"] == [
+        {
+            "pluginId": "demo",
+            "status": "updated",
+            "currentVersion": "1.2.2",
+            "nextVersion": "1.3.0-beta.1",
+            "message": "Updated demo: 1.2.2 -> 1.3.0-beta.1.",
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@openclaw/demo@beta"
+    assert install["resolvedName"] == "@openclaw/demo"
+    assert install["resolvedVersion"] == "1.3.0-beta.1"
+    assert install["resolvedSpec"] == "@openclaw/demo@1.3.0-beta.1"
+
+
+def test_plugins_update_json_refreshes_hook_pack_install_record(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "hooks" / "demo-hooks"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "hooks": {
+                    "internal": {
+                        "installs": {
+                            "demo-hooks": {
+                                "source": "npm",
+                                "spec": "@acme/demo-hooks@1.0.0",
+                                "installPath": str(install_dir),
+                                "version": "1.0.0",
+                                "resolvedName": "@acme/demo-hooks",
+                                "integrity": "sha512-old-hooks",
+                                "hooks": ["before-agent-start"],
+                                "installedAt": "2026-04-29T12:00:00Z",
+                            }
+                        }
+                    }
+                },
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    hook_calls: list[dict[str, object]] = []
+
+    class FakeHookInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            hook_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "hookPackId": "demo-hooks",
+                "targetDir": str(install_dir),
+                "version": "1.1.0",
+                "hooks": ["before-agent-start", "after-agent-end"],
+                "npmResolution": {
+                    "name": "@acme/demo-hooks",
+                    "version": "1.1.0",
+                    "resolvedSpec": "@acme/demo-hooks@1.1.0",
+                    "integrity": "sha512-new-hooks",
+                    "shasum": "hooks-shasum",
+                    "resolvedAt": "2026-05-02T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                hook_npm_installer=FakeHookInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "demo-hooks", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert hook_calls == [{"spec": "@acme/demo-hooks@1.0.0", "mode": "update"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert payload["restart"] == "gateway"
+    assert payload["outcomes"] == [
+        {
+            "hookId": "demo-hooks",
+            "status": "updated",
+            "currentVersion": "1.0.0",
+            "nextVersion": "1.1.0",
+            "message": 'Updated hook pack "demo-hooks": 1.0.0 -> 1.1.0.',
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["hooks"]["internal"]["installs"]["demo-hooks"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@acme/demo-hooks@1.0.0"
+    assert install["installPath"] == str(install_dir)
+    assert install["version"] == "1.1.0"
+    assert install["resolvedName"] == "@acme/demo-hooks"
+    assert install["resolvedVersion"] == "1.1.0"
+    assert install["resolvedSpec"] == "@acme/demo-hooks@1.1.0"
+    assert install["integrity"] == "sha512-new-hooks"
+    assert install["shasum"] == "hooks-shasum"
+    assert install["resolvedAt"] == "2026-05-02T00:00:00Z"
+    assert install["hooks"] == ["before-agent-start", "after-agent-end"]
 
 
 def test_plugins_update_json_refreshes_remote_marketplace_install(
@@ -17577,6 +19268,8 @@ def _invoke_doctor_json_with_config_snapshot(
     gateway_node_methods: object | None = None,
     mission_service: object | None = None,
     ops_mesh: object | None = None,
+    channel_doctor_adapters: object | None = None,
+    plugin_runtime_service: object | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -17595,6 +19288,18 @@ def _invoke_doctor_json_with_config_snapshot(
         def build_snapshot(self) -> dict[str, object]:
             return snapshot
 
+        def set_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, object]:
+            del base_hash
+            next_snapshot = json.loads(raw)
+            snapshot.clear()
+            snapshot.update(next_snapshot)
+            return {
+                "ok": True,
+                "changed": True,
+                "config": snapshot,
+                "hash": "updated",
+            }
+
     async def fake_live_view(_settings: object) -> None:
         return None
 
@@ -17607,6 +19312,8 @@ def _invoke_doctor_json_with_config_snapshot(
                 gateway_node_methods=gateway_node_methods,
                 mission_service=mission_service,
                 ops_mesh=ops_mesh,
+                channel_doctor_adapters=channel_doctor_adapters,
+                plugin_runtime_service=plugin_runtime_service,
             )
         )
 
@@ -17614,6 +19321,438 @@ def _invoke_doctor_json_with_config_snapshot(
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
 
     return runner.invoke(app, args or ["doctor", "--json"])
+
+
+def test_doctor_json_reports_channel_plugin_preview_warnings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        async def collect_preview_warnings(self, **kwargs: object) -> list[str]:
+            calls.append(dict(kwargs))
+            return [
+                "- channels.matrix.config legacy key is deprecated. "
+                'Run "openzues doctor --fix".'
+            ]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "defaults": {"dmPolicy": "allowlist"},
+                "matrix": {"enabled": True, "config": {"legacy": True}},
+            }
+        },
+        channel_doctor_adapters={"matrix": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["status"] == "warning"
+    assert channel_doctor["warnings"] == [
+        "- channels.matrix.config legacy key is deprecated. "
+        'Run "openzues doctor --fix".'
+    ]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "defaults": {"dmPolicy": "allowlist"},
+                    "matrix": {"enabled": True, "config": {"legacy": True}},
+                }
+            },
+            "doctorFixCommand": "openzues doctor --fix",
+        }
+    ]
+    assert channel_doctor["warnings"][0] in payload["warnings"]
+
+
+def test_doctor_fix_runs_channel_plugin_repair_config(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    snapshot: dict[str, object] = {
+        "channels": {
+            "defaults": {"dmPolicy": "allowlist"},
+            "matrix": {"enabled": True, "config": {"legacy": True}},
+        }
+    }
+
+    class FakeChannelDoctorAdapter:
+        async def repair_config(self, **kwargs: object) -> dict[str, object]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            next_config = json.loads(json.dumps(kwargs["cfg"]))
+            matrix_config = next_config["channels"]["matrix"]["config"]
+            matrix_config.pop("legacy")
+            matrix_config["modern"] = True
+            return {
+                "config": next_config,
+                "changes": ["channels.matrix.config: migrated legacy key"],
+            }
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        args=["doctor", "--fix", "--json"],
+        channel_doctor_adapters={"matrix": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["status"] == "ok"
+    assert channel_doctor["changed"] is True
+    assert channel_doctor["changes"] == ["channels.matrix.config: migrated legacy key"]
+    assert channel_doctor["warnings"] == []
+    assert snapshot["channels"]["matrix"]["config"] == {"modern": True}
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "defaults": {"dmPolicy": "allowlist"},
+                    "matrix": {"enabled": True, "config": {"legacy": True}},
+                }
+            },
+            "doctorFixCommand": "openzues doctor --fix",
+        }
+    ]
+
+
+def test_doctor_json_reports_channel_mutable_allowlist_warnings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        async def collect_mutable_allowlist_warnings(
+            self,
+            **kwargs: object,
+        ) -> list[str]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            return [
+                "- channels.zalouser.groups: mutable group names need "
+                "dangerouslyAllowNameMatching=true.",
+            ]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "zalouser": {
+                    "enabled": True,
+                    "groups": {"team-name": {"allow": True}},
+                }
+            }
+        },
+        channel_doctor_adapters={"zalouser": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warning = (
+        "- channels.zalouser.groups: mutable group names need "
+        "dangerouslyAllowNameMatching=true."
+    )
+    assert payload["channelDoctor"]["status"] == "warning"
+    assert payload["channelDoctor"]["warnings"] == [warning]
+    assert warning in payload["warnings"]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "zalouser": {
+                        "enabled": True,
+                        "groups": {"team-name": {"allow": True}},
+                    }
+                }
+            }
+        }
+    ]
+
+
+def test_doctor_json_reports_channel_config_sequence_notes(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        async def run_config_sequence(self, **kwargs: object) -> dict[str, object]:
+            calls.append(
+                {
+                    "cfg": json.loads(json.dumps(kwargs["cfg"])),
+                    "shouldRepair": kwargs["shouldRepair"],
+                    "hasEnv": isinstance(kwargs["env"], dict),
+                }
+            )
+            return {
+                "changeNotes": ["channels.telegram: normalized setup defaults."],
+                "warningNotes": ["channels.telegram: setup still needs bot token."],
+            }
+
+    snapshot = {
+        "channels": {
+            "telegram": {
+                "enabled": True,
+            }
+        }
+    }
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        channel_doctor_adapters={"telegram": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["sequenceChanges"] == [
+        "channels.telegram: normalized setup defaults."
+    ]
+    assert channel_doctor["sequenceWarnings"] == [
+        "channels.telegram: setup still needs bot token."
+    ]
+    assert channel_doctor["changes"] == [
+        "channels.telegram: normalized setup defaults."
+    ]
+    assert channel_doctor["warnings"] == ["channels.telegram: setup still needs bot token."]
+    assert "channels.telegram: setup still needs bot token." in payload["warnings"]
+    assert calls == [
+        {
+            "cfg": snapshot,
+            "shouldRepair": False,
+            "hasEnv": True,
+        }
+    ]
+
+
+def test_doctor_fix_runs_channel_clean_stale_config(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    snapshot: dict[str, object] = {
+        "channels": {
+            "matrix": {
+                "enabled": True,
+                "staleInstallPath": "C:/gone/matrix",
+            }
+        }
+    }
+
+    class FakeChannelDoctorAdapter:
+        async def clean_stale_config(self, **kwargs: object) -> dict[str, object]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            next_config = json.loads(json.dumps(kwargs["cfg"]))
+            next_config["channels"]["matrix"].pop("staleInstallPath")
+            return {
+                "config": next_config,
+                "changes": ["channels.matrix.staleInstallPath: removed stale path"],
+            }
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        args=["doctor", "--fix", "--json"],
+        channel_doctor_adapters={"matrix": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["changed"] is True
+    assert channel_doctor["staleChanges"] == [
+        "channels.matrix.staleInstallPath: removed stale path"
+    ]
+    assert channel_doctor["changes"] == [
+        "channels.matrix.staleInstallPath: removed stale path"
+    ]
+    assert "staleInstallPath" not in snapshot["channels"]["matrix"]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "matrix": {
+                        "enabled": True,
+                        "staleInstallPath": "C:/gone/matrix",
+                    }
+                }
+            }
+        }
+    ]
+
+
+def test_doctor_fix_runs_channel_compatibility_normalizer(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    snapshot: dict[str, object] = {
+        "channels": {
+            "discord": {
+                "enabled": True,
+                "allowFrom": [123],
+            }
+        }
+    }
+
+    class FakeChannelDoctorAdapter:
+        def normalize_compatibility_config(self, **kwargs: object) -> dict[str, object]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            next_config = json.loads(json.dumps(kwargs["cfg"]))
+            next_config["channels"]["discord"]["allowFrom"] = ["123"]
+            return {
+                "config": next_config,
+                "changes": ["channels.discord.allowFrom: converted numeric ids to strings"],
+            }
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        args=["doctor", "--fix", "--json"],
+        channel_doctor_adapters={"discord": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["changed"] is True
+    assert channel_doctor["compatibilityChanges"] == [
+        "channels.discord.allowFrom: converted numeric ids to strings"
+    ]
+    assert channel_doctor["changes"] == [
+        "channels.discord.allowFrom: converted numeric ids to strings"
+    ]
+    assert snapshot["channels"]["discord"]["allowFrom"] == ["123"]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "discord": {
+                        "enabled": True,
+                        "allowFrom": [123],
+                    }
+                }
+            }
+        }
+    ]
+
+
+def test_doctor_json_reports_channel_empty_allowlist_extra_warnings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        def collect_empty_allowlist_extra_warnings(
+            self,
+            **kwargs: object,
+        ) -> list[str]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            return [f"- extra:{kwargs['prefix']}:{kwargs['channelName']}"]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "telegram": {
+                    "enabled": True,
+                    "accounts": {
+                        "ops": {
+                            "dmPolicy": "allowlist",
+                            "allowFrom": ["U123"],
+                        }
+                    },
+                }
+            }
+        },
+        channel_doctor_adapters={"telegram": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channelDoctor"]["warnings"] == [
+        "- extra:channels.telegram:telegram",
+        "- extra:channels.telegram.accounts.ops:telegram",
+    ]
+    assert "- extra:channels.telegram.accounts.ops:telegram" in payload["warnings"]
+    assert calls == [
+        {
+            "account": {
+                "enabled": True,
+                "accounts": {
+                    "ops": {
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["U123"],
+                    }
+                },
+            },
+            "channelName": "telegram",
+            "dmPolicy": None,
+            "effectiveAllowFrom": None,
+            "parent": None,
+            "prefix": "channels.telegram",
+        },
+        {
+            "account": {
+                "dmPolicy": "allowlist",
+                "allowFrom": ["U123"],
+            },
+            "channelName": "telegram",
+            "dmPolicy": "allowlist",
+            "effectiveAllowFrom": ["U123"],
+            "parent": {
+                "enabled": True,
+                "accounts": {
+                    "ops": {
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["U123"],
+                    }
+                },
+            },
+            "prefix": "channels.telegram.accounts.ops",
+        },
+    ]
+
+
+def test_doctor_json_honors_channel_empty_group_allowlist_skip(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        def should_skip_default_empty_group_allowlist_warning(
+            self,
+            **kwargs: object,
+        ) -> bool:
+            calls.append(json.loads(json.dumps(kwargs)))
+            return True
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "signal": {"enabled": True, "groupPolicy": "allowlist"},
+                "zalouser": {"enabled": True, "groupPolicy": "allowlist"},
+            }
+        },
+        channel_doctor_adapters={"zalouser": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["channelDoctor"]["emptyAllowlistWarnings"]
+    assert any("channels.signal.groupPolicy" in warning for warning in warnings)
+    assert not any("channels.zalouser.groupPolicy" in warning for warning in warnings)
+    assert calls == [
+        {
+            "account": {"enabled": True, "groupPolicy": "allowlist"},
+            "channelName": "zalouser",
+            "dmPolicy": None,
+            "effectiveAllowFrom": None,
+            "parent": None,
+            "prefix": "channels.zalouser",
+        }
+    ]
 
 
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
@@ -18214,7 +20353,7 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
     assert workspace_status["openClawContribution"] == "doctor:workspace-status"
     assert workspace_status["plugins"] == {
         "loaded": 1,
-        "imported": 0,
+        "imported": 1,
         "disabled": 0,
         "errors": 0,
         "bundlePlugins": 0,
@@ -18223,10 +20362,92 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
                 "id": "native-search",
                 "status": "loaded",
                 "format": "openclaw",
-                "imported": False,
+                "imported": True,
             }
         ],
     }
+
+
+def test_doctor_json_workspace_status_counts_runtime_imported_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="native-runtime",
+        contracts={"tools": ["native_runtime.search"]},
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            )
+        ]
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "plugins": {
+                "entries": {"native-runtime": {"enabled": True}},
+                "load": {"paths": [str(plugin_dir)]},
+            }
+        },
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    assert result.exit_code == 0, result.stdout
+    workspace_status = json.loads(result.stdout)["workspaceStatus"]
+    assert workspace_status["plugins"]["imported"] == 1
+    assert workspace_status["plugins"]["records"] == [
+        {
+            "id": "native-runtime",
+            "status": "loaded",
+            "format": "openclaw",
+            "imported": True,
+        }
+    ]
+
+
+def test_doctor_json_workspace_status_marks_diagnostics_loaded_plugins_imported(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "plugins" / "diagnostics-loaded"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="diagnostics-loaded")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "plugins": {
+                "load": {"paths": [str(plugin_dir)]},
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    workspace_status = json.loads(result.stdout)["workspaceStatus"]
+    assert workspace_status["plugins"]["imported"] == 1
+    assert workspace_status["plugins"]["records"] == [
+        {
+            "id": "diagnostics-loaded",
+            "status": "loaded",
+            "format": "openclaw",
+            "imported": True,
+        }
+    ]
 
 
 def test_doctor_json_adds_task_flow_recovery_hints_for_broken_blocked_flows(
@@ -22893,6 +25114,207 @@ def test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy(
     assert "openclaw approvals get --gateway" in global_warning
     assert global_warning in payload["warnings"]
     assert agent_warning in payload["warnings"]
+
+
+def test_doctor_json_reports_exec_safe_bin_profile_coverage(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "tools": {
+                "exec": {
+                    "safeBins": ["node", "jq"],
+                    "safeBinProfiles": {"jq": {}},
+                }
+            },
+            "agents": {
+                "list": [
+                    {
+                        "id": "runner",
+                        "tools": {"exec": {"safeBins": ["custom-tool"]}},
+                    }
+                ]
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    safe_bins = payload["security"]["execSafeBins"]
+    assert safe_bins["status"] == "warning"
+    assert safe_bins["coverageHits"] == [
+        {
+            "scopePath": "tools.exec",
+            "bin": "node",
+            "kind": "missingProfile",
+            "isInterpreter": True,
+        },
+        {
+            "scopePath": "tools.exec",
+            "bin": "jq",
+            "kind": "riskySemantics",
+            "warning": (
+                "jq supports broad jq programs and builtins (for example `env`), "
+                "so prefer explicit allowlist entries or approval-gated runs "
+                "instead of safeBins."
+            ),
+        },
+        {
+            "scopePath": "agents.list.runner.tools.exec",
+            "bin": "custom-tool",
+            "kind": "missingProfile",
+            "isInterpreter": False,
+        },
+    ]
+    warnings = safe_bins["warnings"]
+    assert any(
+        "tools.exec.safeBins includes interpreter/runtime 'node' without profile"
+        in warning
+        for warning in warnings
+    )
+    assert any(
+        "tools.exec.safeBins includes 'jq': jq supports broad jq programs" in warning
+        for warning in warnings
+    )
+    assert any(
+        "agents.list.runner.tools.exec.safeBins entry 'custom-tool' is missing "
+        "safeBinProfiles.custom-tool." in warning
+        for warning in warnings
+    )
+    assert any('Run "openzues doctor --fix"' in warning for warning in warnings)
+    for warning in warnings:
+        assert warning in payload["warnings"]
+
+
+def test_doctor_fix_scaffolds_custom_exec_safe_bin_profiles(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "exec": {
+                        "safeBins": ["node", "jq", "custom-tool"],
+                    }
+                },
+            }
+        )
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(data_dir=tmp_path),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    exec_safe_bins = payload["security"]["execSafeBins"]
+    assert exec_safe_bins["repairRequested"] is True
+    assert exec_safe_bins["changed"] is True
+    assert exec_safe_bins["changes"] == [
+        "- tools.exec.safeBinProfiles.custom-tool: added scaffold profile {} "
+        "(review and tighten flags/positionals).",
+        "- tools.exec.safeBinProfiles.jq: added scaffold profile {} "
+        "(review and tighten flags/positionals).",
+    ]
+    assert any(
+        "tools.exec.safeBins includes interpreter/runtime 'node' without profile"
+        in warning
+        for warning in exec_safe_bins["warnings"]
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["tools"]["exec"]["safeBinProfiles"] == {
+        "custom-tool": {},
+        "jq": {},
+    }
+
+
+def test_doctor_json_reports_exec_safe_bin_trusted_dir_hints(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    resolved_bin = tmp_path / "user-bin" / "custom-tool"
+    resolved_bin.parent.mkdir()
+    resolved_bin.write_text("echo custom\n", encoding="utf-8")
+
+    def fake_which(command: str) -> str | None:
+        return str(resolved_bin) if command == "custom-tool" else None
+
+    monkeypatch.setattr(cli_module.shutil, "which", fake_which)
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "tools": {
+                "exec": {
+                    "safeBins": ["custom-tool"],
+                    "safeBinProfiles": {"custom-tool": {}},
+                    "safeBinTrustedDirs": [str(tmp_path / "trusted-bin")],
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    safe_bins = payload["security"]["execSafeBins"]
+    assert safe_bins["status"] == "warning"
+    assert safe_bins["trustedDirHints"] == [
+        {
+            "scopePath": "tools.exec",
+            "bin": "custom-tool",
+            "resolvedPath": str(resolved_bin),
+        }
+    ]
+    warning = safe_bins["warnings"][0]
+    assert "tools.exec.safeBins entry 'custom-tool'" in warning
+    assert "outside trusted safe-bin dirs" in warning
+    assert "tools.exec.safeBinTrustedDirs" in safe_bins["warnings"][-1]
+    assert warning in payload["warnings"]
 
 
 def test_gateway_config_preserves_exec_policy_config_for_security_doctor(

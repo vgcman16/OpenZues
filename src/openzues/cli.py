@@ -4,6 +4,7 @@ import asyncio
 import codecs
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -46,7 +47,11 @@ from openzues.schemas import (
     SetupWizardSessionUpdate,
 )
 from openzues.services.access import AccessService
-from openzues.services.acp_client_runtime import AcpClientSpawnPlan, build_acp_client_spawn_plan
+from openzues.services.acp_client_runtime import (
+    AcpClientSpawnPlan,
+    build_acp_client_spawn_plan,
+    run_acp_client_interactive,
+)
 from openzues.services.browser_posture import build_browser_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.control_chat import (
@@ -93,6 +98,11 @@ from openzues.services.missions import MissionService
 from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService
 from openzues.services.playbooks import PlaybookService
+from openzues.services.plugin_clawhub_installers import CliClawHubPluginInstaller
+from openzues.services.plugin_npm_installers import (
+    CliNpmHookPackInstaller,
+    CliNpmPluginInstaller,
+)
 from openzues.services.projects import ProjectService
 from openzues.services.recall import RecallService
 from openzues.services.remote_ops import RemoteOpsService
@@ -479,6 +489,7 @@ acp_app = typer.Typer(
     help="Run an ACP bridge backed by the Gateway.",
     invoke_without_command=True,
 )
+secrets_app = typer.Typer(help="Secrets runtime controls.")
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="List, spawn, and wait on gateway sessions.")
 tasks_app = typer.Typer(help="Inspect durable background tasks.")
@@ -523,6 +534,7 @@ app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
+app.add_typer(secrets_app, name="secrets")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(tasks_app, name="tasks")
@@ -957,6 +969,9 @@ class CliServices:
     gateway_bootstrap: GatewayBootstrapService
     runtime_updates: RuntimeUpdateService
     setup: SetupService
+    plugin_clawhub_installer: CliClawHubPluginInstaller
+    plugin_npm_installer: CliNpmPluginInstaller
+    hook_npm_installer: CliNpmHookPackInstaller
 
 
 async def _build_services(app_settings: Settings) -> CliServices:
@@ -998,6 +1013,9 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_commands = GatewayCommandsService()
     gateway_node_pairing = GatewayNodePairingService(database)
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
+    plugin_clawhub_installer = CliClawHubPluginInstaller(data_dir=app_settings.data_dir)
+    plugin_npm_installer = CliNpmPluginInstaller(data_dir=app_settings.data_dir)
+    hook_npm_installer = CliNpmHookPackInstaller(data_dir=app_settings.data_dir)
     onboarding = OnboardingService(
         database,
         manager,
@@ -1169,6 +1187,9 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_bootstrap=gateway_bootstrap,
         runtime_updates=runtime_updates,
         setup=setup,
+        plugin_clawhub_installer=plugin_clawhub_installer,
+        plugin_npm_installer=plugin_npm_installer,
+        hook_npm_installer=hook_npm_installer,
     )
 
 
@@ -4120,6 +4141,81 @@ _DOCTOR_EXEC_SECURITY_RANK = {"deny": 0, "allowlist": 1, "full": 2}
 _DOCTOR_EXEC_ASK_RANK = {"off": 0, "on-miss": 1, "always": 2}
 _DOCTOR_EXEC_DEFAULT_SECURITY = "full"
 _DOCTOR_EXEC_DEFAULT_ASK = "off"
+_DOCTOR_DEFAULT_SAFE_BIN_TRUSTED_DIRS = ("/bin", "/usr/bin")
+_DOCTOR_INTERPRETER_LIKE_SAFE_BINS = {
+    "ash",
+    "awk",
+    "bash",
+    "busybox",
+    "bun",
+    "cmd",
+    "cmd.exe",
+    "cscript",
+    "dash",
+    "deno",
+    "fish",
+    "gawk",
+    "gsed",
+    "ksh",
+    "lua",
+    "mawk",
+    "nawk",
+    "node",
+    "nodejs",
+    "perl",
+    "php",
+    "powershell",
+    "powershell.exe",
+    "pypy",
+    "pwsh",
+    "pwsh.exe",
+    "python",
+    "python2",
+    "python3",
+    "ruby",
+    "sed",
+    "sh",
+    "toybox",
+    "wscript",
+    "zsh",
+}
+_DOCTOR_RISKY_SAFE_BIN_WARNINGS = {
+    "awk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "gawk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "mawk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "nawk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "jq": (
+        "jq supports broad jq programs and builtins (for example `env`), so prefer "
+        "explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "sed": (
+        "sed scripts can execute commands and write files, so prefer explicit allowlist "
+        "entries or approval-gated runs instead of safeBins."
+    ),
+    "gsed": (
+        "sed scripts can execute commands and write files, so prefer explicit allowlist "
+        "entries or approval-gated runs instead of safeBins."
+    ),
+}
+_DOCTOR_INTERPRETER_LIKE_SAFE_BIN_PATTERNS = (
+    re.compile(r"^python\d+(?:\.\d+)?$"),
+    re.compile(r"^ruby\d+(?:\.\d+)?$"),
+    re.compile(r"^perl\d+(?:\.\d+)?$"),
+    re.compile(r"^php\d+(?:\.\d+)?$"),
+    re.compile(r"^node\d+(?:\.\d+)?$"),
+)
 
 
 def _doctor_exec_security_value(value: object) -> str | None:
@@ -4148,6 +4244,355 @@ def _doctor_exec_policy_config(value: object) -> dict[str, str]:
     if ask is not None:
         resolved["ask"] = ask
     return resolved
+
+
+def _doctor_normalize_safe_bin_name(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    tail = re.split(r"[\\/]", text.lower())[-1]
+    normalized = re.sub(r"\.(?:exe|cmd|bat|com)$", "", tail)
+    return normalized or None
+
+
+def _doctor_safe_bin_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized = [
+        name
+        for item in value
+        if (name := _doctor_normalize_safe_bin_name(item)) is not None
+    ]
+    return sorted(_dedupe_cli_strings(normalized))
+
+
+def _doctor_safe_bin_profiles(value: object) -> dict[str, object]:
+    profiles = _dict_config(value)
+    return {
+        name: profile
+        for key, profile in profiles.items()
+        if (name := _doctor_normalize_safe_bin_name(key)) is not None
+    }
+
+
+def _doctor_safe_bin_trusted_dirs(value: object) -> list[Path]:
+    dirs: list[Path] = []
+    if not isinstance(value, list):
+        return dirs
+    for entry in value:
+        path_text = _optional_cli_string(entry)
+        if path_text is None:
+            continue
+        dirs.append(_bundled_lookup_path(path_text))
+    return dirs
+
+
+def _doctor_is_interpreter_like_safe_bin(bin_name: str) -> bool:
+    if bin_name in _DOCTOR_INTERPRETER_LIKE_SAFE_BINS:
+        return True
+    return any(
+        pattern.match(bin_name) is not None
+        for pattern in _DOCTOR_INTERPRETER_LIKE_SAFE_BIN_PATTERNS
+    )
+
+
+def _doctor_exec_safe_bin_scopes(
+    snapshot: dict[str, object],
+) -> list[tuple[str, list[str], dict[str, object], list[Path]]]:
+    scopes: list[tuple[str, list[str], dict[str, object], list[Path]]] = []
+    tools = _dict_config(snapshot.get("tools"))
+    global_exec = _dict_config(tools.get("exec"))
+    global_safe_bins = _doctor_safe_bin_list(global_exec.get("safeBins"))
+    global_profiles = _doctor_safe_bin_profiles(global_exec.get("safeBinProfiles"))
+    default_trusted_dirs = [
+        _bundled_lookup_path(path_text) for path_text in _DOCTOR_DEFAULT_SAFE_BIN_TRUSTED_DIRS
+    ]
+    global_trusted_dirs = [
+        *default_trusted_dirs,
+        *_doctor_safe_bin_trusted_dirs(global_exec.get("safeBinTrustedDirs")),
+    ]
+    if global_safe_bins:
+        scopes.append(("tools.exec", global_safe_bins, global_profiles, global_trusted_dirs))
+    agents = _dict_config(snapshot.get("agents"))
+    for agent in _object_list(agents.get("list")):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = _optional_cli_string(agent.get("id"))
+        if agent_id is None:
+            continue
+        agent_tools = _dict_config(agent.get("tools"))
+        agent_exec = _dict_config(agent_tools.get("exec"))
+        agent_safe_bins = _doctor_safe_bin_list(agent_exec.get("safeBins"))
+        if not agent_safe_bins:
+            continue
+        agent_profiles = {
+            **global_profiles,
+            **_doctor_safe_bin_profiles(agent_exec.get("safeBinProfiles")),
+        }
+        agent_trusted_dirs = [
+            *global_trusted_dirs,
+            *_doctor_safe_bin_trusted_dirs(agent_exec.get("safeBinTrustedDirs")),
+        ]
+        scopes.append(
+            (
+                f"agents.list.{agent_id}.tools.exec",
+                agent_safe_bins,
+                agent_profiles,
+                agent_trusted_dirs,
+            )
+        )
+    return scopes
+
+
+def _doctor_exec_safe_bin_coverage_hits(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    hits: list[dict[str, object]] = []
+    for scope_path, safe_bins, merged_profiles, _trusted_dirs in _doctor_exec_safe_bin_scopes(
+        snapshot
+    ):
+        for bin_name in safe_bins:
+            if bin_name in merged_profiles:
+                continue
+            hits.append(
+                {
+                    "scopePath": scope_path,
+                    "bin": bin_name,
+                    "kind": "missingProfile",
+                    "isInterpreter": _doctor_is_interpreter_like_safe_bin(bin_name),
+                }
+            )
+        for bin_name in safe_bins:
+            warning = _DOCTOR_RISKY_SAFE_BIN_WARNINGS.get(bin_name)
+            if warning is None:
+                continue
+            hits.append(
+                {
+                    "scopePath": scope_path,
+                    "bin": bin_name,
+                    "kind": "riskySemantics",
+                    "warning": warning,
+                }
+            )
+    return hits
+
+
+def _doctor_is_trusted_safe_bin_path(
+    resolved_path: Path,
+    trusted_dirs: Sequence[Path],
+) -> bool:
+    try:
+        resolved_parent = resolved_path.resolve(strict=False).parent
+    except OSError:
+        resolved_parent = resolved_path.parent
+    return any(resolved_parent == trusted_dir for trusted_dir in trusted_dirs)
+
+
+def _doctor_exec_safe_bin_trusted_dir_hints(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    hints: list[dict[str, object]] = []
+    for scope_path, safe_bins, _merged_profiles, trusted_dirs in _doctor_exec_safe_bin_scopes(
+        snapshot
+    ):
+        for bin_name in safe_bins:
+            resolved = shutil.which(bin_name)
+            if resolved is None:
+                continue
+            resolved_path = _bundled_lookup_path(resolved)
+            if _doctor_is_trusted_safe_bin_path(resolved_path, trusted_dirs):
+                continue
+            hints.append(
+                {
+                    "scopePath": scope_path,
+                    "bin": bin_name,
+                    "resolvedPath": str(resolved_path),
+                }
+            )
+    return hints
+
+
+def _doctor_exec_safe_bin_warnings(hits: Sequence[dict[str, object]]) -> list[str]:
+    if not hits:
+        return []
+    warnings: list[str] = []
+    interpreter_hits = [
+        hit
+        for hit in hits
+        if hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is True
+    ]
+    custom_hits = [
+        hit
+        for hit in hits
+        if hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is not True
+    ]
+    risky_hits = [hit for hit in hits if hit.get("kind") == "riskySemantics"]
+    for hit in interpreter_hits[:5]:
+        warnings.append(
+            f"- {hit.get('scopePath')}.safeBins includes interpreter/runtime "
+            f"'{hit.get('bin')}' without profile."
+        )
+    if len(interpreter_hits) > 5:
+        warnings.append(
+            f"- {len(interpreter_hits) - 5} more interpreter/runtime safeBins "
+            "entries are missing profiles."
+        )
+    for hit in custom_hits[:5]:
+        warnings.append(
+            f"- {hit.get('scopePath')}.safeBins entry '{hit.get('bin')}' is "
+            f"missing safeBinProfiles.{hit.get('bin')}."
+        )
+    if len(custom_hits) > 5:
+        warnings.append(
+            f"- {len(custom_hits) - 5} more custom safeBins entries are missing profiles."
+        )
+    for hit in risky_hits[:5]:
+        warning = hit.get("warning") or (
+            "prefer explicit allowlist entries or approval-gated runs."
+        )
+        warnings.append(
+            f"- {hit.get('scopePath')}.safeBins includes '{hit.get('bin')}': {warning}"
+        )
+    if len(risky_hits) > 5:
+        warnings.append(
+            f"- {len(risky_hits) - 5} more safeBins entries should not use the "
+            "low-risk safeBins fast path."
+        )
+    if custom_hits:
+        warnings.append(
+            '- Run "openzues doctor --fix" to scaffold missing custom '
+            "safeBinProfiles entries."
+        )
+    return warnings
+
+
+def _doctor_exec_safe_bin_trusted_dir_warnings(
+    hints: Sequence[dict[str, object]],
+) -> list[str]:
+    if not hints:
+        return []
+    warnings = [
+        f"- {hint.get('scopePath')}.safeBins entry '{hint.get('bin')}' resolves to "
+        f"'{hint.get('resolvedPath')}' outside trusted safe-bin dirs."
+        for hint in hints[:5]
+    ]
+    if len(hints) > 5:
+        warnings.append(
+            f"- {len(hints) - 5} more safeBins entries resolve outside trusted "
+            "safe-bin dirs."
+        )
+    warnings.append(
+        "- If intentional, add the binary directory to tools.exec.safeBinTrustedDirs "
+        "(global or agent scope)."
+    )
+    return warnings
+
+
+def _doctor_exec_safe_bin_repair(
+    snapshot: dict[str, object],
+) -> tuple[dict[str, object], list[str]]:
+    next_snapshot: dict[str, object] = dict(snapshot)
+    changes: list[str] = []
+
+    tools = dict(_dict_config(next_snapshot.get("tools")))
+    global_exec = dict(_dict_config(tools.get("exec")))
+    global_profiles = _doctor_safe_bin_profiles(global_exec.get("safeBinProfiles"))
+    global_changed = False
+    for bin_name in _doctor_safe_bin_list(global_exec.get("safeBins")):
+        if bin_name in global_profiles or _doctor_is_interpreter_like_safe_bin(bin_name):
+            continue
+        global_profiles[bin_name] = {}
+        global_changed = True
+        changes.append(
+            f"- tools.exec.safeBinProfiles.{bin_name}: added scaffold profile "
+            "{} (review and tighten flags/positionals)."
+        )
+    if global_changed:
+        global_exec["safeBinProfiles"] = global_profiles
+        tools["exec"] = global_exec
+        next_snapshot["tools"] = tools
+
+    agents = dict(_dict_config(next_snapshot.get("agents")))
+    raw_agent_list = agents.get("list")
+    if not isinstance(raw_agent_list, list):
+        return next_snapshot, changes
+
+    next_agent_list: list[object] = []
+    agent_list_changed = False
+    for raw_agent in raw_agent_list:
+        if not isinstance(raw_agent, dict):
+            next_agent_list.append(raw_agent)
+            continue
+        agent_id = _optional_cli_string(raw_agent.get("id"))
+        if agent_id is None:
+            next_agent_list.append(raw_agent)
+            continue
+        agent_tools = dict(_dict_config(raw_agent.get("tools")))
+        agent_exec = dict(_dict_config(agent_tools.get("exec")))
+        agent_safe_bins = _doctor_safe_bin_list(agent_exec.get("safeBins"))
+        if not agent_safe_bins:
+            next_agent_list.append(raw_agent)
+            continue
+        local_profiles = _doctor_safe_bin_profiles(agent_exec.get("safeBinProfiles"))
+        merged_profiles = {**global_profiles, **local_profiles}
+        agent_changed = False
+        for bin_name in agent_safe_bins:
+            if bin_name in merged_profiles or _doctor_is_interpreter_like_safe_bin(bin_name):
+                continue
+            local_profiles[bin_name] = {}
+            merged_profiles[bin_name] = {}
+            agent_changed = True
+            changes.append(
+                f"- agents.list.{agent_id}.tools.exec.safeBinProfiles.{bin_name}: "
+                "added scaffold profile {} (review and tighten flags/positionals)."
+            )
+        if not agent_changed:
+            next_agent_list.append(raw_agent)
+            continue
+        agent_exec["safeBinProfiles"] = local_profiles
+        agent_tools["exec"] = agent_exec
+        next_agent = dict(raw_agent)
+        next_agent["tools"] = agent_tools
+        next_agent_list.append(next_agent)
+        agent_list_changed = True
+    if agent_list_changed:
+        agents["list"] = next_agent_list
+        next_snapshot["agents"] = agents
+    return next_snapshot, changes
+
+
+def _build_doctor_exec_safe_bins_payload(
+    snapshot: dict[str, object],
+    *,
+    repair_requested: bool = False,
+    changes: Sequence[str] = (),
+) -> dict[str, object]:
+    hits = _doctor_exec_safe_bin_coverage_hits(snapshot)
+    trusted_dir_hints = _doctor_exec_safe_bin_trusted_dir_hints(snapshot)
+    warnings = [
+        *_doctor_exec_safe_bin_warnings(hits),
+        *_doctor_exec_safe_bin_trusted_dir_warnings(trusted_dir_hints),
+    ]
+    custom_missing = any(
+        hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is not True
+        for hit in hits
+    )
+    return {
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "Exec safe-bin coverage has warnings."
+            if warnings
+            else "Exec safe-bin coverage has no warnings."
+        ),
+        "coverageHits": hits,
+        "trustedDirHints": trusted_dir_hints,
+        "warnings": warnings,
+        "repairAvailable": bool(changes) or custom_missing,
+        "repairRequested": repair_requested,
+        "changed": bool(changes),
+        "changes": list(changes),
+        "openClawContribution": "doctor:exec-safe-bins",
+    }
 
 
 def _doctor_security_exec_approvals_path(data_dir: Path | None) -> Path:
@@ -4751,6 +5196,7 @@ def _doctor_security_channel_dm_warnings(
 def _build_doctor_security_payload(
     config_service: object | None = None,
     data_dir: Path | None = None,
+    should_repair: bool = False,
 ) -> dict[str, object]:
     snapshot = _doctor_security_snapshot(config_service)
     if snapshot is None:
@@ -4765,10 +5211,36 @@ def _build_doctor_security_payload(
             "repairAvailable": False,
             "warnings": [],
         }
+    safe_bin_changes: list[str] = []
+    if should_repair:
+        repaired_snapshot, safe_bin_changes = _doctor_exec_safe_bin_repair(snapshot)
+        if safe_bin_changes:
+            patch_object = getattr(config_service, "patch_object", None)
+            set_raw = getattr(config_service, "set_raw", None)
+            if callable(patch_object):
+                patch_object(repaired_snapshot)
+                snapshot = repaired_snapshot
+            elif callable(set_raw):
+                snapshot_hash = getattr(config_service, "_snapshot_hash", None)
+                base_hash = (
+                    snapshot_hash(snapshot)
+                    if callable(snapshot_hash)
+                    else None
+                )
+                set_raw(json.dumps(repaired_snapshot), base_hash=base_hash)
+                snapshot = repaired_snapshot
+            else:
+                safe_bin_changes = []
+    exec_safe_bins = _build_doctor_exec_safe_bins_payload(
+        snapshot,
+        repair_requested=should_repair,
+        changes=safe_bin_changes,
+    )
     warnings = [
         *_doctor_security_approvals_warnings(snapshot),
         *_doctor_security_heartbeat_warnings(snapshot),
         *_doctor_security_exec_policy_warnings(snapshot, data_dir),
+        *[str(item) for item in _object_list(exec_safe_bins.get("warnings"))],
         *_doctor_security_gateway_exposure_warnings(snapshot),
         *_doctor_security_channel_dm_warnings(snapshot, data_dir),
     ]
@@ -4784,6 +5256,7 @@ def _build_doctor_security_payload(
         "repairAvailable": False,
         "warnings": warnings,
         "auditHint": "openclaw security audit --deep",
+        "execSafeBins": exec_safe_bins,
     }
 
 
@@ -4791,11 +5264,597 @@ def _with_doctor_security_payload(
     payload: dict[str, object],
     config_service: object | None,
     data_dir: Path | None = None,
+    should_repair: bool = False,
 ) -> dict[str, object]:
-    security = _build_doctor_security_payload(config_service, data_dir=data_dir)
+    security = _build_doctor_security_payload(
+        config_service,
+        data_dir=data_dir,
+        should_repair=should_repair,
+    )
     next_payload = dict(payload)
     next_payload["security"] = security
     warnings = [str(item) for item in _object_list(security.get("warnings"))]
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, warnings)
+    return next_payload
+
+
+def _doctor_configured_channel_ids(snapshot: dict[str, object]) -> list[str]:
+    channels = _dict_config(snapshot.get("channels"))
+    return sorted(
+        channel_id
+        for channel_id in (str(key).strip() for key in channels)
+        if channel_id and channel_id != "defaults"
+    )
+
+
+def _doctor_channel_adapter(
+    adapters: object | None,
+    channel_id: str,
+) -> object | None:
+    if isinstance(adapters, Mapping):
+        return adapters.get(channel_id)
+    get_adapter = getattr(adapters, "get", None)
+    if callable(get_adapter):
+        return get_adapter(channel_id)
+    return None
+
+
+def _doctor_write_config_snapshot(
+    config_service: object | None,
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    if config_service is None:
+        raise RuntimeError("Gateway config is unavailable.")
+    set_raw = getattr(config_service, "set_raw", None)
+    if callable(set_raw):
+        current = _doctor_config_snapshot(config_service)
+        snapshot_hash = getattr(config_service, "_snapshot_hash", None)
+        base_hash = snapshot_hash(current) if callable(snapshot_hash) else None
+        result = set_raw(json.dumps(snapshot), base_hash=base_hash)
+        return dict(result) if isinstance(result, dict) else {"result": result}
+    patch_object = getattr(config_service, "patch_object", None)
+    if callable(patch_object):
+        result = patch_object(snapshot)
+        return dict(result) if isinstance(result, dict) else {"result": result}
+    raise RuntimeError("Gateway config repair runtime is unavailable.")
+
+
+async def _doctor_channel_preview_warnings(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> list[str]:
+    collect = getattr(adapter, "collect_preview_warnings", None) or getattr(
+        adapter,
+        "collectPreviewWarnings",
+        None,
+    )
+    if not callable(collect):
+        return []
+    result = collect(cfg=snapshot, doctorFixCommand="openzues doctor --fix")
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, list):
+        return []
+    return [str(item) for item in result if str(item).strip()]
+
+
+async def _doctor_channel_repair_mutation(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    repair = getattr(adapter, "repair_config", None) or getattr(
+        adapter,
+        "repairConfig",
+        None,
+    )
+    if not callable(repair):
+        return None
+    result = repair(cfg=snapshot, doctorFixCommand="openzues doctor --fix")
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return None
+    next_config = result.get("config")
+    changes = [str(item) for item in _object_list(result.get("changes")) if str(item).strip()]
+    warnings = [str(item) for item in _object_list(result.get("warnings")) if str(item).strip()]
+    if not changes and not warnings:
+        return None
+    return {
+        "config": next_config if isinstance(next_config, dict) else snapshot,
+        "changes": changes,
+        "warnings": warnings,
+    }
+
+
+async def _doctor_channel_mutable_allowlist_warnings(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> list[str]:
+    collect = getattr(adapter, "collect_mutable_allowlist_warnings", None) or getattr(
+        adapter,
+        "collectMutableAllowlistWarnings",
+        None,
+    )
+    if not callable(collect):
+        return []
+    result = collect(cfg=snapshot)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, list):
+        return []
+    return [str(item) for item in result if str(item).strip()]
+
+
+def _doctor_empty_allowlist_context(
+    *,
+    account: dict[str, object],
+    channel_id: str,
+    parent: dict[str, object] | None = None,
+    prefix: str,
+) -> dict[str, object]:
+    account_dm = _dict_config(account.get("dm"))
+    parent_dm = _dict_config(parent.get("dm")) if parent is not None else {}
+    dm_policy = (
+        _optional_cli_string(account.get("dmPolicy"))
+        or _optional_cli_string(account_dm.get("policy"))
+        or (_optional_cli_string(parent.get("dmPolicy")) if parent is not None else None)
+        or _optional_cli_string(parent_dm.get("policy"))
+    )
+    effective_allow_from = (
+        _doctor_dm_list(account.get("allowFrom"))
+        or (_doctor_dm_list(parent.get("allowFrom")) if parent is not None else [])
+        or _doctor_dm_list(account_dm.get("allowFrom"))
+        or _doctor_dm_list(parent_dm.get("allowFrom"))
+        or None
+    )
+    return {
+        "account": account,
+        "channelName": channel_id,
+        "dmPolicy": dm_policy,
+        "effectiveAllowFrom": effective_allow_from,
+        "parent": parent,
+        "prefix": prefix,
+    }
+
+
+async def _doctor_channel_empty_allowlist_extra_warnings(
+    *,
+    adapter: object,
+    channel_id: str,
+    channel_config: dict[str, object],
+) -> list[str]:
+    collect = getattr(adapter, "collect_empty_allowlist_extra_warnings", None) or getattr(
+        adapter,
+        "collectEmptyAllowlistExtraWarnings",
+        None,
+    )
+    if not callable(collect):
+        return []
+    contexts = [
+        _doctor_empty_allowlist_context(
+            account=channel_config,
+            channel_id=channel_id,
+            prefix=f"channels.{channel_id}",
+        )
+    ]
+    for account_id, raw_account in _dict_config(channel_config.get("accounts")).items():
+        if not isinstance(raw_account, dict):
+            continue
+        contexts.append(
+            _doctor_empty_allowlist_context(
+                account=raw_account,
+                channel_id=channel_id,
+                parent=channel_config,
+                prefix=f"channels.{channel_id}.accounts.{account_id}",
+            )
+        )
+    warnings: list[str] = []
+    for context in contexts:
+        result = collect(**context)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, list):
+            warnings.extend(str(item) for item in result if str(item).strip())
+    return warnings
+
+
+async def _doctor_should_skip_empty_group_allowlist_warning(
+    *,
+    adapter: object | None,
+    context: dict[str, object],
+) -> bool:
+    if adapter is None:
+        return False
+    should_skip = getattr(
+        adapter,
+        "should_skip_default_empty_group_allowlist_warning",
+        None,
+    ) or getattr(adapter, "shouldSkipDefaultEmptyGroupAllowlistWarning", None)
+    if not callable(should_skip):
+        return False
+    result = should_skip(**context)
+    if inspect.isawaitable(result):
+        result = await result
+    return result is True
+
+
+async def _doctor_channel_empty_group_allowlist_warnings(
+    *,
+    adapter: object | None,
+    channel_id: str,
+    channel_config: dict[str, object],
+) -> list[str]:
+    contexts = [
+        _doctor_empty_allowlist_context(
+            account=channel_config,
+            channel_id=channel_id,
+            prefix=f"channels.{channel_id}",
+        )
+    ]
+    for account_id, raw_account in _dict_config(channel_config.get("accounts")).items():
+        if not isinstance(raw_account, dict):
+            continue
+        contexts.append(
+            _doctor_empty_allowlist_context(
+                account=raw_account,
+                channel_id=channel_id,
+                parent=channel_config,
+                prefix=f"channels.{channel_id}.accounts.{account_id}",
+            )
+        )
+    warnings: list[str] = []
+    for context in contexts:
+        account = _dict_config(context.get("account"))
+        parent = _dict_config(context.get("parent"))
+        group_policy = _optional_cli_string(account.get("groupPolicy")) or _optional_cli_string(
+            parent.get("groupPolicy")
+        )
+        if group_policy != "allowlist":
+            continue
+        group_allow_from = _doctor_dm_list(account.get("groupAllowFrom")) or _doctor_dm_list(
+            parent.get("groupAllowFrom")
+        )
+        effective_allow_from = context.get("effectiveAllowFrom")
+        if group_allow_from or (
+            isinstance(effective_allow_from, list) and len(effective_allow_from) > 0
+        ):
+            continue
+        if await _doctor_should_skip_empty_group_allowlist_warning(
+            adapter=adapter,
+            context=context,
+        ):
+            continue
+        prefix = str(context.get("prefix") or f"channels.{channel_id}")
+        warnings.append(
+            f'- {prefix}.groupPolicy is "allowlist" but groupAllowFrom '
+            "(and allowFrom) is empty - all group messages will be silently dropped. "
+            f"Add sender IDs to {prefix}.groupAllowFrom or {prefix}.allowFrom, "
+            'or set groupPolicy to "open".'
+        )
+    return warnings
+
+
+async def _doctor_channel_config_sequence(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+    should_repair: bool,
+) -> dict[str, list[str]]:
+    run_sequence = getattr(adapter, "run_config_sequence", None) or getattr(
+        adapter,
+        "runConfigSequence",
+        None,
+    )
+    if not callable(run_sequence):
+        return {"changeNotes": [], "warningNotes": []}
+    result = run_sequence(
+        cfg=snapshot,
+        env=dict(os.environ),
+        shouldRepair=should_repair,
+    )
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return {"changeNotes": [], "warningNotes": []}
+    return {
+        "changeNotes": [
+            str(item) for item in _object_list(result.get("changeNotes")) if str(item).strip()
+        ],
+        "warningNotes": [
+            str(item) for item in _object_list(result.get("warningNotes")) if str(item).strip()
+        ],
+    }
+
+
+async def _doctor_channel_stale_config_mutation(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    clean = getattr(adapter, "clean_stale_config", None) or getattr(
+        adapter,
+        "cleanStaleConfig",
+        None,
+    )
+    if not callable(clean):
+        return None
+    result = clean(cfg=snapshot)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return None
+    next_config = result.get("config")
+    changes = [str(item) for item in _object_list(result.get("changes")) if str(item).strip()]
+    warnings = [str(item) for item in _object_list(result.get("warnings")) if str(item).strip()]
+    if not changes and not warnings:
+        return None
+    return {
+        "config": next_config if isinstance(next_config, dict) else snapshot,
+        "changes": changes,
+        "warnings": warnings,
+    }
+
+
+async def _doctor_channel_compatibility_mutation(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    normalize = getattr(adapter, "normalize_compatibility_config", None) or getattr(
+        adapter,
+        "normalizeCompatibilityConfig",
+        None,
+    )
+    if not callable(normalize):
+        return None
+    result = normalize(cfg=snapshot)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return None
+    next_config = result.get("config")
+    changes = [str(item) for item in _object_list(result.get("changes")) if str(item).strip()]
+    warnings = [str(item) for item in _object_list(result.get("warnings")) if str(item).strip()]
+    if not changes and not warnings:
+        return None
+    return {
+        "config": next_config if isinstance(next_config, dict) else snapshot,
+        "changes": changes,
+        "warnings": warnings,
+    }
+
+
+async def _build_doctor_channel_doctor_payload(
+    config_service: object | None,
+    adapters: object | None,
+    *,
+    should_repair: bool = False,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    channel_ids = _doctor_configured_channel_ids(snapshot)
+    warnings: list[str] = []
+    changes: list[str] = []
+    sequence_changes: list[str] = []
+    sequence_warnings: list[str] = []
+    stale_changes: list[str] = []
+    stale_warnings: list[str] = []
+    compatibility_changes: list[str] = []
+    compatibility_warnings: list[str] = []
+    empty_allowlist_warnings: list[str] = []
+    adapter_count = 0
+    changed = False
+    next_snapshot = snapshot
+    for channel_id in channel_ids:
+        adapter = _doctor_channel_adapter(adapters, channel_id)
+        if adapter is None:
+            continue
+        adapter_count += 1
+        try:
+            compatibility_mutation = await _doctor_channel_compatibility_mutation(
+                adapter=adapter,
+                snapshot=next_snapshot,
+            )
+            if compatibility_mutation is not None:
+                current_compatibility_changes = [
+                    str(item)
+                    for item in _object_list(compatibility_mutation.get("changes"))
+                    if str(item).strip()
+                ]
+                current_compatibility_warnings = [
+                    str(item)
+                    for item in _object_list(compatibility_mutation.get("warnings"))
+                    if str(item).strip()
+                ]
+                compatibility_changes.extend(current_compatibility_changes)
+                compatibility_warnings.extend(current_compatibility_warnings)
+                changes.extend(current_compatibility_changes)
+                warnings.extend(current_compatibility_warnings)
+                compatibility_config = compatibility_mutation.get("config")
+                if isinstance(compatibility_config, dict) and current_compatibility_changes:
+                    next_snapshot = compatibility_config
+                    changed = should_repair
+            sequence = await _doctor_channel_config_sequence(
+                adapter=adapter,
+                snapshot=next_snapshot,
+                should_repair=should_repair,
+            )
+            current_sequence_changes = sequence["changeNotes"]
+            current_sequence_warnings = sequence["warningNotes"]
+            sequence_changes.extend(current_sequence_changes)
+            sequence_warnings.extend(current_sequence_warnings)
+            changes.extend(current_sequence_changes)
+            warnings.extend(current_sequence_warnings)
+            stale_mutation = await _doctor_channel_stale_config_mutation(
+                adapter=adapter,
+                snapshot=next_snapshot,
+            )
+            if stale_mutation is not None:
+                current_stale_changes = [
+                    str(item)
+                    for item in _object_list(stale_mutation.get("changes"))
+                    if str(item).strip()
+                ]
+                current_stale_warnings = [
+                    str(item)
+                    for item in _object_list(stale_mutation.get("warnings"))
+                    if str(item).strip()
+                ]
+                stale_changes.extend(current_stale_changes)
+                stale_warnings.extend(current_stale_warnings)
+                changes.extend(current_stale_changes)
+                warnings.extend(current_stale_warnings)
+                stale_config = stale_mutation.get("config")
+                if isinstance(stale_config, dict) and current_stale_changes:
+                    next_snapshot = stale_config
+                    changed = should_repair
+            if should_repair:
+                mutation = await _doctor_channel_repair_mutation(
+                    adapter=adapter,
+                    snapshot=next_snapshot,
+                )
+                if mutation is None:
+                    continue
+                changes.extend(
+                    str(item)
+                    for item in _object_list(mutation.get("changes"))
+                    if str(item).strip()
+                )
+                warnings.extend(
+                    str(item)
+                    for item in _object_list(mutation.get("warnings"))
+                    if str(item).strip()
+                )
+                mutation_config = mutation.get("config")
+                if isinstance(mutation_config, dict) and _object_list(
+                    mutation.get("changes")
+                ):
+                    next_snapshot = mutation_config
+                    changed = True
+            else:
+                warnings.extend(
+                    await _doctor_channel_preview_warnings(
+                        adapter=adapter,
+                        snapshot=snapshot,
+                    )
+                )
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            warnings.append(f"- channels.{channel_id} doctor hook failed: {exc}")
+    path: object | None = _config_service_path_label(config_service)
+    if should_repair and changed:
+        try:
+            write_result = _doctor_write_config_snapshot(config_service, next_snapshot)
+            path = write_result.get("path") or path
+        except Exception as exc:
+            warnings.append(f"- Channel plugin doctor repair failed: {exc}")
+            return {
+                "status": "error",
+                "summary": "Channel plugin doctor repair failed.",
+                "source": "openzues-native",
+                "openClawContribution": "doctor:channel-plugin-contracts",
+                "repairRequested": should_repair,
+                "repairAvailable": adapter_count > 0,
+                "configuredChannels": channel_ids,
+                "adapterCount": adapter_count,
+                "changed": False,
+                "changes": changes,
+                "warnings": warnings,
+                "path": path,
+            }
+    for channel_id in channel_ids:
+        channel_config = _dict_config(next_snapshot.get("channels")).get(channel_id)
+        if not isinstance(channel_config, dict):
+            continue
+        adapter = _doctor_channel_adapter(adapters, channel_id)
+        try:
+            current_empty_group_warnings = (
+                await _doctor_channel_empty_group_allowlist_warnings(
+                    adapter=adapter,
+                    channel_id=channel_id,
+                    channel_config=channel_config,
+                )
+            )
+            empty_allowlist_warnings.extend(current_empty_group_warnings)
+            warnings.extend(current_empty_group_warnings)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            warnings.append(
+                f"- channels.{channel_id} empty group allowlist doctor hook failed: {exc}"
+            )
+    for channel_id in channel_ids:
+        adapter = _doctor_channel_adapter(adapters, channel_id)
+        if adapter is None:
+            continue
+        try:
+            warnings.extend(
+                await _doctor_channel_mutable_allowlist_warnings(
+                    adapter=adapter,
+                    snapshot=next_snapshot,
+                )
+            )
+            channel_config = _dict_config(next_snapshot.get("channels")).get(channel_id)
+            if isinstance(channel_config, dict):
+                current_empty_allowlist_warnings = (
+                    await _doctor_channel_empty_allowlist_extra_warnings(
+                        adapter=adapter,
+                        channel_id=channel_id,
+                        channel_config=channel_config,
+                    )
+                )
+                empty_allowlist_warnings.extend(current_empty_allowlist_warnings)
+                warnings.extend(current_empty_allowlist_warnings)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            warnings.append(
+                f"- channels.{channel_id} mutable allowlist doctor hook failed: {exc}"
+            )
+    return {
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "Channel plugin doctor repair applied changes."
+            if should_repair and changed
+            else (
+                "Channel plugin doctor hooks reported warnings."
+                if warnings
+                else "No channel plugin doctor warnings detected."
+            )
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:channel-plugin-contracts",
+        "repairRequested": should_repair,
+        "repairAvailable": adapter_count > 0,
+        "configuredChannels": channel_ids,
+        "adapterCount": adapter_count,
+        "changed": changed,
+        "changes": changes,
+        "sequenceChanges": sequence_changes,
+        "sequenceWarnings": sequence_warnings,
+        "staleChanges": stale_changes,
+        "staleWarnings": stale_warnings,
+        "compatibilityChanges": compatibility_changes,
+        "compatibilityWarnings": compatibility_warnings,
+        "emptyAllowlistWarnings": empty_allowlist_warnings,
+        "warnings": warnings,
+        "path": path,
+    }
+
+
+async def _with_doctor_channel_doctor_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    adapters: object | None,
+    *,
+    should_repair: bool = False,
+) -> dict[str, object]:
+    channel_doctor = await _build_doctor_channel_doctor_payload(
+        config_service,
+        adapters,
+        should_repair=should_repair,
+    )
+    next_payload = dict(payload)
+    next_payload["channelDoctor"] = channel_doctor
+    warnings = [str(item) for item in _object_list(channel_doctor.get("warnings"))]
     if warnings:
         next_payload = _with_doctor_added_warnings(next_payload, warnings)
     return next_payload
@@ -6462,6 +7521,53 @@ def _build_doctor_runtime_bridge_plugin_executors_payload(
     }
 
 
+def _plugin_runtime_activation_payload(
+    plugin_rows: list[object],
+    services: object,
+) -> dict[str, object]:
+    manifest_tool_plugins: list[dict[str, object]] = []
+    for plugin in plugin_rows:
+        if not isinstance(plugin, dict):
+            continue
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        if plugin_id is None:
+            continue
+        contracts = plugin.get("contracts")
+        contract_payload = contracts if isinstance(contracts, dict) else {}
+        tools = _plugin_manifest_string_list(contract_payload.get("tools"))
+        if tools:
+            manifest_tool_plugins.append({"pluginId": plugin_id, "tools": tools})
+    runtime_tool_map: dict[str, list[str]] = {}
+    for spec in _plugin_runtime_specs_from_services(services):
+        plugin_id = _optional_cli_string(spec.plugin_id)
+        if plugin_id is None:
+            continue
+        runtime_tool_map.setdefault(plugin_id, []).append(spec.tool)
+    runtime_executor_plugins = [
+        {"pluginId": plugin_id, "tools": sorted(_dedupe_cli_strings(tools))}
+        for plugin_id, tools in sorted(runtime_tool_map.items())
+    ]
+    missing_executor_plugins = [
+        entry
+        for entry in manifest_tool_plugins
+        if _optional_cli_string(entry.get("pluginId")) not in runtime_tool_map
+    ]
+    if not manifest_tool_plugins:
+        status = "ok"
+    elif missing_executor_plugins and runtime_executor_plugins:
+        status = "partial"
+    elif missing_executor_plugins:
+        status = "metadata_only"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "manifestToolPlugins": manifest_tool_plugins,
+        "runtimeExecutorPlugins": runtime_executor_plugins,
+        "missingExecutorPlugins": missing_executor_plugins,
+    }
+
+
 def _build_doctor_runtime_bridge_acp_payload(
     config_service: object | None,
     gateway_node_methods: object | None,
@@ -7503,9 +8609,15 @@ def _build_doctor_workspace_status_payload(
     config_service: object | None,
     *,
     task_flows: Sequence[Mapping[str, object]] | None = None,
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
 ) -> dict[str, object]:
     snapshot = _doctor_config_snapshot(config_service)
     records = _plugin_records_from_config_snapshot(snapshot)
+    _mark_plugin_import_state(
+        records,
+        runtime_specs,
+        loaded_non_bundle_imported=True,
+    )
     plugin_summary = _doctor_workspace_plugin_summary(records)
     errors = _doctor_int_record_value(plugin_summary, "errors")
     task_flow_recovery = _doctor_task_flow_recovery_payload(task_flows or ())
@@ -7542,11 +8654,13 @@ def _with_doctor_workspace_status_payload(
     config_service: object | None,
     *,
     task_flows: Sequence[Mapping[str, object]] | None = None,
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
 ) -> dict[str, object]:
     next_payload = dict(payload)
     workspace_status = _build_doctor_workspace_status_payload(
         config_service,
         task_flows=task_flows,
+        runtime_specs=runtime_specs,
     )
     next_payload["workspaceStatus"] = workspace_status
     return _with_doctor_added_warnings(
@@ -8226,6 +9340,23 @@ def _emit_session_method_result(payload: dict[str, object], *, json_output: bool
     error = str(payload.get("error") or "").strip()
     if error:
         typer.echo(f"error: {error}")
+
+
+def _emit_secrets_reload(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    warning_count = 0.0
+    raw_warning_count = payload.get("warningCount")
+    if not isinstance(raw_warning_count, bool):
+        try:
+            warning_count = float(cast("int | float | str", raw_warning_count or 0))
+        except (TypeError, ValueError):
+            warning_count = 0.0
+    if math.isfinite(warning_count) and warning_count > 0:
+        typer.echo(f"Secrets reloaded with {warning_count:g} warning(s).")
+        return
+    typer.echo("Secrets reloaded.")
 
 
 def _sessions_cli_positive_int(value: str | None, *, option: str) -> int | None:
@@ -9323,6 +10454,12 @@ def _emit_plugins_install(payload: dict[str, object], *, json_output: bool) -> N
     if json_output:
         _emit_payload(payload, json_output=True)
         return
+    warning = _optional_cli_string(payload.get("warning"))
+    if warning is not None:
+        typer.echo(warning)
+    notice = _optional_cli_string(payload.get("notice"))
+    if notice is not None:
+        typer.echo(notice)
     plugin_id = str(payload.get("pluginId") or "").strip()
     install = payload.get("install")
     install_payload = install if isinstance(install, dict) else {}
@@ -9377,7 +10514,7 @@ def _emit_plugins_update(payload: dict[str, object], *, json_output: bool) -> No
     outcomes = payload.get("outcomes")
     outcome_rows = outcomes if isinstance(outcomes, list) else []
     if not outcome_rows:
-        typer.echo("No tracked plugins to update.")
+        typer.echo("No tracked plugins or hook packs to update.")
         return
     for outcome in outcome_rows:
         if not isinstance(outcome, dict):
@@ -9388,7 +10525,7 @@ def _emit_plugins_update(payload: dict[str, object], *, json_output: bool) -> No
     if payload.get("dryRun") is True:
         typer.echo("Dry run, no changes made.")
     elif payload.get("changed") is True:
-        typer.echo("Restart the gateway to load plugins.")
+        typer.echo("Restart the gateway to load plugins and hooks.")
 
 
 def _emit_plugins_marketplace_list(
@@ -11849,11 +12986,12 @@ async def _build_plugins_inventory_payload(
         if plugin is not None:
             plugins.append(plugin)
     gateway_config = getattr(services, "gateway_config", None)
+    config_snapshot = _doctor_config_snapshot(gateway_config)
     if isinstance(gateway_config, GatewayConfigService):
         existing_ids = {str(plugin.get("id") or "") for plugin in plugins}
         config_diagnostics: list[dict[str, object]] = []
         for plugin in _plugin_records_from_config_snapshot(
-            gateway_config.build_snapshot(),
+            config_snapshot,
             diagnostics=config_diagnostics,
         ):
             plugin_id = str(plugin.get("id") or "")
@@ -11862,12 +13000,18 @@ async def _build_plugins_inventory_payload(
                 existing_ids.add(plugin_id)
     else:
         config_diagnostics = []
+    _normalize_bundled_plugin_reported_versions(
+        plugins,
+        host_version=_plugin_report_host_version(config_snapshot),
+    )
     if enabled_only:
         plugins = [
             plugin
             for plugin in plugins
             if str(plugin.get("status") or "").strip() == "loaded"
         ]
+    runtime_specs = _plugin_runtime_specs_from_services(services)
+    _mark_plugin_import_state(plugins, runtime_specs)
     warnings = view_payload.get("warnings")
     diagnostics: list[dict[str, object]] = [
         {"level": "warn", "message": str(warning)}
@@ -11931,6 +13075,7 @@ async def _build_plugins_doctor_payload(services: CliServices) -> dict[str, obje
         "diagnostics": diagnostics,
         "compatibility": compatibility,
         "runtimeDependencies": runtime_dependency_payload,
+        "runtimeActivation": _plugin_runtime_activation_payload(plugin_rows, services),
         "docs": "https://docs.openclaw.ai/plugin",
     }
 
@@ -12605,6 +13750,318 @@ def _read_cli_local_plugin_identity(plugin_path: Path) -> tuple[str, str | None]
     return plugin_path.name, None
 
 
+_CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES = (
+    ".ts",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".tgz",
+    ".tar.gz",
+    ".tar",
+    ".zip",
+)
+_CLI_BARE_NPM_PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9\-._~]*$")
+_CLI_NPM_EXACT_SEMVER_RE = re.compile(
+    r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$"
+)
+_CLI_NPM_DIST_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_CLI_NPM_UNSCOPED_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-._~]*$")
+_CLI_NPM_SCOPED_NAME_RE = re.compile(
+    r"^@[a-z0-9][a-z0-9\-._~]*/[a-z0-9][a-z0-9\-._~]*$"
+)
+
+
+class _CliClawHubInstallError(ValueError):
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class _CliNpmInstallError(ValueError):
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class _CliBundledPluginSource:
+    plugin_id: str
+    local_path: Path
+    version: str | None = None
+    npm_spec: str | None = None
+
+
+@dataclass(frozen=True)
+class _CliClawHubPluginSpec:
+    name: str
+    version: str | None = None
+
+
+@dataclass(frozen=True)
+class _CliRegistryNpmSpec:
+    name: str
+    selector: str | None = None
+
+
+def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
+    text = raw.strip()
+    if not text:
+        return False
+    if text.startswith((".", "~")):
+        return True
+    if Path(text).is_absolute():
+        return True
+    lower_text = text.lower()
+    return any(lower_text.endswith(suffix) for suffix in _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES)
+
+
+def _is_cli_bare_npm_package_name(raw: str) -> bool:
+    return _CLI_BARE_NPM_PACKAGE_RE.match(raw.strip()) is not None
+
+
+def _cli_has_usable_bundled_plugin_tree(plugins_dir: Path) -> bool:
+    if not plugins_dir.is_dir():
+        return False
+    try:
+        children = sorted(plugins_dir.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return False
+    for child in children:
+        if not child.is_dir():
+            continue
+        if (child / "openclaw.plugin.json").is_file() or (child / "package.json").is_file():
+            return True
+    return False
+
+
+def _cli_is_source_checkout_package_root(package_root: Path) -> bool:
+    return (
+        (package_root / ".git").exists()
+        and (package_root / "src").is_dir()
+        and (package_root / "extensions").is_dir()
+    )
+
+
+def _cli_bundled_tree_from_package_root(package_root: Path) -> Path | None:
+    source_checkout = _cli_is_source_checkout_package_root(package_root)
+    source_extensions = package_root / "extensions"
+    built_extensions = package_root / "dist" / "extensions"
+    runtime_extensions = package_root / "dist-runtime" / "extensions"
+    runtime_usable = (
+        _cli_has_usable_bundled_plugin_tree(runtime_extensions)
+        if source_checkout
+        else runtime_extensions.is_dir()
+    )
+    built_usable = (
+        _cli_has_usable_bundled_plugin_tree(built_extensions)
+        if source_checkout
+        else built_extensions.is_dir()
+    )
+    if runtime_usable and built_usable:
+        return runtime_extensions
+    if built_usable:
+        return built_extensions
+    if source_checkout and source_extensions.is_dir():
+        return source_extensions
+    return None
+
+
+def _cli_bundled_plugin_root_candidates(root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    if _cli_has_usable_bundled_plugin_tree(root):
+        candidates.append(root)
+    package_tree = _cli_bundled_tree_from_package_root(root)
+    if package_tree is not None:
+        candidates.append(package_tree)
+    return candidates
+
+
+def _cli_bundled_plugin_roots() -> list[Path]:
+    roots: list[Path] = []
+    for env_key in ("OPENCLAW_BUNDLED_PLUGINS_DIR", "OPENZUES_BUNDLED_PLUGINS_DIR"):
+        raw_root = _optional_cli_string(os.environ.get(env_key))
+        if raw_root is None:
+            continue
+        root = _bundled_lookup_path(raw_root)
+        for candidate in _cli_bundled_plugin_root_candidates(root):
+            if candidate.is_dir() and candidate not in roots:
+                roots.append(candidate)
+    return roots
+
+
+def _read_cli_bundled_plugin_source(plugin_dir: Path) -> _CliBundledPluginSource | None:
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    plugin_id = _optional_cli_string(manifest.get("id"))
+    if plugin_id is None:
+        return None
+    package_metadata = _plugin_package_json_metadata(plugin_dir)
+    package_openclaw = package_metadata.get("openclaw")
+    install_metadata = (
+        package_openclaw.get("install")
+        if isinstance(package_openclaw, dict)
+        else None
+    )
+    npm_spec = (
+        _optional_cli_string(install_metadata.get("npmSpec"))
+        if isinstance(install_metadata, dict)
+        else None
+    ) or _optional_cli_string(package_metadata.get("name"))
+    return _CliBundledPluginSource(
+        plugin_id=plugin_id,
+        local_path=plugin_dir.resolve(),
+        version=(
+            _optional_cli_string(manifest.get("version"))
+            or _optional_cli_string(package_metadata.get("version"))
+        ),
+        npm_spec=npm_spec,
+    )
+
+
+def _find_cli_bundled_plugin_source_by_id(plugin_id: str) -> _CliBundledPluginSource | None:
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        return None
+    seen: set[Path] = set()
+    for root in _cli_bundled_plugin_roots():
+        candidates: list[Path] = [root / requested_id]
+        try:
+            candidates.extend(sorted(root.iterdir(), key=lambda path: path.name.lower()))
+        except OSError:
+            continue
+        for candidate in candidates:
+            try:
+                resolved_candidate = candidate.resolve(strict=False)
+            except OSError:
+                resolved_candidate = candidate
+            if resolved_candidate in seen or not candidate.is_dir():
+                continue
+            seen.add(resolved_candidate)
+            source = _read_cli_bundled_plugin_source(candidate)
+            if source is not None and source.plugin_id == requested_id:
+                return source
+    return None
+
+
+def _find_cli_bundled_plugin_source_by_npm_spec(
+    npm_spec: str,
+) -> _CliBundledPluginSource | None:
+    requested_spec = npm_spec.strip()
+    if not requested_spec:
+        return None
+    seen: set[Path] = set()
+    for root in _cli_bundled_plugin_roots():
+        try:
+            candidates = sorted(root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for candidate in candidates:
+            try:
+                resolved_candidate = candidate.resolve(strict=False)
+            except OSError:
+                resolved_candidate = candidate
+            if resolved_candidate in seen or not candidate.is_dir():
+                continue
+            seen.add(resolved_candidate)
+            source = _read_cli_bundled_plugin_source(candidate)
+            if source is not None and source.npm_spec == requested_spec:
+                return source
+    return None
+
+
+def _resolve_cli_bundled_install_plan_before_npm(
+    raw_spec: str,
+) -> _CliBundledPluginSource | None:
+    if not _is_cli_bare_npm_package_name(raw_spec):
+        return None
+    return _find_cli_bundled_plugin_source_by_id(raw_spec)
+
+
+def _resolve_cli_bundled_install_plan_for_npm_failure(
+    *,
+    raw_spec: str,
+    code: str | None,
+) -> _CliBundledPluginSource | None:
+    if code != "npm_package_not_found":
+        return None
+    return _find_cli_bundled_plugin_source_by_npm_spec(raw_spec)
+
+
+def _cli_bundled_install_warning(source: _CliBundledPluginSource, raw_spec: str) -> str:
+    return (
+        f'Using bundled plugin "{source.plugin_id}" from {source.local_path} '
+        f'for bare install spec "{raw_spec}". To install an npm package with the same '
+        f"name, use a scoped package name (for example @scope/{raw_spec})."
+    )
+
+
+def _parse_cli_clawhub_plugin_spec(raw: str) -> _CliClawHubPluginSpec | None:
+    trimmed = raw.strip()
+    if not trimmed.lower().startswith("clawhub:"):
+        return None
+    spec = trimmed[len("clawhub:") :].strip()
+    if not spec:
+        return None
+    at_index = spec.rfind("@")
+    if at_index <= 0 or at_index >= len(spec) - 1:
+        return _CliClawHubPluginSpec(name=spec)
+    name = spec[:at_index].strip()
+    version = spec[at_index + 1 :].strip() or None
+    return _CliClawHubPluginSpec(name=name, version=version)
+
+
+def _format_cli_clawhub_spec(name: str, version: str | None = None) -> str:
+    return f"clawhub:{name}{f'@{version}' if version else ''}"
+
+
+def _parse_cli_registry_npm_spec(raw: str) -> _CliRegistryNpmSpec | None:
+    spec = raw.strip()
+    if not spec or re.search(r"\s", spec):
+        return None
+    if "://" in spec or "#" in spec or ":" in spec:
+        return None
+    at_index = spec.rfind("@")
+    has_selector = at_index > 0
+    name = spec[:at_index] if has_selector else spec
+    selector = spec[at_index + 1 :] if has_selector else None
+    name_is_valid = (
+        _CLI_NPM_SCOPED_NAME_RE.match(name) is not None
+        if name.startswith("@")
+        else _CLI_NPM_UNSCOPED_NAME_RE.match(name) is not None
+    )
+    if not name_is_valid:
+        return None
+    if selector is None:
+        return _CliRegistryNpmSpec(name=name)
+    if not selector or "\\" in selector or "/" in selector:
+        return None
+    if (
+        _CLI_NPM_EXACT_SEMVER_RE.match(selector) is None
+        and _CLI_NPM_DIST_TAG_RE.match(selector) is None
+    ):
+        return None
+    return _CliRegistryNpmSpec(name=name, selector=selector)
+
+
+def _build_cli_preferred_clawhub_spec(raw: str) -> str | None:
+    parsed = _parse_cli_registry_npm_spec(raw)
+    if parsed is None:
+        return None
+    return _format_cli_clawhub_spec(parsed.name, parsed.selector)
+
+
+def _should_cli_preferred_clawhub_fallback(code: str | None) -> bool:
+    return code in {"package_not_found", "version_not_found"}
+
+
 async def _build_plugins_path_install_payload(
     services: CliServices,
     *,
@@ -12650,6 +14107,397 @@ async def _build_plugins_path_install_payload(
     }
 
 
+async def _call_cli_clawhub_plugin_installer(
+    services: CliServices,
+    *,
+    spec: str,
+    force: bool = False,
+    mode: str | None = None,
+    base_url: str | None = None,
+    expected_plugin_id: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    installer = getattr(services, "plugin_clawhub_installer", None)
+    install = getattr(installer, "install", None)
+    if not callable(install):
+        raise RuntimeError("ClawHub plugin install runtime is unavailable.")
+    kwargs: dict[str, object] = {"spec": spec, "mode": mode or ("update" if force else "install")}
+    if base_url is not None:
+        kwargs["baseUrl"] = base_url
+    if expected_plugin_id is not None:
+        kwargs["expectedPluginId"] = expected_plugin_id
+    if dry_run:
+        kwargs["dryRun"] = True
+    result = install(**kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        raise RuntimeError("ClawHub plugin install runtime returned an invalid result.")
+    return result
+
+
+async def _build_plugins_clawhub_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    force: bool,
+) -> dict[str, object]:
+    parsed = _parse_cli_clawhub_plugin_spec(raw_spec)
+    if parsed is None:
+        raise ValueError(f"invalid ClawHub plugin spec: {raw_spec}")
+    result = await _call_cli_clawhub_plugin_installer(
+        services,
+        spec=raw_spec,
+        force=force,
+    )
+    if result.get("ok") is False:
+        raise _CliClawHubInstallError(
+            str(result.get("error") or "ClawHub plugin install failed."),
+            _optional_cli_string(result.get("code")),
+        )
+    plugin_id = _optional_cli_string(result.get("pluginId"))
+    install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
+        result.get("installPath")
+    )
+    clawhub = result.get("clawhub")
+    clawhub_payload = clawhub if isinstance(clawhub, dict) else {}
+    clawhub_package = _optional_cli_string(clawhub_payload.get("clawhubPackage")) or parsed.name
+    clawhub_version = (
+        _optional_cli_string(clawhub_payload.get("version"))
+        or _optional_cli_string(result.get("version"))
+        or parsed.version
+    )
+    clawhub_family = _optional_cli_string(clawhub_payload.get("clawhubFamily"))
+    if plugin_id is None:
+        raise RuntimeError("ClawHub plugin install result is missing pluginId.")
+    if install_path is None:
+        raise RuntimeError("ClawHub plugin install result is missing targetDir.")
+    if clawhub_family is None:
+        raise RuntimeError("ClawHub plugin install result is missing package family.")
+    install_spec = _format_cli_clawhub_spec(clawhub_package, clawhub_version)
+    result_payload = services.gateway_config.record_clawhub_plugin_install(
+        plugin_id=plugin_id,
+        install_path=install_path,
+        spec=install_spec,
+        clawhub_url=(
+            _optional_cli_string(clawhub_payload.get("clawhubUrl"))
+            or "https://clawhub.ai"
+        ),
+        clawhub_package=clawhub_package,
+        clawhub_family=clawhub_family,
+        clawhub_channel=_optional_cli_string(clawhub_payload.get("clawhubChannel")),
+        version=clawhub_version,
+        integrity=_optional_cli_string(clawhub_payload.get("integrity")),
+        resolved_at=_optional_cli_string(clawhub_payload.get("resolvedAt")),
+        force=force,
+    )
+    install = result_payload.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result_payload.get("pluginId") or plugin_id,
+        "source": "clawhub",
+        "install": install_payload,
+        "loadPath": result_payload.get("loadPath"),
+        "path": result_payload.get("path"),
+        "hash": result_payload.get("hash"),
+        "restart": result_payload.get("restart") or "gateway",
+    }
+
+
+async def _call_cli_npm_plugin_installer(
+    services: CliServices,
+    *,
+    spec: str,
+    mode: str = "install",
+    dry_run: bool = False,
+) -> dict[str, object]:
+    installer = getattr(services, "plugin_npm_installer", None)
+    install = getattr(installer, "install", None)
+    if not callable(install):
+        raise RuntimeError("npm plugin install runtime is unavailable.")
+    params: dict[str, object] = {"spec": spec, "mode": mode}
+    if dry_run:
+        params["dryRun"] = True
+    result = install(**params)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        raise RuntimeError("npm plugin install runtime returned an invalid result.")
+    return result
+
+
+def _resolve_cli_pinned_npm_record_spec(
+    *,
+    raw_spec: str,
+    pin: bool,
+    resolved_spec: str | None,
+) -> tuple[str, str | None, str | None]:
+    if not pin:
+        return raw_spec, None, None
+    if resolved_spec is None:
+        return (
+            raw_spec,
+            "Could not resolve exact npm version for --pin; storing original npm spec.",
+            None,
+        )
+    return (
+        resolved_spec,
+        None,
+        f"Pinned npm install record to {resolved_spec}.",
+    )
+
+
+def _cli_npm_package_name_from_install_record(record: Mapping[str, object]) -> str | None:
+    resolved_name = _optional_cli_string(record.get("resolvedName"))
+    if resolved_name is not None:
+        return resolved_name
+    for key in ("spec", "resolvedSpec"):
+        spec = _optional_cli_string(record.get(key))
+        if spec is None:
+            continue
+        parsed = _parse_cli_registry_npm_spec(spec)
+        if parsed is not None:
+            return parsed.name
+    return None
+
+
+def _resolve_cli_plugin_update_selection(
+    *,
+    install_records: Mapping[str, object],
+    requested_id: str | None,
+    all_plugins: bool,
+) -> tuple[list[str], dict[str, str]]:
+    if all_plugins:
+        return [str(plugin_id) for plugin_id in install_records], {}
+    if requested_id is None:
+        return [], {}
+    parsed = _parse_cli_registry_npm_spec(requested_id)
+    if parsed is None or parsed.selector is None:
+        return [requested_id], {}
+    matches: list[str] = []
+    for plugin_id, record in install_records.items():
+        if not isinstance(record, Mapping):
+            continue
+        if _cli_npm_package_name_from_install_record(record) == parsed.name:
+            matches.append(str(plugin_id))
+    if len(matches) != 1:
+        return [requested_id], {}
+    target = matches[0]
+    return [target], {target: requested_id}
+
+
+def _resolve_cli_hook_pack_update_selection(
+    *,
+    install_records: Mapping[str, object],
+    requested_id: str | None,
+    all_packs: bool,
+) -> tuple[list[str], dict[str, str]]:
+    if all_packs:
+        return [str(hook_id) for hook_id in install_records], {}
+    if requested_id is None:
+        return [], {}
+    if requested_id in install_records:
+        return [requested_id], {}
+    parsed = _parse_cli_registry_npm_spec(requested_id)
+    if parsed is None or parsed.selector is None:
+        return [], {}
+    matches: list[str] = []
+    for hook_id, record in install_records.items():
+        if not isinstance(record, Mapping):
+            continue
+        if _cli_npm_package_name_from_install_record(record) == parsed.name:
+            matches.append(str(hook_id))
+    if len(matches) != 1:
+        return [], {}
+    target = matches[0]
+    return [target], {target: requested_id}
+
+
+async def _call_cli_hook_npm_installer(
+    services: CliServices,
+    *,
+    spec: str,
+    mode: str = "install",
+    dry_run: bool = False,
+) -> dict[str, object]:
+    installer = getattr(services, "hook_npm_installer", None)
+    install = getattr(installer, "install", None)
+    if not callable(install):
+        raise RuntimeError("hook pack npm install runtime is unavailable.")
+    params: dict[str, object] = {"spec": spec, "mode": mode}
+    if dry_run:
+        params["dryRun"] = True
+    result = install(**params)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        raise RuntimeError("hook pack npm install runtime returned an invalid result.")
+    return result
+
+
+async def _build_plugins_npm_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    force: bool,
+    pin: bool,
+) -> dict[str, object]:
+    if _parse_cli_registry_npm_spec(raw_spec) is None:
+        raise ValueError(f"unsupported npm spec: {raw_spec}")
+    result = await _call_cli_npm_plugin_installer(
+        services,
+        spec=raw_spec,
+        mode="update" if force else "install",
+    )
+    if result.get("ok") is False:
+        raise _CliNpmInstallError(
+            str(result.get("error") or "npm plugin install failed."),
+            _optional_cli_string(result.get("code")),
+        )
+    plugin_id = _optional_cli_string(result.get("pluginId"))
+    install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
+        result.get("installPath")
+    )
+    if plugin_id is None:
+        raise RuntimeError("npm plugin install result is missing pluginId.")
+    if install_path is None:
+        raise RuntimeError("npm plugin install result is missing targetDir.")
+    resolution = result.get("npmResolution")
+    resolution_payload = resolution if isinstance(resolution, dict) else {}
+    resolved_spec = _optional_cli_string(resolution_payload.get("resolvedSpec"))
+    record_spec, warning, notice = _resolve_cli_pinned_npm_record_spec(
+        raw_spec=raw_spec,
+        pin=pin,
+        resolved_spec=resolved_spec,
+    )
+    result_payload = services.gateway_config.record_npm_plugin_install(
+        plugin_id=plugin_id,
+        install_path=install_path,
+        spec=record_spec,
+        version=_optional_cli_string(result.get("version")),
+        resolved_name=_optional_cli_string(resolution_payload.get("resolvedName")),
+        resolved_version=_optional_cli_string(resolution_payload.get("resolvedVersion")),
+        resolved_spec=resolved_spec,
+        integrity=_optional_cli_string(resolution_payload.get("integrity")),
+        shasum=_optional_cli_string(resolution_payload.get("shasum")),
+        resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+        force=force,
+    )
+    install = result_payload.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    payload: dict[str, object] = {
+        "ok": True,
+        "action": "install",
+        "pluginId": result_payload.get("pluginId") or plugin_id,
+        "source": "npm",
+        "install": install_payload,
+        "loadPath": result_payload.get("loadPath"),
+        "path": result_payload.get("path"),
+        "hash": result_payload.get("hash"),
+        "restart": result_payload.get("restart") or "gateway",
+    }
+    if warning is not None:
+        payload["warning"] = warning
+    if notice is not None:
+        payload["notice"] = notice
+    return payload
+
+
+async def _build_hooks_npm_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    force: bool,
+) -> dict[str, object]:
+    result = await _call_cli_hook_npm_installer(
+        services,
+        spec=raw_spec,
+        mode="update" if force else "install",
+    )
+    if result.get("ok") is False:
+        raise ValueError(str(result.get("error") or "hook pack install failed."))
+    hook_id = _optional_cli_string(result.get("hookPackId"))
+    install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
+        result.get("installPath")
+    )
+    if hook_id is None:
+        raise RuntimeError("hook pack install result is missing hookPackId.")
+    if install_path is None:
+        raise RuntimeError("hook pack install result is missing targetDir.")
+    raw_hooks = result.get("hooks")
+    hooks = [str(value) for value in raw_hooks] if isinstance(raw_hooks, list) else []
+    resolution = result.get("npmResolution")
+    resolution_payload = resolution if isinstance(resolution, dict) else {}
+    result_payload = services.gateway_config.record_npm_hook_pack_install(
+        hook_id=hook_id,
+        install_path=install_path,
+        spec=raw_spec,
+        version=_optional_cli_string(result.get("version")),
+        resolved_name=(
+            _optional_cli_string(resolution_payload.get("resolvedName"))
+            or _optional_cli_string(resolution_payload.get("name"))
+        ),
+        resolved_version=(
+            _optional_cli_string(resolution_payload.get("resolvedVersion"))
+            or _optional_cli_string(resolution_payload.get("version"))
+        ),
+        resolved_spec=_optional_cli_string(resolution_payload.get("resolvedSpec")),
+        integrity=_optional_cli_string(resolution_payload.get("integrity")),
+        shasum=_optional_cli_string(resolution_payload.get("shasum")),
+        resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+        hooks=hooks,
+        force=force,
+    )
+    install = result_payload.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "hookId": result_payload.get("hookId") or hook_id,
+        "source": "hook-pack",
+        "install": install_payload,
+        "hooks": hooks,
+        "path": result_payload.get("path"),
+        "hash": result_payload.get("hash"),
+        "restart": result_payload.get("restart") or "gateway",
+        "warning": f"Plugin install failed; installed matching hook pack {hook_id} instead.",
+    }
+
+
+async def _build_plugins_bundled_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    source: _CliBundledPluginSource,
+    force: bool,
+    warning: str | None = None,
+) -> dict[str, object]:
+    result = services.gateway_config.record_path_plugin_install(
+        plugin_id=source.plugin_id,
+        install_path=str(source.local_path),
+        source_path=str(source.local_path),
+        spec=raw_spec,
+        version=source.version,
+        force=force,
+    )
+    install = result.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result.get("pluginId") or source.plugin_id,
+        "source": "path",
+        "install": install_payload,
+        "loadPath": result.get("loadPath"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+        "warning": warning or _cli_bundled_install_warning(source, raw_spec),
+    }
+
+
 async def _build_plugins_uninstall_payload(
     services: CliServices,
     *,
@@ -12691,11 +14539,30 @@ async def _build_plugins_update_payload(
     plugins_config = plugins if isinstance(plugins, dict) else {}
     installs = plugins_config.get("installs")
     install_records = installs if isinstance(installs, dict) else {}
-    if all_plugins:
-        targets = [str(plugin_id) for plugin_id in install_records]
-    elif requested_id is not None:
-        targets = [requested_id]
-    else:
+    hooks = snapshot.get("hooks")
+    hooks_config = hooks if isinstance(hooks, dict) else {}
+    internal_hooks = hooks_config.get("internal")
+    internal_hooks_config = internal_hooks if isinstance(internal_hooks, dict) else {}
+    hook_installs = internal_hooks_config.get("installs")
+    hook_install_records = hook_installs if isinstance(hook_installs, dict) else {}
+    targets, spec_overrides = _resolve_cli_plugin_update_selection(
+        install_records=install_records,
+        requested_id=requested_id,
+        all_plugins=all_plugins,
+    )
+    hook_targets, hook_spec_overrides = _resolve_cli_hook_pack_update_selection(
+        install_records=hook_install_records,
+        requested_id=requested_id,
+        all_packs=all_plugins,
+    )
+    if (
+        requested_id is not None
+        and not all_plugins
+        and requested_id not in install_records
+        and hook_targets
+    ):
+        targets = []
+    if requested_id is None and not all_plugins:
         raise ValueError("Provide a plugin id, or use --all.")
     outcomes: list[dict[str, object]] = []
     changed = False
@@ -12711,6 +14578,247 @@ async def _build_plugins_update_payload(
             )
             continue
         source = _optional_cli_string(record.get("source"))
+        if source == "npm":
+            spec = spec_overrides.get(target) or _optional_cli_string(record.get("spec"))
+            if spec is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "skipped",
+                        "message": f'Skipping "{target}" (missing npm spec).',
+                    }
+                )
+                continue
+            try:
+                update_result = await _call_cli_npm_plugin_installer(
+                    services,
+                    spec=spec,
+                    mode="update",
+                    dry_run=dry_run,
+                )
+            except RuntimeError as exc:
+                phase = "check" if dry_run else "update"
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {exc}",
+                    }
+                )
+                continue
+            if update_result.get("ok") is False:
+                phase = "check" if dry_run else "update"
+                message = str(update_result.get("error") or "npm plugin update failed.")
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {message}",
+                    }
+                )
+                continue
+            plugin_id_value = _optional_cli_string(update_result.get("pluginId")) or target
+            install_path = _optional_cli_string(
+                update_result.get("targetDir")
+            ) or _optional_cli_string(update_result.get("installPath"))
+            if install_path is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to update {target}: missing targetDir.",
+                    }
+                )
+                continue
+            npm_current_version = _optional_cli_string(record.get("version"))
+            npm_next_version = _optional_cli_string(update_result.get("version"))
+            if not dry_run:
+                resolution = update_result.get("npmResolution")
+                resolution_payload = resolution if isinstance(resolution, dict) else {}
+                result = services.gateway_config.record_npm_plugin_install(
+                    plugin_id=plugin_id_value,
+                    install_path=install_path,
+                    spec=spec,
+                    version=npm_next_version,
+                    resolved_name=_optional_cli_string(resolution_payload.get("resolvedName")),
+                    resolved_version=_optional_cli_string(
+                        resolution_payload.get("resolvedVersion")
+                    ),
+                    resolved_spec=_optional_cli_string(resolution_payload.get("resolvedSpec")),
+                    integrity=_optional_cli_string(resolution_payload.get("integrity")),
+                    shasum=_optional_cli_string(resolution_payload.get("shasum")),
+                    resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+                    force=True,
+                )
+                changed = changed or result.get("ok") is True
+            npm_current_label = npm_current_version or "unknown"
+            npm_next_label = npm_next_version or "unknown"
+            npm_same_version = (
+                npm_current_version is not None
+                and npm_next_version is not None
+                and npm_current_version == npm_next_version
+            )
+            if dry_run:
+                status = "unchanged" if npm_same_version else "updated"
+                message = (
+                    f"{target} is up to date ({npm_current_label})."
+                    if npm_same_version
+                    else f"Would update {target}: {npm_current_label} -> {npm_next_label}."
+                )
+            else:
+                status = "unchanged" if npm_same_version else "updated"
+                message = (
+                    f"{target} already at {npm_current_label}."
+                    if npm_same_version
+                    else f"Updated {target}: {npm_current_label} -> {npm_next_label}."
+                )
+            npm_outcome: dict[str, object] = {
+                "pluginId": target,
+                "status": status,
+                "message": message,
+            }
+            if npm_current_version is not None:
+                npm_outcome["currentVersion"] = npm_current_version
+            if npm_next_version is not None:
+                npm_outcome["nextVersion"] = npm_next_version
+            outcomes.append(npm_outcome)
+            continue
+        if source == "clawhub":
+            clawhub_package = _optional_cli_string(record.get("clawhubPackage"))
+            if clawhub_package is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "skipped",
+                        "message": f'Skipping "{target}" (missing ClawHub package metadata).',
+                    }
+                )
+                continue
+            spec = _optional_cli_string(record.get("spec")) or _format_cli_clawhub_spec(
+                clawhub_package,
+                None,
+            )
+            phase = "check" if dry_run else "update"
+            try:
+                update_result = await _call_cli_clawhub_plugin_installer(
+                    services,
+                    spec=spec,
+                    mode="update",
+                    base_url=_optional_cli_string(record.get("clawhubUrl")),
+                    expected_plugin_id=target,
+                    dry_run=dry_run,
+                )
+            except RuntimeError as exc:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {exc}",
+                    }
+                )
+                continue
+            if update_result.get("ok") is False:
+                message = str(update_result.get("error") or "ClawHub plugin update failed.")
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {message}",
+                    }
+                )
+                continue
+            plugin_id_value = _optional_cli_string(update_result.get("pluginId")) or target
+            install_path = _optional_cli_string(
+                update_result.get("targetDir")
+            ) or _optional_cli_string(update_result.get("installPath"))
+            if install_path is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to update {target}: missing targetDir.",
+                    }
+                )
+                continue
+            clawhub = update_result.get("clawhub")
+            clawhub_payload = clawhub if isinstance(clawhub, dict) else {}
+            clawhub_next_package = (
+                _optional_cli_string(clawhub_payload.get("clawhubPackage")) or clawhub_package
+            )
+            clawhub_next_family = _optional_cli_string(
+                clawhub_payload.get("clawhubFamily")
+            ) or _optional_cli_string(record.get("clawhubFamily"))
+            if clawhub_next_family is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to update {target}: missing ClawHub package family.",
+                    }
+                )
+                continue
+            current_version = _optional_cli_string(record.get("version"))
+            next_version = (
+                _optional_cli_string(clawhub_payload.get("version"))
+                or _optional_cli_string(update_result.get("version"))
+            )
+            if not dry_run:
+                result = services.gateway_config.record_clawhub_plugin_install(
+                    plugin_id=plugin_id_value,
+                    install_path=install_path,
+                    spec=_format_cli_clawhub_spec(clawhub_next_package, next_version),
+                    clawhub_url=(
+                        _optional_cli_string(clawhub_payload.get("clawhubUrl"))
+                        or _optional_cli_string(record.get("clawhubUrl"))
+                        or "https://clawhub.ai"
+                    ),
+                    clawhub_package=clawhub_next_package,
+                    clawhub_family=clawhub_next_family,
+                    clawhub_channel=(
+                        _optional_cli_string(clawhub_payload.get("clawhubChannel"))
+                        or _optional_cli_string(record.get("clawhubChannel"))
+                    ),
+                    version=next_version,
+                    integrity=(
+                        _optional_cli_string(clawhub_payload.get("integrity"))
+                        or _optional_cli_string(record.get("integrity"))
+                    ),
+                    resolved_at=_optional_cli_string(clawhub_payload.get("resolvedAt")),
+                    force=True,
+                )
+                changed = changed or result.get("ok") is True
+            current_label = current_version or "unknown"
+            next_label = next_version or "unknown"
+            same_version = (
+                current_version is not None
+                and next_version is not None
+                and current_version == next_version
+            )
+            if dry_run:
+                status = "unchanged" if same_version else "updated"
+                message = (
+                    f"{target} is up to date ({current_label})."
+                    if same_version
+                    else f"Would update {target}: {current_label} -> {next_label}."
+                )
+            else:
+                status = "unchanged" if same_version else "updated"
+                message = (
+                    f"{target} already at {current_label}."
+                    if same_version
+                    else f"Updated {target}: {current_label} -> {next_label}."
+                )
+            clawhub_outcome: dict[str, object] = {
+                "pluginId": target,
+                "status": status,
+                "message": message,
+            }
+            if current_version is not None:
+                clawhub_outcome["currentVersion"] = current_version
+            if next_version is not None:
+                clawhub_outcome["nextVersion"] = next_version
+            outcomes.append(clawhub_outcome)
+            continue
         if source != "marketplace":
             outcomes.append(
                 {
@@ -12749,8 +14857,8 @@ async def _build_plugins_update_payload(
                 }
             )
             continue
-        current_version = update["currentVersion"]
-        next_version = update["nextVersion"]
+        current_version = cast(str | None, update["currentVersion"])
+        next_version = cast(str | None, update["nextVersion"])
         current_label = current_version or "unknown"
         next_label = next_version or "unknown"
         same_version = (
@@ -12768,14 +14876,13 @@ async def _build_plugins_update_payload(
         else:
             if not same_version:
                 marketplace_name = cast(str | None, update["marketplaceName"])
-                version = cast(str | None, next_version)
                 result = services.gateway_config.record_marketplace_plugin_install(
                     plugin_id=target,
                     install_path=str(update["installPath"]),
                     marketplace_source=str(update["marketplaceSource"]),
                     marketplace_plugin=marketplace_plugin,
                     marketplace_name=marketplace_name,
-                    version=version,
+                    version=next_version,
                     force=True,
                 )
                 changed = changed or result.get("ok") is True
@@ -12795,6 +14902,136 @@ async def _build_plugins_update_payload(
         if next_version is not None:
             outcome["nextVersion"] = next_version
         outcomes.append(outcome)
+    for target in hook_targets:
+        record = hook_install_records.get(target)
+        if not isinstance(record, dict):
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "skipped",
+                    "message": f'No install record for hook pack "{target}".',
+                }
+            )
+            continue
+        source = _optional_cli_string(record.get("source"))
+        if source != "npm":
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "skipped",
+                    "message": f'Skipping hook pack "{target}" (source: {source or "unknown"}).',
+                }
+            )
+            continue
+        spec = hook_spec_overrides.get(target) or _optional_cli_string(record.get("spec"))
+        if spec is None:
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "skipped",
+                    "message": f'Skipping hook pack "{target}" (missing npm spec).',
+                }
+            )
+            continue
+        try:
+            hook_result = await _call_cli_hook_npm_installer(
+                services,
+                spec=spec,
+                mode="update",
+                dry_run=dry_run,
+            )
+        except RuntimeError as exc:
+            phase = "check" if dry_run else "update"
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "error",
+                    "message": f'Failed to {phase} hook pack "{target}": {exc}',
+                }
+            )
+            continue
+        if hook_result.get("ok") is False:
+            phase = "check" if dry_run else "update"
+            message = str(hook_result.get("error") or "hook pack update failed.")
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "error",
+                    "message": f'Failed to {phase} hook pack "{target}": {message}',
+                }
+            )
+            continue
+        hook_id_value = _optional_cli_string(hook_result.get("hookPackId")) or target
+        install_path = _optional_cli_string(hook_result.get("targetDir")) or _optional_cli_string(
+            hook_result.get("installPath")
+        )
+        if install_path is None:
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "error",
+                    "message": f'Failed to update hook pack "{target}": missing targetDir.',
+                }
+            )
+            continue
+        current_version = _optional_cli_string(record.get("version"))
+        next_version = _optional_cli_string(hook_result.get("version"))
+        if not dry_run:
+            resolution = hook_result.get("npmResolution")
+            resolution_payload = resolution if isinstance(resolution, dict) else {}
+            raw_hooks = hook_result.get("hooks")
+            result = services.gateway_config.record_npm_hook_pack_install(
+                hook_id=hook_id_value,
+                install_path=install_path,
+                spec=spec,
+                version=next_version,
+                resolved_name=(
+                    _optional_cli_string(resolution_payload.get("resolvedName"))
+                    or _optional_cli_string(resolution_payload.get("name"))
+                ),
+                resolved_version=(
+                    _optional_cli_string(resolution_payload.get("resolvedVersion"))
+                    or _optional_cli_string(resolution_payload.get("version"))
+                ),
+                resolved_spec=_optional_cli_string(resolution_payload.get("resolvedSpec")),
+                integrity=_optional_cli_string(resolution_payload.get("integrity")),
+                shasum=_optional_cli_string(resolution_payload.get("shasum")),
+                resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+                hooks=[str(value) for value in raw_hooks] if isinstance(raw_hooks, list) else None,
+                force=True,
+            )
+            changed = changed or result.get("ok") is True
+        current_label = current_version or "unknown"
+        next_label = next_version or "unknown"
+        same_version = (
+            current_version is not None
+            and next_version is not None
+            and current_version == next_version
+        )
+        if dry_run:
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f'Hook pack "{target}" is up to date ({current_label}).'
+                if same_version
+                else f'Would update hook pack "{target}": {current_label} -> {next_label}.'
+            )
+        else:
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f'Hook pack "{target}" already at {current_label}.'
+                if same_version
+                else f'Updated hook pack "{target}": {current_label} -> {next_label}.'
+            )
+        hook_outcome: dict[str, object] = {
+            "hookId": target,
+            "status": status,
+            "message": message,
+        }
+        if current_version is not None:
+            hook_outcome["currentVersion"] = current_version
+        if next_version is not None:
+            hook_outcome["nextVersion"] = next_version
+        outcomes.append(hook_outcome)
     return {
         "ok": True,
         "action": "update",
@@ -13805,12 +16042,19 @@ async def _build_plugin_inspect_payload(
         plugins,
         list,
     ) else []
+    raw_diagnostics = inventory.get("diagnostics")
+    diagnostics = [
+        diagnostic
+        for diagnostic in raw_diagnostics
+        if isinstance(diagnostic, dict)
+    ] if isinstance(raw_diagnostics, list) else []
     if inspect_all:
         return [
             _plugin_inspect_report(
                 plugin,
                 runtime_specs=runtime_specs,
                 policy=_plugin_inspect_policy_from_services(services, plugin),
+                diagnostics=diagnostics,
             )
             for plugin in plugin_rows
         ]
@@ -13824,6 +16068,7 @@ async def _build_plugin_inspect_payload(
         plugin,
         runtime_specs=runtime_specs,
         policy=_plugin_inspect_policy_from_services(services, plugin),
+        diagnostics=diagnostics,
     )
 
 
@@ -13845,6 +16090,7 @@ def _plugin_inspect_report(
     *,
     runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
     policy: dict[str, object] | None = None,
+    diagnostics: Sequence[dict[str, object]] = (),
 ) -> dict[str, object]:
     capabilities = plugin.get("capabilities")
     capability_ids = [
@@ -13880,12 +16126,80 @@ def _plugin_inspect_report(
         "lspServers": _plugin_record_string_list(plugin, "lspServers"),
         "httpRouteCount": _plugin_record_http_route_count(plugin),
         "policy": dict(policy) if policy is not None else {},
-        "diagnostics": [],
+        "diagnostics": _plugin_scoped_diagnostics(plugin, diagnostics),
         "install": dict(install) if isinstance(install, dict) else None,
     }
     if runtime_dependencies:
         report["runtimeDependencies"] = runtime_dependencies
     return report
+
+
+def _plugin_scoped_diagnostics(
+    plugin: dict[str, object],
+    diagnostics: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    plugin_id = _optional_cli_string(plugin.get("id"))
+    if plugin_id is None:
+        return []
+    return [
+        dict(diagnostic)
+        for diagnostic in diagnostics
+        if _optional_cli_string(diagnostic.get("pluginId")) == plugin_id
+    ]
+
+
+def _mark_plugin_import_state(
+    plugins: list[dict[str, object]],
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...],
+    *,
+    loaded_non_bundle_imported: bool = False,
+) -> None:
+    for plugin in plugins:
+        runtime_tools = _plugin_runtime_tool_names(
+            _plugin_runtime_tool_entries(plugin, runtime_specs)
+        )
+        is_bundle = str(plugin.get("format") or "").strip() == "bundle"
+        is_diagnostics_loaded = (
+            loaded_non_bundle_imported
+            and str(plugin.get("status") or "").strip() == "loaded"
+        )
+        plugin["imported"] = (
+            not is_bundle
+            and (
+                plugin.get("imported") is True
+                or bool(runtime_tools)
+                or is_diagnostics_loaded
+            )
+        )
+
+
+def _normalize_bundled_plugin_reported_versions(
+    plugins: list[dict[str, object]],
+    *,
+    host_version: str | None,
+) -> None:
+    host_base = _openclaw_version_base(host_version)
+    for plugin in plugins:
+        if _optional_cli_string(plugin.get("origin")) != "bundled":
+            continue
+        raw_version = _optional_cli_string(plugin.get("version"))
+        reported = host_base or _openclaw_version_base(raw_version) or raw_version
+        if reported is not None:
+            plugin["version"] = reported
+
+
+def _plugin_report_host_version(config_snapshot: Mapping[str, object]) -> str | None:
+    return _optional_cli_string(config_snapshot.get("serverVersion")) or __version__
+
+
+def _openclaw_version_base(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", text)
+    if match is None:
+        return None
+    return f"{match.group(1)}.{match.group(2)}.{match.group(3)}"
 
 
 def _plugin_record_string_list(plugin: dict[str, object], key: str) -> list[str]:
@@ -14140,11 +16454,19 @@ def _plugin_record_from_deck_item(
             if workspace_dir is not None and plugin_name
             else "hermes_source"
         )
+    origin = _optional_cli_string(item.get("origin"))
+    if origin is not None:
+        record["origin"] = origin
+    version = _optional_cli_string(item.get("version"))
+    if version is not None:
+        record["version"] = version
     shape = _optional_cli_string(item.get("shape"))
     if shape is not None:
         record["shape"] = shape
     if item.get("usesLegacyBeforeAgentStart") is True:
         record["usesLegacyBeforeAgentStart"] = True
+    if item.get("imported") is True:
+        record["imported"] = True
     item_root_dir = _optional_cli_string(item.get("rootDir"))
     for metadata_key, metadata_value in _plugin_manifest_root_metadata(
         item,
@@ -14202,6 +16524,7 @@ _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES = (
     "index.mjs",
     "index.cjs",
 )
+_OPENCLAW_CONTRACT_API_EXTENSIONS = (".ts", ".mts", ".cts", ".js", ".mjs", ".cjs")
 _OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS = (
     "skills",
     "commands",
@@ -14240,6 +16563,77 @@ def _plugin_manifest_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _plugin_doctor_contract_api_artifact(root_dir: Path) -> dict[str, object] | None:
+    for basename in ("doctor-contract-api", "contract-api"):
+        for extension in _OPENCLAW_CONTRACT_API_EXTENSIONS:
+            candidate = root_dir / f"{basename}{extension}"
+            if not candidate.exists():
+                continue
+            return {
+                "path": str(candidate),
+                "artifact": candidate.name,
+                "kind": basename,
+            }
+    return None
+
+
+def _has_legacy_elevenlabs_talk_fields(raw: Mapping[object, object]) -> bool:
+    talk = raw.get("talk")
+    if not isinstance(talk, Mapping):
+        return False
+    return any(
+        key in talk
+        for key in ("voiceId", "voiceAliases", "modelId", "outputFormat", "apiKey")
+    )
+
+
+def _collect_relevant_doctor_plugin_ids(raw: object) -> list[str]:
+    if not isinstance(raw, Mapping):
+        return []
+    ids: set[str] = set()
+    channels = raw.get("channels")
+    if isinstance(channels, Mapping):
+        for channel_id in channels:
+            text = str(channel_id)
+            if text != "defaults":
+                ids.add(text)
+    plugins = raw.get("plugins")
+    plugin_entries = plugins.get("entries") if isinstance(plugins, Mapping) else None
+    if isinstance(plugin_entries, Mapping):
+        ids.update(str(plugin_id) for plugin_id in plugin_entries)
+    if _has_legacy_elevenlabs_talk_fields(raw):
+        ids.add("elevenlabs")
+    return sorted(ids)
+
+
+def _collect_relevant_doctor_plugin_ids_for_touched_paths(
+    raw: object,
+    touched_paths: Sequence[Sequence[object]],
+) -> list[str]:
+    if not isinstance(raw, Mapping):
+        return []
+    ids: set[str] = set()
+    for touched_path in touched_paths:
+        parts = [str(part) for part in touched_path]
+        first = parts[0] if parts else None
+        second = parts[1] if len(parts) > 1 else None
+        third = parts[2] if len(parts) > 2 else None
+        if first == "channels":
+            if not second:
+                return _collect_relevant_doctor_plugin_ids(raw)
+            if second != "defaults":
+                ids.add(second)
+            continue
+        if first == "plugins":
+            if second != "entries" or not third:
+                return _collect_relevant_doctor_plugin_ids(raw)
+            ids.add(third)
+            continue
+        if first == "talk" and _has_legacy_elevenlabs_talk_fields(raw):
+            ids.add("elevenlabs")
+    return sorted(ids)
 
 
 def _plugin_manifest_string_list_record(value: object) -> dict[str, object]:
@@ -15691,6 +18085,9 @@ def _plugin_record_from_openclaw_manifest(
         root_dir=manifest_path.parent,
     ).items():
         record[metadata_key] = metadata_value
+    doctor_contract_api = _plugin_doctor_contract_api_artifact(manifest_path.parent)
+    if doctor_contract_api is not None:
+        record["doctorContractApi"] = doctor_contract_api
     if contracts:
         record["contracts"] = contracts
     tool_names = contracts.get("tools")
@@ -19494,6 +21891,147 @@ def plugins_install_command(
         if link:
             typer.echo("`--link` requires a local path.", err=True)
             raise typer.Exit(code=1)
+        if _looks_like_cli_local_plugin_install_spec(plugin_id):
+            missing_path = Path(plugin_id).expanduser()
+            try:
+                resolved_missing_path = missing_path.resolve(strict=False)
+            except OSError:
+                resolved_missing_path = missing_path
+            typer.echo(f"Path not found: {resolved_missing_path}", err=True)
+            raise typer.Exit(code=1)
+        bundled_source = _resolve_cli_bundled_install_plan_before_npm(plugin_id)
+        if bundled_source is not None:
+
+            async def _bundled_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_bundled_install_payload(
+                    services,
+                    raw_spec=plugin_id,
+                    source=bundled_source,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_bundled_action))
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
+        if _parse_cli_clawhub_plugin_spec(plugin_id) is not None:
+
+            async def _clawhub_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_clawhub_install_payload(
+                    services,
+                    raw_spec=plugin_id,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_clawhub_action))
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
+        preferred_clawhub_spec = _build_cli_preferred_clawhub_spec(plugin_id)
+        if preferred_clawhub_spec is not None:
+
+            async def _preferred_clawhub_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_clawhub_install_payload(
+                    services,
+                    raw_spec=preferred_clawhub_spec,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_preferred_clawhub_action))
+            except _CliClawHubInstallError as exc:
+                if not _should_cli_preferred_clawhub_fallback(exc.code):
+                    typer.echo(str(exc), err=True)
+                    raise typer.Exit(code=1) from exc
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            else:
+                _emit_plugins_install(payload, json_output=json_output)
+                return
+        if _parse_cli_registry_npm_spec(plugin_id) is not None:
+
+            async def _npm_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_npm_install_payload(
+                    services,
+                    raw_spec=plugin_id,
+                    force=force,
+                    pin=pin,
+                )
+
+            try:
+                payload = _run(_run_with_services(_npm_action))
+            except _CliNpmInstallError as exc:
+                bundled_fallback = _resolve_cli_bundled_install_plan_for_npm_failure(
+                    raw_spec=plugin_id,
+                    code=exc.code,
+                )
+                if bundled_fallback is None:
+                    async def _hook_fallback_action(
+                        services: CliServices,
+                    ) -> dict[str, object]:
+                        return await _build_hooks_npm_install_payload(
+                            services,
+                            raw_spec=plugin_id,
+                            force=force,
+                        )
+
+                    try:
+                        payload = _run(_run_with_services(_hook_fallback_action))
+                    except ValueError as hook_exc:
+                        typer.echo(f"{exc}\nAlso not a valid hook pack: {hook_exc}", err=True)
+                        raise typer.Exit(code=1) from hook_exc
+                    except RuntimeError as hook_exc:
+                        typer.echo(f"{exc}\nAlso not a valid hook pack: {hook_exc}", err=True)
+                        raise typer.Exit(code=1) from hook_exc
+                    _emit_plugins_install(payload, json_output=json_output)
+                    return
+
+                async def _bundled_fallback_action(
+                    services: CliServices,
+                ) -> dict[str, object]:
+                    return await _build_plugins_bundled_install_payload(
+                        services,
+                        raw_spec=plugin_id,
+                        source=bundled_fallback,
+                        force=force,
+                        warning=(
+                            f"npm package unavailable for {plugin_id}; "
+                            f"using bundled plugin at {bundled_fallback.local_path}."
+                        ),
+                    )
+
+                try:
+                    payload = _run(_run_with_services(_bundled_fallback_action))
+                except ValueError as fallback_exc:
+                    typer.echo(str(fallback_exc), err=True)
+                    raise typer.Exit(code=1) from fallback_exc
+                except RuntimeError as fallback_exc:
+                    typer.echo(str(fallback_exc), err=True)
+                    raise typer.Exit(code=1) from fallback_exc
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",
@@ -19858,20 +22396,12 @@ def acp_client_command(
     if _acp_client_runner is not None:
         code = _acp_client_runner(plan)
         raise typer.Exit(code=0 if code is None else code)
-    _emit_acp_bridge_unavailable(
-        kind="client",
-        context={
-            "cwd": plan.cwd,
-            "server": plan.server_command,
-            "serverArgs": " ".join(plan.server_args),
-            "serverVerbose": plan.server_verbose,
-            "verbose": plan.verbose,
-            "openclawShell": plan.env.get("OPENCLAW_SHELL"),
-            "stripProviderAuthEnvVars": plan.strip_provider_auth_env_vars,
-            "strippedEnvKeys": ",".join(plan.stripped_env_keys),
-        },
-    )
-    raise typer.Exit(code=1)
+    try:
+        code = _run(run_acp_client_interactive(plan))
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(f"ACP client failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    raise typer.Exit(code=0 if code is None else code)
 
 
 @acp_app.command("status")
@@ -19892,6 +22422,17 @@ def acp_status_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_acp_status(payload, json_output=json_output)
+
+
+@secrets_app.command("reload")
+def secrets_reload_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "secrets.reload", {})
+
+    result = _run(_run_with_services(_action))
+    _emit_secrets_reload(result, json_output=json_output)
 
 
 @capability_app.command("list")
@@ -24363,6 +26904,7 @@ def doctor(
             payload,
             services.gateway_config,
             task_flows=task_flows,
+            runtime_specs=_plugin_runtime_specs_from_services(services),
         )
         data_dir = getattr(services.settings, "data_dir", None)
         payload = _with_doctor_provider_override_warnings(
@@ -24387,6 +26929,13 @@ def doctor(
             payload,
             services.gateway_config,
             data_dir if isinstance(data_dir, Path) else None,
+            should_repair=fix,
+        )
+        payload = await _with_doctor_channel_doctor_payload(
+            payload,
+            services.gateway_config,
+            getattr(services, "channel_doctor_adapters", None),
+            should_repair=fix,
         )
         payload = _with_doctor_shell_completion_payload(
             payload,

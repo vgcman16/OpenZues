@@ -2,13 +2,13 @@
 
 ## Snapshot
 
-- Updated: 2026-05-01.
-- Estimated repo-wide parity: ~49% overall, with a reasonable band of ~44-54%.
+- Updated: 2026-05-02.
+- Estimated repo-wide parity: ~52.5% overall, with a reasonable band of ~48-57%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
-- Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
+- Estimated chat/session contract subfamily parity: ~98.2% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, and local path link/copy install slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, and local path link/copy installs; remaining CLI gaps are now dominated by package/npm/clawhub install breadth, runtime activation/import depth, and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -1737,11 +1737,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
-| Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
+| Gateway session/tool contracts | Active | ~97.2% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, sanitized attachment mount-path hints, sandboxed remote provider media staging, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~99% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, direct-announce provider metadata, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
-| CLI + operator control plane | Partial | ~95% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, ACP unavailable bridge boundaries, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
+| CLI + operator control plane | Strong partial | ~98.7% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, native `acp client` interactive replay, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/voices/enable/disable/set-provider/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, local path link/copy install, ClawHub/npm install, npm-not-found bundled fallback, npm install-record update with explicit npm spec override selection, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
 | Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
@@ -7107,6 +7107,910 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\cli.py
   src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py src\openzues\services\gateway_config.py`.
+- Missing local-looking plugin install specs now match OpenClaw's
+  `looksLikeLocalInstallSpec` guard for dot-relative, home-relative, absolute,
+  archive, and script-shaped paths: the native CLI reports
+  `Path not found: <resolved path>` before falling through to the broader
+  package/npm/clawhub install queue.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this guard slice. Remaining non-marketplace
+  plugin install parity is package/npm/clawhub install/update behavior plus
+  deeper runtime activation/import depth.
+- Verified the missing local-looking install-spec slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_reports_missing_local_like_spec -q`
+  (`1 failed` before implementation because missing `.tgz` specs returned the
+  native marketplace boundary), then the same command (`1 passed`), adjacent
+  plugin CLI proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry"` (`4
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Verified the full local-looking predicate follow-up with `python -m pytest
+  tests\test_cli.py::test_plugins_install_reports_missing_absolute_local_like_spec
+  -q` (`1 failed` before implementation because missing absolute path specs
+  returned the native marketplace boundary), then adjacent plugin CLI proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry"` (`5
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins install <bare-plugin-id>` now follows OpenClaw's bundled pre-npm
+  branch before ClawHub/npm fallback. Native bundled sources resolve from
+  `OPENCLAW_BUNDLED_PLUGINS_DIR` / `OPENZUES_BUNDLED_PLUGINS_DIR`, persist
+  path install records with `spec=<raw id>`, keep source/install paths pointed
+  at the bundled plugin directory, and emit the upstream-shaped warning that a
+  scoped npm package name is required to bypass the bundled plugin.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this bundled pre-npm slice. Remaining
+  non-marketplace plugin install parity is explicit/preferred ClawHub
+  install, npm install/update behavior, and deeper runtime activation/import
+  depth.
+- Verified the bundled pre-npm install slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_uses_bundled_plugin_for_bare_id
+  -q` and `python -m pytest
+  tests\test_cli.py::test_plugins_install_human_warns_for_bundled_bare_id -q`
+  (`1 failed` each before implementation because bare bundled ids returned the
+  native marketplace boundary), then both commands (`1 passed` each), adjacent
+  plugin CLI proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`8 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- `plugins install clawhub:<name>[@version]` now follows OpenClaw's explicit
+  ClawHub branch through a fakeable native plugin installer. Successful
+  installs persist `source="clawhub"` records with canonical
+  `clawhub:<package>@<version>` specs, package family/channel/url, integrity,
+  resolved-at metadata, load-path/allow/entry state, and the existing precise
+  unavailable boundary when no native installer is wired.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this explicit ClawHub slice. Remaining
+  non-marketplace plugin install parity is preferred ClawHub fallback before
+  npm, npm install/update behavior, and deeper runtime activation/import depth.
+- Verified the explicit ClawHub install slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_uses_clawhub_installer_for_explicit_spec
+  -q` and `python -m pytest
+  tests\test_cli.py::test_plugins_install_clawhub_reports_unavailable_runtime
+  -q` (`1 failed` each before implementation because `clawhub:` specs returned
+  the native marketplace boundary), then both commands (`1 passed` each),
+  adjacent plugin CLI proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_uses_clawhub_installer_for_explicit_spec or
+  plugins_install_clawhub_reports_unavailable_runtime or
+  plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`10 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- Registry npm-looking specs now mirror OpenClaw's preferred ClawHub attempt
+  before npm install. The native CLI maps valid registry specs to
+  `clawhub:<name>[@selector]`, routes them through the same fakeable ClawHub
+  plugin installer, persists successful ClawHub records, and only falls through
+  to the current npm boundary when ClawHub reports package/version not found.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this preferred ClawHub slice. Remaining
+  non-marketplace plugin install parity is npm install/update behavior and
+  deeper runtime activation/import depth.
+- Verified the preferred ClawHub fallback slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_prefers_clawhub_for_registry_npm_spec
+  -q` and `python -m pytest
+  tests\test_cli.py::test_plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary
+  -q` (`1 failed` each before implementation because registry specs skipped
+  ClawHub), then both commands (`1 passed` each), adjacent plugin CLI proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary or
+  plugins_install_json_uses_clawhub_installer_for_explicit_spec or
+  plugins_install_clawhub_reports_unavailable_runtime or
+  plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`12 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- Registry npm installs now have a fakeable native branch after preferred
+  ClawHub fallback. The CLI calls `plugin_npm_installer.install`, persists
+  `source="npm"` records with install path, version, resolved name/version/spec,
+  integrity, shasum, and resolved-at metadata, and mirrors OpenClaw's `--pin`
+  behavior by storing the exact resolved spec when available.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this npm install slice. Remaining
+  non-marketplace plugin parity is npm update/failure fallback behavior,
+  hook-pack fallback breadth, production npm installer wiring, and deeper
+  runtime activation/import depth.
+- Verified the npm install slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin
+  -q` and `python -m pytest
+  tests\test_cli.py::test_plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss
+  -q` (`1 failed` each before implementation because npm specs still reached
+  the old native boundary after ClawHub miss), then both commands (`1 passed`
+  each), adjacent plugin CLI proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary or
+  plugins_install_json_uses_clawhub_installer_for_explicit_spec or
+  plugins_install_clawhub_reports_unavailable_runtime or
+  plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`14 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- npm `npm_package_not_found` failures now mirror OpenClaw's bundled fallback
+  by npm spec. Bundled sources expose package `openclaw.install.npmSpec` /
+  package-name metadata, and the native CLI persists the matching bundled
+  plugin as a path install with the original npm spec plus the upstream-shaped
+  `npm package unavailable... using bundled plugin...` warning.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this npm-failure fallback slice. Remaining
+  non-marketplace plugin parity is npm update behavior, hook-pack fallback
+  breadth, production npm installer wiring, and deeper runtime
+  activation/import depth.
+- Verified the npm-not-found bundled fallback slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec
+  -q` (`1 failed` before implementation because the npm error surfaced
+  directly), then the same command (`1 passed`), adjacent plugin CLI proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary or
+  plugins_install_json_uses_clawhub_installer_for_explicit_spec or
+  plugins_install_clawhub_reports_unavailable_runtime or
+  plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`15 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- npm install records now update through the fakeable native npm adapter,
+  matching OpenClaw's `plugins update` source dispatch for `source="npm"`.
+  The CLI calls the installer with `mode="update"`, reports dry-run/update
+  outcomes with current/next versions, and persists refreshed npm resolution
+  fields back into `plugins.installs`.
+- Progress estimates moved to roughly 49.5% repo-wide and ~98.5% for the
+  CLI/operator control plane after this npm-update slice. Remaining
+  non-marketplace plugin parity is hook-pack fallback breadth, production npm
+  installer wiring, and deeper runtime activation/import depth.
+- Verified the npm update slice with `python -m pytest
+  tests\test_cli.py::test_plugins_update_json_refreshes_npm_install_record -q`
+  (`1 failed` before implementation because npm install records were skipped),
+  then the same command (`1 passed`), adjacent plugin CLI proof `python -m
+  pytest tests\test_cli.py -q -k
+  "plugins_update_json_refreshes_npm_install_record or
+  plugins_update_json_refreshes_local_marketplace_install or
+  plugins_update_json_refreshes_remote_marketplace_install or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_uninstall_json_removes_native_install_metadata"` (`8 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins update <npm-package>@<tag-or-version>` now mirrors OpenClaw's update
+  selection helper by mapping the explicit npm spec back to the single tracked
+  npm install whose resolved/package name matches, then using the raw spec as
+  the update override. Ambiguous or unmatched specs continue through the normal
+  missing-record path.
+- Progress estimates are now roughly 49.5% repo-wide and ~98.6% for the
+  CLI/operator control plane after this npm spec-override update slice.
+  Remaining non-marketplace plugin parity is hook-pack fallback breadth,
+  production npm installer wiring, and deeper runtime activation/import depth.
+- Verified the npm update spec-override slice with `python -m pytest
+  tests\test_cli.py::test_plugins_update_json_maps_npm_spec_override_to_tracked_install
+  -q` (`1 failed` before implementation because no npm update call was made),
+  then the same command (`1 passed`), adjacent plugin CLI proof `python -m
+  pytest tests\test_cli.py -q -k
+  "plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_npm_install_record or
+  plugins_update_json_refreshes_local_marketplace_install or
+  plugins_update_json_refreshes_remote_marketplace_install or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_uninstall_json_removes_native_install_metadata"` (`8 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- `plugins update` now includes tracked npm hook packs from
+  `hooks.internal.installs`, matching OpenClaw's merged plugin/hook update
+  command behavior. Native config snapshots preserve top-level `hooks`,
+  fakeable `hook_npm_installer` updates run with `mode="update"`, refreshed
+  hook-pack install metadata persists under `hooks.internal.installs`, and the
+  human restart text names both plugins and hooks.
+- Progress estimates are now roughly 49.5% repo-wide and ~98.7% for the
+  CLI/operator control plane after this hook-pack update slice. Remaining
+  non-marketplace plugin/hook parity is hook-pack install fallback breadth,
+  production npm/hook installer wiring, and deeper runtime activation/import
+  depth.
+- Verified the hook-pack update slice with `python -m pytest
+  tests\test_cli.py::test_plugins_update_json_refreshes_hook_pack_install_record
+  -q` (`1 failed` before implementation because no hook update call was made),
+  then the same command (`1 passed`), adjacent plugin/hook update proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_update_json_refreshes_hook_pack_install_record or
+  plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_npm_install_record or
+  plugins_update_json_refreshes_local_marketplace_install or
+  plugins_update_json_refreshes_remote_marketplace_install"` (`5 passed`),
+  broader adjacent CLI proof including install and hooks doctor checks
+  (`9 passed, 405 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- `plugins install <npm-spec>` now falls back to npm hook-pack installation
+  after plugin npm install fails for a non-bundled, non-security reason,
+  matching OpenClaw's hook-pack fallback branch. The native CLI persists
+  hook-pack npm install records under `hooks.internal.installs`, returns a
+  hook-pack JSON payload with installed hooks and npm resolution metadata, and
+  keeps bundled npm fallback ahead of hook fallback.
+- Progress estimates are now roughly 49.5% repo-wide and ~98.8% for the
+  CLI/operator control plane after this hook-pack install fallback slice.
+  Remaining non-marketplace plugin/hook parity is production npm/hook installer
+  wiring and deeper runtime activation/import depth.
+- Verified the hook-pack install fallback slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_falls_back_to_npm_hook_pack -q`
+  (`1 failed` before implementation because the plugin npm error exited
+  directly), then the same command (`1 passed`), adjacent plugin/hook proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_falls_back_to_npm_hook_pack or
+  plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_update_json_refreshes_hook_pack_install_record or
+  plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_npm_install_record or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary"`
+  (`9 passed`), `ruff check src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py src\openzues\schemas.py`.
+- The CLI service graph now production-wires native npm plugin and hook-pack
+  installer adapters instead of relying only on fakeable test attributes. The
+  adapters use `npm pack --json`, safe tar extraction, durable data-dir install
+  targets, plugin manifest validation, hook-pack package metadata projection,
+  and npm resolution fields while avoiding package install scripts.
+- At the npm/hook installer checkpoint, progress estimates were roughly 49.6%
+  repo-wide and ~98.9% for the CLI/operator control plane. The follow-on
+  plugin/runtime queue was deeper activation/import behavior, ClawHub
+  production breadth, packaging/distribution, and broader runtime command
+  ergonomics.
+- Verified the production npm installer adapter slice with `python -m pytest
+  tests\test_plugin_npm_installers.py
+  tests\test_cli.py::test_plugins_install_json_falls_back_to_npm_hook_pack -q`
+  (`3 passed`), adjacent plugin/hook CLI proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_install_json_falls_back_to_npm_hook_pack or
+  plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_update_json_refreshes_hook_pack_install_record or
+  plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_npm_install_record or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary"`
+  (`9 passed`), `ruff check src\openzues\services\plugin_npm_installers.py
+  src\openzues\cli.py tests\test_plugin_npm_installers.py tests\test_cli.py`,
+  and `mypy src\openzues\services\plugin_npm_installers.py
+  src\openzues\cli.py`.
+- The CLI service graph now production-wires a native ClawHub plugin installer
+  instead of relying only on the fakeable ClawHub test seam. The adapter uses
+  the ClawHub package/version/download API, validates raw-hex and SRI
+  `sha256hash` metadata against the observed archive digest, preserves strict
+  `files[]` fallback verification, installs the downloaded archive into a
+  durable `plugins/clawhub/<id>` data-dir root, and returns OpenClaw-shaped
+  ClawHub package/channel/integrity/resolved-at metadata for the existing CLI
+  persistence path.
+- Progress estimates are now roughly 49.7% repo-wide, ~99.0% for the
+  runtime/CLI/doctor native bridge, and ~99.0% for the CLI/operator control
+  plane after this ClawHub production adapter slice. Remaining plugin/runtime
+  parity is deeper activation/import behavior, packaging/distribution, and
+  broader runtime command ergonomics.
+- Verified the production ClawHub installer slice with `python -m pytest
+  tests\test_plugin_clawhub_installers.py
+  tests\test_cli.py::test_cli_services_declares_clawhub_plugin_installer -q`
+  (`3 passed`), adjacent ClawHub/plugin CLI proof `python -m pytest
+  tests\test_plugin_clawhub_installers.py tests\test_cli.py -q -k
+  "clawhub or plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_install_json_falls_back_to_npm_hook_pack"` (`10 passed`), adjacent
+  installer proof `python -m pytest tests\test_plugin_clawhub_installers.py
+  tests\test_plugin_npm_installers.py -q` (`4 passed`), `ruff check
+  src\openzues\services\plugin_clawhub_installers.py
+  src\openzues\services\plugin_npm_installers.py src\openzues\cli.py
+  tests\test_plugin_clawhub_installers.py tests\test_plugin_npm_installers.py
+  tests\test_cli.py`, and `mypy
+  src\openzues\services\plugin_clawhub_installers.py src\openzues\cli.py`.
+- OpenZues now has a native manifest activation planner matching OpenClaw's
+  `plugins/activation-planner.ts` trigger rules. The helper resolves plugin
+  ids from command aliases and `activation.onCommands`, provider metadata plus
+  setup providers, agent harnesses, channels, routes, capability hints,
+  contracts-owned tools, hooks, origin filters, and explicit empty plugin
+  scopes. This closes the data-level planner seam; remaining plugin activation
+  parity is runtime import/executor activation wiring that feeds real installed
+  manifests into this planner.
+- Progress estimates are now roughly 49.8% repo-wide, ~99.1% for the
+  runtime/CLI/doctor native bridge, and ~99.1% for the CLI/operator control
+  plane after this activation-planner slice.
+- Verified the activation-planner slice with `python -m pytest
+  tests\test_gateway_plugin_activation.py -q` (`3 passed`), adjacent manifest
+  metadata proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_command_aliases or
+  plugins_list_json_preserves_manifest_tool_contracts"` (`1 passed`), `ruff
+  check src\openzues\services\gateway_plugin_activation.py
+  tests\test_gateway_plugin_activation.py`, and `mypy
+  src\openzues\services\gateway_plugin_activation.py`.
+- Native plugin runtime projection now includes an OpenClaw-shaped active
+  registry adapter for tool entries: registry tool names become ordered
+  `GatewayPluginRuntimeExecutorSpec`s, optional tools require an allowlist hit
+  on the tool, plugin id, or `group:plugins`, core tool-name conflicts are
+  skipped, and plugin ids that conflict with core tool names block that plugin's
+  projected tools. This closes the executor-spec projection edge; remaining
+  activation/import parity is loading real installed plugin modules into a
+  native active registry without importing the TypeScript runtime.
+- Progress estimates are now roughly 49.9% repo-wide, ~99.2% for the
+  runtime/CLI/doctor native bridge, and ~99.2% for the CLI/operator control
+  plane after this active-registry projection slice.
+- Verified the active-registry projection slice with `python -m pytest
+  tests\test_gateway_plugin_runtime.py -q` (`3 passed`), adjacent gateway
+  plugin-runtime proof `python -m pytest tests\test_gateway_plugin_runtime.py
+  tests\test_gateway_node_methods.py -q -k
+  "plugin_runtime or tools_invoke_uses_plugin_runtime_service or
+  tools_invoke_projects_plugin_runtime_errors or
+  tools_catalog_includes_plugin_runtime_specs or
+  tools_effective_includes_plugin_runtime_specs"` (`4 passed`), `ruff check
+  src\openzues\services\gateway_plugin_runtime.py
+  tests\test_gateway_plugin_runtime.py`, and `mypy
+  src\openzues\services\gateway_plugin_runtime.py`.
+- `plugins doctor --json` now reports runtime activation posture for manifest
+  tool contracts that do not yet have a native active executor. This separates
+  "metadata discovered" from "runtime executor active" without making
+  metadata-only manifests hard failures, giving operators an honest view of the
+  remaining native import/activation adapter work.
+- Progress estimates are now roughly 50.0% repo-wide, ~99.3% for the
+  runtime/CLI/doctor native bridge, and ~99.3% for the CLI/operator control
+  plane after this runtime-activation doctor posture slice.
+- Verified the doctor posture slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_reports_metadata_only_tool_activation
+  -q` (`1 passed`), adjacent plugin doctor proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_doctor_json_reports_metadata_only_tool_activation or
+  plugins_doctor_json_reports_missing_bundled_runtime_dependencies or
+  plugins_doctor_json_limits_runtime_deps_to_enabled_channel_plugins or
+  plugins_doctor_human_reports_no_plugin_issues or
+  plugins_doctor_human_reports_error_plugins or
+  plugins_doctor_human_reports_compatibility_notices"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- ClawHub-installed plugins now participate in `plugins update`: recorded
+  `source="clawhub"` install metadata dispatches to the native ClawHub adapter
+  with the stored base URL and expected plugin id, refreshes package
+  family/channel/version/integrity/resolved-at metadata, supports dry-run
+  checks without archive installation, and preserves the existing npm and
+  marketplace update paths.
+- Progress estimates are now roughly 50.1% repo-wide, ~99.4% for the
+  runtime/CLI/doctor native bridge, and ~99.4% for the CLI/operator control
+  plane after this ClawHub update slice.
+- Verified the ClawHub update slice with `python -m pytest
+  tests\test_cli.py::test_plugins_update_json_refreshes_clawhub_install_record
+  -q` (`1 passed`), adjacent CLI/plugin installer proof `python -m pytest
+  tests\test_cli.py -q -k
+  "clawhub or plugins_update_json_refreshes_npm_install_record or
+  plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_local_marketplace_install"` (`11 passed`),
+  `python -m pytest tests\test_plugin_clawhub_installers.py -q` (`2 passed`),
+  `ruff check src\openzues\cli.py
+  src\openzues\services\plugin_clawhub_installers.py tests\test_cli.py
+  tests\test_plugin_clawhub_installers.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\plugin_clawhub_installers.py`.
+- `doctor:security` now mirrors OpenClaw's exec safe-bin doctor helper:
+  top-level `doctor --json` reports missing `safeBinProfiles`, marks
+  interpreter/runtime safe bins, reports risky `jq`/`awk`/`sed`-family
+  semantics, rolls those warnings into the shared doctor warning list, and
+  `doctor --fix` scaffolds empty custom profiles while leaving interpreters as
+  warnings.
+- Progress estimates are now roughly 50.2% repo-wide, ~99.5% for the
+  runtime/CLI/doctor native bridge, and ~99.5% for the CLI/operator control
+  plane after this exec safe-bin doctor slice.
+- Verified the exec safe-bin doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_profile_coverage
+  tests\test_cli.py::test_doctor_fix_scaffolds_custom_exec_safe_bin_profiles
+  -q` (`2 passed`), adjacent security proof `python -m pytest
+  tests\test_cli.py -q -k
+  "exec_safe_bin or exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  approvals_exec_forwarding or heartbeat_direct_policy or
+  gateway_bind_is_exposed_without_auth"` (`7 passed`), runtime/doctor proof
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_runtime_bridge_posture or
+  doctor_json_warns_when_exec_policy_config_exceeds_host_policy or
+  doctor_json_reports_exec_safe_bin_profile_coverage or
+  doctor_fix_scaffolds_custom_exec_safe_bin_profiles"` (`4 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Bundled plugin discovery now mirrors OpenClaw's packaged runtime preference:
+  when a package root exposes both usable `dist/extensions` and
+  `dist-runtime/extensions` plugin trees, native bundled installs resolve from
+  `dist-runtime/extensions` so staged runtime wrappers are preferred over the
+  built source graph. Existing direct bundled-root overrides still work.
+- Progress estimates are now roughly 50.3% repo-wide, ~99.6% for the
+  runtime/CLI/doctor native bridge, and ~99.6% for the CLI/operator control
+  plane after this packaged bundled-runtime root slice.
+- Verified the packaged bundled-runtime root slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_prefers_dist_runtime_bundled_tree_for_package_root
+  -q` (`1 passed`), adjacent bundled install proof `python -m pytest
+  tests\test_cli.py -q -k
+  "bundled_plugin_for_bare_id or bundled_bare_id or
+  npm_not_found_uses_bundled_plugin_by_npm_spec or missing_local_like_spec"`
+  (`4 passed`), explicit adjacent proof `python -m pytest
+  tests\test_cli.py::test_plugins_install_prefers_dist_runtime_bundled_tree_for_package_root
+  tests\test_cli.py::test_plugins_install_json_uses_bundled_plugin_for_bare_id
+  tests\test_cli.py::test_plugins_install_human_warns_for_bundled_bare_id
+  tests\test_cli.py::test_plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec
+  -q` (`4 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- `doctor:security` now also mirrors OpenClaw's exec safe-bin trusted-directory
+  hints: profiled safe bins are resolved through the platform command lookup,
+  paths outside the default or configured `safeBinTrustedDirs` are reported in
+  `execSafeBins.trustedDirHints`, and the warnings point operators at the
+  global/agent trusted-dir config.
+- Progress estimates are now roughly 50.4% repo-wide, ~99.7% for the
+  runtime/CLI/doctor native bridge, and ~99.7% for the CLI/operator control
+  plane after this exec safe-bin trusted-dir hint slice.
+- Verified the trusted-dir hint slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_trusted_dir_hints
+  -q` (`1 passed`), focused safe-bin proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_profile_coverage
+  tests\test_cli.py::test_doctor_fix_scaffolds_custom_exec_safe_bin_profiles
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_trusted_dir_hints
+  -q` (`3 passed`), adjacent security proof `python -m pytest
+  tests\test_cli.py -q -k
+  "exec_safe_bin or exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  approvals_exec_forwarding or heartbeat_direct_policy or
+  gateway_bind_is_exposed_without_auth"` (`8 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now mirrors OpenClaw's configured channel doctor
+  preview hook from `doctor/shared/channel-doctor.ts`: native OpenZues scans
+  configured channel ids, calls registered fakeable channel doctor adapters,
+  records a structured `channelDoctor` contribution, and promotes plugin
+  preview warnings into the shared doctor warning list.
+- Progress estimates are now roughly 50.5% repo-wide, ~99.8% for the
+  runtime/CLI/doctor native bridge, and ~99.8% for the CLI/operator control
+  plane after this channel-plugin doctor preview slice.
+- Verified the channel-plugin doctor preview slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  -q` (`1 passed`), adjacent doctor/security proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_profile_coverage
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_trusted_dir_hints
+  -q` (`4 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --fix --json` now also mirrors OpenClaw's channel doctor
+  repair sequencing from `doctor/shared/channel-doctor.ts` and
+  `doctor/repair-sequencing.ts`: registered native adapters can expose
+  `repair_config` / `repairConfig`, receive `{ cfg, doctorFixCommand }`,
+  return sequential config mutations plus change/warning notes, and OpenZues
+  persists the final config with full replacement semantics so removals survive.
+- Progress estimates are now roughly 50.6% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin doctor repair slice.
+- Verified the channel-plugin doctor repair slice with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  -q` (`2 passed`), adjacent repair/security proof `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_repairs_open_policy_allow_from
+  tests\test_cli.py::test_doctor_fix_recovers_allowlist_policy_allow_from_from_store
+  -q` (`5 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now also runs OpenClaw's
+  `collectChannelDoctorMutableAllowlistWarnings` contract from
+  `doctor-config-flow.ts`: registered channel doctor adapters can expose
+  `collect_mutable_allowlist_warnings` /
+  `collectMutableAllowlistWarnings`, receive `{ cfg }`, and return provider
+  warnings that are surfaced under `channelDoctor` and promoted to the shared
+  doctor warnings list.
+- Progress estimates are now roughly 50.7% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin mutable-allowlist warning slice.
+- Verified the mutable-allowlist warning slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config -q`
+  (`3 passed`), adjacent doctor/security proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_profile_coverage -q`
+  (`5 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now also runs OpenClaw's
+  `runChannelDoctorConfigSequences` hook from `doctor-config-flow.ts`:
+  registered channel doctor adapters can expose `run_config_sequence` /
+  `runConfigSequence`, receive `{ cfg, env, shouldRepair }`, and return
+  `changeNotes` / `warningNotes` that are represented as
+  `channelDoctor.sequenceChanges`, `channelDoctor.sequenceWarnings`, and the
+  shared channel-doctor changes/warnings.
+- Progress estimates are now roughly 50.8% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin config-sequence slice.
+- Verified the config-sequence slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config -q`
+  (`4 passed`), adjacent doctor repair/security proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy
+  -q` (`6 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --fix --json` now also runs OpenClaw's
+  `collectChannelDoctorStaleConfigMutations` hook from
+  `doctor/shared/channel-doctor.ts`: registered channel doctor adapters can
+  expose `clean_stale_config` / `cleanStaleConfig`, receive `{ cfg }`, return
+  sequential config mutations, and have stale-cleanup changes reported under
+  `channelDoctor.staleChanges` while repair mode persists the final candidate.
+- Progress estimates are now roughly 50.9% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin stale-cleanup slice.
+- Verified the stale-cleanup slice with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config -q`
+  (`4 passed`), adjacent doctor repair proof `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_repairs_open_policy_allow_from -q`
+  (`6 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --fix --json` now also runs OpenClaw's
+  `normalizeCompatibilityConfig` channel doctor contract from
+  `channel-doctor.ts`: registered adapters can expose
+  `normalize_compatibility_config` / `normalizeCompatibilityConfig`, receive
+  `{ cfg }`, return sequential compatibility mutations, and have
+  `channelDoctor.compatibilityChanges` persisted in repair mode before later
+  sequence/stale/repair hooks run.
+- Progress estimates are now roughly 51.0% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin compatibility-normalizer slice.
+- Verified the compatibility-normalizer slice with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_compatibility_normalizer
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config -q`
+  (`5 passed`), adjacent doctor repair proof `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_compatibility_normalizer
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_repairs_open_policy_allow_from -q`
+  (`7 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now also runs OpenClaw's
+  `collectEmptyAllowlistExtraWarnings` channel doctor hook from
+  `empty-allowlist-scan.ts`: registered adapters can expose
+  `collect_empty_allowlist_extra_warnings` /
+  `collectEmptyAllowlistExtraWarnings`, receive top-level and account-scoped
+  channel context, and return provider-specific warnings that land under
+  `channelDoctor.emptyAllowlistWarnings` and the shared doctor warning list.
+- Progress estimates are now roughly 51.1% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin empty-allowlist extra-warning slice.
+- Verified the empty-allowlist extra-warning slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_empty_allowlist_extra_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_compatibility_normalizer
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings -q`
+  (`5 passed`), adjacent security/repair proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_channel_empty_allowlist_extra_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_compatibility_normalizer
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings
+  tests\test_cli.py::test_doctor_json_warns_about_channel_dm_policy_security
+  tests\test_cli.py::test_doctor_fix_recovers_allowlist_policy_allow_from_from_store
+  -q` (`7 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --json` now also implements OpenClaw's default empty group
+  allowlist warning and the
+  `shouldSkipDefaultEmptyGroupAllowlistWarning` provider hook from
+  `empty-allowlist-policy.ts`: group allowlist configurations with no
+  sender source emit a native warning, and registered adapters can suppress
+  that default warning with the same account context used by upstream.
+- Progress estimates are now roughly 51.2% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this empty-group allowlist skip slice.
+- Verified the empty-group skip slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_honors_channel_empty_group_allowlist_skip
+  tests\test_cli.py::test_doctor_json_reports_channel_empty_allowlist_extra_warnings
+  tests\test_cli.py::test_doctor_json_reports_channel_mutable_allowlist_warnings -q`
+  (`3 passed`), adjacent channel/security proof `python -m pytest
+  tests\test_cli.py::test_doctor_json_honors_channel_empty_group_allowlist_skip
+  tests\test_cli.py::test_doctor_json_reports_channel_empty_allowlist_extra_warnings
+  tests\test_cli.py::test_doctor_fix_runs_channel_compatibility_normalizer
+  tests\test_cli.py::test_doctor_fix_runs_channel_clean_stale_config
+  tests\test_cli.py::test_doctor_json_reports_channel_config_sequence_notes
+  tests\test_cli.py::test_doctor_json_warns_about_channel_dm_policy_security -q`
+  (`6 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Native plugin inventory now mirrors OpenClaw's doctor contract artifact
+  preference from `plugins/doctor-contract-registry.ts` without importing the
+  TypeScript runtime: plugin records scan their root for
+  `doctor-contract-api.*` before `contract-api.*` and expose the preferred
+  artifact under `doctorContractApi` for `plugins list --json` /
+  `plugins inspect --json`.
+- Progress estimates are now roughly 51.3% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this doctor-contract artifact projection slice.
+- Verified the doctor-contract artifact projection slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_prefers_doctor_contract_api_artifact
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_config_contracts
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_identity_and_classification
+  -q` (`3 passed`), adjacent plugin inventory/inspect proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_prefers_doctor_contract_api_artifact or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_identity_and_classification or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_inspect_json_returns_plugin_detail or
+  plugins_inspect_json_projects_record_runtime_surfaces"` (`6 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Native doctor-contract registry helpers now also mirror OpenClaw's scoped
+  dry-run narrowing from `collectRelevantDoctorPluginIdsForTouchedPaths`:
+  touched `channels.<id>` and `plugins.entries.<id>` paths resolve only the
+  relevant plugin ids, legacy `talk.*` fields add `elevenlabs`, and broad
+  channel/plugin paths fall back to the full relevant doctor plugin set.
+- Progress estimates are now roughly 51.4% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this doctor-contract touched-path narrowing slice.
+- Verified the touched-path narrowing slice with `python -m pytest
+  tests\test_cli.py::test_doctor_contract_relevant_plugin_ids_narrow_touched_paths
+  -q` (`1 passed`), adjacent doctor/plugin proof `python -m pytest
+  tests\test_cli.py::test_doctor_contract_relevant_plugin_ids_narrow_touched_paths
+  tests\test_cli.py::test_plugins_list_json_prefers_doctor_contract_api_artifact
+  tests\test_cli.py::test_doctor_fix_runs_channel_compatibility_normalizer
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  -q` (`4 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Native CLI now mirrors OpenClaw's `secrets reload` surface from
+  `src/cli/secrets-cli.ts`: the root Typer `secrets` command exposes
+  `reload --json`, dispatches through the native `secrets.reload` gateway
+  method, writes raw JSON in JSON mode, and prints the upstream warning-count
+  human message otherwise.
+- Progress estimates are now roughly 51.5% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this secrets reload CLI slice.
+- Verified the secrets reload CLI slice with `python -m pytest
+  tests\test_cli.py -q -k "secrets_reload"` (`2 passed`), adjacent
+  gateway/CLI proof `python -m pytest tests\test_cli.py
+  tests\test_gateway_node_methods.py -q -k "secrets_reload"` (`3 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Native `plugins list --json` now mirrors OpenClaw's imported plugin-state
+  projection from `src/plugins/status.ts`: plugin rows carry an `imported`
+  boolean derived from the native runtime executor registry state, while
+  bundle-format plugin rows remain `imported=false` even when a runtime spec
+  names them.
+- Progress estimates are now roughly 51.6% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this plugin imported-state projection slice.
+- Verified the plugin imported-state slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_marks_runtime_executor_plugins_imported
+  -q` (`1 passed`), broad plugin-list proof `python -m pytest
+  tests\test_cli.py -q -k "plugins_list_json"` (`20 passed`), adjacent
+  inspect proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_marks_runtime_executor_plugins_imported or
+  plugins_list_json_projects_runtime_executor_inventory or
+  plugins_inspect_json_projects_record_runtime_surfaces or
+  plugins_inspect_json_returns_plugin_detail"` (`4 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Native `doctor --json` workspaceStatus now consumes the same runtime-aware
+  imported plugin records as `plugins list --json`, matching OpenClaw's
+  `doctor-workspace-status.ts` imported-count note. Runtime-loaded native
+  plugins now increment `workspaceStatus.plugins.imported` and appear in the
+  workspaceStatus records with `imported=true`.
+- Progress estimates are now roughly 51.7% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this doctor workspaceStatus imported-count slice.
+- Verified the doctor workspaceStatus imported-count slice with `python -m
+  pytest tests\test_cli.py::test_doctor_json_workspace_status_counts_runtime_imported_plugins
+  -q` (`1 passed`), adjacent workspace/plugin proof `python -m pytest
+  tests\test_cli.py -q -k "workspace_status_plugin_counts or
+  runtime_imported_plugins or plugins_list_json"` (`22 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- Native plugin inventory now also preserves facade/imported state from
+  upstream-shaped Hermes plugin deck rows, matching OpenClaw's
+  `listImportedBundledPluginFacadeIds()` contribution to plugin reports.
+  Non-bundle facade-loaded plugins remain `imported=true` even without a native
+  runtime executor, while bundle rows are still forced to `imported=false`.
+- Progress estimates are now roughly 51.8% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this facade-loaded plugin imported-state slice.
+- Verified the facade-loaded plugin imported-state slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_facade_imported_plugin_state
+  -q` (`1 passed`), adjacent imported-state proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_list_json_marks_runtime_executor_plugins_imported or
+  plugins_list_json_preserves_facade_imported_plugin_state or
+  doctor_json_includes_workspace_status_plugin_counts"` (`3 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Native `doctor --json` workspaceStatus now also mirrors OpenClaw's full
+  diagnostics-report behavior from `src/plugins/status.ts`: loaded non-bundle
+  plugin modules are treated as imported during doctor diagnostics, while
+  ordinary metadata-only `plugins list --json` remains runtime/facade driven.
+- Progress estimates are now roughly 51.9% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this diagnostics-loaded imported-state slice.
+- Verified the diagnostics-loaded imported-state slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_workspace_status_marks_diagnostics_loaded_plugins_imported
+  -q` (`1 passed`), adjacent workspace/imported proof `python -m pytest
+  tests\test_cli.py -q -k
+  "workspace_status_marks_diagnostics_loaded_plugins_imported or
+  workspace_status_counts_runtime_imported_plugins or
+  workspace_status_plugin_counts or
+  plugins_list_json_preserves_facade_imported_plugin_state"` (`4 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Native `plugins list --json` now mirrors OpenClaw's bundled plugin reported
+  version normalization from `src/plugins/status.ts`: deck/runtime plugin rows
+  preserve explicit `origin` and `version`, and `origin="bundled"` reports the
+  host base version such as `2026.3.23` from `2026.3.23-1`.
+- Progress estimates are now roughly 52.0% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this bundled plugin reported-version slice.
+- Verified the bundled plugin reported-version slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_normalizes_bundled_plugin_reported_version
+  -q` (`1 passed`), upstream-shaped adjacent expression `python -m pytest
+  tests\test_cli.py -q -k "plugins_list_json and (facade_imported or
+  bundled_plugin_version)"` (`1 passed`), explicit adjacent proof `python -m
+  pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_facade_imported_plugin_state or
+  plugins_list_json_normalizes_bundled_plugin_reported_version or
+  plugins_list_json_projects_hermes_plugin_inventory"` (`3 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Native `plugins inspect --json` now mirrors OpenClaw's plugin-scoped
+  diagnostics filtering from `src/plugins/status.ts`: inspect reports receive
+  inventory diagnostics and include only entries whose `pluginId` matches the
+  inspected plugin, while global or other-plugin diagnostics stay out of the
+  per-plugin payload.
+- Progress estimates are now roughly 52.1% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this plugin inspect diagnostics slice.
+- Verified the plugin inspect diagnostics slice with `python -m pytest
+  tests\test_cli.py::test_plugins_inspect_json_includes_plugin_scoped_diagnostics
+  -q` (`1 passed`), adjacent inspect proof `python -m pytest
+  tests\test_cli.py -q -k
+  "plugins_inspect_json_includes_plugin_scoped_diagnostics or
+  plugins_inspect_json_returns_plugin_detail or
+  plugins_inspect_json_projects_record_runtime_surfaces"` (`3 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Native `chat.inject` now mirrors OpenClaw's live `chat` event dispatch:
+  accepted injected assistant messages publish `event="chat"` with
+  `runId="inject-<messageId>"`, canonical `sessionKey`, `seq=0`,
+  `state="final"`, and the sanitized assistant message payload, then route the
+  same event through subscribed gateway nodes for that canonical session.
+- Progress estimates are now roughly 52.2% repo-wide, ~98.1% for the
+  chat/session contract subfamily, and ~99.9% for runtime/CLI/doctor after this
+  `chat.inject` live-event slice.
+- Verified the `chat.inject` live-event slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_chat_inject_appends_assistant_message_and_publishes_session_message_event
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "chat_inject"` (`5 passed`), `ruff
+  check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Native `acp client` now mirrors OpenClaw's interactive prompt replay loop:
+  without an injected bridge runner, the Typer command starts the native ACP
+  client runtime, initializes a subprocess-backed NDJSON client session, trims
+  entered prompts, ignores blank input, sends `prompt` requests with ACP text
+  blocks, reports the stop reason, and kills the spawned agent on `exit` or
+  `quit`.
+- Progress estimates are now roughly 52.3% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~98.7% for the CLI/operator table row
+  after this ACP interactive replay slice.
+- Verified the ACP interactive replay slice with `python -m pytest
+  tests\test_acp_client_runtime.py::test_acp_client_interactive_replay_trims_prompts_and_quits
+  tests\test_cli.py::test_acp_client_command_runs_native_interactive_runtime
+  -q` (`2 passed`), adjacent `python -m pytest
+  tests\test_acp_client_runtime.py tests\test_cli.py -q -k "acp_client or
+  acp_bridge_command or acp_status_json_and_human or acp_permission"` (`21
+  passed`), `ruff check src\openzues\services\acp_client_runtime.py
+  src\openzues\cli.py tests\test_acp_client_runtime.py tests\test_cli.py`, and
+  `mypy src\openzues\services\acp_client_runtime.py src\openzues\cli.py`.
+- Native `sessions.spawn` attachment handling now mirrors OpenClaw's
+  `sanitizeMountPathHint` prompt-safety guard: unsafe `attachAs.mountPath`
+  values containing control characters, newlines, or disallowed characters are
+  dropped before the spawned child system prompt is built, while safe hints
+  still appear in the attachment receipt prompt suffix.
+- Progress estimates are now roughly 52.4% repo-wide and ~97.1% for the
+  gateway session/tool-contract table row after this attachment mount-path
+  sanitizer slice.
+- Verified the attachment mount-path sanitizer slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_sanitizes_invalid_attachment_mount_path_hint
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn and attachment"`
+  (`8 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
+- Native sandboxed chat/session attachment handling now mirrors OpenClaw's
+  remote inbound media staging path from
+  `src/auto-reply/reply/stage-sandbox-media.ts`: provider-backed attachments
+  with safe `MediaRemoteHost`/`MediaPath` metadata and configured
+  `remoteAttachmentRoots` are fetched through the fakeable SCP-backed adapter,
+  copied into the child workspace under `media/inbound`, and rewritten to
+  sandbox-relative media refs before the runtime sees them. Unsafe or
+  unconfigured remote sources remain unstaged.
+- Progress estimates are now roughly 52.5% repo-wide, ~98.2% for the
+  chat/session contract subfamily, and ~97.2% for the gateway
+  session/tool-contract table row after this remote inbound provider media
+  staging slice.
+- Verified the remote inbound provider media staging slice with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_chat_send_sandboxed_remote_provider_attachment_stages_allowed_media
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "sandboxed_remote_provider_attachment_stages_allowed_media or
+  sandboxed_attachment_stages_media_in_session_workspace or
+  saved_path_attachment_stages_media_in_session_workspace"` (`6 passed`),
+  `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 

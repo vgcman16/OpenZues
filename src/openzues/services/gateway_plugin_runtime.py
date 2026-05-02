@@ -211,6 +211,64 @@ def _normalize_executor_spec(
     )
 
 
+def build_plugin_runtime_executor_specs_from_active_registry(
+    registry: Mapping[str, object],
+    *,
+    existing_tool_names: Iterable[str] = (),
+    tool_allowlist: Iterable[str] = (),
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    tools = registry.get("tools")
+    if not isinstance(tools, list):
+        return ()
+    existing_normalized = {_normalize_tool_name(tool) for tool in existing_tool_names}
+    allowlist = {_normalize_tool_name(tool) for tool in tool_allowlist}
+    blocked_plugins: set[str] = set()
+    specs: list[GatewayPluginRuntimeExecutorSpec] = []
+    for entry in tools:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_string(entry.get("pluginId", entry.get("plugin_id")))
+        if plugin_id is None:
+            continue
+        plugin_key = _normalize_tool_name(plugin_id)
+        if plugin_key in blocked_plugins:
+            continue
+        if plugin_key in existing_normalized:
+            blocked_plugins.add(plugin_key)
+            continue
+        optional = bool(entry.get("optional", False))
+        executor = entry.get("executor")
+        if not callable(executor):
+            continue
+        for tool in _active_registry_tool_names(entry):
+            tool_key = _normalize_tool_name(tool)
+            if not tool_key:
+                continue
+            if optional and not _optional_tool_allowed(
+                tool_key=tool_key,
+                plugin_key=plugin_key,
+                allowlist=allowlist,
+            ):
+                continue
+            if tool_key in existing_normalized:
+                continue
+            existing_normalized.add(tool_key)
+            specs.append(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool=tool,
+                    executor=cast(GatewayPluginExecutor, executor),
+                    optional=optional,
+                    plugin_id=plugin_id,
+                    plugin_name=_optional_string(
+                        entry.get("pluginName", entry.get("plugin_name"))
+                    ),
+                    description=_optional_string(entry.get("description")),
+                    source=str(entry.get("source") or "plugin").strip() or "plugin",
+                )
+            )
+    return tuple(specs)
+
+
 def _optional_string(value: object) -> str | None:
     if value is None:
         return None
@@ -218,6 +276,30 @@ def _optional_string(value: object) -> str | None:
     if not text:
         return None
     return text
+
+
+def _active_registry_tool_names(entry: Mapping[str, object]) -> tuple[str, ...]:
+    raw_names = entry.get("names")
+    names = [str(name).strip() for name in raw_names] if isinstance(raw_names, list) else []
+    single_name = _optional_string(entry.get("name", entry.get("tool")))
+    if single_name is not None:
+        names.append(single_name)
+    return tuple(name for name in names if name)
+
+
+def _normalize_tool_name(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _optional_tool_allowed(
+    *,
+    tool_key: str,
+    plugin_key: str,
+    allowlist: set[str],
+) -> bool:
+    if not allowlist:
+        return False
+    return tool_key in allowlist or plugin_key in allowlist or "group:plugins" in allowlist
 
 
 def _optional_mapping(value: object) -> Mapping[str, object] | None:

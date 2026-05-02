@@ -1,30 +1,53 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-01
+Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~49% overall, with a reasonable
-  band of ~44-54%.
+- Repo-wide OpenClaw parity is estimated at ~52.5% overall, with a reasonable
+  band of ~48-57%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98% after the latest
+- The chat/session contract subfamily is estimated at ~98.2% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
-  `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
-  runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
-  runtime bridge doctor posture, provider route send/poll alias-precedence,
-  plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
+  `sessions.patch`, `sessions.delete`, `sessions.spawn`, sandboxed remote
+  media staging, and `tools.invoke` runtime seams.
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  plugin runtime executor inventory, doctor-contract artifact
+  projection/touched-path narrowing,
+  channel-plugin doctor
+  compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root
+  preference, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
   plus MCP/LSP server projection, known Claude marketplace shortcut, remote
   marketplace listing, remote marketplace path-entry install/update,
-  Git/GitHub entry-source install, URL/archive entry-source install, and local
-  path link/copy install slices.
-- The CLI/operator control-plane family is estimated at ~98% after the bundle
-  metadata mini-queue and marketplace source-shape install/update queue;
-  remaining CLI gaps are now dominated by package/npm/clawhub install breadth,
-  runtime activation/import depth, and packaging surfaces.
+  Git/GitHub entry-source install, URL/archive entry-source install, local
+  path link/copy install, missing local-looking install-spec guard, and bundled
+  pre-npm plus explicit/preferred ClawHub, production-wired ClawHub API/archive
+  install/update, fakeable plus production-wired npm install/update, update
+  spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
+  hook-pack npm install fallback, native manifest activation-planner,
+  active-registry executor projection, and runtime activation doctor posture
+  slices.
+- The gateway session/tool-contract family is estimated at ~97.2% after the
+  latest sandboxed remote inbound provider media staging slice.
+- The CLI/operator control-plane family is estimated at ~99.9% after the bundle
+  metadata mini-queue, marketplace source-shape install/update queue, native
+  ACP client interactive replay,
+  secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
+  compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
+  installs, missing local-looking install-spec guard, and
+  bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
+  API/archive install/update, fakeable plus production-wired npm install/update,
+  update spec-overrides,
+  npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
+  install fallback, native manifest activation planning, active-registry
+  executor projection, and runtime activation doctor posture; remaining CLI
+  gaps are now dominated by real installed plugin module import/activation and
+  packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -979,7 +1002,13 @@ legacy bind aliases under the legacy-config migrator. It now also compares
 global and per-agent `tools.exec` policy against the native
 `settings/exec-approvals.json` host policy and emits the OpenClaw-shaped
 config/host/effective-policy warning when the requested policy is broader or
-less prompt-heavy than the host permits. Configured channel DM security now
+less prompt-heavy than the host permits. It also mirrors OpenClaw's exec
+safe-bin doctor helper: configured global and per-agent `safeBins` report
+missing `safeBinProfiles`, interpreter/runtime bins, and risky jq/awk/sed
+semantics, while `doctor --fix` scaffolds empty custom profiles and leaves
+interpreter bins as warnings. It also resolves profiled safe bins through the
+platform command lookup and reports paths outside the default or configured
+`safeBinTrustedDirs` in `execSafeBins.trustedDirHints`. Configured channel DM security now
 also mirrors OpenClaw's OPEN, invalid-open-allowFrom, locked allowlist/pairing,
 disabled, and shared-main-session warnings using native config snapshots and
 the existing pairing allowFrom store. `doctor:shell-completion` now reports
@@ -987,6 +1016,43 @@ native shell/profile/cache/slow-pattern status and `doctor --fix` regenerates a
 missing cache and replaces slow dynamic profile stanzas with a cached source
 line. First-time `doctor --fix` installation for profiles with no existing
 completion is also wired through the same native cache/profile path.
+Top-level doctor output now also includes OpenClaw's configured channel doctor
+preview hook from `doctor/shared/channel-doctor.ts`: registered native channel
+doctor adapters receive the full config snapshot and
+`doctorFixCommand="openzues doctor --fix"`, return preview warnings, and those
+warnings are exposed under `channelDoctor` plus the top-level doctor warning
+list.
+The same `channelDoctor` contribution now also runs OpenClaw-style channel
+doctor repair hooks during `doctor --fix`: native adapters exposing
+`repair_config` or `repairConfig` receive `{ cfg, doctorFixCommand }`, return
+sequential config mutations plus changes/warnings, and OpenZues persists the
+final config through full replacement semantics so adapter removals survive.
+`channelDoctor` now also runs the upstream mutable-allowlist warning hook:
+native adapters exposing `collect_mutable_allowlist_warnings` or
+`collectMutableAllowlistWarnings` receive `{ cfg }`, and provider warnings are
+reported under `channelDoctor` plus the shared doctor warning list.
+`channelDoctor` now also runs the upstream config-sequence hook: native
+adapters exposing `run_config_sequence` or `runConfigSequence` receive
+`{ cfg, env, shouldRepair }`, and returned `changeNotes` / `warningNotes` are
+reported as sequence changes/warnings in the contribution.
+`channelDoctor` now also runs the upstream stale-config cleanup hook: native
+adapters exposing `clean_stale_config` or `cleanStaleConfig` receive `{ cfg }`,
+return sequential config mutations, and repair mode persists the final
+candidate while reporting `staleChanges`.
+`channelDoctor` now also runs the upstream compatibility normalizer hook:
+native adapters exposing `normalize_compatibility_config` or
+`normalizeCompatibilityConfig` receive `{ cfg }`, return sequential
+compatibility mutations, and repair mode persists those changes before later
+channel doctor hooks run.
+`channelDoctor` now also runs the upstream provider-specific empty-allowlist
+extra-warning hook: native adapters exposing
+`collect_empty_allowlist_extra_warnings` or
+`collectEmptyAllowlistExtraWarnings` receive top-level and account-scoped
+channel context and report warnings under `emptyAllowlistWarnings`.
+`channelDoctor` now also mirrors OpenClaw's default empty-group allowlist
+warning plus `shouldSkipDefaultEmptyGroupAllowlistWarning`: empty group
+sender allowlists produce a native warning, and registered adapters can skip
+that default warning with the upstream account context.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes
 the OpenAI auth endpoint through a fakeable boundary, classifies TLS
@@ -1382,6 +1448,99 @@ install records with `sourcePath`, `installPath`, version metadata from
 `plugins install <local-path>` without `--link` now copies local plugin
 directories/files into a durable `plugins/local/<id>` data-dir install root
 while preserving separate `sourcePath` and `installPath` metadata.
+Missing local-looking install specs now mirror OpenClaw's
+`looksLikeLocalInstallSpec` predicate: dot-relative, home-relative, absolute,
+archive, and script-shaped specs return `Path not found: <resolved path>`
+before the native command reaches the broader package/npm/clawhub install
+boundary.
+`plugins install <bare-plugin-id>` now also mirrors OpenClaw's bundled
+pre-npm branch: native bundled sources resolve from
+`OPENCLAW_BUNDLED_PLUGINS_DIR` / `OPENZUES_BUNDLED_PLUGINS_DIR`, persist path
+install records with the raw `spec`, and warn operators that scoped npm package
+names bypass the bundled plugin. Packaged bundle-root discovery now also
+prefers `dist-runtime/extensions` over `dist/extensions` when both usable
+trees are present under the same package root, matching OpenClaw's staged
+runtime-wrapper preference. Remaining non-marketplace install parity is
+explicit/preferred ClawHub install, npm install/update behavior, and deeper
+runtime activation/import metadata.
+`plugins install clawhub:<name>[@version]` now mirrors OpenClaw's explicit
+ClawHub branch through a fakeable native installer and persists
+`source="clawhub"` install records with canonical specs, package
+family/channel/url, integrity, resolved-at metadata, and load/allow/entry
+state. Remaining non-marketplace install parity is preferred ClawHub fallback
+before npm, npm install/update behavior, and deeper runtime activation/import
+metadata.
+Registry npm-looking specs now mirror OpenClaw's preferred ClawHub attempt
+before npm: valid registry specs map to `clawhub:<name>[@selector]`, successful
+installs persist the same ClawHub record shape, and package/version-not-found
+ClawHub outcomes fall through to the current native npm boundary. Remaining
+non-marketplace install parity is npm install/update behavior and deeper
+runtime activation/import metadata.
+Registry npm installs now route through a fakeable native npm installer after
+preferred ClawHub fallback, persist `source="npm"` install records with
+resolution metadata, and honor `--pin` by storing the resolved exact spec when
+available. Remaining npm/plugin CLI parity is npm update and failure fallback
+behavior, hook-pack fallback breadth, production npm installer wiring, and
+deeper runtime activation/import metadata.
+npm package-not-found failures now fall back to bundled plugins whose
+`openclaw.install.npmSpec` or package name matches the requested spec,
+persisting a path install with the original npm spec and upstream-shaped
+warning. The next npm/plugin CLI queue head after this slice was npm update
+behavior, with hook-pack fallback breadth, production npm installer wiring, and
+deeper runtime activation/import metadata still following behind it.
+Npm install records now update through the native fakeable npm adapter:
+`plugins update` dispatches `source="npm"` records with `mode="update"`,
+refreshes version and npm resolution metadata, and preserves marketplace update
+behavior. Remaining npm/plugin CLI parity is hook-pack fallback breadth,
+production npm installer wiring, and deeper runtime activation/import metadata.
+Explicit npm update specs now match OpenClaw's selection helper:
+`plugins update <npm-package>@<tag-or-version>` maps to the single tracked npm
+install with a matching resolved/package name and persists the raw spec as the
+update override. Remaining npm/plugin CLI parity is hook-pack fallback breadth,
+production npm installer wiring, and deeper runtime activation/import metadata.
+Tracked npm hook packs now participate in `plugins update`: native config
+snapshots preserve `hooks.internal.installs`, the fakeable hook npm update
+adapter refreshes version/resolution/hook metadata, and human restart copy
+matches OpenClaw's plugin-and-hook wording. Remaining npm/plugin CLI parity is
+hook-pack install fallback breadth, production npm/hook installer wiring, and
+deeper runtime activation/import metadata.
+Npm hook-pack install fallback now runs after non-bundled plugin npm install
+failures, persists hook-pack records under `hooks.internal.installs`, and keeps
+bundled plugin fallback ahead of hook fallback. Remaining npm/plugin CLI parity
+is production npm/hook installer wiring and deeper runtime activation/import
+metadata.
+Native npm plugin and hook-pack installers are now production-wired through the
+CLI service graph, using `npm pack --json`, safe tar extraction, durable install
+targets, manifest/package metadata projection, and npm resolution fields.
+Native ClawHub plugin installs are now also production-wired through the CLI
+service graph: the adapter resolves ClawHub package/version metadata through
+the package API, validates raw-hex and SRI `sha256hash` metadata against the
+observed archive digest, preserves strict `files[]` fallback verification,
+installs the downloaded archive into durable `plugins/clawhub/<id>` data-dir
+targets, and returns the OpenClaw-shaped ClawHub package/channel/integrity
+metadata for the existing persistence path. Remaining npm/plugin CLI parity is
+deeper runtime activation/import metadata and packaging/distribution ergonomics.
+ClawHub install records now also update through the native adapter:
+`plugins update` dispatches `source="clawhub"` records with the stored
+ClawHub URL, package spec, and expected plugin id, refreshes version,
+family/channel, integrity, and resolved-at metadata, and keeps dry-run checks
+from mutating the install directory. Remaining npm/plugin CLI parity is deeper
+runtime activation/import metadata and packaging/distribution ergonomics.
+The native manifest activation-planner helper now mirrors OpenClaw's
+`plugins/activation-planner.ts` data-level trigger semantics: command aliases
+and `activation.onCommands`, providers plus setup providers, agent harnesses,
+channels, routes, capability hints, contract-owned tools, hooks, origin
+filters, and explicit empty plugin scopes resolve to stable sorted plugin ids.
+The native plugin runtime service can now also project OpenClaw-shaped active
+registry tool entries into ordered executor specs, including optional-tool
+allowlist checks, core tool-name conflict skips, and plugin-id conflict blocks.
+`plugins doctor --json` now reports runtime activation posture for manifest
+tool contracts, distinguishing metadata-only tool ownership from active native
+executor registration without treating the metadata-only state as a hard
+failure.
+Remaining plugin activation parity is real installed plugin module import and
+activation wiring that feeds installed manifest records and native executor
+entries into the planner and runtime service.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
@@ -1410,7 +1569,15 @@ metadata is preserved for setup/onboarding channel configuration. Manifest
 `modelSupport` metadata is preserved for pre-runtime model-family ownership
 hints, and manifest `configContracts` metadata is preserved for compatibility
 config path ownership, dangerous literal flags, and secret input materialization
-hints. Manifest root identity/classification fields are now also preserved,
+hints. Plugin records now also expose OpenClaw-shaped `doctorContractApi`
+artifact metadata by preferring `doctor-contract-api.*` over `contract-api.*`
+inside configured plugin roots for doctor-contract registry inventory without
+importing the TypeScript runtime. Native doctor-contract helpers now also
+mirror OpenClaw's scoped touched-path narrowing so `channels.<id>`,
+`plugins.entries.<id>`, and legacy `talk.*` changes resolve only the relevant
+doctor plugin ids, while broad channel/plugin paths fall back to the full
+relevant set. Manifest root identity/classification fields are now also
+preserved,
 including `enabledByDefault`, `legacyPluginIds`,
 `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
 `providerDiscoverySource` resolved from `providerDiscoveryEntry`,
@@ -2069,8 +2236,8 @@ runtime `lifecycle` `start` events record `startedAt`, terminal `end` events
 return OpenClaw-shaped `status`, `startedAt`, and `endedAt`, aborted end events
 map to `timeout`, and transient `error` events are held behind the same short
 retry grace before they can become terminal snapshots. The next bounded seam
-should move back to ACP client harness replay, sandboxed spawn media/workspace
-staging, or another source-backed session/runtime mismatch.
+should move back to sandboxed spawn media/workspace staging or another
+source-backed session/runtime mismatch.
 
 ## How To Read This Queue
 
@@ -2082,7 +2249,7 @@ staging, or another source-backed session/runtime mismatch.
 
 | Priority | Seam | Status | Why it still matters | Next exact move |
 | --- | --- | --- | --- | --- |
-| P1 | Browser/canvas/nodes/voice OpenClaw feature-family seam | Active | OpenZues now routes direct text send, multi-media URL send, `poll`, explicit cron announce, saved session-like delivery replays, provider-shaped send/poll callbacks, opt-in route-backed gateway webhook adapters, account/channel-specific native adapter bindings, Slack Web API delivery/uploads, Telegram Bot API delivery/media groups, Discord webhook delivery/polls, and WhatsApp Cloud API text/media/interactive-button delivery through one shared outbound runtime owner; full Ops Mesh, CLI, and adjacent gateway node/session/model/log/presence sweeps now prove no smaller provider-runtime blocker remains in this queue. The first browser/canvas/nodes/voice slices are now landed: `node.event` honors upstream-style `chat.subscribe` / `chat.unsubscribe`, the registry can route session-scoped events back to subscribed nodes, node `exec.started` / `exec.finished` / `exec.denied` events queue session-scoped next-heartbeat system notifications with duplicate `exec.finished` suppression, `notifications.changed` events become session-scoped notification wakes, `voice.transcript` events route into the chat runtime with stable node-voice idempotency plus near-duplicate suppression, text `agent.request` deep-links route into the chat runtime with route-safe delivery plus receipt/thinking/timeout hints, effective `agent.request` attachments keep an honest default unavailable boundary and can now pass through an injected attachment runtime, direct `chat.send`, `sessions.send`, and `sessions.steer` can use that injected attachment runtime when wired, `create_app()` now persists effective base64 attachments to durable local media files and passes bounded `media://`/hash/path metadata into control chat instead of raw blob text, recorded `push.apns.register` events move `push.test` from missing-registration to the honest sender-runtime boundary, registered nodes can complete `push.test` through an injected APNS sender adapter, app-level direct plus relay registrations now send OpenClaw-compatible APNS requests with ES256 bearer tokens, bearer relay grants, gateway signatures, and provider response metadata, disconnected APNS-registered nodes can wake/reconnect before `node.invoke`, `node.invoke` retries an available APNS-backed wake once when the first nudge does not reconnect, direct APNS registrations are cleared on upstream-style `400 BadDeviceToken` / `410` invalidation results from alert or wake sends, failed background wake retries send one throttled foreground APNS reopen nudge, assistant control-chat shortcodes now produce structured canvas previews rendered in the web transcript, `/__openclaw__/a2ui` serves a traversal-safe A2UI scaffold plus bundle, `/__openclaw__/ws` exposes the live-reload upgrade boundary plus websocket accept path and reload broadcast owner, `/__openclaw__/canvas/` serves a default canvas host page from the traversal-safe canvas state root, the app now runs a filesystem-backed debounce watcher that publishes `canvas/reload` into connected canvas clients, served canvas HTML now carries the OpenClaw live-reload/action bridge hook, scoped capability URLs now consume minted node canvas tokens for canvas/A2UI/WS paths, malformed `canvas.a2ui.push*` JSONL is rejected before node dispatch, configured node allow/deny command lists now flow into node invoke plus node catalog/scope-upgrade logic, node list/describe/API catalog/pairing surfaces now advertise only allowlisted commands instead of raw rejected declarations, advertised native browser commands now have gateway-method runtimes backed by `agent-browser` with a truthful unavailable boundary, plugin-published node-host browser commands/caps are visible in capability/bootstrap inventory, `chat.send` media-only final replies now project stale `NO_REPLY` plus media into OpenClaw-style `MEDIA:<url>` transcript text, `update.run` now drives a native fakeable git/install/build runner before sentinel/restart projection, and ACP client spawn preflight now resolves Windows `.cmd` shims without shell execution. The broad family is still minimal compared with OpenClaw and remains an active repo-wide parity family. | Rotate to the next source-backed runtime/session seam, currently ACP interactive protocol replay or sandboxed spawn media/workspace staging. |
+| P1 | Browser/canvas/nodes/voice OpenClaw feature-family seam | Active | OpenZues now routes direct text send, multi-media URL send, `poll`, explicit cron announce, saved session-like delivery replays, provider-shaped send/poll callbacks, opt-in route-backed gateway webhook adapters, account/channel-specific native adapter bindings, Slack Web API delivery/uploads, Telegram Bot API delivery/media groups, Discord webhook delivery/polls, and WhatsApp Cloud API text/media/interactive-button delivery through one shared outbound runtime owner; full Ops Mesh, CLI, and adjacent gateway node/session/model/log/presence sweeps now prove no smaller provider-runtime blocker remains in this queue. The first browser/canvas/nodes/voice slices are now landed: `node.event` honors upstream-style `chat.subscribe` / `chat.unsubscribe`, the registry can route session-scoped events back to subscribed nodes, node `exec.started` / `exec.finished` / `exec.denied` events queue session-scoped next-heartbeat system notifications with duplicate `exec.finished` suppression, `notifications.changed` events become session-scoped notification wakes, `voice.transcript` events route into the chat runtime with stable node-voice idempotency plus near-duplicate suppression, text `agent.request` deep-links route into the chat runtime with route-safe delivery plus receipt/thinking/timeout hints, effective `agent.request` attachments keep an honest default unavailable boundary and can now pass through an injected attachment runtime, direct `chat.send`, `sessions.send`, and `sessions.steer` can use that injected attachment runtime when wired, `create_app()` now persists effective base64 attachments to durable local media files and passes bounded `media://`/hash/path metadata into control chat instead of raw blob text, recorded `push.apns.register` events move `push.test` from missing-registration to the honest sender-runtime boundary, registered nodes can complete `push.test` through an injected APNS sender adapter, app-level direct plus relay registrations now send OpenClaw-compatible APNS requests with ES256 bearer tokens, bearer relay grants, gateway signatures, and provider response metadata, disconnected APNS-registered nodes can wake/reconnect before `node.invoke`, `node.invoke` retries an available APNS-backed wake once when the first nudge does not reconnect, direct APNS registrations are cleared on upstream-style `400 BadDeviceToken` / `410` invalidation results from alert or wake sends, failed background wake retries send one throttled foreground APNS reopen nudge, assistant control-chat shortcodes now produce structured canvas previews rendered in the web transcript, `/__openclaw__/a2ui` serves a traversal-safe A2UI scaffold plus bundle, `/__openclaw__/ws` exposes the live-reload upgrade boundary plus websocket accept path and reload broadcast owner, `/__openclaw__/canvas/` serves a default canvas host page from the traversal-safe canvas state root, the app now runs a filesystem-backed debounce watcher that publishes `canvas/reload` into connected canvas clients, served canvas HTML now carries the OpenClaw live-reload/action bridge hook, scoped capability URLs now consume minted node canvas tokens for canvas/A2UI/WS paths, malformed `canvas.a2ui.push*` JSONL is rejected before node dispatch, configured node allow/deny command lists now flow into node invoke plus node catalog/scope-upgrade logic, node list/describe/API catalog/pairing surfaces now advertise only allowlisted commands instead of raw rejected declarations, advertised native browser commands now have gateway-method runtimes backed by `agent-browser` with a truthful unavailable boundary, plugin-published node-host browser commands/caps are visible in capability/bootstrap inventory, `chat.send` media-only final replies now project stale `NO_REPLY` plus media into OpenClaw-style `MEDIA:<url>` transcript text, `update.run` now drives a native fakeable git/install/build runner before sentinel/restart projection, ACP client spawn preflight now resolves Windows `.cmd` shims without shell execution, and native ACP client interactive replay now trims prompts, skips blanks, sends ACP text prompt blocks, reports stop reasons, and kills the spawned agent on `exit`/`quit`. The broad family is still minimal compared with OpenClaw and remains an active repo-wide parity family. | Rotate to the next source-backed runtime/session seam, currently sandboxed spawn media/workspace staging or another runtime/session mismatch. |
 
 Current queue-head adjustment: `browser.status` is now productized as a read-only gateway method backed by the existing browser posture in operator status, with method/API/policy verification. The next small browser-runtime seam is `browser.verify` / `browser.doctor` productization or a richer node-host plugin command inventory proof.
 
@@ -2096,8 +2263,8 @@ the browser cap family, carries the per-lane counts, and avoids inflating the
 saved-launch runtime method count with locally built-in browser gateway
 methods. The next browser/canvas/node pass should only reopen this family for
 new source-backed runtime inventory gaps; the active next repo-level seam can
-rotate to ACP client harness replay, sandboxed spawn media/workspace staging,
-or another bounded runtime-control queue head.
+rotate to sandboxed spawn media/workspace staging or another bounded
+runtime-control queue head.
 
 Current queue-head adjustment: `browser.tabs` is now productized as the first read-only browser command-breadth slice beyond status/verify/open/snapshot/console/errors. The next small browser/canvas/node seam is likely another upstream browser command family such as lifecycle/profile/screenshot/action commands, or richer plugin node-host inventory.
 
@@ -4072,11 +4239,197 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   thread/reply ids over fallback `--thread` / `--reply-to` values. Runtime/
   CLI/doctor native-bridge parity was adjusted from ~96% to ~97%. Verified
   with focused and adjacent CLI route proofs, `ruff check`, and `mypy`.
+- Closed the channel-plugin doctor preview hook seam from OpenClaw
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --json` now enumerates configured channel ids, calls registered
+  fakeable channel doctor adapters with the config snapshot and
+  `doctorFixCommand`, emits a structured `channelDoctor` contribution, and
+  promotes returned preview warnings into the shared warning list. Runtime/
+  CLI/doctor native-bridge and CLI/operator parity are now estimated at ~99.8%,
+  with repo-wide parity at ~50.5%. Verified with focused and adjacent CLI
+  doctor/security proofs, `ruff check`, and `mypy`.
+- Closed the channel-plugin doctor repair hook seam from OpenClaw
+  `src/commands/doctor/shared/channel-doctor.ts` and
+  `src/commands/doctor/repair-sequencing.ts`: top-level native
+  `doctor --fix --json` now invokes registered provider repair hooks in
+  configured-channel order, applies sequential config mutations, records
+  `changed`/`changes`/`warnings` under `channelDoctor`, and persists the final
+  config with full replacement semantics. Runtime/CLI/doctor native-bridge and
+  CLI/operator parity are now estimated at ~99.9%, with repo-wide parity at
+  ~50.6%. Verified with focused and adjacent CLI doctor repair/security proofs,
+  `ruff check`, and `mypy`.
+- Closed the channel-plugin mutable-allowlist warning seam from OpenClaw
+  `src/commands/doctor-config-flow.ts` and
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --json` now invokes registered provider
+  `collectMutableAllowlistWarnings` equivalents after preview/repair analysis,
+  records the provider warnings under `channelDoctor`, and promotes them into
+  the shared warning list. Repo-wide parity is now estimated at ~50.7%;
+  runtime/CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent CLI doctor/security proofs, `ruff check`, and `mypy`.
+- Closed the channel-plugin config-sequence seam from OpenClaw
+  `src/commands/doctor-config-flow.ts` and
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --json` now invokes registered provider `runConfigSequence`
+  equivalents with config, environment, and repair posture, records returned
+  sequence change/warning notes under `channelDoctor`, and promotes sequence
+  warnings into the shared warning list. Repo-wide parity is now estimated at
+  ~50.8%; runtime/CLI/doctor and CLI/operator remain ~99.9%. Verified with
+  focused and adjacent CLI doctor repair/security proofs, `ruff check`, and
+  `mypy`.
+- Closed the channel-plugin stale-config cleanup seam from OpenClaw
+  `src/commands/doctor-config-flow.ts` and
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --fix --json` now invokes registered provider `cleanStaleConfig`
+  equivalents, threads the cleaned candidate into later repair hooks, records
+  `staleChanges` under `channelDoctor`, and persists the final candidate in
+  repair mode. Repo-wide parity is now estimated at ~50.9%; runtime/CLI/doctor
+  and CLI/operator remain ~99.9%. Verified with focused and adjacent CLI doctor
+  repair proofs, `ruff check`, and `mypy`.
+- Closed the channel-plugin compatibility-normalizer seam from OpenClaw
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --fix --json` now invokes registered provider
+  `normalizeCompatibilityConfig` equivalents for configured channel ids,
+  records `compatibilityChanges` under `channelDoctor`, and persists the
+  normalized candidate before later sequence/stale/repair hooks. Repo-wide
+  parity is now estimated at ~51.0%; runtime/CLI/doctor and CLI/operator
+  remain ~99.9%. Verified with focused and adjacent CLI doctor repair proofs,
+  `ruff check`, and `mypy`.
+- Closed the channel-plugin empty-allowlist extra-warning seam from OpenClaw
+  `src/commands/doctor/shared/empty-allowlist-scan.ts` and
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --json` now invokes registered provider
+  `collectEmptyAllowlistExtraWarnings` equivalents with top-level and
+  account-scoped channel context, records `emptyAllowlistWarnings` under
+  `channelDoctor`, and promotes provider warnings into the shared warning list.
+  Repo-wide parity is now estimated at ~51.1%; runtime/CLI/doctor and
+  CLI/operator remain ~99.9%. Verified with focused and adjacent CLI doctor
+  security/repair proofs, `ruff check`, and `mypy`.
+- Closed the channel-plugin empty-group allowlist skip seam from OpenClaw
+  `src/commands/doctor/shared/empty-allowlist-policy.ts` and
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --json` now emits the default empty group sender allowlist warning
+  and lets registered provider `shouldSkipDefaultEmptyGroupAllowlistWarning`
+  equivalents suppress it with the upstream account context. Repo-wide parity
+  is now estimated at ~51.2%; runtime/CLI/doctor and CLI/operator remain
+  ~99.9%. Verified with focused and adjacent CLI doctor security proofs,
+  `ruff check`, and `mypy`.
+- Closed the doctor-contract artifact projection seam from OpenClaw
+  `src/plugins/doctor-contract-registry.ts` and
+  `src/plugins/doctor-contract-registry.test.ts`: metadata-only plugin
+  inventory now detects `doctor-contract-api.*` before fallback
+  `contract-api.*`, exposes the chosen path/artifact/kind under
+  `doctorContractApi`, and keeps the implementation native without importing
+  plugin JavaScript. Repo-wide parity is now estimated at ~51.3%; runtime/
+  CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent plugin inventory proofs, `ruff check`, and `mypy`.
+- Closed the doctor-contract touched-path narrowing seam from OpenClaw
+  `src/plugins/doctor-contract-registry.ts` and
+  `src/plugins/doctor-contract-registry.test.ts`: native helpers now match
+  `collectRelevantDoctorPluginIdsForTouchedPaths` for scoped channel/plugin
+  entry changes, legacy ElevenLabs `talk.*` fields, and broad-path fallback to
+  the full relevant doctor plugin set. Repo-wide parity is now estimated at
+  ~51.4%; runtime/CLI/doctor and CLI/operator remain ~99.9%. Verified with
+  focused and adjacent CLI doctor/plugin proofs, `ruff check`, and `mypy`.
+- Closed the secrets reload CLI seam from OpenClaw `src/cli/secrets-cli.ts`
+  and `src/cli/secrets-cli.test.ts`: root native Typer now exposes
+  `secrets reload --json`, dispatches to the existing `secrets.reload`
+  gateway method, preserves raw JSON output, and mirrors the warning-count
+  human message. Repo-wide parity is now estimated at ~51.5%; runtime/
+  CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent CLI/gateway proofs, `ruff check`, and `mypy`.
+- Closed the plugin imported-state projection seam from OpenClaw
+  `src/plugins/status.ts` and `src/plugins/status.test.ts`: native
+  `plugins list --json` now stamps plugin rows with `imported` based on
+  native runtime executor registry state and keeps bundle-format rows
+  `imported=false` even when a runtime executor spec names the bundle. Repo-wide
+  parity is now estimated at ~51.6%; runtime/CLI/doctor and CLI/operator
+  remain ~99.9%. Verified with focused, broad plugin-list, and adjacent
+  inspect proofs, `ruff check`, and `mypy`.
+- Closed the doctor workspaceStatus imported-count seam from OpenClaw
+  `src/commands/doctor-workspace-status.ts` and
+  `src/commands/doctor-workspace-status.test.ts`: native `doctor --json`
+  workspaceStatus now consumes the same runtime-aware imported plugin records
+  as plugin inventory, so runtime-loaded native plugins increment
+  `workspaceStatus.plugins.imported` and carry `imported=true` in the status
+  records. Repo-wide parity is now estimated at ~51.7%; runtime/CLI/doctor and
+  CLI/operator remain ~99.9%. Verified with focused and adjacent CLI/plugin
+  proofs, `ruff check`, and `mypy`.
+- Closed the facade-loaded plugin imported-state seam from OpenClaw
+  `src/plugins/status.ts`, `src/plugins/status.test.ts`, and
+  `src/plugin-sdk/facade-loader.ts`: native plugin inventory now preserves
+  upstream-shaped non-bundle `imported=true` facade state from Hermes/plugin
+  deck rows before applying runtime executor import markers, while bundle rows
+  stay `imported=false`. Repo-wide parity is now estimated at ~51.8%;
+  runtime/CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent CLI/plugin proofs, `ruff check`, and `mypy`.
+- Closed the diagnostics-loaded plugin imported-state seam from OpenClaw
+  `src/plugins/status.ts` and `src/plugins/status.test.ts`: native
+  `doctor --json` workspaceStatus now treats loaded non-bundle plugin modules
+  as imported during doctor diagnostics, matching OpenClaw's full diagnostics
+  report while keeping ordinary metadata-only plugin list reports
+  runtime/facade driven. Repo-wide parity is now estimated at ~51.9%;
+  runtime/CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent CLI/plugin proofs, `ruff check`, and `mypy`.
+- Closed the bundled plugin reported-version seam from OpenClaw
+  `src/plugins/status.ts`, `src/plugins/status.test.ts`, and
+  `src/config/version.ts`: native `plugins list --json` now preserves deck
+  plugin `origin`/`version` metadata and reports `origin="bundled"` versions
+  as the host base version, e.g. `2026.3.23` from `2026.3.23-1`. Repo-wide
+  parity is now estimated at ~52.0%; runtime/CLI/doctor and CLI/operator
+  remain ~99.9%. Verified with focused and adjacent CLI/plugin proofs, `ruff
+  check`, and `mypy`.
+- Closed the plugin inspect scoped diagnostics seam from OpenClaw
+  `src/plugins/status.ts` and `src/plugins/status.test.ts`: native
+  `plugins inspect --json` now filters inventory diagnostics by inspected
+  `pluginId`, so matching plugin diagnostics are included and global or
+  other-plugin diagnostics are omitted from that report. Repo-wide parity is
+  now estimated at ~52.1%; runtime/CLI/doctor and CLI/operator remain ~99.9%.
+  Verified with focused and adjacent CLI/plugin inspect proofs, `ruff check`,
+  and `mypy`.
+- Closed the `chat.inject` live `chat` event seam from OpenClaw
+  `src/gateway/server-methods/chat.ts` and
+  `src/gateway/server-methods/chat.directive-tags.test.ts`: native
+  `chat.inject` now publishes a live `chat` gateway event with
+  `runId="inject-<messageId>"`, canonical session key, `seq=0`, final state,
+  and sanitized assistant message payload, then routes the same event through
+  subscribed gateway nodes for that canonical session. Repo-wide parity is now
+  estimated at ~52.2%; chat/session contract parity is ~98.1%. Verified with
+  focused and adjacent gateway node method proofs, `ruff check`, and `mypy`.
+- Closed the ACP interactive client replay seam from OpenClaw
+  `src/acp/client.ts`: native `acp client` now uses an OpenZues-owned
+  subprocess-backed NDJSON ACP client path when no test/desktop runner is
+  injected, initializes a session, trims and replays prompts as ACP text
+  blocks, skips blanks, reports stop reasons, and kills the spawned agent on
+  `exit`/`quit`. Repo-wide parity is now estimated at ~52.3%; runtime/
+  CLI/doctor parity remains ~99.9%, and the CLI/operator table row is ~98.7%.
+  Verified with focused and adjacent ACP client/permission/bridge CLI proofs,
+  `ruff check`, and `mypy`.
+- Closed the `sessions.spawn` attachment mount-path sanitizer seam from
+  OpenClaw `src/agents/subagent-spawn.ts` and
+  `src/agents/subagent-attachments.ts`: native attachment materialization now
+  drops unsafe `attachAs.mountPath` prompt hints containing control characters,
+  newlines, or characters outside OpenClaw's safe mount-path pattern before
+  appending the hint to the child system prompt. Repo-wide parity is now
+  estimated at ~52.4%; gateway session/tool-contract parity is ~97.1%.
+  Verified with focused and adjacent sessions.spawn attachment proofs, `ruff
+  check`, and `mypy`.
+- Closed the sandboxed remote inbound provider media staging seam from OpenClaw
+  `src/auto-reply/reply/stage-sandbox-media.ts`,
+  `src/infra/scp-host.ts`, and `src/media/inbound-path-policy.ts`: native
+  chat/session attachment dispatch now recognizes safe provider remote media
+  metadata, honors configured `remoteAttachmentRoots`, stages fetched media
+  into the child workspace under `media/inbound`, and removes remote host/path
+  metadata from runtime attachments after sandbox rewriting. Repo-wide parity
+  is now estimated at ~52.5%; chat/session contract parity is ~98.2%, and
+  gateway session/tool-contract parity is ~97.2%. Verified with focused and
+  adjacent sandbox attachment proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
-  open. Source anchors are OpenClaw CLI runtime/session/provider command
-  surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human
-  parity for runtime inspection, plugin/runtime inventory commands, packaging/
-  distribution checks, and standalone ACP bridge lifecycle presentation.
+  open while the next source-backed seam is selected. Source anchors remain
+  OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
+  and doctor/runtime owners; the next likely runtime seam is another
+  source-backed session/runtime mismatch or packaging/installed-plugin
+  activation gap from the tracking workspace.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
