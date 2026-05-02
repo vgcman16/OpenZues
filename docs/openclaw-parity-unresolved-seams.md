@@ -12,7 +12,7 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~98.5% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~98.6% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
@@ -21,15 +21,15 @@ Current percentage rollup:
   marketplace listing, remote marketplace path-entry install/update,
   Git/GitHub entry-source install, URL/archive entry-source install, local
   path link/copy install, missing local-looking install-spec guard, and bundled
-  pre-npm plus explicit/preferred ClawHub, fakeable npm install/update, and
-  npm-not-found bundled fallback slices.
-- The CLI/operator control-plane family is estimated at ~98.5% after the bundle
+  pre-npm plus explicit/preferred ClawHub, fakeable npm install/update plus
+  update spec-overrides, and npm-not-found bundled fallback slices.
+- The CLI/operator control-plane family is estimated at ~98.6% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
-  bundled pre-npm plus explicit/preferred ClawHub, fakeable npm install/update,
-  and npm-not-found bundled fallback; remaining CLI gaps are now dominated by
-  hook fallback breadth, runtime activation/import depth, and packaging
-  surfaces.
+  bundled pre-npm plus explicit/preferred ClawHub, fakeable npm install/update
+  plus update spec-overrides, and npm-not-found bundled fallback; remaining CLI
+  gaps are now dominated by hook fallback breadth, runtime activation/import
+  depth, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1428,6 +1428,11 @@ Npm install records now update through the native fakeable npm adapter:
 `plugins update` dispatches `source="npm"` records with `mode="update"`,
 refreshes version and npm resolution metadata, and preserves marketplace update
 behavior. Remaining npm/plugin CLI parity is hook-pack fallback breadth,
+production npm installer wiring, and deeper runtime activation/import metadata.
+Explicit npm update specs now match OpenClaw's selection helper:
+`plugins update <npm-package>@<tag-or-version>` maps to the single tracked npm
+install with a matching resolved/package name and persists the raw spec as the
+update override. Remaining npm/plugin CLI parity is hook-pack fallback breadth,
 production npm installer wiring, and deeper runtime activation/import metadata.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,

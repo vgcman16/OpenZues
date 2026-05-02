@@ -10230,6 +10230,102 @@ def test_plugins_update_json_refreshes_npm_install_record(
     assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
 
 
+def test_plugins_update_json_maps_npm_spec_override_to_tracked_install(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "plugins" / "npm" / "demo"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "npm",
+                            "spec": "@openclaw/demo",
+                            "installPath": str(install_dir),
+                            "version": "1.2.2",
+                            "resolvedName": "@openclaw/demo",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(install_dir)]},
+                },
+            }
+        )
+    )
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.3.0-beta.1",
+                "npmResolution": {
+                    "resolvedName": "@openclaw/demo",
+                    "resolvedVersion": "1.3.0-beta.1",
+                    "resolvedSpec": "@openclaw/demo@1.3.0-beta.1",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "@openclaw/demo@beta", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert npm_calls == [{"spec": "@openclaw/demo@beta", "mode": "update"}]
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert payload["outcomes"] == [
+        {
+            "pluginId": "demo",
+            "status": "updated",
+            "currentVersion": "1.2.2",
+            "nextVersion": "1.3.0-beta.1",
+            "message": "Updated demo: 1.2.2 -> 1.3.0-beta.1.",
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@openclaw/demo@beta"
+    assert install["resolvedName"] == "@openclaw/demo"
+    assert install["resolvedVersion"] == "1.3.0-beta.1"
+    assert install["resolvedSpec"] == "@openclaw/demo@1.3.0-beta.1"
+
+
 def test_plugins_update_json_refreshes_remote_marketplace_install(
     tmp_path,
     monkeypatch,

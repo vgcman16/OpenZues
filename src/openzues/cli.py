@@ -13041,6 +13041,45 @@ def _resolve_cli_pinned_npm_record_spec(
     )
 
 
+def _cli_npm_package_name_from_install_record(record: Mapping[str, object]) -> str | None:
+    resolved_name = _optional_cli_string(record.get("resolvedName"))
+    if resolved_name is not None:
+        return resolved_name
+    for key in ("spec", "resolvedSpec"):
+        spec = _optional_cli_string(record.get(key))
+        if spec is None:
+            continue
+        parsed = _parse_cli_registry_npm_spec(spec)
+        if parsed is not None:
+            return parsed.name
+    return None
+
+
+def _resolve_cli_plugin_update_selection(
+    *,
+    install_records: Mapping[str, object],
+    requested_id: str | None,
+    all_plugins: bool,
+) -> tuple[list[str], dict[str, str]]:
+    if all_plugins:
+        return [str(plugin_id) for plugin_id in install_records], {}
+    if requested_id is None:
+        return [], {}
+    parsed = _parse_cli_registry_npm_spec(requested_id)
+    if parsed is None or parsed.selector is None:
+        return [requested_id], {}
+    matches: list[str] = []
+    for plugin_id, record in install_records.items():
+        if not isinstance(record, Mapping):
+            continue
+        if _cli_npm_package_name_from_install_record(record) == parsed.name:
+            matches.append(str(plugin_id))
+    if len(matches) != 1:
+        return [requested_id], {}
+    target = matches[0]
+    return [target], {target: requested_id}
+
+
 async def _build_plugins_npm_install_payload(
     services: CliServices,
     *,
@@ -13182,11 +13221,12 @@ async def _build_plugins_update_payload(
     plugins_config = plugins if isinstance(plugins, dict) else {}
     installs = plugins_config.get("installs")
     install_records = installs if isinstance(installs, dict) else {}
-    if all_plugins:
-        targets = [str(plugin_id) for plugin_id in install_records]
-    elif requested_id is not None:
-        targets = [requested_id]
-    else:
+    targets, spec_overrides = _resolve_cli_plugin_update_selection(
+        install_records=install_records,
+        requested_id=requested_id,
+        all_plugins=all_plugins,
+    )
+    if not targets:
         raise ValueError("Provide a plugin id, or use --all.")
     outcomes: list[dict[str, object]] = []
     changed = False
@@ -13203,7 +13243,7 @@ async def _build_plugins_update_payload(
             continue
         source = _optional_cli_string(record.get("source"))
         if source == "npm":
-            spec = _optional_cli_string(record.get("spec"))
+            spec = spec_overrides.get(target) or _optional_cli_string(record.get("spec"))
             if spec is None:
                 outcomes.append(
                     {
