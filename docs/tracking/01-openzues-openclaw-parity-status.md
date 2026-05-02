@@ -130,7 +130,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human base metadata, rendering description, origin,
   version, capability mode, and legacy `before_agent_start` posture.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `c11085d1`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -316,15 +316,15 @@ may lag behind this tracker.
     `0dc9fc27`, plugin inspect failure-phase projection checkpointed in
     `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
     `b3bf64a5`, plugin inspect loader error text projection checkpointed in
-    `88ff1768`, and plugin inspect human base metadata verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    `88ff1768`, and plugin inspect human base metadata checkpointed in
+    `c11085d1`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin inspect human base metadata.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `c11085d1`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect human metadata test (`1
     passed`), adjacent plugin inspect/doctor proof (`9 passed`), `ruff

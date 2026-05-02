@@ -8596,7 +8596,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect human base metadata is now landed for OpenClaw's inspect
   detail surface: human `plugins inspect <id>` renders description, origin,
   version, capability mode, and legacy `before_agent_start` posture when
-  present in the native inspect payload. Checkpoint pending.
+  present in the native inspect payload. Checkpointed in `c11085d1`.
 - Progress estimates are now roughly 55.0% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
