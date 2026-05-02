@@ -4134,6 +4134,80 @@ _DOCTOR_EXEC_SECURITY_RANK = {"deny": 0, "allowlist": 1, "full": 2}
 _DOCTOR_EXEC_ASK_RANK = {"off": 0, "on-miss": 1, "always": 2}
 _DOCTOR_EXEC_DEFAULT_SECURITY = "full"
 _DOCTOR_EXEC_DEFAULT_ASK = "off"
+_DOCTOR_INTERPRETER_LIKE_SAFE_BINS = {
+    "ash",
+    "awk",
+    "bash",
+    "busybox",
+    "bun",
+    "cmd",
+    "cmd.exe",
+    "cscript",
+    "dash",
+    "deno",
+    "fish",
+    "gawk",
+    "gsed",
+    "ksh",
+    "lua",
+    "mawk",
+    "nawk",
+    "node",
+    "nodejs",
+    "perl",
+    "php",
+    "powershell",
+    "powershell.exe",
+    "pypy",
+    "pwsh",
+    "pwsh.exe",
+    "python",
+    "python2",
+    "python3",
+    "ruby",
+    "sed",
+    "sh",
+    "toybox",
+    "wscript",
+    "zsh",
+}
+_DOCTOR_RISKY_SAFE_BIN_WARNINGS = {
+    "awk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "gawk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "mawk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "nawk": (
+        "awk-family interpreters can execute commands, access ENVIRON, and write files, "
+        "so prefer explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "jq": (
+        "jq supports broad jq programs and builtins (for example `env`), so prefer "
+        "explicit allowlist entries or approval-gated runs instead of safeBins."
+    ),
+    "sed": (
+        "sed scripts can execute commands and write files, so prefer explicit allowlist "
+        "entries or approval-gated runs instead of safeBins."
+    ),
+    "gsed": (
+        "sed scripts can execute commands and write files, so prefer explicit allowlist "
+        "entries or approval-gated runs instead of safeBins."
+    ),
+}
+_DOCTOR_INTERPRETER_LIKE_SAFE_BIN_PATTERNS = (
+    re.compile(r"^python\d+(?:\.\d+)?$"),
+    re.compile(r"^ruby\d+(?:\.\d+)?$"),
+    re.compile(r"^perl\d+(?:\.\d+)?$"),
+    re.compile(r"^php\d+(?:\.\d+)?$"),
+    re.compile(r"^node\d+(?:\.\d+)?$"),
+)
 
 
 def _doctor_exec_security_value(value: object) -> str | None:
@@ -4162,6 +4236,267 @@ def _doctor_exec_policy_config(value: object) -> dict[str, str]:
     if ask is not None:
         resolved["ask"] = ask
     return resolved
+
+
+def _doctor_normalize_safe_bin_name(value: object) -> str | None:
+    text = _optional_cli_string(value)
+    if text is None:
+        return None
+    tail = re.split(r"[\\/]", text.lower())[-1]
+    normalized = re.sub(r"\.(?:exe|cmd|bat|com)$", "", tail)
+    return normalized or None
+
+
+def _doctor_safe_bin_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized = [
+        name
+        for item in value
+        if (name := _doctor_normalize_safe_bin_name(item)) is not None
+    ]
+    return sorted(_dedupe_cli_strings(normalized))
+
+
+def _doctor_safe_bin_profiles(value: object) -> dict[str, object]:
+    profiles = _dict_config(value)
+    return {
+        name: profile
+        for key, profile in profiles.items()
+        if (name := _doctor_normalize_safe_bin_name(key)) is not None
+    }
+
+
+def _doctor_is_interpreter_like_safe_bin(bin_name: str) -> bool:
+    if bin_name in _DOCTOR_INTERPRETER_LIKE_SAFE_BINS:
+        return True
+    return any(
+        pattern.match(bin_name) is not None
+        for pattern in _DOCTOR_INTERPRETER_LIKE_SAFE_BIN_PATTERNS
+    )
+
+
+def _doctor_exec_safe_bin_scopes(
+    snapshot: dict[str, object],
+) -> list[tuple[str, list[str], dict[str, object]]]:
+    scopes: list[tuple[str, list[str], dict[str, object]]] = []
+    tools = _dict_config(snapshot.get("tools"))
+    global_exec = _dict_config(tools.get("exec"))
+    global_safe_bins = _doctor_safe_bin_list(global_exec.get("safeBins"))
+    global_profiles = _doctor_safe_bin_profiles(global_exec.get("safeBinProfiles"))
+    if global_safe_bins:
+        scopes.append(("tools.exec", global_safe_bins, global_profiles))
+    agents = _dict_config(snapshot.get("agents"))
+    for agent in _object_list(agents.get("list")):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = _optional_cli_string(agent.get("id"))
+        if agent_id is None:
+            continue
+        agent_tools = _dict_config(agent.get("tools"))
+        agent_exec = _dict_config(agent_tools.get("exec"))
+        agent_safe_bins = _doctor_safe_bin_list(agent_exec.get("safeBins"))
+        if not agent_safe_bins:
+            continue
+        agent_profiles = {
+            **global_profiles,
+            **_doctor_safe_bin_profiles(agent_exec.get("safeBinProfiles")),
+        }
+        scopes.append(
+            (
+                f"agents.list.{agent_id}.tools.exec",
+                agent_safe_bins,
+                agent_profiles,
+            )
+        )
+    return scopes
+
+
+def _doctor_exec_safe_bin_coverage_hits(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    hits: list[dict[str, object]] = []
+    for scope_path, safe_bins, merged_profiles in _doctor_exec_safe_bin_scopes(snapshot):
+        for bin_name in safe_bins:
+            if bin_name in merged_profiles:
+                continue
+            hits.append(
+                {
+                    "scopePath": scope_path,
+                    "bin": bin_name,
+                    "kind": "missingProfile",
+                    "isInterpreter": _doctor_is_interpreter_like_safe_bin(bin_name),
+                }
+            )
+        for bin_name in safe_bins:
+            warning = _DOCTOR_RISKY_SAFE_BIN_WARNINGS.get(bin_name)
+            if warning is None:
+                continue
+            hits.append(
+                {
+                    "scopePath": scope_path,
+                    "bin": bin_name,
+                    "kind": "riskySemantics",
+                    "warning": warning,
+                }
+            )
+    return hits
+
+
+def _doctor_exec_safe_bin_warnings(hits: Sequence[dict[str, object]]) -> list[str]:
+    if not hits:
+        return []
+    warnings: list[str] = []
+    interpreter_hits = [
+        hit
+        for hit in hits
+        if hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is True
+    ]
+    custom_hits = [
+        hit
+        for hit in hits
+        if hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is not True
+    ]
+    risky_hits = [hit for hit in hits if hit.get("kind") == "riskySemantics"]
+    for hit in interpreter_hits[:5]:
+        warnings.append(
+            f"- {hit.get('scopePath')}.safeBins includes interpreter/runtime "
+            f"'{hit.get('bin')}' without profile."
+        )
+    if len(interpreter_hits) > 5:
+        warnings.append(
+            f"- {len(interpreter_hits) - 5} more interpreter/runtime safeBins "
+            "entries are missing profiles."
+        )
+    for hit in custom_hits[:5]:
+        warnings.append(
+            f"- {hit.get('scopePath')}.safeBins entry '{hit.get('bin')}' is "
+            f"missing safeBinProfiles.{hit.get('bin')}."
+        )
+    if len(custom_hits) > 5:
+        warnings.append(
+            f"- {len(custom_hits) - 5} more custom safeBins entries are missing profiles."
+        )
+    for hit in risky_hits[:5]:
+        warning = hit.get("warning") or (
+            "prefer explicit allowlist entries or approval-gated runs."
+        )
+        warnings.append(
+            f"- {hit.get('scopePath')}.safeBins includes '{hit.get('bin')}': {warning}"
+        )
+    if len(risky_hits) > 5:
+        warnings.append(
+            f"- {len(risky_hits) - 5} more safeBins entries should not use the "
+            "low-risk safeBins fast path."
+        )
+    if custom_hits:
+        warnings.append(
+            '- Run "openzues doctor --fix" to scaffold missing custom '
+            "safeBinProfiles entries."
+        )
+    return warnings
+
+
+def _doctor_exec_safe_bin_repair(
+    snapshot: dict[str, object],
+) -> tuple[dict[str, object], list[str]]:
+    next_snapshot: dict[str, object] = dict(snapshot)
+    changes: list[str] = []
+
+    tools = dict(_dict_config(next_snapshot.get("tools")))
+    global_exec = dict(_dict_config(tools.get("exec")))
+    global_profiles = _doctor_safe_bin_profiles(global_exec.get("safeBinProfiles"))
+    global_changed = False
+    for bin_name in _doctor_safe_bin_list(global_exec.get("safeBins")):
+        if bin_name in global_profiles or _doctor_is_interpreter_like_safe_bin(bin_name):
+            continue
+        global_profiles[bin_name] = {}
+        global_changed = True
+        changes.append(
+            f"- tools.exec.safeBinProfiles.{bin_name}: added scaffold profile "
+            "{} (review and tighten flags/positionals)."
+        )
+    if global_changed:
+        global_exec["safeBinProfiles"] = global_profiles
+        tools["exec"] = global_exec
+        next_snapshot["tools"] = tools
+
+    agents = dict(_dict_config(next_snapshot.get("agents")))
+    raw_agent_list = agents.get("list")
+    if not isinstance(raw_agent_list, list):
+        return next_snapshot, changes
+
+    next_agent_list: list[object] = []
+    agent_list_changed = False
+    for raw_agent in raw_agent_list:
+        if not isinstance(raw_agent, dict):
+            next_agent_list.append(raw_agent)
+            continue
+        agent_id = _optional_cli_string(raw_agent.get("id"))
+        if agent_id is None:
+            next_agent_list.append(raw_agent)
+            continue
+        agent_tools = dict(_dict_config(raw_agent.get("tools")))
+        agent_exec = dict(_dict_config(agent_tools.get("exec")))
+        agent_safe_bins = _doctor_safe_bin_list(agent_exec.get("safeBins"))
+        if not agent_safe_bins:
+            next_agent_list.append(raw_agent)
+            continue
+        local_profiles = _doctor_safe_bin_profiles(agent_exec.get("safeBinProfiles"))
+        merged_profiles = {**global_profiles, **local_profiles}
+        agent_changed = False
+        for bin_name in agent_safe_bins:
+            if bin_name in merged_profiles or _doctor_is_interpreter_like_safe_bin(bin_name):
+                continue
+            local_profiles[bin_name] = {}
+            merged_profiles[bin_name] = {}
+            agent_changed = True
+            changes.append(
+                f"- agents.list.{agent_id}.tools.exec.safeBinProfiles.{bin_name}: "
+                "added scaffold profile {} (review and tighten flags/positionals)."
+            )
+        if not agent_changed:
+            next_agent_list.append(raw_agent)
+            continue
+        agent_exec["safeBinProfiles"] = local_profiles
+        agent_tools["exec"] = agent_exec
+        next_agent = dict(raw_agent)
+        next_agent["tools"] = agent_tools
+        next_agent_list.append(next_agent)
+        agent_list_changed = True
+    if agent_list_changed:
+        agents["list"] = next_agent_list
+        next_snapshot["agents"] = agents
+    return next_snapshot, changes
+
+
+def _build_doctor_exec_safe_bins_payload(
+    snapshot: dict[str, object],
+    *,
+    repair_requested: bool = False,
+    changes: Sequence[str] = (),
+) -> dict[str, object]:
+    hits = _doctor_exec_safe_bin_coverage_hits(snapshot)
+    warnings = _doctor_exec_safe_bin_warnings(hits)
+    custom_missing = any(
+        hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is not True
+        for hit in hits
+    )
+    return {
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "Exec safe-bin coverage has warnings."
+            if warnings
+            else "Exec safe-bin coverage has no warnings."
+        ),
+        "coverageHits": hits,
+        "warnings": warnings,
+        "repairAvailable": bool(changes) or custom_missing,
+        "repairRequested": repair_requested,
+        "changed": bool(changes),
+        "changes": list(changes),
+        "openClawContribution": "doctor:exec-safe-bins",
+    }
 
 
 def _doctor_security_exec_approvals_path(data_dir: Path | None) -> Path:
@@ -4765,6 +5100,7 @@ def _doctor_security_channel_dm_warnings(
 def _build_doctor_security_payload(
     config_service: object | None = None,
     data_dir: Path | None = None,
+    should_repair: bool = False,
 ) -> dict[str, object]:
     snapshot = _doctor_security_snapshot(config_service)
     if snapshot is None:
@@ -4779,10 +5115,36 @@ def _build_doctor_security_payload(
             "repairAvailable": False,
             "warnings": [],
         }
+    safe_bin_changes: list[str] = []
+    if should_repair:
+        repaired_snapshot, safe_bin_changes = _doctor_exec_safe_bin_repair(snapshot)
+        if safe_bin_changes:
+            patch_object = getattr(config_service, "patch_object", None)
+            set_raw = getattr(config_service, "set_raw", None)
+            if callable(patch_object):
+                patch_object(repaired_snapshot)
+                snapshot = repaired_snapshot
+            elif callable(set_raw):
+                snapshot_hash = getattr(config_service, "_snapshot_hash", None)
+                base_hash = (
+                    snapshot_hash(snapshot)
+                    if callable(snapshot_hash)
+                    else None
+                )
+                set_raw(json.dumps(repaired_snapshot), base_hash=base_hash)
+                snapshot = repaired_snapshot
+            else:
+                safe_bin_changes = []
+    exec_safe_bins = _build_doctor_exec_safe_bins_payload(
+        snapshot,
+        repair_requested=should_repair,
+        changes=safe_bin_changes,
+    )
     warnings = [
         *_doctor_security_approvals_warnings(snapshot),
         *_doctor_security_heartbeat_warnings(snapshot),
         *_doctor_security_exec_policy_warnings(snapshot, data_dir),
+        *[str(item) for item in _object_list(exec_safe_bins.get("warnings"))],
         *_doctor_security_gateway_exposure_warnings(snapshot),
         *_doctor_security_channel_dm_warnings(snapshot, data_dir),
     ]
@@ -4798,6 +5160,7 @@ def _build_doctor_security_payload(
         "repairAvailable": False,
         "warnings": warnings,
         "auditHint": "openclaw security audit --deep",
+        "execSafeBins": exec_safe_bins,
     }
 
 
@@ -4805,8 +5168,13 @@ def _with_doctor_security_payload(
     payload: dict[str, object],
     config_service: object | None,
     data_dir: Path | None = None,
+    should_repair: bool = False,
 ) -> dict[str, object]:
-    security = _build_doctor_security_payload(config_service, data_dir=data_dir)
+    security = _build_doctor_security_payload(
+        config_service,
+        data_dir=data_dir,
+        should_repair=should_repair,
+    )
     next_payload = dict(payload)
     next_payload["security"] = security
     warnings = [str(item) for item in _object_list(security.get("warnings"))]
@@ -25630,6 +25998,7 @@ def doctor(
             payload,
             services.gateway_config,
             data_dir if isinstance(data_dir, Path) else None,
+            should_repair=fix,
         )
         payload = _with_doctor_shell_completion_payload(
             payload,

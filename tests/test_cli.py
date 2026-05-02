@@ -24108,6 +24108,164 @@ def test_doctor_json_warns_when_exec_policy_config_exceeds_host_policy(
     assert agent_warning in payload["warnings"]
 
 
+def test_doctor_json_reports_exec_safe_bin_profile_coverage(
+    monkeypatch,
+) -> None:
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "tools": {
+                "exec": {
+                    "safeBins": ["node", "jq"],
+                    "safeBinProfiles": {"jq": {}},
+                }
+            },
+            "agents": {
+                "list": [
+                    {
+                        "id": "runner",
+                        "tools": {"exec": {"safeBins": ["custom-tool"]}},
+                    }
+                ]
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    safe_bins = payload["security"]["execSafeBins"]
+    assert safe_bins["status"] == "warning"
+    assert safe_bins["coverageHits"] == [
+        {
+            "scopePath": "tools.exec",
+            "bin": "node",
+            "kind": "missingProfile",
+            "isInterpreter": True,
+        },
+        {
+            "scopePath": "tools.exec",
+            "bin": "jq",
+            "kind": "riskySemantics",
+            "warning": (
+                "jq supports broad jq programs and builtins (for example `env`), "
+                "so prefer explicit allowlist entries or approval-gated runs "
+                "instead of safeBins."
+            ),
+        },
+        {
+            "scopePath": "agents.list.runner.tools.exec",
+            "bin": "custom-tool",
+            "kind": "missingProfile",
+            "isInterpreter": False,
+        },
+    ]
+    warnings = safe_bins["warnings"]
+    assert any(
+        "tools.exec.safeBins includes interpreter/runtime 'node' without profile"
+        in warning
+        for warning in warnings
+    )
+    assert any(
+        "tools.exec.safeBins includes 'jq': jq supports broad jq programs" in warning
+        for warning in warnings
+    )
+    assert any(
+        "agents.list.runner.tools.exec.safeBins entry 'custom-tool' is missing "
+        "safeBinProfiles.custom-tool." in warning
+        for warning in warnings
+    )
+    assert any('Run "openzues doctor --fix"' in warning for warning in warnings)
+    for warning in warnings:
+        assert warning in payload["warnings"]
+
+
+def test_doctor_fix_scaffolds_custom_exec_safe_bin_profiles(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "tools": {
+                    "exec": {
+                        "safeBins": ["node", "jq", "custom-tool"],
+                    }
+                },
+            }
+        )
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Hermes runtime profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(data_dir=tmp_path),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=gateway_config,
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    exec_safe_bins = payload["security"]["execSafeBins"]
+    assert exec_safe_bins["repairRequested"] is True
+    assert exec_safe_bins["changed"] is True
+    assert exec_safe_bins["changes"] == [
+        "- tools.exec.safeBinProfiles.custom-tool: added scaffold profile {} "
+        "(review and tighten flags/positionals).",
+        "- tools.exec.safeBinProfiles.jq: added scaffold profile {} "
+        "(review and tighten flags/positionals).",
+    ]
+    assert any(
+        "tools.exec.safeBins includes interpreter/runtime 'node' without profile"
+        in warning
+        for warning in exec_safe_bins["warnings"]
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["tools"]["exec"]["safeBinProfiles"] == {
+        "custom-tool": {},
+        "jq": {},
+    }
+
+
 def test_gateway_config_preserves_exec_policy_config_for_security_doctor(
     tmp_path,
 ) -> None:

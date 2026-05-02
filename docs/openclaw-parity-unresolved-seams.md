@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~50.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~50.2% overall, with a reasonable
   band of ~46-55%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -12,9 +12,9 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.4% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.5% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
-  plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
+  plugin runtime executor inventory, exec safe-bin coverage/repair, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
   plus MCP/LSP server projection, known Claude marketplace shortcut, remote
@@ -27,9 +27,10 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The CLI/operator control-plane family is estimated at ~99.4% after the bundle
-  metadata mini-queue, marketplace source-shape install/update queue, local
-  path link/copy installs, missing local-looking install-spec guard, and
+- The CLI/operator control-plane family is estimated at ~99.5% after the bundle
+  metadata mini-queue, marketplace source-shape install/update queue, exec
+  safe-bin coverage/repair, local path link/copy installs, missing
+  local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
   API/archive install/update, fakeable plus production-wired npm install/update,
   update spec-overrides,
@@ -992,7 +993,11 @@ legacy bind aliases under the legacy-config migrator. It now also compares
 global and per-agent `tools.exec` policy against the native
 `settings/exec-approvals.json` host policy and emits the OpenClaw-shaped
 config/host/effective-policy warning when the requested policy is broader or
-less prompt-heavy than the host permits. Configured channel DM security now
+less prompt-heavy than the host permits. It also mirrors OpenClaw's exec
+safe-bin doctor helper: configured global and per-agent `safeBins` report
+missing `safeBinProfiles`, interpreter/runtime bins, and risky jq/awk/sed
+semantics, while `doctor --fix` scaffolds empty custom profiles and leaves
+interpreter bins as warnings. Configured channel DM security now
 also mirrors OpenClaw's OPEN, invalid-open-allowFrom, locked allowlist/pairing,
 disabled, and shared-main-session warnings using native config snapshots and
 the existing pairing allowFrom store. `doctor:shell-completion` now reports

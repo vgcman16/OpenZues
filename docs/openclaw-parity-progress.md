@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~50.1% overall, with a reasonable band of ~46-55%.
+- Estimated repo-wide parity: ~50.2% overall, with a reasonable band of ~46-55%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.4% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.4% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.5% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, exec safe-bin coverage/repair, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.5% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, exec safe-bin coverage/repair, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7538,6 +7538,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\plugin_clawhub_installers.py tests\test_cli.py
   tests\test_plugin_clawhub_installers.py`, and `mypy src\openzues\cli.py
   src\openzues\services\plugin_clawhub_installers.py`.
+- `doctor:security` now mirrors OpenClaw's exec safe-bin doctor helper:
+  top-level `doctor --json` reports missing `safeBinProfiles`, marks
+  interpreter/runtime safe bins, reports risky `jq`/`awk`/`sed`-family
+  semantics, rolls those warnings into the shared doctor warning list, and
+  `doctor --fix` scaffolds empty custom profiles while leaving interpreters as
+  warnings.
+- Progress estimates are now roughly 50.2% repo-wide, ~99.5% for the
+  runtime/CLI/doctor native bridge, and ~99.5% for the CLI/operator control
+  plane after this exec safe-bin doctor slice.
+- Verified the exec safe-bin doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_profile_coverage
+  tests\test_cli.py::test_doctor_fix_scaffolds_custom_exec_safe_bin_profiles
+  -q` (`2 passed`), adjacent security proof `python -m pytest
+  tests\test_cli.py -q -k
+  "exec_safe_bin or exec_policy_config_exceeds_host_policy or
+  gateway_config_preserves_exec_policy_config_for_security_doctor or
+  approvals_exec_forwarding or heartbeat_direct_policy or
+  gateway_bind_is_exposed_without_auth"` (`7 passed`), runtime/doctor proof
+  `python -m pytest tests\test_cli.py -q -k
+  "doctor_json_includes_runtime_bridge_posture or
+  doctor_json_warns_when_exec_policy_config_exceeds_host_policy or
+  doctor_json_reports_exec_safe_bin_profile_coverage or
+  doctor_fix_scaffolds_custom_exec_safe_bin_profiles"` (`4 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
 
 ## References
 
