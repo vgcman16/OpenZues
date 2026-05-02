@@ -18842,6 +18842,7 @@ def _invoke_doctor_json_with_config_snapshot(
     gateway_node_methods: object | None = None,
     mission_service: object | None = None,
     ops_mesh: object | None = None,
+    channel_doctor_adapters: object | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -18872,6 +18873,7 @@ def _invoke_doctor_json_with_config_snapshot(
                 gateway_node_methods=gateway_node_methods,
                 mission_service=mission_service,
                 ops_mesh=ops_mesh,
+                channel_doctor_adapters=channel_doctor_adapters,
             )
         )
 
@@ -18879,6 +18881,52 @@ def _invoke_doctor_json_with_config_snapshot(
     monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
 
     return runner.invoke(app, args or ["doctor", "--json"])
+
+
+def test_doctor_json_reports_channel_plugin_preview_warnings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        async def collect_preview_warnings(self, **kwargs: object) -> list[str]:
+            calls.append(dict(kwargs))
+            return [
+                "- channels.matrix.config legacy key is deprecated. "
+                'Run "openzues doctor --fix".'
+            ]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "defaults": {"dmPolicy": "allowlist"},
+                "matrix": {"enabled": True, "config": {"legacy": True}},
+            }
+        },
+        channel_doctor_adapters={"matrix": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["status"] == "warning"
+    assert channel_doctor["warnings"] == [
+        "- channels.matrix.config legacy key is deprecated. "
+        'Run "openzues doctor --fix".'
+    ]
+    assert calls == [
+        {
+            "config": {
+                "channels": {
+                    "defaults": {"dmPolicy": "allowlist"},
+                    "matrix": {"enabled": True, "config": {"legacy": True}},
+                }
+            },
+            "doctorFixCommand": "openzues doctor --fix",
+        }
+    ]
+    assert channel_doctor["warnings"][0] in payload["warnings"]
 
 
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(

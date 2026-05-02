@@ -5272,6 +5272,98 @@ def _with_doctor_security_payload(
     return next_payload
 
 
+def _doctor_configured_channel_ids(snapshot: dict[str, object]) -> list[str]:
+    channels = _dict_config(snapshot.get("channels"))
+    return sorted(
+        channel_id
+        for channel_id in (str(key).strip() for key in channels)
+        if channel_id and channel_id != "defaults"
+    )
+
+
+def _doctor_channel_adapter(
+    adapters: object | None,
+    channel_id: str,
+) -> object | None:
+    if isinstance(adapters, Mapping):
+        return adapters.get(channel_id)
+    get_adapter = getattr(adapters, "get", None)
+    if callable(get_adapter):
+        return get_adapter(channel_id)
+    return None
+
+
+async def _doctor_channel_preview_warnings(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> list[str]:
+    collect = getattr(adapter, "collect_preview_warnings", None) or getattr(
+        adapter,
+        "collectPreviewWarnings",
+        None,
+    )
+    if not callable(collect):
+        return []
+    result = collect(config=snapshot, doctorFixCommand="openzues doctor --fix")
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, list):
+        return []
+    return [str(item) for item in result if str(item).strip()]
+
+
+async def _build_doctor_channel_doctor_payload(
+    config_service: object | None,
+    adapters: object | None,
+) -> dict[str, object]:
+    snapshot = _doctor_config_snapshot(config_service)
+    channel_ids = _doctor_configured_channel_ids(snapshot)
+    warnings: list[str] = []
+    adapter_count = 0
+    for channel_id in channel_ids:
+        adapter = _doctor_channel_adapter(adapters, channel_id)
+        if adapter is None:
+            continue
+        adapter_count += 1
+        try:
+            warnings.extend(
+                await _doctor_channel_preview_warnings(
+                    adapter=adapter,
+                    snapshot=snapshot,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            warnings.append(f"- channels.{channel_id} doctor hook failed: {exc}")
+    return {
+        "status": "warning" if warnings else "ok",
+        "summary": (
+            "Channel plugin doctor hooks reported warnings."
+            if warnings
+            else "No channel plugin doctor warnings detected."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:channel-plugin-contracts",
+        "configuredChannels": channel_ids,
+        "adapterCount": adapter_count,
+        "warnings": warnings,
+    }
+
+
+async def _with_doctor_channel_doctor_payload(
+    payload: dict[str, object],
+    config_service: object | None,
+    adapters: object | None,
+) -> dict[str, object]:
+    channel_doctor = await _build_doctor_channel_doctor_payload(config_service, adapters)
+    next_payload = dict(payload)
+    next_payload["channelDoctor"] = channel_doctor
+    warnings = [str(item) for item in _object_list(channel_doctor.get("warnings"))]
+    if warnings:
+        next_payload = _with_doctor_added_warnings(next_payload, warnings)
+    return next_payload
+
+
 _DOCTOR_COMPLETION_SHELL_EXTENSIONS = {
     "bash": "bash",
     "fish": "fish",
@@ -26146,6 +26238,11 @@ def doctor(
             services.gateway_config,
             data_dir if isinstance(data_dir, Path) else None,
             should_repair=fix,
+        )
+        payload = await _with_doctor_channel_doctor_payload(
+            payload,
+            services.gateway_config,
+            getattr(services, "channel_doctor_adapters", None),
         )
         payload = _with_doctor_shell_completion_payload(
             payload,
