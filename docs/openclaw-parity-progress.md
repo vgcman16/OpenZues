@@ -8816,7 +8816,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   inspect detail surface: native plugin records preserve `typedHooks` and
   `customHooks`, inspect JSON projects them, and human `plugins inspect <id>`
   renders `Typed hooks` and `Custom hooks` sections with priority/event
-  formatting. Checkpoint pending.
+  formatting. Checkpointed in `0a6e8bcd`.
 - Progress estimates are now roughly 56.0% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

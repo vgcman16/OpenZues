@@ -170,7 +170,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect typed/custom hook sections, projecting hook metadata in
   JSON and human output.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `0a6e8bcd`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -366,7 +366,7 @@ may lag behind this tracker.
     inspect human diagnostics section checkpointed in `667182c7`, and plugin
     inspect human install section checkpointed in `5ca0a5f2`, and plugin
     inspect human compatibility warnings section checkpointed in `38b85a1a`,
-    and plugin inspect typed/custom hook sections verified pending checkpoint,
+    and plugin inspect typed/custom hook sections checkpointed in `0a6e8bcd`,
     but deeper module import/runtime activation remains.
   - Weight: 5
 
@@ -374,7 +374,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `0a6e8bcd`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect hook-section test (`1
     passed`), adjacent plugin inspect/doctor proof (`11 passed`), `ruff

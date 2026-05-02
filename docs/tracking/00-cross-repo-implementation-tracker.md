@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin inspect typed/custom hook sections slice is verified and pending its
-checkpoint hash. Any follow-up changes should target the next queue head only:
+The plugin inspect typed/custom hook sections slice is checkpointed in
+`0a6e8bcd`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect typed/custom hook sections verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect typed/custom hook sections checkpointed in `0a6e8bcd` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -727,7 +727,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     event formatting.
   - Evidence required: focused plugin inspect hook-section test, adjacent
     plugin inspect/doctor tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `0a6e8bcd`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_cli.py::test_plugins_inspect_projects_and_reports_hook_sections
