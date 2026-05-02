@@ -8255,7 +8255,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   route-backed sends: media URLs are sent as an ordered webhook sequence, the
   first send carries text, later sends use blank content, and provider metadata
   preserves ordered `messageIds` while returning the final id as `messageId`.
-  Checkpoint pending.
+  Checkpointed in `b5371fd9`.
 - Progress estimates are now roughly 53.6% repo-wide and ~99.1% for the active
   gateway/session/tool-contract family after this Discord media slice.
 - Verified the Discord media iteration slice with focused Discord media route

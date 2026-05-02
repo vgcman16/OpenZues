@@ -106,7 +106,7 @@ may lag behind this tracker.
 - [x] Discord provider-native media sends with OpenClaw-shaped per-media
   webhook iteration, first-send captioning, final-id `messageId`, and ordered
   provider `messageIds`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `b5371fd9`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn

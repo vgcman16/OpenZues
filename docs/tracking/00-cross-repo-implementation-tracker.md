@@ -29,9 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Discord provider-native media iteration parity slice is verified locally
-and awaiting checkpoint. Any follow-up changes should target the next queue
-head only:
+The Discord provider-native media iteration parity slice is checkpointed in
+`b5371fd9`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
 - `tests/test_ops_mesh.py`
@@ -51,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration verified locally | Repo-wide +0.1%, active gateway/method +0.1% | Checkpoint, then continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -285,7 +284,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     each provider call.
   - Evidence required: focused Discord native media route test, adjacent
     Discord native send/reply/thread/poll route tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `b5371fd9`
   - Weight: 1
   - Last verified: 2026-05-02, focused Discord media route tests (`2
     passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
