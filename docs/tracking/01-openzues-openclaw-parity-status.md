@@ -68,7 +68,7 @@ may lag behind this tracker.
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
   and `capability/infer tts personas` plus `set-persona` JSON output.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `3819d03a`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -135,7 +135,7 @@ may lag behind this tracker.
     `src/openzues/services/gateway_method_policy.py`, `src/openzues/cli.py`
   - Test: `tests/test_gateway_node_methods.py`,
     `tests/test_gateway_method_policy.py`, `tests/test_cli.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `3819d03a`.
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway persona tests (`2 passed`),
     focused policy test (`1 passed`), focused CLI tests (`2 passed`),

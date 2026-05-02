@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `tts.personas` / `tts.setPersona` gateway and CLI parity slice is verified
-and ready for checkpointing with these intended files:
+The `tts.personas` / `tts.setPersona` gateway and CLI parity slice is
+checkpointed in `3819d03a`. Any follow-up changes should target the next queue
+head only:
 
 - `src/openzues/services/gateway_tts.py`
 - `src/openzues/services/gateway_node_methods.py`
@@ -51,7 +52,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Active | Repo-wide +0.1%, active gateway/method +0.1% | `tts.personas` / `tts.setPersona` verified; next source-backed base-method gap is `talk.realtime.*` |
+| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `3819d03a` | Repo-wide +0.1%, active gateway/method +0.1% | `tts.personas` / `tts.setPersona` done; next source-backed base-method gap is `talk.realtime.*` |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -122,7 +123,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     JSON-capable Typer commands.
   - Evidence required: focused gateway/policy/CLI tests, adjacent TTS gateway,
     API, and CLI tests, ruff, mypy
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `3819d03a`
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway persona tests (`2 passed`),
     focused policy test (`1 passed`), focused CLI tests (`2 passed`),

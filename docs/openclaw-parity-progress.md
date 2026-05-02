@@ -91,7 +91,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   provider-binding ids, selected persona state persists with TTS prefs,
   `off`/`none`/`default` clears the selection, unknown personas return the
   upstream-shaped invalid-persona error, and `capability tts personas` /
-  `capability tts set-persona` share the gateway runtime.
+  `capability tts set-persona` share the gateway runtime. This slice is
+  checkpointed in `3819d03a`.
 - Verified the TTS persona slice with focused gateway persona tests (`2
   passed`), focused policy test (`1 passed`), focused CLI tests (`2 passed`),
   adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k "tts_"`
@@ -8080,7 +8081,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   projected from config or fakeable service state, selected persona persists in
   TTS prefs, `tts.status` includes active persona metadata, and
   `capability`/`infer tts personas` plus `set-persona` expose JSON-capable CLI
-  coverage.
+  coverage. Checkpointed in `3819d03a`.
 - Progress estimates are now roughly 52.8% repo-wide and ~98.3% for the active
   gateway/session/tool-contract family after this TTS persona slice.
 - Verified the TTS persona slice with focused gateway persona tests (`2

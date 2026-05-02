@@ -104,7 +104,8 @@ projects active persona metadata, `off`/`none`/`default` clears the selection,
 unknown persona ids return the upstream invalid-persona error, and
 `capability`/`infer tts` expose JSON-capable `personas` and `set-persona`
 commands. Verified on 2026-05-02 with focused gateway, policy, and CLI tests,
-adjacent gateway/API/CLI TTS proofs, `ruff check`, and `mypy`.
+adjacent gateway/API/CLI TTS proofs, `ruff check`, and `mypy`; checkpointed in
+`3819d03a`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4472,7 +4473,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `set-persona` provide JSON-capable CLI coverage. Repo-wide parity is now
   estimated at ~52.8%; active gateway/session/tool-contract parity is ~98.3%.
   Verified with focused gateway, policy, and CLI proofs, adjacent gateway/API/
-  CLI TTS tests, `ruff check`, and `mypy`.
+  CLI TTS tests, `ruff check`, and `mypy`; checkpointed in `3819d03a`.
 - Next repo-wide queue head: OpenClaw's `talk.realtime.*` gateway handlers are
   now the clearest source-backed base-method gap exposed by the adjacent
   method-policy proof. Source anchors are
