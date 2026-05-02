@@ -3077,6 +3077,54 @@ def test_acp_bridge_warns_for_inline_secrets() -> None:
     assert "ACP Gateway bridge is not available" in result.stderr
 
 
+def test_secrets_reload_json_calls_gateway_method(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "warningCount": 1}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["secrets", "reload", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("secrets.reload", {})]
+    assert json.loads(result.stdout) == {"ok": True, "warningCount": 1}
+
+
+def test_secrets_reload_human_reports_warning_count(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"ok": True, "warningCount": 2}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["secrets", "reload"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("secrets.reload", {})]
+    assert "Secrets reloaded with 2 warning(s)." in result.stdout
+
+
 def test_capability_list_json_surfaces_openclaw_capability_metadata() -> None:
     result = runner.invoke(app, ["capability", "list", "--json"])
 

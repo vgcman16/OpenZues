@@ -4,6 +4,7 @@ import asyncio
 import codecs
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -484,6 +485,7 @@ acp_app = typer.Typer(
     help="Run an ACP bridge backed by the Gateway.",
     invoke_without_command=True,
 )
+secrets_app = typer.Typer(help="Secrets runtime controls.")
 sandbox_app = typer.Typer(help="Inspect sandbox runtime inventory.")
 sessions_app = typer.Typer(help="List, spawn, and wait on gateway sessions.")
 tasks_app = typer.Typer(help="Inspect durable background tasks.")
@@ -528,6 +530,7 @@ app.add_typer(routes_app, name="routes")
 app.add_typer(agents_app, name="agents")
 app.add_typer(channels_app, name="channels")
 app.add_typer(acp_app, name="acp")
+app.add_typer(secrets_app, name="secrets")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(tasks_app, name="tasks")
@@ -9325,6 +9328,23 @@ def _emit_session_method_result(payload: dict[str, object], *, json_output: bool
     error = str(payload.get("error") or "").strip()
     if error:
         typer.echo(f"error: {error}")
+
+
+def _emit_secrets_reload(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    warning_count = 0.0
+    raw_warning_count = payload.get("warningCount")
+    if not isinstance(raw_warning_count, bool):
+        try:
+            warning_count = float(cast("int | float | str", raw_warning_count or 0))
+        except (TypeError, ValueError):
+            warning_count = 0.0
+    if math.isfinite(warning_count) and warning_count > 0:
+        typer.echo(f"Secrets reloaded with {warning_count:g} warning(s).")
+        return
+    typer.echo("Secrets reloaded.")
 
 
 def _sessions_cli_positive_int(value: str | None, *, option: str) -> int | None:
@@ -22306,6 +22326,17 @@ def acp_status_command(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_acp_status(payload, json_output=json_output)
+
+
+@secrets_app.command("reload")
+def secrets_reload_command(
+    json_output: bool = typer.Option(False, "--json", help="Output JSON."),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        return await _call_gateway_node_method(services, "secrets.reload", {})
+
+    result = _run(_run_with_services(_action))
+    _emit_secrets_reload(result, json_output=json_output)
 
 
 @capability_app.command("list")

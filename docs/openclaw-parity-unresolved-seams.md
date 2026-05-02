@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~51.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~51.5% overall, with a reasonable
   band of ~47-56%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, secrets reload CLI surface, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -33,6 +33,7 @@ Current percentage rollup:
   slices.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue,
+  secrets reload CLI surface,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -4327,6 +4328,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   the full relevant doctor plugin set. Repo-wide parity is now estimated at
   ~51.4%; runtime/CLI/doctor and CLI/operator remain ~99.9%. Verified with
   focused and adjacent CLI doctor/plugin proofs, `ruff check`, and `mypy`.
+- Closed the secrets reload CLI seam from OpenClaw `src/cli/secrets-cli.ts`
+  and `src/cli/secrets-cli.test.ts`: root native Typer now exposes
+  `secrets reload --json`, dispatches to the existing `secrets.reload`
+  gateway method, preserves raw JSON output, and mirrors the warning-count
+  human message. Repo-wide parity is now estimated at ~51.5%; runtime/
+  CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent CLI/gateway proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open. Source anchors are OpenClaw CLI runtime/session/provider command
   surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human
