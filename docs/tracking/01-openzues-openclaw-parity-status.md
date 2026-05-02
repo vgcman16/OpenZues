@@ -79,7 +79,7 @@ may lag behind this tracker.
 - [x] Plugin list persisted-registry source projection in `plugins list
   --json`, including persisted/derived registry source metadata and
   OpenClaw-shaped registry diagnostics.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `6468e305`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -254,7 +254,8 @@ may lag behind this tracker.
   - Status: open; manifest activation-plan reason projection child slice
     checkpointed in `721ec0f2`, plugin registry inspect/refresh child slice
     checkpointed in `cdb3035e`, and plugin list registry-source child slice
-    verified, but deeper module import/runtime activation remains.
+    checkpointed in `6468e305`, but deeper module import/runtime activation
+    remains.
   - Weight: 5
 
 - [x] Plugin list persisted-registry source projection.
@@ -263,7 +264,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/status.registry-snapshot.test.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `6468e305`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_reports_persisted_registry_source_after_refresh

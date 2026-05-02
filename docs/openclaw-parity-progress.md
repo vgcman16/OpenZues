@@ -155,6 +155,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `registry.source` as `persisted` after a fresh registry refresh, and reports
   OpenClaw-shaped derived-source diagnostics when the persisted index is
   missing or stale.
+  This slice is checkpointed in `6468e305`.
 - Verified the plugin list registry-source slice with `python -m pytest
   tests\test_cli.py::test_plugins_list_json_reports_persisted_registry_source_after_refresh
   -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
@@ -8344,7 +8345,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   OpenClaw's `plugins list --json` registry block: native list output reports
   `registry.source`, returns `persisted` with empty diagnostics after a fresh
   refresh, and keeps derived-source diagnostics available for missing or stale
-  persisted indexes. Checkpoint pending.
+  persisted indexes. Checkpointed in `6468e305`.
 - Progress estimates are now roughly 53.9% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
