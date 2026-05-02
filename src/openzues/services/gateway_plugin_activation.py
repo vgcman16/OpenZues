@@ -610,7 +610,7 @@ def _configured_channel_owner_block_reason(
     allow = _plugin_id_list(plugins.get("allow"))
     origin = _normalize_command_id(plugin.get("origin"))
     if (
-        origin in {"config", "global"}
+        origin in {"config", "global", "workspace"}
         and plugin_id not in allow
         and entry.get("enabled") is not True
     ):

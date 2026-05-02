@@ -175,6 +175,7 @@ def test_resolve_configured_channel_plugin_plan_projects_activation_config() -> 
     assert resolve_configured_channel_plugin_plan(
         plugins=plugins,
         config={
+            "plugins": {"entries": {"demo-channel": {"enabled": True}}},
             "channels": {
                 "telegram": {"enabled": True},
                 "defaults": {"account": "primary"},
@@ -275,6 +276,36 @@ def test_resolve_configured_channel_plugin_plan_requires_trust_for_config_owner(
             "id": "external-telegram",
             "channels": ["telegram"],
             "origin": "config",
+            "enabledByDefault": True,
+        }
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={"channels": {"telegram": {"enabled": True}}},
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": [],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": False,
+                "pluginIds": [],
+                "blockedReasons": ["untrusted-plugin"],
+            }
+        ],
+        "diagnostics": [],
+    }
+
+
+def test_resolve_configured_channel_plugin_plan_requires_activation_for_workspace_owner() -> None:
+    plugins = [
+        {
+            "id": "workspace-telegram",
+            "channels": ["telegram"],
+            "origin": "workspace",
             "enabledByDefault": True,
         }
     ]

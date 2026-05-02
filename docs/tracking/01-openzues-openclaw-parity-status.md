@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~57.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~57.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -214,6 +214,10 @@ may lag behind this tracker.
 - [x] Configured-channel config/global owner trust gate in runtime activation
   planning.
   - Status: checkpointed in `0e6ce093`
+
+- [x] Configured-channel workspace owner activation gate in runtime activation
+  planning.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -421,9 +425,21 @@ may lag behind this tracker.
     projection checkpointed in `ae5c3986`, and configured-channel disabled
     owner policy checkpointed in `d2d0e9c3`, and configured-channel bundled
     owner allowlist bypass checkpointed in `6ad518d4`, and configured-channel
-    config/global owner trust gate checkpointed in `0e6ce093`, but
-    deeper module import/runtime activation remains.
+    config/global owner trust gate checkpointed in `0e6ce093`, and
+    configured-channel workspace owner activation gate verified with
+    checkpoint pending, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Configured-channel workspace owner activation gate.
+  - Source: `openclaw-main/src/plugins/channel-presence-policy.ts`,
+    `openclaw-main/src/plugins/config-activation-shared.ts`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused workspace-owner activation helper test
+    (`1 passed`), full activation helper suite (`9 passed`), adjacent plugin
+    doctor proof (`3 passed`), `ruff check`, and `mypy`.
 
 - [x] Configured-channel config/global owner trust gate.
   - Source: `openclaw-main/src/plugins/channel-presence-policy.ts`,
