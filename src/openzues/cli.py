@@ -16455,6 +16455,63 @@ def _plugin_doctor_contract_api_artifact(root_dir: Path) -> dict[str, object] | 
     return None
 
 
+def _has_legacy_elevenlabs_talk_fields(raw: Mapping[object, object]) -> bool:
+    talk = raw.get("talk")
+    if not isinstance(talk, Mapping):
+        return False
+    return any(
+        key in talk
+        for key in ("voiceId", "voiceAliases", "modelId", "outputFormat", "apiKey")
+    )
+
+
+def _collect_relevant_doctor_plugin_ids(raw: object) -> list[str]:
+    if not isinstance(raw, Mapping):
+        return []
+    ids: set[str] = set()
+    channels = raw.get("channels")
+    if isinstance(channels, Mapping):
+        for channel_id in channels:
+            text = str(channel_id)
+            if text != "defaults":
+                ids.add(text)
+    plugins = raw.get("plugins")
+    plugin_entries = plugins.get("entries") if isinstance(plugins, Mapping) else None
+    if isinstance(plugin_entries, Mapping):
+        ids.update(str(plugin_id) for plugin_id in plugin_entries)
+    if _has_legacy_elevenlabs_talk_fields(raw):
+        ids.add("elevenlabs")
+    return sorted(ids)
+
+
+def _collect_relevant_doctor_plugin_ids_for_touched_paths(
+    raw: object,
+    touched_paths: Sequence[Sequence[object]],
+) -> list[str]:
+    if not isinstance(raw, Mapping):
+        return []
+    ids: set[str] = set()
+    for touched_path in touched_paths:
+        parts = [str(part) for part in touched_path]
+        first = parts[0] if parts else None
+        second = parts[1] if len(parts) > 1 else None
+        third = parts[2] if len(parts) > 2 else None
+        if first == "channels":
+            if not second:
+                return _collect_relevant_doctor_plugin_ids(raw)
+            if second != "defaults":
+                ids.add(second)
+            continue
+        if first == "plugins":
+            if second != "entries" or not third:
+                return _collect_relevant_doctor_plugin_ids(raw)
+            ids.add(third)
+            continue
+        if first == "talk" and _has_legacy_elevenlabs_talk_fields(raw):
+            ids.add("elevenlabs")
+    return sorted(ids)
+
+
 def _plugin_manifest_string_list_record(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}

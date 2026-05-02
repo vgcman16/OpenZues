@@ -7345,6 +7345,46 @@ def test_plugins_list_json_prefers_doctor_contract_api_artifact(
     }
 
 
+def test_doctor_contract_relevant_plugin_ids_narrow_touched_paths() -> None:
+    raw_config = {
+        "channels": {
+            "discord": {},
+            "telegram": {},
+        },
+        "plugins": {
+            "entries": {
+                "memory-wiki": {},
+            },
+        },
+        "talk": {
+            "voiceId": "legacy-voice",
+        },
+    }
+
+    assert cli_module._collect_relevant_doctor_plugin_ids_for_touched_paths(
+        raw_config,
+        [
+            ["channels", "discord", "token"],
+            ["plugins", "entries", "memory-wiki", "enabled"],
+            ["talk", "voiceId"],
+        ],
+    ) == ["discord", "elevenlabs", "memory-wiki"]
+    assert cli_module._collect_relevant_doctor_plugin_ids_for_touched_paths(
+        {
+            "channels": {
+                "discord": {},
+                "telegram": {},
+            },
+            "plugins": {
+                "entries": {
+                    "memory-wiki": {},
+                },
+            },
+        },
+        [["channels"]],
+    ) == ["discord", "memory-wiki", "telegram"]
+
+
 def test_plugins_list_json_preserves_manifest_identity_and_classification(
     tmp_path,
     monkeypatch,
