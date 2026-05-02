@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.5% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.6% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,9 +29,11 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `channels.stop` gateway method parity slice is checkpointed in
-`64f6937a`. Any follow-up changes should target the next queue head only:
+The `node.pair.remove` gateway method parity slice is verified and awaiting
+its checkpoint commit. Any follow-up changes should target the next queue head
+only:
 
+- `src/openzues/services/gateway_node_pairing.py`
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_method_policy.py`
 - `tests/test_gateway_node_methods.py`
@@ -48,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `64f6937a` | Repo-wide +0.1%, active gateway/method +0.1% | `channels.stop` done; next small base-method gap is `node.pair.remove` |
+| OZ-RT-001 | Runtime-control hard gaps | `node.pair.remove` verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -173,6 +175,28 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     or channels_logout"` (`7 passed`), `ruff check`, and `mypy`. A broader
     channel-status selection exposed an unrelated older catalog expectation for
     Zalo/LINE/Matrix.
+
+- [x] `OZ-RT-001E` `node.pair.remove` gateway method
+  - Source: `openclaw-main/src/gateway/server-methods/nodes.ts` and
+    `openclaw-main/src/gateway/method-scopes.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Contract: `node.pair.remove` is pairing-scoped, validates `nodeId`,
+    removes a paired node from the native pairing store, returns `{nodeId}`,
+    rejects unknown nodes, and broadcasts `node.pair.resolved` with
+    `decision="removed"` and an empty `requestId`.
+  - Evidence required: focused gateway/policy tests, adjacent node-pair
+    lifecycle tests, ruff, mypy
+  - Status: verified; checkpoint commit pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused gateway remove tests (`2 passed`),
+    focused node/voice policy proof (`1 passed`), adjacent `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "node_pair_remove or
+    node_pair_approve or node_pair_reject or node_pair_list or
+    node_pair_request or node_pair_verify or node_rename"` (`13 passed`),
+    `ruff check`, and `mypy`.
 
 ## Canonical Checklist Format
 

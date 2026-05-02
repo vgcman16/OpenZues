@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.0% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.5% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~53.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.6% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -78,6 +78,11 @@ may lag behind this tracker.
 - [x] `channels.stop` admin-scoped gateway method with native idempotent stop
   projection and invalid-channel guards.
   - Status: checkpointed in `64f6937a`
+
+- [x] `node.pair.remove` pairing-scoped gateway method with paired-node removal,
+  `{nodeId}` projection, unknown-node guard, and `node.pair.resolved` removal
+  broadcasts.
+  - Status: verified; checkpoint commit pending
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -178,6 +183,20 @@ may lag behind this tracker.
   - Last verified: 2026-05-02, focused gateway stop tests (`2 passed`),
     focused channel policy proof (`1 passed`), adjacent start/logout/stop tests
     (`7 passed`), `ruff check`, and `mypy`.
+
+- [x] `node.pair.remove` gateway method.
+  - Source: `openclaw-main/src/gateway/server-methods/nodes.ts`,
+    `openclaw-main/src/gateway/method-scopes.ts`
+  - Target: `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Test: `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`
+  - Status: verified; checkpoint commit pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused gateway remove tests (`2 passed`),
+    focused node/voice policy proof (`1 passed`), adjacent node-pair lifecycle
+    tests (`13 passed`), `ruff check`, and `mypy`.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.

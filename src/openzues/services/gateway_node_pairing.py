@@ -350,6 +350,13 @@ class GatewayNodePairingService:
         paired = _paired_node_from_row(paired_row)
         return {"deviceId": paired.node_id}
 
+    async def remove_node(self, node_id: str) -> dict[str, str] | None:
+        paired_row = await self.database.delete_gateway_node_paired_node(node_id)
+        if paired_row is None:
+            return None
+        paired = _paired_node_from_row(paired_row)
+        return {"nodeId": paired.node_id}
+
     async def list_device_token_summaries(self, device_id: str) -> list[dict[str, object]]:
         normalized_device_id = _normalize_device_id(device_id)
         if normalized_device_id is None:

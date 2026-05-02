@@ -678,6 +678,7 @@ def test_gateway_method_policy_covers_openclaw_node_and_voice_handlers() -> None
         "node.pair.list",
         "node.pair.approve",
         "node.pair.reject",
+        "node.pair.remove",
         "node.pair.verify",
         "node.rename",
         "node.list",
@@ -719,6 +720,7 @@ def test_gateway_method_policy_covers_openclaw_node_and_voice_handlers() -> None
     } == {
         "node.pair.approve",
         "node.pair.list",
+        "node.pair.remove",
         "node.pair.reject",
         "node.pair.request",
         "node.pair.verify",

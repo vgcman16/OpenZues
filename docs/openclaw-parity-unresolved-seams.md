@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.1% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~98.5% of the
+- The active gateway/session/tool-contract family is estimated at ~98.6% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,9 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~97.4% after the
-  latest `plugins.uiDescriptors` active-registry control UI descriptor
-  gateway method slice.
+- The gateway session/tool-contract family is estimated at ~98.6% after the
+  latest `node.pair.remove` node-pair lifecycle gateway method slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -121,6 +120,13 @@ errors, and the native boundary returns idempotent `{channel, accountId,
 stopped: true}` payloads. Verified on 2026-05-02 with focused gateway/policy
 proofs, adjacent channel start/logout/stop tests, `ruff check`, and `mypy`;
 checkpointed in `64f6937a`.
+`node.pair.remove` now mirrors OpenClaw's node-pair lifecycle gateway layer:
+params validate `nodeId`, the native pairing store deletes the paired node,
+the method returns `{nodeId}`, unknown nodes raise the upstream-shaped
+`unknown nodeId` error, and `node.pair.resolved` broadcasts carry
+`decision="removed"` with an empty request id. Verified on 2026-05-02 with
+focused gateway/policy proofs, adjacent node-pair lifecycle tests, `ruff
+check`, and `mypy`; checkpoint commit pending.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4509,11 +4515,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~98.5%. Verified with focused
   gateway and policy proofs, adjacent start/logout/stop tests, `ruff check`,
   and `mypy`; checkpointed in `64f6937a`.
-- Next repo-wide queue head: the broader method-policy sweep still exposes the
-  source-backed small base-method gap `node.pair.remove`. Source anchors are
-  OpenClaw `src/gateway/server-methods/nodes.ts`,
-  `src/gateway/method-scopes.ts`, and OpenZues' gateway node method plus
-  pairing service owners.
+- Closed the `node.pair.remove` gateway method seam from OpenClaw
+  `src/gateway/server-methods/nodes.ts` and
+  `src/gateway/method-scopes.ts`: native node pairing now removes paired nodes,
+  returns `{nodeId}`, broadcasts the `node.pair.resolved` removal event, and is
+  pairing-scoped. Repo-wide parity is now estimated at ~53.1%; active
+  gateway/session/tool-contract parity is ~98.6%. Verified with focused
+  gateway and policy proofs, adjacent node-pair lifecycle tests, `ruff check`,
+  and `mypy`; checkpoint commit pending.
+- Next repo-wide queue head: rotate from small gateway base-method closures
+  back to the source-backed provider-native adapter breadth queue, starting
+  with remaining OpenClaw channel/provider send, poll, replay, direct announce,
+  media, reply, thread, and result metadata behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

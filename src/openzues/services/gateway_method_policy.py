@@ -112,6 +112,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "node.pair.request",
         "node.pair.list",
         "node.pair.reject",
+        "node.pair.remove",
         "node.pair.verify",
         "node.pair.approve",
         "device.pair.list",

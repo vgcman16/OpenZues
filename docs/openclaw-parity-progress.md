@@ -3,8 +3,8 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~53.0% overall, with a reasonable band of ~49-58%.
-- Estimated active gateway/session/tool-contract family parity: ~98.5% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~53.1% overall, with a reasonable band of ~49-58%.
+- Estimated active gateway/session/tool-contract family parity: ~98.6% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
@@ -40,6 +40,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   realtime provider/relay runtime is wired.
 - Channel runtime control now includes `channels.stop` as an admin-scoped,
   idempotent native stop boundary with normalized channel/account projection.
+- Node pairing lifecycle parity now includes `node.pair.remove` as a
+  pairing-scoped removal boundary that revokes paired nodes, returns
+  `{nodeId}`, and publishes the OpenClaw-shaped `node.pair.resolved` removal
+  event.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -140,6 +144,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_method_policy.py
   tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`, and
   `mypy src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py`.
+- `node.pair.remove` now mirrors OpenClaw's gateway method layer: pairing
+  scope, strict `nodeId` params, paired-node removal through the native pairing
+  store, `{nodeId}` response projection, unknown-node errors, and
+  `node.pair.resolved` broadcasts with `decision="removed"`. This slice is
+  verified; checkpoint commit pending.
+- Verified the `node.pair.remove` slice with focused gateway remove tests (`2
+  passed`), focused node/voice policy test (`1 passed`), adjacent `python -m
+  pytest tests\test_gateway_node_methods.py -q -k "node_pair_remove or
+  node_pair_approve or node_pair_reject or node_pair_list or node_pair_request
+  or node_pair_verify or node_rename"` (`13 passed`), `ruff check
+  src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
+  src\openzues\services\gateway_method_policy.py
+  tests\test_gateway_node_methods.py tests\test_gateway_method_policy.py`, and
+  `mypy src\openzues\services\gateway_node_pairing.py
+  src\openzues\services\gateway_node_methods.py
   src\openzues\services\gateway_method_policy.py`.
 - Native configured ACP binding helpers now mirror OpenClaw's
   `persistent-bindings.types.ts` and `persistent-bindings.lifecycle.ts`
@@ -8143,6 +8164,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Verified the `channels.stop` slice with focused gateway/policy proofs,
   adjacent channel start/logout/stop tests (`7 passed`), `ruff check`, and
   `mypy`.
+- Node pairing removal parity is now landed for OpenClaw's
+  `node.pair.remove` method: pairing scope, strict `nodeId` validation,
+  paired-node deletion, `{nodeId}` response projection, unknown-node errors,
+  and `node.pair.resolved` removal broadcasts.
+  Checkpoint commit pending.
+- Progress estimates are now roughly 53.1% repo-wide and ~98.6% for the active
+  gateway/session/tool-contract family after this `node.pair.remove` slice.
+- Verified the `node.pair.remove` slice with focused gateway/policy proofs,
+  adjacent node-pair lifecycle tests (`13 passed`), `ruff check`, and `mypy`.
 
 ## References
 

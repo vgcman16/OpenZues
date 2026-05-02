@@ -10522,6 +10522,34 @@ class GatewayNodeMethodService:
             )
             return rejected
 
+        if resolved_method == "node.pair.remove":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("nodeId",))
+            if self._pairing_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message="node pairing storage unavailable",
+                    status_code=503,
+                )
+            removed = await self._pairing_service.remove_node(
+                _require_non_empty_string(payload.get("nodeId"), label="nodeId")
+            )
+            if removed is None:
+                raise ValueError("unknown nodeId")
+            removed_node_id = _require_non_empty_string(
+                removed.get("nodeId"),
+                label="nodeId",
+            )
+            await self._publish_gateway_event(
+                "node.pair.resolved",
+                {
+                    "requestId": "",
+                    "nodeId": removed_node_id,
+                    "decision": "removed",
+                    "ts": _timestamp_ms(now_ms),
+                },
+            )
+            return removed
+
         if resolved_method == "node.pair.approve":
             _validate_exact_keys(resolved_method, payload, allowed_keys=("requestId",))
             if self._pairing_service is None:

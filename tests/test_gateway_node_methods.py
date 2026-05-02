@@ -38420,6 +38420,72 @@ async def test_node_pair_resolution_broadcasts_openclaw_resolved_event(
 
 
 @pytest.mark.asyncio
+async def test_node_pair_remove_revokes_paired_node_and_broadcasts_event(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    hub = BroadcastHub()
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+        hub=hub,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-remove",
+            "displayName": "Remove Me",
+            "platform": "macos",
+            "commands": ["system.run"],
+        },
+        now_ms=1_000,
+    )
+    request_id = created["request"]["requestId"]
+    await service.call(
+        "node.pair.approve",
+        {"requestId": request_id},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    async with hub.subscribe() as queue:
+        removed = await service.call(
+            "node.pair.remove",
+            {"nodeId": "pair-node-remove"},
+            now_ms=3_000,
+        )
+        broadcast = await asyncio.wait_for(queue.get(), timeout=1.0)
+
+    assert removed == {"nodeId": "pair-node-remove"}
+    assert await service.call("node.pair.list", {}) == {"pending": [], "paired": []}
+    assert broadcast["type"] == "gateway_event"
+    assert broadcast["event"] == "node.pair.resolved"
+    assert broadcast["payload"] == {
+        "requestId": "",
+        "nodeId": "pair-node-remove",
+        "decision": "removed",
+        "ts": 3_000,
+    }
+    assert isinstance(broadcast["createdAt"], str)
+
+
+@pytest.mark.asyncio
+async def test_node_pair_remove_rejects_unknown_node_id(tmp_path) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        pairing_service=pairing_service,
+    )
+
+    with pytest.raises(ValueError, match="unknown nodeId"):
+        await service.call("node.pair.remove", {"nodeId": "missing-node"})
+
+
+@pytest.mark.asyncio
 async def test_node_pair_approve_verify_and_rename_lifecycle(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
