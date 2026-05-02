@@ -139,8 +139,8 @@ contract: multi-media URLs upload one file at a time, raw payload text is used
 as the first Slack caption, subsequent uploads omit captions, the final media
 id becomes canonical `messageId`, and ordered `mediaIds`/`mediaUrls` metadata is
 preserved. Verified on 2026-05-02 with focused Slack media route tests,
-adjacent Slack native/media route tests, `ruff check`, and `mypy`; checkpoint
-commit pending.
+adjacent Slack native/media route tests, `ruff check`, and `mypy`;
+checkpointed in `e3b5bbc0`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4554,7 +4554,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   media id, and preserve ordered media metadata. Repo-wide parity is now
   estimated at ~53.3%; active gateway/session/tool-contract parity is ~98.8%.
   Verified with focused and adjacent Slack native/media route tests, `ruff
-  check`, and `mypy`; checkpoint commit pending.
+  check`, and `mypy`; checkpointed in `e3b5bbc0`.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.

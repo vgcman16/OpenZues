@@ -29,9 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Slack provider-native multi-media result parity slice is verified and
-awaiting its checkpoint commit. Any follow-up changes should target the next
-queue head only:
+The Slack provider-native multi-media result parity slice is checkpointed in
+`e3b5bbc0`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
 - `tests/test_ops_mesh.py`
@@ -51,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack media result verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack media result checkpointed in `e3b5bbc0` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -225,7 +224,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     `messageId`, and preserve ordered `mediaIds` and `mediaUrls`.
   - Evidence required: focused Slack media route test, adjacent Slack native
     route test, ruff, mypy
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `e3b5bbc0`
   - Weight: 1
   - Last verified: 2026-05-02, focused Slack media route tests (`2 passed`),
     adjacent `python -m pytest tests\test_ops_mesh.py -q -k

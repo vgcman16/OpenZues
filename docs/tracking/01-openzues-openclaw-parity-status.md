@@ -92,7 +92,7 @@ may lag behind this tracker.
 - [x] Slack provider-native media sends with OpenClaw-shaped iterated media
   uploads, first-upload captioning, final-id `messageId`, and ordered media
   metadata projection.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `e3b5bbc0`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -228,7 +228,7 @@ may lag behind this tracker.
   - Source: OpenClaw channel/provider send, poll, replay, direct announce, media,
     reply, thread, and result metadata behavior.
   - Status: mapped; Slack thread timestamp fallback checkpointed in
-    `a461e5eb`; Slack media result verified with checkpoint commit pending
+    `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`
   - Weight: 3
 
 - [x] Slack native route `thread_ts` fallback.
@@ -248,7 +248,7 @@ may lag behind this tracker.
     `openclaw-main/extensions/slack/src/outbound-adapter.ts`
   - Target: `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `e3b5bbc0`.
   - Weight: 1
   - Last verified: 2026-05-02, focused Slack media route tests (`2 passed`),
     adjacent Slack native/media route tests (`7 passed`), `ruff check`, and

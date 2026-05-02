@@ -4450,7 +4450,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   receives the text caption, Slack media captions use the raw payload text
   instead of the generic `Media:` fallback body, and the final media id becomes
   the canonical `messageId` while all media ids remain in `mediaIds`. This
-  slice is verified; checkpoint commit pending.
+  slice is checkpointed in `e3b5bbc0`.
 - Verified the Slack multi-media slice with focused Slack media route tests (`2
   passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
   "slack_native_route or slack_media or direct_channel_message_uses_slack"` (`7
@@ -8216,7 +8216,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   caption text is attached only to the first upload, raw payload text is used as
   the Slack caption, and the final media id is returned as the canonical
   `messageId` with all ids preserved in `mediaIds`.
-  Checkpoint commit pending.
+  Checkpointed in `e3b5bbc0`.
 - Progress estimates are now roughly 53.3% repo-wide and ~98.8% for the active
   gateway/session/tool-contract family after this Slack media result slice.
 - Verified the Slack multi-media slice with focused Slack media route tests (`2
