@@ -16,9 +16,9 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~52.5% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~98.2% | High for bounded local path | Current local session/chat contracts are near complete |
+| Repo-wide OpenClaw parity | ~52.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.1% | High for bounded local path | Does not mean whole product parity |
+| Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
 | CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are plugin import/activation and packaging surfaces |
@@ -49,8 +49,8 @@ may lag behind this tracker.
 
 - [x] Session tool contracts for `sessions_history`, `session_status`,
   `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`,
-  `sessions.patch`, `sessions.delete`, `sessions.preview`, and direct session
-  REST/SSE behavior.
+  `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
+  `sessions.preview`, and direct session REST/SSE behavior.
   - Status: verified in ledger
 
 - [x] `tools.invoke` core bridge for allow/deny policy, owner-only controls,
@@ -77,6 +77,25 @@ may lag behind this tracker.
     tests\test_gateway_node_methods.py::test_chat_send_sandboxed_remote_provider_attachment_stages_allowed_media
     -q` (`1 passed`), adjacent sandbox attachment proof (`6 passed`), `ruff
     check`, and `mypy`.
+
+- [x] Runtime-control `sessions.pluginPatch` registered plugin session
+  extension state.
+  - Source: `openclaw-main/src/gateway/server-methods/sessions.ts`,
+    `openclaw-main/src/plugins/host-hook-state.ts`,
+    `openclaw-main/src/plugins/host-hook-json.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `src/openzues/services/gateway_sessions.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state
+    -q` (`1 passed`), adjacent `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "sessions_plugin_patch or
+    sessions_patch or sessions_resolve"` (`27 passed`), `ruff check`, and
+    `mypy`.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.

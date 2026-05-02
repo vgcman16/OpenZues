@@ -291,6 +291,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "cron.remove",
         "cron.run",
         "sessions.patch",
+        "sessions.pluginPatch",
         "sessions.reset",
         "sessions.delete",
         "sessions.compact",

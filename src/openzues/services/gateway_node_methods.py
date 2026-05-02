@@ -77,6 +77,8 @@ from openzues.services.gateway_plugin_runtime import (
     GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorResolution,
     GatewayPluginRuntimeService,
+    copy_plugin_json_value,
+    is_plugin_json_value,
 )
 from openzues.services.gateway_sandbox_spawn import (
     FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
@@ -1490,9 +1492,23 @@ class GatewayNodeMethodService:
             )
         self._logs_service = logs_service or GatewayLogsService()
         self._models_service = models_service or GatewayModelsService()
+        self._tools_invoke_executors = dict(tools_invoke_executors or {})
+        self._tools_invoke_owner_only = {
+            tool_name.strip()
+            for tool_name in tools_invoke_owner_only
+            if isinstance(tool_name, str) and tool_name.strip()
+        }
+        self._tools_invoke_before_call = tools_invoke_before_call
+        self._plugin_runtime_service = plugin_runtime_service or GatewayPluginRuntimeService(
+            executors=self._tools_invoke_executors,
+            owner_only=self._tools_invoke_owner_only,
+        )
         self._sessions_service = sessions_service
         if self._sessions_service is None and self._database is not None:
-            self._sessions_service = GatewaySessionsService(self._database)
+            self._sessions_service = GatewaySessionsService(
+                self._database,
+                plugin_runtime_service=self._plugin_runtime_service,
+            )
         self._session_compaction_service = session_compaction_service
         if self._session_compaction_service is None and self._database is not None:
             self._session_compaction_service = GatewaySessionCompactionService(self._database)
@@ -1562,17 +1578,6 @@ class GatewayNodeMethodService:
         self._browser_runtime_service = browser_runtime_service or GatewayBrowserRuntimeService()
         self._acp_spawn_service = acp_spawn_service
         self._exec_approvals_path = exec_approvals_path
-        self._tools_invoke_executors = dict(tools_invoke_executors or {})
-        self._tools_invoke_owner_only = {
-            tool_name.strip()
-            for tool_name in tools_invoke_owner_only
-            if isinstance(tool_name, str) and tool_name.strip()
-        }
-        self._tools_invoke_before_call = tools_invoke_before_call
-        self._plugin_runtime_service = plugin_runtime_service or GatewayPluginRuntimeService(
-            executors=self._tools_invoke_executors,
-            owner_only=self._tools_invoke_owner_only,
-        )
         self._message_action_dispatcher = message_action_dispatcher
         if tools_catalog_service is None:
             self._tools_catalog_service = GatewayToolsCatalogService(
@@ -9118,6 +9123,105 @@ class GatewayNodeMethodService:
                 },
             }
 
+        if resolved_method == "sessions.pluginPatch":
+            _validate_exact_keys(
+                resolved_method,
+                payload,
+                allowed_keys=("key", "pluginId", "namespace", "value", "unset"),
+            )
+            if (
+                resolved_requester.caller_scopes is not None
+                and ADMIN_GATEWAY_METHOD_SCOPE not in resolved_requester.caller_scopes
+            ):
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=(
+                        "sessions.pluginPatch requires gateway scope: "
+                        f"{ADMIN_GATEWAY_METHOD_SCOPE}"
+                    ),
+                    status_code=400,
+                )
+            _reject_webchat_session_mutation(
+                action="patch",
+                requester=resolved_requester,
+            )
+            if self._database is None or self._sessions_service is None:
+                raise GatewayNodeMethodError(
+                    code="UNAVAILABLE",
+                    message=(
+                        "sessions.pluginPatch is unavailable until session patch storage is wired"
+                    ),
+                    status_code=503,
+                )
+            session_key = _require_non_empty_string(payload.get("key"), label="key")
+            plugin_id = _require_non_empty_string(payload.get("pluginId"), label="pluginId")
+            namespace = _require_non_empty_string(payload.get("namespace"), label="namespace")
+            unset = _optional_bool(payload.get("unset"), label="unset")
+            has_value = "value" in payload
+            if unset is True and has_value:
+                raise ValueError("sessions.pluginPatch cannot specify both unset and value")
+            if unset is not True and not has_value:
+                raise ValueError(
+                    "plugin session extension value is required unless unset is true"
+                )
+            patch_value = payload.get("value")
+            if has_value and not is_plugin_json_value(patch_value):
+                raise ValueError("sessions.pluginPatch value must be JSON-compatible")
+            if not self._plugin_runtime_service.has_session_extension(plugin_id, namespace):
+                raise ValueError(f"unknown plugin session extension: {plugin_id}/{namespace}")
+            canonical_key = await self._resolve_existing_session_key(
+                session_key,
+                now_ms=now_ms,
+            )
+            existing_entry = await self._sessions_service.build_session_payload_for_key(
+                session_key=canonical_key,
+                now_ms=_timestamp_ms(now_ms),
+            )
+            if existing_entry is None:
+                raise ValueError(f"unknown session key: {session_key}")
+            canonical_key = str(existing_entry.get("key") or canonical_key)
+            existing_plugin_metadata_row = await self._database.get_gateway_session_metadata(
+                canonical_key
+            )
+            existing_plugin_metadata: dict[str, Any] = {}
+            if isinstance(existing_plugin_metadata_row, dict):
+                metadata_value = existing_plugin_metadata_row.get("metadata")
+                if isinstance(metadata_value, dict):
+                    existing_plugin_metadata = dict(metadata_value)
+            next_metadata = dict(existing_plugin_metadata)
+            plugin_extensions = _session_plugin_extensions_metadata(
+                next_metadata.get("pluginExtensions")
+            )
+            plugin_state = dict(plugin_extensions.get(plugin_id) or {})
+            plugin_patch_result: dict[str, Any] = {"ok": True, "key": canonical_key}
+            if unset is True:
+                plugin_state.pop(namespace, None)
+            else:
+                copied_value = copy_plugin_json_value(patch_value)
+                plugin_state[namespace] = copied_value
+                plugin_patch_result["value"] = copied_value
+            if plugin_state:
+                plugin_extensions[plugin_id] = plugin_state
+            else:
+                plugin_extensions.pop(plugin_id, None)
+            if plugin_extensions:
+                next_metadata["pluginExtensions"] = plugin_extensions
+            else:
+                next_metadata.pop("pluginExtensions", None)
+            if next_metadata:
+                await self._database.upsert_gateway_session_metadata(
+                    session_key=canonical_key,
+                    metadata=next_metadata,
+                )
+            else:
+                await self._database.delete_gateway_session_metadata(canonical_key)
+            await self._publish_sessions_changed_event(
+                session_key=canonical_key,
+                reason="plugin-patch",
+                now_ms=now_ms,
+            )
+            return plugin_patch_result
+
         if resolved_method == "chat.abort":
             _validate_exact_keys(
                 resolved_method,
@@ -11272,7 +11376,10 @@ class GatewayNodeMethodService:
                     "twoPhase",
                 ),
             )
-            plugin_id = _optional_non_empty_string(payload.get("pluginId"), label="pluginId")
+            approval_plugin_id = _optional_non_empty_string(
+                payload.get("pluginId"),
+                label="pluginId",
+            )
             title = _require_non_empty_string(payload.get("title"), label="title")
             description = _require_non_empty_string(
                 payload.get("description"),
@@ -11289,8 +11396,14 @@ class GatewayNodeMethodService:
                 label="toolCallId",
             )
             agent_id = _optional_normalized_string(payload.get("agentId"), label="agentId")
-            session_key = _optional_normalized_string(payload.get("sessionKey"), label="sessionKey")
-            session_key = await self._resolve_known_session_key(session_key, now_ms=now_ms)
+            approval_session_key = _optional_normalized_string(
+                payload.get("sessionKey"),
+                label="sessionKey",
+            )
+            approval_session_key = await self._resolve_known_session_key(
+                approval_session_key,
+                now_ms=now_ms,
+            )
             turn_source_channel = _optional_normalized_string(
                 payload.get("turnSourceChannel"),
                 label="turnSourceChannel",
@@ -11324,14 +11437,14 @@ class GatewayNodeMethodService:
             self._prune_plugin_approvals(timestamp_ms)
             approval_id = f"plugin:{secrets.token_hex(16)}"
             approval_request: dict[str, Any] = {
-                "pluginId": plugin_id,
+                "pluginId": approval_plugin_id,
                 "title": title,
                 "description": description,
                 "severity": severity,
                 "toolName": tool_name,
                 "toolCallId": tool_call_id,
                 "agentId": agent_id,
-                "sessionKey": session_key,
+                "sessionKey": approval_session_key,
                 "turnSourceChannel": turn_source_channel,
                 "turnSourceTo": turn_source_to,
                 "turnSourceAccountId": turn_source_account_id,
@@ -13404,6 +13517,25 @@ def _string_or_none(value: object) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _session_plugin_extensions_metadata(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, Mapping):
+        return {}
+    plugin_extensions: dict[str, dict[str, object]] = {}
+    for raw_plugin_id, raw_plugin_state in value.items():
+        plugin_id = _string_or_none(raw_plugin_id)
+        if plugin_id is None or not isinstance(raw_plugin_state, Mapping):
+            continue
+        plugin_state: dict[str, object] = {}
+        for raw_namespace, raw_state in raw_plugin_state.items():
+            namespace = _string_or_none(raw_namespace)
+            if namespace is None or not is_plugin_json_value(raw_state):
+                continue
+            plugin_state[namespace] = copy_plugin_json_value(raw_state)
+        if plugin_state:
+            plugin_extensions[plugin_id] = plugin_state
+    return plugin_extensions
 
 
 def _requester_route_context(

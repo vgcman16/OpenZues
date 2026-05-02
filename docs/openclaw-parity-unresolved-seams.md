@@ -4,14 +4,15 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.6% overall, with a reasonable
   band of ~48-57%.
-- The active gateway/session/tool-contract family is estimated at ~98% of the
+- The active gateway/session/tool-contract family is estimated at ~98.1% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.2% after the latest
+- The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
-  `sessions.patch`, `sessions.delete`, `sessions.spawn`, sandboxed remote
-  media staging, and `tools.invoke` runtime seams.
+  `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`,
+  `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
+  runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
@@ -31,8 +32,9 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~97.2% after the
-  latest sandboxed remote inbound provider media staging slice.
+- The gateway session/tool-contract family is estimated at ~97.3% after the
+  latest `sessions.pluginPatch` registered plugin session extension state
+  slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -78,6 +80,15 @@ default, missing targets return `errorCode="target_agent_required"`, and
 `errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
 now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
 resolved target agent id in session metadata.
+
+Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered plugin
+session extension mutation path: admin-scoped callers can patch only registered
+plugin id/namespace pairs, values are validated with OpenClaw-shaped plugin JSON
+limits, extension state persists under session metadata by plugin id and
+namespace, registered extension values project on session rows, and
+`unset=true` removes empty plugin extension state. Verified on 2026-05-02 with
+the focused `sessions.pluginPatch` pytest, adjacent `sessions_plugin_patch or
+sessions_patch or sessions_resolve` proof, `ruff check`, and `mypy`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,

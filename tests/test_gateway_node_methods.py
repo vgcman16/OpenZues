@@ -62,6 +62,7 @@ from openzues.services.gateway_node_registry import (
 from openzues.services.gateway_plugin_runtime import (
     GatewayPluginRuntimeExecutorSpec,
     GatewayPluginRuntimeService,
+    GatewayPluginSessionExtensionSpec,
 )
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
@@ -32417,6 +32418,105 @@ async def test_sessions_resolve_by_key_respects_spawned_by_filter() -> None:
         await service.call(
             "sessions.resolve",
             {"key": child_key, "spawnedBy": visible_parent_key},
+        )
+
+
+@pytest.mark.asyncio
+async def test_sessions_plugin_patch_persists_registered_extension_state(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "gateway-sessions-plugin-patch.db")
+    await database.initialize()
+    session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+    )
+    plugin_runtime = GatewayPluginRuntimeService(
+        session_extensions=[
+            GatewayPluginSessionExtensionSpec(
+                plugin_id="memory-core",
+                namespace="focus",
+                description="Focus state shown on session rows.",
+            )
+        ]
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    with pytest.raises(GatewayNodeMethodError, match="sessions.pluginPatch requires gateway scope"):
+        await service.call(
+            "sessions.pluginPatch",
+            {
+                "key": session_key,
+                "pluginId": "memory-core",
+                "namespace": "focus",
+                "value": {"state": "active"},
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(WRITE_GATEWAY_METHOD_SCOPE,)),
+        )
+
+    payload = await service.call(
+        "sessions.pluginPatch",
+        {
+            "key": session_key,
+            "pluginId": "memory-core",
+            "namespace": "focus",
+            "value": {"state": "active", "score": 3},
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert payload == {
+        "ok": True,
+        "key": session_key,
+        "value": {"state": "active", "score": 3},
+    }
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is not None
+    assert metadata_row["metadata"]["pluginExtensions"] == {
+        "memory-core": {"focus": {"state": "active", "score": 3}}
+    }
+    snapshot = await service.call("sessions.list", {"includeGlobal": True})
+    session = next(item for item in snapshot["sessions"] if item["key"] == session_key)
+    assert session["pluginExtensions"] == [
+        {
+            "pluginId": "memory-core",
+            "namespace": "focus",
+            "value": {"state": "active", "score": 3},
+        }
+    ]
+
+    unset_payload = await service.call(
+        "sessions.pluginPatch",
+        {
+            "key": session_key,
+            "pluginId": "memory-core",
+            "namespace": "focus",
+            "unset": True,
+        },
+        requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
+    )
+
+    assert unset_payload == {"ok": True, "key": session_key}
+    metadata_row = await database.get_gateway_session_metadata(session_key)
+    assert metadata_row is None
+
+    with pytest.raises(ValueError, match="unknown plugin session extension: memory-core/missing"):
+        await service.call(
+            "sessions.pluginPatch",
+            {
+                "key": session_key,
+                "pluginId": "memory-core",
+                "namespace": "missing",
+                "value": {"state": "active"},
+            },
+            requester=GatewayNodeMethodRequester(caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,)),
         )
 
 

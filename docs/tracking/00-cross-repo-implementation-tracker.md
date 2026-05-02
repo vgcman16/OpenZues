@@ -20,19 +20,22 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~52.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~98.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~52.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
 ## Current Worktree Boundary
 
-The remote-media parity slice is now part of the active checkpoint and may be
-staged with its source, test, and ledger updates:
+The `sessions.pluginPatch` runtime-control parity slice is now part of the
+active checkpoint and may be staged with its source, test, and ledger updates:
 
 - `src/openzues/services/gateway_node_methods.py`
+- `src/openzues/services/gateway_plugin_runtime.py`
+- `src/openzues/services/gateway_sessions.py`
+- `src/openzues/services/gateway_method_policy.py`
 - `tests/test_gateway_node_methods.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
@@ -46,11 +49,36 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Open | TBD | Map next source-backed `chat.*` or `sessions.*` runtime mismatch |
+| OZ-RT-001 | Runtime-control hard gaps | Verified slice; checkpoint pending | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; map next source-backed `chat.*` or `sessions.*` runtime mismatch |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Open | Broad | Compare OpenClaw plugin activation/import lifecycle and implement next seam |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Open | Medium | Continue provider-specific send/poll/replay metadata gaps |
+
+## Active Slice Detail
+
+- [x] `OZ-RT-001A` `sessions.pluginPatch` registered plugin session extension state
+  - Source: `openclaw-main/src/gateway/server-methods/sessions.ts`,
+    `openclaw-main/src/plugins/host-hook-state.ts`,
+    `openclaw-main/src/plugins/host-hook-json.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `src/openzues/services/gateway_sessions.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Contract: `sessions.pluginPatch` is admin-only, rejects unregistered
+    plugin/namespace pairs, persists JSON-compatible plugin extension state
+    by plugin id and namespace, projects registered extension values on
+    session rows, and removes state on explicit `unset=true`.
+  - Evidence required: focused test, adjacent session-control test, ruff, mypy
+  - Status: verified
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state
+    -q` (`1 passed`), adjacent `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "sessions_plugin_patch or
+    sessions_patch or sessions_resolve"` (`27 passed`), `ruff check`, and
+    `mypy`.
 
 ## Canonical Checklist Format
 
