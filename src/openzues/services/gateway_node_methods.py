@@ -8336,7 +8336,7 @@ class GatewayNodeMethodService:
             if attach_as is not None and not isinstance(attach_as, dict):
                 raise ValueError("attachAs must be an object")
             mount_path_hint = (
-                _optional_non_empty_string(attach_as.get("mountPath"), label="mountPath")
+                _sanitize_sessions_spawn_mount_path_hint(attach_as.get("mountPath"))
                 if isinstance(attach_as, dict)
                 else None
             )
@@ -15130,6 +15130,24 @@ def _materialize_sessions_spawn_attachments(
     if mount_path_hint is not None:
         prompt_suffix += f"\nRequested mountPath hint: {mount_path_hint}."
     return receipt, prompt_suffix
+
+
+def _sanitize_sessions_spawn_mount_path_hint(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if any(
+        character in {"\r", "\n"}
+        or ord(character) < 32
+        or ord(character) in {127, 133, 0x2028, 0x2029}
+        for character in trimmed
+    ):
+        return None
+    if re.fullmatch(r"[A-Za-z0-9._\-/:]+", trimmed) is None:
+        return None
+    return trimmed
 
 
 def _is_safe_sessions_spawn_attachment_name(name: str) -> bool:

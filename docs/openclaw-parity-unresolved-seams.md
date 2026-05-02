@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.4% overall, with a reasonable
   band of ~48-57%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -31,6 +31,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
+- The gateway session/tool-contract family is estimated at ~97.1% after the
+  latest `sessions.spawn` attachment mount-path sanitizer slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -4403,6 +4405,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/doctor parity remains ~99.9%, and the CLI/operator table row is ~98.7%.
   Verified with focused and adjacent ACP client/permission/bridge CLI proofs,
   `ruff check`, and `mypy`.
+- Closed the `sessions.spawn` attachment mount-path sanitizer seam from
+  OpenClaw `src/agents/subagent-spawn.ts` and
+  `src/agents/subagent-attachments.ts`: native attachment materialization now
+  drops unsafe `attachAs.mountPath` prompt hints containing control characters,
+  newlines, or characters outside OpenClaw's safe mount-path pattern before
+  appending the hint to the child system prompt. Repo-wide parity is now
+  estimated at ~52.4%; gateway session/tool-contract parity is ~97.1%.
+  Verified with focused and adjacent sessions.spawn attachment proofs, `ruff
+  check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open while the next source-backed seam is selected. Source anchors remain
   OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer

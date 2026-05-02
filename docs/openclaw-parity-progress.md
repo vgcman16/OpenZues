@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~52.3% overall, with a reasonable band of ~48-57%.
+- Estimated repo-wide parity: ~52.4% overall, with a reasonable band of ~48-57%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.1% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -1737,7 +1737,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | Family | Status | Estimate | Current Read |
 | --- | --- | --- | --- |
 | Gateway + gateway methods | Near-complete bounded local path | ~99% | Gateway method registry, config lookups/mutation, model/session inventory, node invoke guards, native browser command productization, plugin/exec approval lifecycles, exec approval policy config, device-pair lifecycle, device token rotate/revoke, agent registry mutation, memory-doctor mutation, OpenClaw bootstrap/memory agent files, and strict chat/session validation are heavily covered. |
-| Gateway session/tool contracts | Active | ~97% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
+| Gateway session/tool contracts | Active | ~97.1% | `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_spawn`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.delete`, `tools.invoke`, plugin-published `tools.catalog` / `tools.effective` groups, optional plugin executor allowlist aliases, visibility policy, ACP spawn dispatch/tracking plus `mode="session"` thread-required guard and delete/reset runtime cleanup, app-wired sandbox-required Codex app-server dispatch, route-backed thread adapters with bound initial child-run and terminal completion delivery, configured and omitted subagent timeout defaults, completion-expectation metadata, lightweight bootstrap context, child task envelopes, lifecycle policy metadata, terminal cleanup consumption, wait-consumed completion announcements, completion-announcement idempotency, tracked-run freshness guards, `agent.wait` zero-timeout polling, exact run-id wait precedence, recovered-run tracking cleanup, exact-run tracker isolation, sanitized attachment mount-path hints, and chat/session transcript contracts are now the live queue head; config-driven sandbox target selection and broader native executor/provider hooks remain. |
 | Chat + transcript contracts | Strong partial | ~97% | `chat.history`, direct session history REST/SSE, `chat.send`, `chat.inject`, `chat.abort` run ownership and partial persistence, live `session.message`, `sessions.changed`, transcript metadata, usage/cost, text caps, and sanitizer parity are verified against OpenClaw-shaped behavior where they map to SQLite-backed storage. |
 | Cron wake/delivery | Strong partial | ~99% | Direct send/poll, provider route callbacks, native route setup, replay/test dispatch, direct-announce provider metadata, provider error/result metadata, OpenClaw-style cron-expression schedules, due-run behavior, session-key wake routing, retry/backoff, one-shot delete-after-run cleanup, the CLI simple command group, and add/edit schedule/payload breadth are verified. |
 | Onboarding + setup | Partial | ~70% | QuickStart, gateway bootstrap, saved-lane handling, degraded bootstrap boundaries, remote saved-lane wizard progression, and broken-default repair posture are real, with broader OpenClaw setup breadth still open. |
@@ -7973,6 +7973,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\services\acp_client_runtime.py
   src\openzues\cli.py tests\test_acp_client_runtime.py tests\test_cli.py`, and
   `mypy src\openzues\services\acp_client_runtime.py src\openzues\cli.py`.
+- Native `sessions.spawn` attachment handling now mirrors OpenClaw's
+  `sanitizeMountPathHint` prompt-safety guard: unsafe `attachAs.mountPath`
+  values containing control characters, newlines, or disallowed characters are
+  dropped before the spawned child system prompt is built, while safe hints
+  still appear in the attachment receipt prompt suffix.
+- Progress estimates are now roughly 52.4% repo-wide and ~97.1% for the
+  gateway session/tool-contract table row after this attachment mount-path
+  sanitizer slice.
+- Verified the attachment mount-path sanitizer slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_sessions_spawn_sanitizes_invalid_attachment_mount_path_hint
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "sessions_spawn and attachment"`
+  (`8 passed`), `ruff check src\openzues\services\gateway_node_methods.py
+  tests\test_gateway_node_methods.py`, and `mypy
+  src\openzues\services\gateway_node_methods.py`.
 
 ## References
 
