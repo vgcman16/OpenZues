@@ -253,7 +253,14 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "line",
     "matrix",
 }
-NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {"bluebubbles", "line", "matrix", "whatsapp", "zalo"}
+NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
+    "bluebubbles",
+    "line",
+    "matrix",
+    "slack",
+    "whatsapp",
+    "zalo",
+}
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
@@ -18109,7 +18116,7 @@ class OpsMeshService:
         thread_id: str | None,
         secret_token: str,
     ) -> list[str]:
-        files: list[dict[str, str]] = []
+        file_ids: list[str] = []
         for index, media_url in enumerate(media_urls, start=1):
             filename = _slack_media_filename(media_url, index)
             file_bytes = self._download_slack_media_url(media_url)
@@ -18129,21 +18136,24 @@ class OpsMeshService:
                 upload_url=upload_url,
                 file_bytes=file_bytes,
             )
-            files.append({"id": file_id, "title": filename})
-        complete_payload: dict[str, Any] = {
-            "files": json.dumps(files),
-            "channel_id": channel_id,
-        }
-        if initial_comment:
-            complete_payload["initial_comment"] = initial_comment
-        if thread_id:
-            complete_payload["thread_ts"] = thread_id
-        self._post_slack_form(
-            _slack_api_endpoint(str(route.get("target") or ""), "files.completeUploadExternal"),
-            complete_payload,
-            secret_token=secret_token,
-        )
-        return [file["id"] for file in files]
+            complete_payload: dict[str, Any] = {
+                "files": json.dumps([{"id": file_id, "title": filename}]),
+                "channel_id": channel_id,
+            }
+            if index == 1 and initial_comment:
+                complete_payload["initial_comment"] = initial_comment
+            if thread_id:
+                complete_payload["thread_ts"] = thread_id
+            self._post_slack_form(
+                _slack_api_endpoint(
+                    str(route.get("target") or ""),
+                    "files.completeUploadExternal",
+                ),
+                complete_payload,
+                secret_token=secret_token,
+            )
+            file_ids.append(file_id)
+        return file_ids
 
     def _post_slack_provider_event(
         self,
@@ -18174,8 +18184,6 @@ class OpsMeshService:
             )
         else:
             text = str(event.get("message") or "").strip()
-        if not text:
-            raise RuntimeError("Slack route is missing message text.")
         raw_media_urls = event.get("mediaUrls")
         media_urls = _normalize_direct_channel_media_urls(
             media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
@@ -18185,6 +18193,8 @@ class OpsMeshService:
                 else None
             ),
         )
+        if not text and not media_urls:
+            raise RuntimeError("Slack route is missing message text.")
         thread_id = _resolve_slack_thread_ts(
             reply_to_id=event.get("replyToId"),
             thread_id=event.get("threadId"),
@@ -18200,7 +18210,7 @@ class OpsMeshService:
             )
             return {
                 "runtime": "native-provider-backed",
-                "messageId": media_ids[0],
+                "messageId": media_ids[-1],
                 "chatId": channel_id,
                 "channelId": channel_id,
                 "mediaIds": media_ids,

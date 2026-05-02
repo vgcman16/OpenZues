@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.2% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.7% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~53.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.8% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -88,6 +88,11 @@ may lag behind this tracker.
   validation and fallback from internal `replyToId` values to valid Slack
   `threadId` timestamps.
   - Status: checkpointed in `a461e5eb`
+
+- [x] Slack provider-native media sends with OpenClaw-shaped iterated media
+  uploads, first-upload captioning, final-id `messageId`, and ordered media
+  metadata projection.
+  - Status: verified; checkpoint commit pending
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -223,7 +228,7 @@ may lag behind this tracker.
   - Source: OpenClaw channel/provider send, poll, replay, direct announce, media,
     reply, thread, and result metadata behavior.
   - Status: mapped; Slack thread timestamp fallback checkpointed in
-    `a461e5eb`
+    `a461e5eb`; Slack media result verified with checkpoint commit pending
   - Weight: 3
 
 - [x] Slack native route `thread_ts` fallback.
@@ -236,6 +241,18 @@ may lag behind this tracker.
   - Weight: 1
   - Last verified: 2026-05-02, focused Slack native route tests (`2 passed`),
     adjacent Slack native route tests (`5 passed`), `ruff check`, and `mypy`.
+
+- [x] Slack native multi-media result metadata.
+  - Source: `openclaw-main/test/helpers/channels/outbound-payload-contract.ts`,
+    `openclaw-main/src/channels/plugins/outbound/direct-text-media.ts`,
+    `openclaw-main/extensions/slack/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint commit pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused Slack media route tests (`2 passed`),
+    adjacent Slack native/media route tests (`7 passed`), `ruff check`, and
+    `mypy`.
 
 - [ ] Packaging, companion apps, setup/onboarding, memory/media generation, and
   file-store-only transcript edge cases.

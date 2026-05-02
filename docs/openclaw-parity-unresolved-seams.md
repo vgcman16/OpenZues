@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.3% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~98.7% of the
+- The active gateway/session/tool-contract family is estimated at ~98.8% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,8 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~98.7% after the
-  latest Slack provider-native thread timestamp route slice.
+- The gateway session/tool-contract family is estimated at ~98.8% after the
+  latest Slack provider-native multi-media result route slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -134,6 +134,13 @@ resolution: only Slack timestamp-shaped `replyToId` values become
 to Slack. Verified on 2026-05-02 with focused Slack native route tests,
 adjacent Slack native route tests, `ruff check`, and `mypy`;
 checkpointed in `a461e5eb`.
+Slack provider-native media sends now mirror OpenClaw's outbound payload media
+contract: multi-media URLs upload one file at a time, raw payload text is used
+as the first Slack caption, subsequent uploads omit captions, the final media
+id becomes canonical `messageId`, and ordered `mediaIds`/`mediaUrls` metadata is
+preserved. Verified on 2026-05-02 with focused Slack media route tests,
+adjacent Slack native/media route tests, `ruff check`, and `mypy`; checkpoint
+commit pending.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4539,6 +4546,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~53.2%; active gateway/session/tool-contract parity is ~98.7%.
   Verified with focused and adjacent Slack native route tests, `ruff check`,
   and `mypy`; checkpointed in `a461e5eb`.
+- Closed the Slack provider-native multi-media result seam from OpenClaw
+  `test/helpers/channels/outbound-payload-contract.ts`,
+  `src/channels/plugins/outbound/direct-text-media.ts`, and
+  `extensions/slack/src/outbound-adapter.ts`: route-backed Slack direct sends
+  now iterate media uploads, caption only the first upload, return the final
+  media id, and preserve ordered media metadata. Repo-wide parity is now
+  estimated at ~53.3%; active gateway/session/tool-contract parity is ~98.8%.
+  Verified with focused and adjacent Slack native/media route tests, `ruff
+  check`, and `mypy`; checkpoint commit pending.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.

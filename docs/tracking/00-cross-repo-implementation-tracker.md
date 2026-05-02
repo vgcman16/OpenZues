@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.7% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.8% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,8 +29,9 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Slack provider-native thread timestamp parity slice is checkpointed in
-`a461e5eb`. Any follow-up changes should target the next queue head only:
+The Slack provider-native multi-media result parity slice is verified and
+awaiting its checkpoint commit. Any follow-up changes should target the next
+queue head only:
 
 - `src/openzues/services/ops_mesh.py`
 - `tests/test_ops_mesh.py`
@@ -50,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack thread timestamp fallback checkpointed in `a461e5eb` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack media result verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -212,6 +213,24 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     adjacent `python -m pytest tests\test_ops_mesh.py -q -k
     "slack_native_route or direct_channel_message_uses_slack or
     slack_reply_to_thread"` (`5 passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001B` Slack native multi-media result metadata
+  - Source: `openclaw-main/test/helpers/channels/outbound-payload-contract.ts`,
+    `openclaw-main/src/channels/plugins/outbound/direct-text-media.ts`, and
+    `openclaw-main/extensions/slack/src/outbound-adapter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: Slack native route-backed media sends iterate `mediaUrls`, attach
+    raw payload text only to the first upload, return the final media id as
+    `messageId`, and preserve ordered `mediaIds` and `mediaUrls`.
+  - Evidence required: focused Slack media route test, adjacent Slack native
+    route test, ruff, mypy
+  - Status: verified; checkpoint commit pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused Slack media route tests (`2 passed`),
+    adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "slack_native_route or slack_media or direct_channel_message_uses_slack"`
+    (`7 passed`), `ruff check`, and `mypy`.
 
 ## Canonical Checklist Format
 

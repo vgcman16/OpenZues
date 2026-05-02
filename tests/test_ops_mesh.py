@@ -14299,9 +14299,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
             {
                 "files": '[{"id": "F111", "title": "slack.png"}]',
                 "channel_id": "C123",
-                "initial_comment": (
-                    "Ship native Slack parity.\n\nMedia:\n1. https://example.com/slack.png"
-                ),
+                "initial_comment": "Ship native Slack parity.",
             },
             "xoxb-route-token",
         ),
@@ -14317,6 +14315,145 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_native_ro
         "mediaIds": ["F111"],
         "mediaUrls": ["https://example.com/slack.png"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_iterates_slack_media_like_openclaw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-slack-multi-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Native Multi Media Provider",
+        kind="slack",
+        target="https://slack.com/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-route-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_forms: list[tuple[str, dict[str, object], str]] = []
+    uploaded_files: list[tuple[str, bytes]] = []
+    upload_ids = iter(("F111", "F222"))
+
+    def fake_post_slack_form(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_token: str,
+    ) -> dict[str, object]:
+        del self
+        slack_forms.append((target, payload, secret_token))
+        if target.endswith("/files.getUploadURLExternal"):
+            file_id = next(upload_ids)
+            return {
+                "ok": True,
+                "upload_url": f"https://upload.slack.test/{file_id}",
+                "file_id": file_id,
+            }
+        return {"ok": True}
+
+    def fake_download_slack_media_url(self: OpsMeshService, media_url: str) -> bytes:
+        del self
+        return {
+            "https://example.com/slack-1.png": b"fake-one",
+            "https://example.com/slack-2.png": b"fake-two",
+        }[media_url]
+
+    def fake_upload_slack_file_bytes(
+        self: OpsMeshService,
+        *,
+        upload_url: str,
+        file_bytes: bytes,
+    ) -> None:
+        del self
+        uploaded_files.append((upload_url, file_bytes))
+
+    monkeypatch.setattr(OpsMeshService, "_post_slack_form", fake_post_slack_form)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_download_slack_media_url",
+        fake_download_slack_media_url,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_upload_slack_file_bytes",
+        fake_upload_slack_file_bytes,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Ship multi media Slack parity.",
+        media_urls=[
+            "https://example.com/slack-1.png",
+            "https://example.com/slack-2.png",
+        ],
+        account_id="workspace-bot",
+        idempotency_key="idem-native-slack-multi-media",
+    )
+
+    assert result["messageId"] == "F222"
+    assert result["mediaIds"] == ["F111", "F222"]
+    assert slack_forms == [
+        (
+            "https://slack.com/api/files.getUploadURLExternal",
+            {
+                "filename": "slack-1.png",
+                "length": "8",
+            },
+            "xoxb-route-token",
+        ),
+        (
+            "https://slack.com/api/files.completeUploadExternal",
+            {
+                "files": '[{"id": "F111", "title": "slack-1.png"}]',
+                "channel_id": "C123",
+                "initial_comment": "Ship multi media Slack parity.",
+            },
+            "xoxb-route-token",
+        ),
+        (
+            "https://slack.com/api/files.getUploadURLExternal",
+            {
+                "filename": "slack-2.png",
+                "length": "8",
+            },
+            "xoxb-route-token",
+        ),
+        (
+            "https://slack.com/api/files.completeUploadExternal",
+            {
+                "files": '[{"id": "F222", "title": "slack-2.png"}]',
+                "channel_id": "C123",
+            },
+            "xoxb-route-token",
+        ),
+    ]
+    assert uploaded_files == [
+        ("https://upload.slack.test/F111", b"fake-one"),
+        ("https://upload.slack.test/F222", b"fake-two"),
+    ]
 
 
 @pytest.mark.asyncio
