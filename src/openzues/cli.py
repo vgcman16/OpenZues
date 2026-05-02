@@ -12232,6 +12232,9 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     failure_phase = _plugin_failure_phase(plugin.get("failurePhase"))
     if failure_phase is not None:
         typer.echo(f"Failure phase: {failure_phase}")
+    failed_at = _plugin_failed_at(plugin.get("failedAt"))
+    if failed_at is not None:
+        typer.echo(f"Failed at: {failed_at}")
     format_name = str(plugin.get("format") or "").strip()
     if format_name:
         typer.echo(f"format: {format_name}")
@@ -16705,6 +16708,12 @@ def _plugin_failure_phase(value: object) -> str | None:
     return phase if phase in {"validation", "load", "register"} else None
 
 
+def _plugin_failed_at(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return _optional_cli_string(value)
+
+
 def _format_plugin_compatibility_notice(notice: dict[str, object]) -> str:
     plugin_id = str(notice.get("pluginId") or "").strip()
     message = str(notice.get("message") or "").strip()
@@ -16766,6 +16775,9 @@ def _plugin_record_from_deck_item(
     failure_phase = _plugin_failure_phase(item.get("failurePhase"))
     if failure_phase is not None:
         record["failurePhase"] = failure_phase
+    failed_at = _plugin_failed_at(item.get("failedAt"))
+    if failed_at is not None:
+        record["failedAt"] = failed_at
     item_root_dir = _optional_cli_string(item.get("rootDir"))
     for metadata_key, metadata_value in _plugin_manifest_root_metadata(
         item,
