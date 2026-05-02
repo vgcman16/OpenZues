@@ -8605,9 +8605,11 @@ def _build_doctor_workspace_status_payload(
     config_service: object | None,
     *,
     task_flows: Sequence[Mapping[str, object]] | None = None,
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
 ) -> dict[str, object]:
     snapshot = _doctor_config_snapshot(config_service)
     records = _plugin_records_from_config_snapshot(snapshot)
+    _mark_plugin_import_state(records, runtime_specs)
     plugin_summary = _doctor_workspace_plugin_summary(records)
     errors = _doctor_int_record_value(plugin_summary, "errors")
     task_flow_recovery = _doctor_task_flow_recovery_payload(task_flows or ())
@@ -8644,11 +8646,13 @@ def _with_doctor_workspace_status_payload(
     config_service: object | None,
     *,
     task_flows: Sequence[Mapping[str, object]] | None = None,
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
 ) -> dict[str, object]:
     next_payload = dict(payload)
     workspace_status = _build_doctor_workspace_status_payload(
         config_service,
         task_flows=task_flows,
+        runtime_specs=runtime_specs,
     )
     next_payload["workspaceStatus"] = workspace_status
     return _with_doctor_added_warnings(
@@ -26824,6 +26828,7 @@ def doctor(
             payload,
             services.gateway_config,
             task_flows=task_flows,
+            runtime_specs=_plugin_runtime_specs_from_services(services),
         )
         data_dir = getattr(services.settings, "data_dir", None)
         payload = _with_doctor_provider_override_warnings(

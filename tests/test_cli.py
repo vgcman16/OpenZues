@@ -19088,6 +19088,7 @@ def _invoke_doctor_json_with_config_snapshot(
     mission_service: object | None = None,
     ops_mesh: object | None = None,
     channel_doctor_adapters: object | None = None,
+    plugin_runtime_service: object | None = None,
 ):
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:
@@ -19131,6 +19132,7 @@ def _invoke_doctor_json_with_config_snapshot(
                 mission_service=mission_service,
                 ops_mesh=ops_mesh,
                 channel_doctor_adapters=channel_doctor_adapters,
+                plugin_runtime_service=plugin_runtime_service,
             )
         )
 
@@ -20183,6 +20185,59 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
             }
         ],
     }
+
+
+def test_doctor_json_workspace_status_counts_runtime_imported_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "plugins" / "native-runtime"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="native-runtime",
+        contracts={"tools": ["native_runtime.search"]},
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            )
+        ]
+    )
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "plugins": {
+                "entries": {"native-runtime": {"enabled": True}},
+                "load": {"paths": [str(plugin_dir)]},
+            }
+        },
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    assert result.exit_code == 0, result.stdout
+    workspace_status = json.loads(result.stdout)["workspaceStatus"]
+    assert workspace_status["plugins"]["imported"] == 1
+    assert workspace_status["plugins"]["records"] == [
+        {
+            "id": "native-runtime",
+            "status": "loaded",
+            "format": "openclaw",
+            "imported": True,
+        }
+    ]
 
 
 def test_doctor_json_adds_task_flow_recovery_hints_for_broken_blocked_flows(
