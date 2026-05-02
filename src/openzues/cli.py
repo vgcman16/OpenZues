@@ -18651,6 +18651,30 @@ def _plugin_manifest_has_enabled_channel(
     return False
 
 
+def _plugin_manifest_configured_channel_auto_reason(
+    manifest: dict[str, object],
+    config_snapshot: dict[str, object] | None,
+) -> str | None:
+    if config_snapshot is None:
+        return None
+    raw_channels_config = config_snapshot.get("channels")
+    channels_config = raw_channels_config if isinstance(raw_channels_config, dict) else {}
+    if not channels_config:
+        return None
+    for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
+        normalized_channel = _normalize_openclaw_channel_plugin_id(channel_id)
+        if normalized_channel is None:
+            continue
+        channel_config = channels_config.get(normalized_channel)
+        if not isinstance(channel_config, dict):
+            continue
+        if channel_config.get("enabled") is False:
+            continue
+        if any(str(key) != "enabled" for key in channel_config):
+            return f"{normalized_channel} configured"
+    return None
+
+
 def _plugin_runtime_dependency_entries_from_package_json(
     package_json: dict[str, object],
 ) -> list[dict[str, object]]:
@@ -19330,6 +19354,11 @@ def _plugin_manifest_status(
     if origin == "bundled":
         if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
             return "loaded"
+        if _plugin_manifest_configured_channel_auto_reason(
+            manifest,
+            config_snapshot,
+        ) is not None:
+            return "loaded"
         if allow_values and plugin_id not in allow_values:
             return "disabled"
         return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
@@ -19405,6 +19434,7 @@ def _plugin_activation_state_payload(
     origin: str = "config",
     enabled_by_default: bool | None = None,
     channel_enabled_by_config: bool = False,
+    auto_enabled_reason: str | None = None,
 ) -> dict[str, object]:
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     allow_values = _plugin_config_string_set(plugins_config, "allow")
@@ -19433,7 +19463,7 @@ def _plugin_activation_state_payload(
     elif activated and slot_reason is not None:
         reason = slot_reason
     elif allow_values and plugin_id not in allow_values and not (
-        origin == "bundled" and channel_enabled_by_config
+        origin == "bundled" and (channel_enabled_by_config or auto_enabled_reason is not None)
     ):
         activated = False
         source = "disabled"
@@ -19442,6 +19472,9 @@ def _plugin_activation_state_payload(
         reason = "enabled in config"
     elif activated and origin == "bundled" and channel_enabled_by_config:
         reason = "channel enabled in config"
+    elif activated and auto_enabled_reason is not None:
+        source = "auto"
+        reason = auto_enabled_reason
     elif activated and origin != "bundled" and plugin_id in allow_values:
         reason = "selected in allowlist"
     elif origin == "bundled" and activated and enabled_by_default is True:
@@ -19508,6 +19541,10 @@ def _plugin_record_from_openclaw_manifest(
         manifest,
         config_snapshot,
     )
+    auto_enabled_reason = _plugin_manifest_configured_channel_auto_reason(
+        manifest,
+        config_snapshot,
+    )
     status = _plugin_manifest_status(
         manifest,
         plugin_id=plugin_id,
@@ -19541,6 +19578,7 @@ def _plugin_record_from_openclaw_manifest(
             origin=origin,
             enabled_by_default=manifest.get("enabledByDefault") is True,
             channel_enabled_by_config=channel_enabled_by_config,
+            auto_enabled_reason=auto_enabled_reason,
         )
     )
     version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(

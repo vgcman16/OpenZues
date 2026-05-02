@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~58.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~58.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.2% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -123,6 +123,11 @@ may lag behind this tracker.
   `channel enabled in config` activation reason and allowlist bypass for
   configured bundled channel plugins.
   - Status: checkpointed in `e92cfcae`
+
+- [x] Bundled channel auto-enable activation, preserving OpenClaw's
+  `<channel> configured` auto activation reason for meaningful bundled channel
+  config without `enabled=true`.
+  - Status: verified pending checkpoint
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON

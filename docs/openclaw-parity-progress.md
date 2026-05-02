@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~58.5% overall, with a reasonable band of ~50-59%.
+- Estimated repo-wide parity: ~58.6% overall, with a reasonable band of ~50-59%.
 - Estimated active gateway/session/tool-contract family parity: ~99.2% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9408,6 +9408,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or plugins_doctor_json_projects_configured_channel_plugin_activation or
   configured_channel_plugin_activation or
   plugins_list_json_discovers_openclaw_manifest_load_paths"` (`4 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Bundled channel auto-enable activation is now landed: bundled channel plugin
+  records with meaningful `channels.<id>` config are treated as auto-enabled
+  even without `enabled=true`, remain non-explicit, bypass allowlist misses, and
+  report `<channel> configured` as the activation reason. Checkpoint pending.
+- Progress estimates are now roughly 58.6% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the bundled channel auto-enable slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_marks_configured_bundled_channel_as_auto_enabled
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "configured_bundled_channel_as_auto_enabled or
+  configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+  or plugins_doctor_json_projects_configured_channel_plugin_activation or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`5 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 

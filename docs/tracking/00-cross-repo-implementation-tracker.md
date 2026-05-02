@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~58.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~58.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The bundled channel explicit activation slice is checkpointed in `e92cfcae`.
-Any follow-up changes should target the next queue head only:
+The bundled channel auto-enable activation slice is verified and pending
+checkpoint. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `tests/test_cli.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled channel explicit activation checkpointed in `e92cfcae` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation or standalone text-transform depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled channel auto-enable activation verified pending checkpoint | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation or standalone text-transform depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1360,6 +1360,31 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_doctor_json_projects_configured_channel_plugin_activation or
     configured_channel_plugin_activation or
     plugins_list_json_discovers_openclaw_manifest_load_paths"` (`4 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AX` bundled channel auto-enable activation
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/config/plugin-auto-enable.shared.ts`, and
+    `openclaw-main/src/config/channel-configured-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled channel plugin records with meaningful
+    `channels.<id>` configuration are treated as auto-enabled even without
+    `enabled=true`, remain non-explicit, bypass allowlist misses like
+    OpenClaw's materialized auto-enable config, and report
+    `<channel> configured` as the activation reason.
+  - Evidence required: focused bundled configured-channel auto-enable test,
+    adjacent bundled channel activation/default tests, ruff, mypy
+  - Status: verified pending checkpoint
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_marks_configured_bundled_channel_as_auto_enabled
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "configured_bundled_channel_as_auto_enabled or
+    configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+    or plugins_doctor_json_projects_configured_channel_plugin_activation or
+    plugins_list_json_discovers_openclaw_manifest_load_paths"` (`5 passed`),
     `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
 
