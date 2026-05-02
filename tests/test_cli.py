@@ -9132,6 +9132,10 @@ def test_plugins_install_json_uses_clawhub_installer_for_explicit_spec(
     assert isinstance(install["installedAt"], str)
 
 
+def test_cli_services_declares_clawhub_plugin_installer() -> None:
+    assert "plugin_clawhub_installer" in cli_module.CliServices.__dataclass_fields__
+
+
 def test_plugins_install_clawhub_reports_unavailable_runtime(
     tmp_path,
     monkeypatch,

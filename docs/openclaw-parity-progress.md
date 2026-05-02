@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~49.6% overall, with a reasonable band of ~45-54%.
+- Estimated repo-wide parity: ~49.7% overall, with a reasonable band of ~45-54%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98.9% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~98.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback; remaining CLI gaps are now dominated by deeper runtime activation/import depth and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.0% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper plugin activation/import behavior, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.0% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback; remaining CLI gaps are now dominated by deeper runtime activation/import depth and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7403,11 +7403,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   adapters use `npm pack --json`, safe tar extraction, durable data-dir install
   targets, plugin manifest validation, hook-pack package metadata projection,
   and npm resolution fields while avoiding package install scripts.
-- Progress estimates are now roughly 49.6% repo-wide and ~98.9% for the
-  CLI/operator control plane after this production installer wiring slice.
-  Remaining plugin/runtime parity is deeper activation/import behavior,
-  ClawHub production breadth, packaging/distribution, and broader runtime
-  command ergonomics.
+- At the npm/hook installer checkpoint, progress estimates were roughly 49.6%
+  repo-wide and ~98.9% for the CLI/operator control plane. The follow-on
+  plugin/runtime queue was deeper activation/import behavior, ClawHub
+  production breadth, packaging/distribution, and broader runtime command
+  ergonomics.
 - Verified the production npm installer adapter slice with `python -m pytest
   tests\test_plugin_npm_installers.py
   tests\test_cli.py::test_plugins_install_json_falls_back_to_npm_hook_pack -q`
@@ -7426,6 +7426,36 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\cli.py tests\test_plugin_npm_installers.py tests\test_cli.py`,
   and `mypy src\openzues\services\plugin_npm_installers.py
   src\openzues\cli.py`.
+- The CLI service graph now production-wires a native ClawHub plugin installer
+  instead of relying only on the fakeable ClawHub test seam. The adapter uses
+  the ClawHub package/version/download API, validates raw-hex and SRI
+  `sha256hash` metadata against the observed archive digest, preserves strict
+  `files[]` fallback verification, installs the downloaded archive into a
+  durable `plugins/clawhub/<id>` data-dir root, and returns OpenClaw-shaped
+  ClawHub package/channel/integrity/resolved-at metadata for the existing CLI
+  persistence path.
+- Progress estimates are now roughly 49.7% repo-wide, ~99.0% for the
+  runtime/CLI/doctor native bridge, and ~99.0% for the CLI/operator control
+  plane after this ClawHub production adapter slice. Remaining plugin/runtime
+  parity is deeper activation/import behavior, packaging/distribution, and
+  broader runtime command ergonomics.
+- Verified the production ClawHub installer slice with `python -m pytest
+  tests\test_plugin_clawhub_installers.py
+  tests\test_cli.py::test_cli_services_declares_clawhub_plugin_installer -q`
+  (`3 passed`), adjacent ClawHub/plugin CLI proof `python -m pytest
+  tests\test_plugin_clawhub_installers.py tests\test_cli.py -q -k
+  "clawhub or plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_install_json_falls_back_to_npm_hook_pack"` (`10 passed`), adjacent
+  installer proof `python -m pytest tests\test_plugin_clawhub_installers.py
+  tests\test_plugin_npm_installers.py -q` (`4 passed`), `ruff check
+  src\openzues\services\plugin_clawhub_installers.py
+  src\openzues\services\plugin_npm_installers.py src\openzues\cli.py
+  tests\test_plugin_clawhub_installers.py tests\test_plugin_npm_installers.py
+  tests\test_cli.py`, and `mypy
+  src\openzues\services\plugin_clawhub_installers.py src\openzues\cli.py`.
 
 ## References
 

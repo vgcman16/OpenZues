@@ -93,6 +93,7 @@ from openzues.services.missions import MissionService
 from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService
 from openzues.services.playbooks import PlaybookService
+from openzues.services.plugin_clawhub_installers import CliClawHubPluginInstaller
 from openzues.services.plugin_npm_installers import (
     CliNpmHookPackInstaller,
     CliNpmPluginInstaller,
@@ -961,6 +962,7 @@ class CliServices:
     gateway_bootstrap: GatewayBootstrapService
     runtime_updates: RuntimeUpdateService
     setup: SetupService
+    plugin_clawhub_installer: CliClawHubPluginInstaller
     plugin_npm_installer: CliNpmPluginInstaller
     hook_npm_installer: CliNpmHookPackInstaller
 
@@ -1004,6 +1006,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
     gateway_commands = GatewayCommandsService()
     gateway_node_pairing = GatewayNodePairingService(database)
     setup = SetupService(database, manager, access, gateway_bootstrap, ops_mesh)
+    plugin_clawhub_installer = CliClawHubPluginInstaller(data_dir=app_settings.data_dir)
     plugin_npm_installer = CliNpmPluginInstaller(data_dir=app_settings.data_dir)
     hook_npm_installer = CliNpmHookPackInstaller(data_dir=app_settings.data_dir)
     onboarding = OnboardingService(
@@ -1177,6 +1180,7 @@ async def _build_services(app_settings: Settings) -> CliServices:
         gateway_bootstrap=gateway_bootstrap,
         runtime_updates=runtime_updates,
         setup=setup,
+        plugin_clawhub_installer=plugin_clawhub_installer,
         plugin_npm_installer=plugin_npm_installer,
         hook_npm_installer=hook_npm_installer,
     )
