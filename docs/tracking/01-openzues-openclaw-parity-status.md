@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~57.8% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~57.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.2% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -930,8 +930,24 @@ may lag behind this tracker.
     `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`; Discord thread
     query placement checkpointed in `0d40be27`; WhatsApp document filename
     projection checkpointed in `05c4f0fc`; Discord media iteration
-    checkpointed in `b5371fd9`
+    checkpointed in `b5371fd9`; native provider result metadata passthrough
+    verified and awaiting checkpoint
   - Weight: 3
+
+- [x] Native provider result metadata passthrough.
+  - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/infra/outbound/message-action-param-keys.ts`,
+    `openclaw-main/src/channels/plugins/types.core.ts`, and
+    `openclaw-main/src/cli/send-runtime/channel-outbound-send.test.ts`
+  - Target: `src/openzues/services/gateway_outbound_runtime.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata
+    -q` (`1 passed`), adjacent provider metadata/native binding proof (`3
+    passed`), `ruff check`, and `mypy`.
 
 - [x] Plugin manifest activation-plan reason projection.
   - Source: `openclaw-main/src/plugins/activation-planner.ts`,

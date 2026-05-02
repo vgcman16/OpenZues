@@ -9251,6 +9251,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 
+- Native provider result metadata passthrough is now landed for shared
+  outbound runtime delivery results: OpenClaw-shaped reply/thread, tracking,
+  file, filename, and document metadata are preserved in direct send responses
+  and persisted outbound delivery `provider_result` payloads, while
+  caption-capable native providers continue receiving structured media
+  requests instead of synthesized media-list text. Checkpoint pending.
+- Progress estimates are now roughly 57.9% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while the runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is manifest `contracts.tools` enforcement for installed activation
+  adapter runtime tools and deeper production module import/runtime executor
+  wiring.
+- Verified the native provider metadata passthrough slice with `python -m
+  pytest
+  tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "provider_result_persistence_keeps_native_extended_metadata or
+  provider_result_persistence_keeps_message_id_runtime_and_meta or
+  send_direct_channel_message_uses_native_adapter_binding"` (`3 passed`),
+  `ruff check src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

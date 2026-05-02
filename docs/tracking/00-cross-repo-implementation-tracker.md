@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~57.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~57.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,14 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The installed plugin activation adapter failure diagnostic projection slice is
-checkpointed in `baa32232`. Any follow-up changes should target the next queue
-head only:
+The native provider result metadata passthrough slice is verified and awaiting
+checkpoint. Any follow-up changes should target the next queue head only:
 
-- `src/openzues/cli.py`
-- `src/openzues/services/gateway_plugin_activation.py`
-- `tests/test_cli.py`
-- `tests/test_gateway_plugin_activation.py`
+- `src/openzues/services/gateway_outbound_runtime.py`
+- `src/openzues/services/ops_mesh.py`
+- `tests/test_ops_mesh.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -53,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed plugin activation adapter failure diagnostics checkpointed in `baa32232` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
 
@@ -1396,6 +1394,34 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     "discord_native_route or discord_media or discord_thread_query or
     discord_reply_and_silent or send_direct_channel_poll_uses_discord"` (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001F` Native provider result metadata passthrough
+  - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/infra/outbound/message-action-param-keys.ts`,
+    `openclaw-main/src/channels/plugins/types.core.ts`, and
+    `openclaw-main/src/cli/send-runtime/channel-outbound-send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_outbound_runtime.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Contract: shared native provider delivery results preserve
+    OpenClaw-shaped reply/thread, tracking, file, filename, and document
+    metadata in the direct send response and persisted outbound delivery
+    `provider_result` while keeping the existing structured media request
+    contract for caption-capable native providers.
+  - Evidence required: focused provider metadata test, adjacent native adapter
+    binding and provider metadata tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "provider_result_persistence_keeps_native_extended_metadata or
+    provider_result_persistence_keeps_message_id_runtime_and_meta or
+    send_direct_channel_message_uses_native_adapter_binding"` (`3 passed`),
+    `ruff check src\openzues\services\gateway_outbound_runtime.py
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+    src\openzues\services\gateway_outbound_runtime.py
+    src\openzues\services\ops_mesh.py`.
 
 ## Canonical Checklist Format
 

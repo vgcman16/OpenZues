@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~57.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~57.9% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~99.1% of the
+- The active gateway/session/tool-contract family is estimated at ~99.2% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -57,8 +57,8 @@ Current percentage rollup:
   installed plugin disabled activation gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~99.1% after the
-  latest Discord provider-native media iteration route slice.
+- The gateway session/tool-contract family is estimated at ~99.2% after the
+  latest native provider result metadata passthrough slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -4851,6 +4851,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~99.1%. Verified with focused and
   adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
   in `b5371fd9`.
+- Closed the native provider result metadata passthrough seam from OpenClaw
+  `src/infra/outbound/deliver.ts`,
+  `src/infra/outbound/message-action-param-keys.ts`,
+  `src/channels/plugins/types.core.ts`, and
+  `src/cli/send-runtime/channel-outbound-send.test.ts`: shared native provider
+  delivery results now preserve reply/thread, tracking, file, filename, and
+  document metadata in direct send responses and persisted outbound delivery
+  `provider_result` payloads, while caption-capable providers continue
+  receiving structured media requests. Repo-wide parity is now estimated at
+  ~57.9%; active gateway/session/tool-contract parity is ~99.2%. Verified with
+  focused and adjacent provider-native metadata/binding tests, `ruff check`,
+  and `mypy`; checkpoint pending.
 - Closed the plugin manifest activation-plan reason projection seam from
   OpenClaw `src/plugins/activation-planner.ts`,
   `src/plugins/activation-planner.test.ts`, `src/plugins/cli-registry-loader.ts`,
@@ -5241,10 +5253,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   activation adapter error test, adjacent plugin runtime CLI proof, `ruff
   check`, and `mypy`; checkpoint in `baa32232`.
 - Next repo-wide queue head: continue the real installed plugin module
-  import/activation queue, especially the source-backed boundary that turns
-  installed manifest/load-path registry records into native runtime executor or
-  honest unavailable activation posture. The provider-native adapter breadth
-  queue remains the next alternate after that slice.
+  import/activation queue, especially manifest `contracts.tools` enforcement
+  for installed activation-adapter runtime tools and the deeper boundary that
+  turns installed manifest/load-path registry records into native runtime
+  executor or honest unavailable activation posture. The provider-native
+  adapter breadth queue remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

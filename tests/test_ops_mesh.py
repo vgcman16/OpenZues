@@ -7996,7 +7996,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_native_adapter_
         GatewayOutboundRuntimeMessageRequest(
             channel="slack",
             target="channel:C123",
-            message="Ship the native adapter path.\n\nMedia:\n1. https://example.com/native.png",
+            message="Ship the native adapter path.",
             media_urls=("https://example.com/native.png",),
             account_id="workspace-bot",
             session_key=expected_session_key,
@@ -8083,6 +8083,78 @@ async def test_provider_result_persistence_keeps_message_id_runtime_and_meta() -
         "roomId": "room-9",
         "timestamp": 1713980000,
         "meta": {"hook": "ok", "attempt": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_provider_result_persistence_keeps_native_extended_metadata() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-provider-result-extended-metadata"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    async def fake_native_delivery(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        assert request.channel == "telegram"
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": "native-meta-2",
+            "channel": "telegram",
+            "threadId": "topic-42",
+            "replyToId": "reply-7",
+            "trackingId": "track-123",
+            "fileId": "file-123",
+            "filename": "report.pdf",
+            "documentId": "document-123",
+            "meta": {"provider": "telegram"},
+        }
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="telegram",
+        deliverer=fake_native_delivery,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="telegram",
+        to="chat:123",
+        message="Preserve native provider metadata.",
+        idempotency_key="idem-provider-result-extended-metadata",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "native-meta-2"
+    assert result["threadId"] == "topic-42"
+    assert result["replyToId"] == "reply-7"
+    assert result["trackingId"] == "track-123"
+    assert result["fileId"] == "file-123"
+    assert result["filename"] == "report.pdf"
+    assert result["documentId"] == "document-123"
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "native-meta-2",
+        "channel": "telegram",
+        "threadId": "topic-42",
+        "replyToId": "reply-7",
+        "trackingId": "track-123",
+        "fileId": "file-123",
+        "filename": "report.pdf",
+        "documentId": "document-123",
+        "meta": {"provider": "telegram"},
     }
 
 
