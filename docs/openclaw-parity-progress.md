@@ -9095,7 +9095,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   channel owners are disabled by default for scoped configured-channel
   activation unless explicitly activated through `plugins.allow` or
   `plugins.entries.<id>.enabled=true`, otherwise they are projected as
-  `untrusted-plugin`. Checkpoint pending.
+  `untrusted-plugin`. Checkpointed in `bb9ef28a`.
 - Progress estimates are now roughly 57.2% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
