@@ -5457,7 +5457,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator-control
   bounded paths remain ~99.9%. Verified with the focused WhatsApp audio pytest,
   adjacent WhatsApp native media/reply/gif/poll proof, `ruff check`, and
-  `mypy`; checkpoint pending commit.
+  `mypy`; checkpointed in `c27d3439`.
 - Next repo-wide queue head: continue provider-specific send/poll/replay edge
   cases or rotate to packaging/companion/plugin breadth, whichever is the
   strongest source-backed seam after the next discovery pass.

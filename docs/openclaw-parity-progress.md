@@ -9576,7 +9576,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `audioAsVoice=true` and send Cloud API `type="audio"` payloads. Visible text
   is sent as a follow-up text message because WhatsApp audio payloads do not
   support captions, while reply context and media result metadata remain on
-  the audio delivery. Checkpoint pending commit.
+  the audio delivery. Checkpoint in `c27d3439`.
 - Progress estimates are now roughly 59.4% repo-wide and 99.9% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the provider queue
