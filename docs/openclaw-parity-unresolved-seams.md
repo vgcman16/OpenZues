@@ -179,7 +179,7 @@ Installed plugin slot activation reasons now mirror OpenClaw's explicit
 rows activate before the allowlist guard and project upstream reason text such
 as `selected memory slot`. Verified on 2026-05-02 with the focused installed
 slot activation CLI test, adjacent plugin config/install list and doctor proof,
-`ruff check`, and `mypy`; checkpoint pending.
+`ruff check`, and `mypy`; checkpointed in `209dced0`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4765,7 +4765,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused installed slot activation CLI test, adjacent plugin
   config/install list and doctor proof, `ruff check`, and `mypy`; checkpoint
-  pending.
+  in `209dced0`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

@@ -245,7 +245,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   selection path: `plugins.slots.memory` and `plugins.slots.contextEngine`
   activate matching config/install-backed plugin records before the allowlist
   guard and project upstream reasons such as `selected memory slot`.
-  Checkpoint pending.
+  This slice is checkpointed in `209dced0`.
 - Verified the installed slot activation slice with `python -m pytest
   tests\test_cli.py::test_plugins_list_json_projects_installed_plugin_slot_activation_reason
   -q` (`1 passed`), adjacent plugin config/install list and doctor proof
@@ -8503,7 +8503,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Installed plugin slot activation reason projection is now landed for
   OpenClaw's explicit slot-selection path: memory/context-engine slot choices
   activate matching installed records before the allowlist guard and project
-  upstream reason text such as `selected memory slot`. Checkpoint pending.
+  upstream reason text such as `selected memory slot`. Checkpointed in
+  `209dced0`.
 - Progress estimates are now roughly 54.5% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
