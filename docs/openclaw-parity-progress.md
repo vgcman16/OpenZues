@@ -8229,7 +8229,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Discord provider-native webhook thread query parity is now landed for direct
   route-backed sends: `threadId` is encoded as the webhook execution
   `thread_id` query parameter alongside `wait=true`, while `replyToId` and
-  `silent` remain body-level Discord message options. Checkpoint pending.
+  `silent` remain body-level Discord message options. Checkpointed in
+  `0d40be27`.
 - Progress estimates are now roughly 53.4% repo-wide and ~98.9% for the active
   gateway/session/tool-contract family after this Discord provider slice.
 - Verified the Discord thread query slice with focused Discord thread/reply

@@ -97,7 +97,7 @@ may lag behind this tracker.
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `0d40be27`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn

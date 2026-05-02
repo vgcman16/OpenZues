@@ -29,9 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Discord provider-native webhook thread query parity slice is verified
-locally and awaiting checkpoint. Any follow-up changes should target the next
-queue head only:
+The Discord provider-native webhook thread query parity slice is checkpointed
+in `0d40be27`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
 - `tests/test_ops_mesh.py`
@@ -51,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord webhook thread query verified locally | Repo-wide +0.1%, active gateway/method +0.1% | Checkpoint, then continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord webhook thread query checkpointed in `0d40be27` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -244,7 +243,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     omit `thread_id` from the body.
   - Evidence required: focused Discord native route test, adjacent Discord
     native send/poll route test, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `0d40be27`
   - Weight: 1
   - Last verified: 2026-05-02, focused Discord thread/reply tests (`2
     passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k

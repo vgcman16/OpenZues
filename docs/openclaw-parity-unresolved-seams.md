@@ -4564,8 +4564,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and silent flags in the JSON body and omitting body-level `thread_id`.
   Repo-wide parity is now estimated at ~53.4%; active
   gateway/session/tool-contract parity is ~98.9%. Verified with focused and
-  adjacent Discord native route tests, `ruff check`, and `mypy`; checkpoint
-  pending.
+  adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
+  in `0d40be27`.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.
