@@ -5,6 +5,23 @@ from pathlib import Path
 import pytest
 
 
+class _FakeAcpPromptClient:
+    def __init__(self) -> None:
+        self.prompts: list[dict[str, object]] = []
+
+    async def prompt(self, params: dict[str, object]) -> dict[str, object]:
+        self.prompts.append(params)
+        return {"stopReason": "end_turn"}
+
+
+class _FakeAcpClientAgent:
+    def __init__(self) -> None:
+        self.killed = False
+
+    def kill(self) -> None:
+        self.killed = True
+
+
 def _permission_request(**overrides: object) -> dict[str, object]:
     tool_call_override = overrides.pop("toolCall", None)
     options_override = overrides.pop("options", None)
@@ -219,3 +236,57 @@ async def test_acp_permission_sanitizes_title_before_logging_and_prompting() -> 
     assert prompts == [("exec", expected_title)]
     assert logs == [f"\n[permission requested] {expected_title} (exec) [exec_capable]"]
     assert result == {"outcome": {"outcome": "selected", "optionId": "reject"}}
+
+
+@pytest.mark.asyncio
+async def test_acp_client_interactive_replay_trims_prompts_and_quits() -> None:
+    from openzues.services.acp_client_runtime import (
+        AcpClientInteractiveHandle,
+        AcpClientSpawnPlan,
+        run_acp_client_interactive,
+    )
+
+    client = _FakeAcpPromptClient()
+    agent = _FakeAcpClientAgent()
+    handle = AcpClientInteractiveHandle(
+        client=client,
+        agent=agent,
+        session_id="session-1",
+    )
+    output: list[str] = []
+
+    async def create_client(
+        _plan: AcpClientSpawnPlan,
+    ) -> AcpClientInteractiveHandle:
+        return handle
+
+    code = await run_acp_client_interactive(
+        AcpClientSpawnPlan(
+            cwd=r"C:\work\OpenZues",
+            server_command="openzues",
+            server_args=("acp",),
+            env={"OPENCLAW_SHELL": "acp-client"},
+            strip_provider_auth_env_vars=True,
+            stripped_env_keys=(),
+            verbose=False,
+            server_verbose=False,
+        ),
+        input_lines=["", "  hello  ", "quit"],
+        output=output.append,
+        create_client=create_client,
+    )
+
+    assert code == 0
+    assert client.prompts == [
+        {
+            "sessionId": "session-1",
+            "prompt": [{"type": "text", "text": "hello"}],
+        }
+    ]
+    assert agent.killed is True
+    assert output[:3] == [
+        "OpenClaw ACP client",
+        "Session: session-1",
+        'Type a prompt, or "exit" to quit.\n',
+    ]
+    assert "\n[end_turn]\n" in output

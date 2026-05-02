@@ -2720,7 +2720,22 @@ def test_acp_bridge_command_passes_options_to_registered_runner(
     ]
 
 
-def test_acp_client_command_reports_native_runtime_unavailable() -> None:
+def test_acp_client_command_runs_native_interactive_runtime(monkeypatch) -> None:
+    from openzues.services.acp_client_runtime import AcpClientSpawnPlan
+
+    calls: list[AcpClientSpawnPlan] = []
+
+    async def fake_run_acp_client_interactive(plan: AcpClientSpawnPlan) -> int:
+        calls.append(plan)
+        return 4
+
+    monkeypatch.setattr(cli_module, "_acp_client_runner", None)
+    monkeypatch.setattr(
+        cli_module,
+        "run_acp_client_interactive",
+        fake_run_acp_client_interactive,
+    )
+
     result = runner.invoke(
         app,
         [
@@ -2734,9 +2749,13 @@ def test_acp_client_command_reports_native_runtime_unavailable() -> None:
         ],
     )
 
-    assert result.exit_code == 1
-    assert "ACP client bridge is not available" in result.stderr
-    assert r"C:\work\OpenZues" in result.stderr
+    assert result.exit_code == 4
+    assert len(calls) == 1
+    plan = calls[0]
+    assert plan.cwd == r"C:\work\OpenZues"
+    assert plan.server_command == "openzues"
+    assert plan.server_args == ("acp",)
+    assert plan.verbose is True
 
 
 def test_acp_status_json_and_human_output_uses_saved_metadata(monkeypatch) -> None:

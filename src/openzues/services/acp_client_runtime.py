@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Protocol
 from urllib.parse import unquote, urlparse
 
 DEFAULT_ACP_SERVER_COMMAND = "openzues"
 DEFAULT_ACP_SERVER_ARGS = ("acp",)
 ACP_CLIENT_SHELL = "acp-client"
+ACP_CLIENT_PROTOCOL_VERSION = "0.4.0"
 KNOWN_PROVIDER_AUTH_ENV_KEYS = (
     "OPENAI_API_KEY",
     "GITHUB_TOKEN",
@@ -102,6 +106,7 @@ _MESSAGE_MUTATING_ACTIONS = {
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 AcpPermissionPrompt = Callable[[str | None, str], Awaitable[bool] | bool]
 AcpPermissionLogger = Callable[[str], object]
+AcpOutputWriter = Callable[[str], object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +119,29 @@ class AcpClientSpawnPlan:
     stripped_env_keys: tuple[str, ...]
     verbose: bool
     server_verbose: bool
+
+
+class AcpInteractivePromptClient(Protocol):
+    async def prompt(self, params: dict[str, object]) -> Mapping[str, object]:
+        ...
+
+
+class AcpInteractiveAgent(Protocol):
+    def kill(self) -> object:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class AcpClientInteractiveHandle:
+    client: AcpInteractivePromptClient
+    agent: AcpInteractiveAgent
+    session_id: str
+
+
+AcpClientFactory = Callable[
+    [AcpClientSpawnPlan],
+    Awaitable[AcpClientInteractiveHandle] | AcpClientInteractiveHandle,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -631,3 +659,307 @@ def _resolve_windows_acp_client_shim_entry(shim_path: Path) -> Path | None:
     relative = match.group(1).lstrip("\\/")
     entry_path = shim_path.parent / Path(relative)
     return entry_path if entry_path.exists() else None
+
+
+class _AcpSubprocessAgent:
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+
+    def kill(self) -> None:
+        if self._process.returncode is None:
+            self._process.kill()
+
+
+class _AcpNdjsonClient:
+    def __init__(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        cwd: str,
+        output: AcpOutputWriter,
+        error: AcpOutputWriter,
+    ) -> None:
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("Failed to create ACP stdio pipes")
+        self._process = process
+        self._stdin = process.stdin
+        self._stdout = process.stdout
+        self._cwd = cwd
+        self._output = output
+        self._error = error
+        self._next_request_id = 0
+        self._pending: dict[int, asyncio.Future[Mapping[str, object]]] = {}
+        self._reader_task = asyncio.create_task(self._read_loop())
+
+    async def initialize(self) -> Mapping[str, object]:
+        return await self.request(
+            "initialize",
+            {
+                "protocolVersion": ACP_CLIENT_PROTOCOL_VERSION,
+                "clientCapabilities": {
+                    "fs": {"readTextFile": True, "writeTextFile": True},
+                    "terminal": True,
+                },
+                "clientInfo": {"name": "openzues-acp-client", "version": "1.0.0"},
+            },
+        )
+
+    async def new_session(self, *, cwd: str) -> Mapping[str, object]:
+        return await self.request("newSession", {"cwd": cwd, "mcpServers": []})
+
+    async def prompt(self, params: dict[str, object]) -> Mapping[str, object]:
+        return await self.request("prompt", params)
+
+    async def request(self, method: str, params: Mapping[str, object]) -> Mapping[str, object]:
+        self._next_request_id += 1
+        request_id = self._next_request_id
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Mapping[str, object]] = loop.create_future()
+        self._pending[request_id] = future
+        await self._send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": dict(params),
+            }
+        )
+        return await future
+
+    async def _send_json(self, payload: Mapping[str, object]) -> None:
+        self._stdin.write(json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n")
+        await self._stdin.drain()
+
+    async def _read_loop(self) -> None:
+        try:
+            while True:
+                line = await self._stdout.readline()
+                if not line:
+                    break
+                try:
+                    raw_payload = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(raw_payload, dict):
+                    await self._handle_message(raw_payload)
+        except Exception as exc:
+            self._fail_pending(exc)
+            return
+        self._fail_pending(RuntimeError("ACP server exited before responding"))
+
+    def _fail_pending(self, exc: Exception) -> None:
+        pending = list(self._pending.values())
+        self._pending.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(exc)
+
+    async def _handle_message(self, payload: Mapping[str, object]) -> None:
+        raw_id = payload.get("id")
+        if raw_id is not None and ("result" in payload or "error" in payload):
+            request_id = int(raw_id) if isinstance(raw_id, int) else None
+            future = self._pending.pop(request_id, None) if request_id is not None else None
+            if future is None or future.done():
+                return
+            error = payload.get("error")
+            if isinstance(error, Mapping):
+                message = str(error.get("message") or "ACP request failed")
+                future.set_exception(RuntimeError(message))
+                return
+            payload_result = payload.get("result")
+            future.set_result(payload_result if isinstance(payload_result, Mapping) else {})
+            return
+
+        method = payload.get("method")
+        if not isinstance(method, str):
+            return
+        raw_params = payload.get("params")
+        params = raw_params if isinstance(raw_params, Mapping) else {}
+        method_result: Mapping[str, object] | None = None
+        try:
+            if method in {"sessionUpdate", "session/update", "session_update"}:
+                self._print_session_update(params)
+                method_result = {}
+            elif method in {"requestPermission", "permission/request", "request_permission"}:
+                method_result = await resolve_acp_permission_request(
+                    params,
+                    cwd=self._cwd,
+                    log=self._error,
+                )
+            else:
+                await self._respond_error(raw_id, f"Unsupported ACP client method: {method}")
+                return
+        except Exception as exc:
+            await self._respond_error(raw_id, str(exc))
+            return
+        await self._respond_result(raw_id, method_result or {})
+
+    async def _respond_result(self, request_id: object, result: Mapping[str, object]) -> None:
+        if request_id is None:
+            return
+        await self._send_json({"jsonrpc": "2.0", "id": request_id, "result": dict(result)})
+
+    async def _respond_error(self, request_id: object, message: str) -> None:
+        if request_id is None:
+            return
+        await self._send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32603, "message": message},
+            }
+        )
+
+    def _print_session_update(self, notification: Mapping[str, object]) -> None:
+        raw_update_container = notification.get("update")
+        update = raw_update_container if isinstance(raw_update_container, Mapping) else {}
+        session_update = update.get("sessionUpdate")
+        if session_update == "agent_message_chunk":
+            content = update.get("content")
+            if isinstance(content, Mapping) and content.get("type") == "text":
+                text = content.get("text")
+                if isinstance(text, str):
+                    self._output(text)
+            return
+        if session_update == "tool_call":
+            self._output(f"\n[tool] {update.get('title')} ({update.get('status')})")
+            return
+        if session_update == "tool_call_update":
+            status = update.get("status")
+            if status:
+                self._output(f"[tool update] {update.get('toolCallId')}: {status}")
+            return
+        if session_update == "available_commands_update":
+            raw_commands = update.get("availableCommands")
+            if not isinstance(raw_commands, Sequence) or isinstance(raw_commands, str):
+                return
+            names = []
+            for command in raw_commands:
+                if isinstance(command, Mapping):
+                    name = command.get("name")
+                    if isinstance(name, str) and name.strip():
+                        names.append(f"/{name.strip()}")
+            if names:
+                self._output(f"\n[commands] {' '.join(names)}")
+
+
+async def create_acp_client_interactive_handle(
+    plan: AcpClientSpawnPlan,
+    *,
+    output: AcpOutputWriter | None = None,
+    error: AcpOutputWriter | None = None,
+) -> AcpClientInteractiveHandle:
+    out = output or print
+    err = error or (lambda line: print(line, file=sys.stderr))
+    invocation = resolve_acp_client_spawn_invocation(
+        server_command=plan.server_command,
+        server_args=plan.server_args,
+        env=plan.env,
+        executable=sys.executable,
+    )
+    if invocation.get("shell") is True:
+        raise RuntimeError("ACP client shell execution is unavailable in the native runtime")
+    command = str(invocation["command"])
+    raw_args = invocation.get("args")
+    args = (
+        tuple(str(arg) for arg in raw_args)
+        if isinstance(raw_args, Sequence) and not isinstance(raw_args, str)
+        else ()
+    )
+    process_kwargs: dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": None,
+        "cwd": plan.cwd or None,
+        "env": plan.env,
+    }
+    if sys.platform == "win32" and invocation.get("windowsHide") is True:
+        process_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            command,
+            *args,
+            **process_kwargs,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Failed to start ACP server {command}: {exc}") from exc
+    cwd = plan.cwd or os.getcwd()
+    client = _AcpNdjsonClient(process, cwd=cwd, output=out, error=err)
+    if plan.verbose:
+        out("[acp-client] initializing")
+    await client.initialize()
+    if plan.verbose:
+        out("[acp-client] creating session")
+    session = await client.new_session(cwd=cwd)
+    session_id = str(session.get("sessionId") or "").strip()
+    if not session_id:
+        raise RuntimeError("ACP server did not return a sessionId")
+    return AcpClientInteractiveHandle(
+        client=client,
+        agent=_AcpSubprocessAgent(process),
+        session_id=session_id,
+    )
+
+
+async def _resolve_acp_client_handle(
+    plan: AcpClientSpawnPlan,
+    *,
+    output: AcpOutputWriter,
+    error: AcpOutputWriter,
+    create_client: AcpClientFactory | None,
+) -> AcpClientInteractiveHandle:
+    if create_client is None:
+        return await create_acp_client_interactive_handle(plan, output=output, error=error)
+    result = create_client(plan)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def _iter_acp_input_lines(input_lines: Iterable[str] | None) -> Iterable[str]:
+    if input_lines is not None:
+        yield from input_lines
+        return
+    while True:
+        yield input("> ")
+
+
+async def run_acp_client_interactive(
+    plan: AcpClientSpawnPlan,
+    *,
+    input_lines: Iterable[str] | None = None,
+    output: AcpOutputWriter | None = None,
+    error: AcpOutputWriter | None = None,
+    create_client: AcpClientFactory | None = None,
+) -> int:
+    out = output or print
+    err = error or (lambda line: print(line, file=sys.stderr))
+    handle = await _resolve_acp_client_handle(
+        plan,
+        output=out,
+        error=err,
+        create_client=create_client,
+    )
+    out("OpenClaw ACP client")
+    out(f"Session: {handle.session_id}")
+    out('Type a prompt, or "exit" to quit.\n')
+    for raw_input in _iter_acp_input_lines(input_lines):
+        text = raw_input.strip()
+        if not text:
+            continue
+        if text in {"exit", "quit"}:
+            handle.agent.kill()
+            return 0
+        try:
+            response = await handle.client.prompt(
+                {
+                    "sessionId": handle.session_id,
+                    "prompt": [{"type": "text", "text": text}],
+                }
+            )
+            stop_reason = response.get("stopReason")
+            if stop_reason is not None:
+                out(f"\n[{stop_reason}]\n")
+        except Exception as exc:
+            err(f"\n[error] {exc}\n")
+    return 0

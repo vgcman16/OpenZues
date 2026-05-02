@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.3% overall, with a reasonable
   band of ~48-57%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -32,7 +32,8 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
-  metadata mini-queue, marketplace source-shape install/update queue,
+  metadata mini-queue, marketplace source-shape install/update queue, native
+  ACP client interactive replay,
   secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
@@ -2233,8 +2234,8 @@ runtime `lifecycle` `start` events record `startedAt`, terminal `end` events
 return OpenClaw-shaped `status`, `startedAt`, and `endedAt`, aborted end events
 map to `timeout`, and transient `error` events are held behind the same short
 retry grace before they can become terminal snapshots. The next bounded seam
-should move back to ACP client harness replay, sandboxed spawn media/workspace
-staging, or another source-backed session/runtime mismatch.
+should move back to sandboxed spawn media/workspace staging or another
+source-backed session/runtime mismatch.
 
 ## How To Read This Queue
 
@@ -2246,7 +2247,7 @@ staging, or another source-backed session/runtime mismatch.
 
 | Priority | Seam | Status | Why it still matters | Next exact move |
 | --- | --- | --- | --- | --- |
-| P1 | Browser/canvas/nodes/voice OpenClaw feature-family seam | Active | OpenZues now routes direct text send, multi-media URL send, `poll`, explicit cron announce, saved session-like delivery replays, provider-shaped send/poll callbacks, opt-in route-backed gateway webhook adapters, account/channel-specific native adapter bindings, Slack Web API delivery/uploads, Telegram Bot API delivery/media groups, Discord webhook delivery/polls, and WhatsApp Cloud API text/media/interactive-button delivery through one shared outbound runtime owner; full Ops Mesh, CLI, and adjacent gateway node/session/model/log/presence sweeps now prove no smaller provider-runtime blocker remains in this queue. The first browser/canvas/nodes/voice slices are now landed: `node.event` honors upstream-style `chat.subscribe` / `chat.unsubscribe`, the registry can route session-scoped events back to subscribed nodes, node `exec.started` / `exec.finished` / `exec.denied` events queue session-scoped next-heartbeat system notifications with duplicate `exec.finished` suppression, `notifications.changed` events become session-scoped notification wakes, `voice.transcript` events route into the chat runtime with stable node-voice idempotency plus near-duplicate suppression, text `agent.request` deep-links route into the chat runtime with route-safe delivery plus receipt/thinking/timeout hints, effective `agent.request` attachments keep an honest default unavailable boundary and can now pass through an injected attachment runtime, direct `chat.send`, `sessions.send`, and `sessions.steer` can use that injected attachment runtime when wired, `create_app()` now persists effective base64 attachments to durable local media files and passes bounded `media://`/hash/path metadata into control chat instead of raw blob text, recorded `push.apns.register` events move `push.test` from missing-registration to the honest sender-runtime boundary, registered nodes can complete `push.test` through an injected APNS sender adapter, app-level direct plus relay registrations now send OpenClaw-compatible APNS requests with ES256 bearer tokens, bearer relay grants, gateway signatures, and provider response metadata, disconnected APNS-registered nodes can wake/reconnect before `node.invoke`, `node.invoke` retries an available APNS-backed wake once when the first nudge does not reconnect, direct APNS registrations are cleared on upstream-style `400 BadDeviceToken` / `410` invalidation results from alert or wake sends, failed background wake retries send one throttled foreground APNS reopen nudge, assistant control-chat shortcodes now produce structured canvas previews rendered in the web transcript, `/__openclaw__/a2ui` serves a traversal-safe A2UI scaffold plus bundle, `/__openclaw__/ws` exposes the live-reload upgrade boundary plus websocket accept path and reload broadcast owner, `/__openclaw__/canvas/` serves a default canvas host page from the traversal-safe canvas state root, the app now runs a filesystem-backed debounce watcher that publishes `canvas/reload` into connected canvas clients, served canvas HTML now carries the OpenClaw live-reload/action bridge hook, scoped capability URLs now consume minted node canvas tokens for canvas/A2UI/WS paths, malformed `canvas.a2ui.push*` JSONL is rejected before node dispatch, configured node allow/deny command lists now flow into node invoke plus node catalog/scope-upgrade logic, node list/describe/API catalog/pairing surfaces now advertise only allowlisted commands instead of raw rejected declarations, advertised native browser commands now have gateway-method runtimes backed by `agent-browser` with a truthful unavailable boundary, plugin-published node-host browser commands/caps are visible in capability/bootstrap inventory, `chat.send` media-only final replies now project stale `NO_REPLY` plus media into OpenClaw-style `MEDIA:<url>` transcript text, `update.run` now drives a native fakeable git/install/build runner before sentinel/restart projection, and ACP client spawn preflight now resolves Windows `.cmd` shims without shell execution. The broad family is still minimal compared with OpenClaw and remains an active repo-wide parity family. | Rotate to the next source-backed runtime/session seam, currently ACP interactive protocol replay or sandboxed spawn media/workspace staging. |
+| P1 | Browser/canvas/nodes/voice OpenClaw feature-family seam | Active | OpenZues now routes direct text send, multi-media URL send, `poll`, explicit cron announce, saved session-like delivery replays, provider-shaped send/poll callbacks, opt-in route-backed gateway webhook adapters, account/channel-specific native adapter bindings, Slack Web API delivery/uploads, Telegram Bot API delivery/media groups, Discord webhook delivery/polls, and WhatsApp Cloud API text/media/interactive-button delivery through one shared outbound runtime owner; full Ops Mesh, CLI, and adjacent gateway node/session/model/log/presence sweeps now prove no smaller provider-runtime blocker remains in this queue. The first browser/canvas/nodes/voice slices are now landed: `node.event` honors upstream-style `chat.subscribe` / `chat.unsubscribe`, the registry can route session-scoped events back to subscribed nodes, node `exec.started` / `exec.finished` / `exec.denied` events queue session-scoped next-heartbeat system notifications with duplicate `exec.finished` suppression, `notifications.changed` events become session-scoped notification wakes, `voice.transcript` events route into the chat runtime with stable node-voice idempotency plus near-duplicate suppression, text `agent.request` deep-links route into the chat runtime with route-safe delivery plus receipt/thinking/timeout hints, effective `agent.request` attachments keep an honest default unavailable boundary and can now pass through an injected attachment runtime, direct `chat.send`, `sessions.send`, and `sessions.steer` can use that injected attachment runtime when wired, `create_app()` now persists effective base64 attachments to durable local media files and passes bounded `media://`/hash/path metadata into control chat instead of raw blob text, recorded `push.apns.register` events move `push.test` from missing-registration to the honest sender-runtime boundary, registered nodes can complete `push.test` through an injected APNS sender adapter, app-level direct plus relay registrations now send OpenClaw-compatible APNS requests with ES256 bearer tokens, bearer relay grants, gateway signatures, and provider response metadata, disconnected APNS-registered nodes can wake/reconnect before `node.invoke`, `node.invoke` retries an available APNS-backed wake once when the first nudge does not reconnect, direct APNS registrations are cleared on upstream-style `400 BadDeviceToken` / `410` invalidation results from alert or wake sends, failed background wake retries send one throttled foreground APNS reopen nudge, assistant control-chat shortcodes now produce structured canvas previews rendered in the web transcript, `/__openclaw__/a2ui` serves a traversal-safe A2UI scaffold plus bundle, `/__openclaw__/ws` exposes the live-reload upgrade boundary plus websocket accept path and reload broadcast owner, `/__openclaw__/canvas/` serves a default canvas host page from the traversal-safe canvas state root, the app now runs a filesystem-backed debounce watcher that publishes `canvas/reload` into connected canvas clients, served canvas HTML now carries the OpenClaw live-reload/action bridge hook, scoped capability URLs now consume minted node canvas tokens for canvas/A2UI/WS paths, malformed `canvas.a2ui.push*` JSONL is rejected before node dispatch, configured node allow/deny command lists now flow into node invoke plus node catalog/scope-upgrade logic, node list/describe/API catalog/pairing surfaces now advertise only allowlisted commands instead of raw rejected declarations, advertised native browser commands now have gateway-method runtimes backed by `agent-browser` with a truthful unavailable boundary, plugin-published node-host browser commands/caps are visible in capability/bootstrap inventory, `chat.send` media-only final replies now project stale `NO_REPLY` plus media into OpenClaw-style `MEDIA:<url>` transcript text, `update.run` now drives a native fakeable git/install/build runner before sentinel/restart projection, ACP client spawn preflight now resolves Windows `.cmd` shims without shell execution, and native ACP client interactive replay now trims prompts, skips blanks, sends ACP text prompt blocks, reports stop reasons, and kills the spawned agent on `exit`/`quit`. The broad family is still minimal compared with OpenClaw and remains an active repo-wide parity family. | Rotate to the next source-backed runtime/session seam, currently sandboxed spawn media/workspace staging or another runtime/session mismatch. |
 
 Current queue-head adjustment: `browser.status` is now productized as a read-only gateway method backed by the existing browser posture in operator status, with method/API/policy verification. The next small browser-runtime seam is `browser.verify` / `browser.doctor` productization or a richer node-host plugin command inventory proof.
 
@@ -2260,8 +2261,8 @@ the browser cap family, carries the per-lane counts, and avoids inflating the
 saved-launch runtime method count with locally built-in browser gateway
 methods. The next browser/canvas/node pass should only reopen this family for
 new source-backed runtime inventory gaps; the active next repo-level seam can
-rotate to ACP client harness replay, sandboxed spawn media/workspace staging,
-or another bounded runtime-control queue head.
+rotate to sandboxed spawn media/workspace staging or another bounded
+runtime-control queue head.
 
 Current queue-head adjustment: `browser.tabs` is now productized as the first read-only browser command-breadth slice beyond status/verify/open/snapshot/console/errors. The next small browser/canvas/node seam is likely another upstream browser command family such as lifecycle/profile/screenshot/action commands, or richer plugin node-host inventory.
 
@@ -4393,10 +4394,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   subscribed gateway nodes for that canonical session. Repo-wide parity is now
   estimated at ~52.2%; chat/session contract parity is ~98.1%. Verified with
   focused and adjacent gateway node method proofs, `ruff check`, and `mypy`.
+- Closed the ACP interactive client replay seam from OpenClaw
+  `src/acp/client.ts`: native `acp client` now uses an OpenZues-owned
+  subprocess-backed NDJSON ACP client path when no test/desktop runner is
+  injected, initializes a session, trims and replays prompts as ACP text
+  blocks, skips blanks, reports stop reasons, and kills the spawned agent on
+  `exit`/`quit`. Repo-wide parity is now estimated at ~52.3%; runtime/
+  CLI/doctor parity remains ~99.9%, and the CLI/operator table row is ~98.7%.
+  Verified with focused and adjacent ACP client/permission/bridge CLI proofs,
+  `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open while the next source-backed seam is selected. Source anchors remain
   OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
-  and doctor/runtime owners.
+  and doctor/runtime owners; the next likely runtime seam is sandboxed spawn
+  media/workspace staging or another source-backed session/runtime mismatch.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

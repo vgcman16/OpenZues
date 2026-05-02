@@ -47,7 +47,11 @@ from openzues.schemas import (
     SetupWizardSessionUpdate,
 )
 from openzues.services.access import AccessService
-from openzues.services.acp_client_runtime import AcpClientSpawnPlan, build_acp_client_spawn_plan
+from openzues.services.acp_client_runtime import (
+    AcpClientSpawnPlan,
+    build_acp_client_spawn_plan,
+    run_acp_client_interactive,
+)
 from openzues.services.browser_posture import build_browser_posture
 from openzues.services.codex_desktop import CodexDesktopService
 from openzues.services.control_chat import (
@@ -22392,20 +22396,12 @@ def acp_client_command(
     if _acp_client_runner is not None:
         code = _acp_client_runner(plan)
         raise typer.Exit(code=0 if code is None else code)
-    _emit_acp_bridge_unavailable(
-        kind="client",
-        context={
-            "cwd": plan.cwd,
-            "server": plan.server_command,
-            "serverArgs": " ".join(plan.server_args),
-            "serverVerbose": plan.server_verbose,
-            "verbose": plan.verbose,
-            "openclawShell": plan.env.get("OPENCLAW_SHELL"),
-            "stripProviderAuthEnvVars": plan.strip_provider_auth_env_vars,
-            "strippedEnvKeys": ",".join(plan.stripped_env_keys),
-        },
-    )
-    raise typer.Exit(code=1)
+    try:
+        code = _run(run_acp_client_interactive(plan))
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(f"ACP client failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    raise typer.Exit(code=0 if code is None else code)
 
 
 @acp_app.command("status")
