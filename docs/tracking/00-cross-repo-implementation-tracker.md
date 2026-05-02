@@ -45,7 +45,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
-| OZ-RM-001 | Sandboxed remote inbound provider media staging | Verified, checkpoint commit pending | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Commit and push this seam checkpoint |
+| OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Open | TBD | Map next source-backed `chat.*` or `sessions.*` runtime mismatch |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Open | Broad | Compare OpenClaw plugin activation/import lifecycle and implement next seam |

@@ -71,7 +71,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/auto-reply/reply/stage-sandbox-media.ts`
   - Target: `src/openzues/services/gateway_node_methods.py`
   - Test: `tests/test_gateway_node_methods.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed and pushed in `2e6a3ed8`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_gateway_node_methods.py::test_chat_send_sandboxed_remote_provider_attachment_stages_allowed_media
