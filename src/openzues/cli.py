@@ -12605,6 +12605,23 @@ def _read_cli_local_plugin_identity(plugin_path: Path) -> tuple[str, str | None]
     return plugin_path.name, None
 
 
+_CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES = (
+    ".ts",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".tgz",
+    ".tar.gz",
+    ".tar",
+    ".zip",
+)
+
+
+def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
+    text = raw.strip().lower()
+    return any(text.endswith(suffix) for suffix in _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES)
+
+
 async def _build_plugins_path_install_payload(
     services: CliServices,
     *,
@@ -19493,6 +19510,14 @@ def plugins_install_command(
             return
         if link:
             typer.echo("`--link` requires a local path.", err=True)
+            raise typer.Exit(code=1)
+        if _looks_like_cli_local_plugin_install_spec(plugin_id):
+            missing_path = Path(plugin_id).expanduser()
+            try:
+                resolved_missing_path = missing_path.resolve(strict=False)
+            except OSError:
+                resolved_missing_path = missing_path
+            typer.echo(f"Path not found: {resolved_missing_path}", err=True)
             raise typer.Exit(code=1)
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "

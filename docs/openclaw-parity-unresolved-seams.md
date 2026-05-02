@@ -19,10 +19,11 @@ Current percentage rollup:
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
   plus MCP/LSP server projection, known Claude marketplace shortcut, remote
   marketplace listing, remote marketplace path-entry install/update,
-  Git/GitHub entry-source install, URL/archive entry-source install, and local
-  path link/copy install slices.
+  Git/GitHub entry-source install, URL/archive entry-source install, local
+  path link/copy install, and missing local-looking install-spec guard slices.
 - The CLI/operator control-plane family is estimated at ~98% after the bundle
-  metadata mini-queue and marketplace source-shape install/update queue;
+  metadata mini-queue, marketplace source-shape install/update queue, local
+  path link/copy installs, and missing local-looking install-spec guard;
   remaining CLI gaps are now dominated by package/npm/clawhub install breadth,
   runtime activation/import depth, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
@@ -1382,6 +1383,10 @@ install records with `sourcePath`, `installPath`, version metadata from
 `plugins install <local-path>` without `--link` now copies local plugin
 directories/files into a durable `plugins/local/<id>` data-dir install root
 while preserving separate `sourcePath` and `installPath` metadata.
+Missing local-looking archive/script install specs (`.ts`, `.js`, `.mjs`,
+`.cjs`, `.tgz`, `.tar.gz`, `.tar`, and `.zip`) now return OpenClaw's
+`Path not found: <resolved path>` error before the native command reaches the
+broader package/npm/clawhub install boundary.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
