@@ -13611,6 +13611,7 @@ async def _build_plugins_inventory_payload(
             plugin for plugin in plugins if _plugin_row_runtime_activated(plugin)
         ],
         config_snapshot=config_snapshot,
+        workspace_dir=workspace_dir,
     )
     _mark_plugin_import_state(
         plugins,
@@ -16830,6 +16831,7 @@ async def _build_plugin_inspect_payload(
             runtime_specs = _plugin_inspect_runtime_specs_from_rows(
                 services,
                 plugin_rows,
+                workspace_dir=_optional_cli_string(runtime_inventory.get("workspaceDir")),
             )
         return [
             _plugin_inspect_report(
@@ -16858,6 +16860,7 @@ async def _build_plugin_inspect_payload(
         runtime_specs = _plugin_inspect_runtime_specs_from_rows(
             services,
             runtime_plugin_rows,
+            workspace_dir=_optional_cli_string(runtime_inventory.get("workspaceDir")),
         )
     return _plugin_inspect_report(
         plugin,
@@ -16870,6 +16873,8 @@ async def _build_plugin_inspect_payload(
 def _plugin_inspect_runtime_specs_from_rows(
     services: object,
     plugin_rows: Sequence[Mapping[str, object]],
+    *,
+    workspace_dir: str | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     config_snapshot = _doctor_config_snapshot(getattr(services, "gateway_config", None))
     return _plugin_runtime_specs_from_services(
@@ -16878,6 +16883,7 @@ def _plugin_inspect_runtime_specs_from_rows(
             plugin for plugin in plugin_rows if _plugin_row_runtime_activated(plugin)
         ],
         config_snapshot=config_snapshot,
+        workspace_dir=workspace_dir,
     )
 
 
@@ -17073,6 +17079,7 @@ def _plugin_runtime_specs_from_services(
     *,
     plugin_rows: Sequence[Mapping[str, object]] = (),
     config_snapshot: Mapping[str, object] | None = None,
+    workspace_dir: str | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     specs: list[GatewayPluginRuntimeExecutorSpec] = []
     seen_tools: set[str] = set()
@@ -17094,6 +17101,7 @@ def _plugin_runtime_specs_from_services(
         plugin_rows=plugin_rows,
         config_snapshot=config_snapshot or {},
         existing_tool_names=seen_tools,
+        workspace_dir=workspace_dir,
     )
     _extend_plugin_runtime_specs(specs, seen_tools, adapter_specs)
     return tuple(specs)
@@ -17120,6 +17128,7 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     plugin_rows: Sequence[Mapping[str, object]],
     config_snapshot: Mapping[str, object],
     existing_tool_names: Iterable[str],
+    workspace_dir: str | None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     if not plugin_rows:
         return ()
@@ -17136,11 +17145,22 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
             break
     if adapter is None:
         return ()
-    context = {
+    only_plugin_ids = _dedupe_cli_strings(
+        [
+            plugin_id
+            for plugin in plugin_rows
+            if (plugin_id := _optional_cli_string(plugin.get("id"))) is not None
+        ]
+    )
+    context: dict[str, object] = {
         "plugins": [dict(plugin) for plugin in plugin_rows],
         "config": dict(config_snapshot),
+        "activationSourceConfig": dict(config_snapshot),
         "env": dict(os.environ),
+        "onlyPluginIds": only_plugin_ids,
     }
+    if workspace_dir is not None:
+        context["workspaceDir"] = workspace_dir
     result = _call_plugin_runtime_activation_adapter(adapter, context)
     if result is None:
         return ()

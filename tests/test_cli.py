@@ -8344,11 +8344,12 @@ def _patch_plugins_cli_services(
     gateway_config: GatewayConfigService,
     plugin_runtime_service: GatewayPluginRuntimeService | None = None,
     installed_plugin_runtime_activation_adapter: object | None = None,
+    hermes_source_path: str | None = None,
 ) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
             return {
-                "profile": {"hermes_source_path": None},
+                "profile": {"hermes_source_path": hermes_source_path},
                 "warnings": [],
                 "plugins": {"items": []},
             }
@@ -8819,6 +8820,98 @@ def test_plugins_inspect_runtime_json_uses_installed_activation_adapter_tools(
         {"names": ["installed_runtime.search"], "optional": False}
     ]
     assert [plugin["id"] for plugin in calls[-1]["plugins"]] == ["installed-runtime"]
+
+
+def test_plugins_inspect_runtime_activation_adapter_receives_scoped_load_context(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    workspace_dir = tmp_path / "workspace"
+    plugin_root = tmp_path / "plugins"
+    inspected_dir = plugin_root / "installed-runtime"
+    other_dir = plugin_root / "other-runtime"
+    _write_openclaw_runtime_plugin(
+        inspected_dir,
+        plugin_id="installed-runtime",
+        contracts={"tools": ["installed_runtime.search"]},
+    )
+    _write_openclaw_runtime_plugin(
+        other_dir,
+        plugin_id="other-runtime",
+        contracts={"tools": ["other_runtime.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "load": {"paths": [str(inspected_dir), str(other_dir)]}
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-runtime",
+                        "pluginName": "Installed Runtime",
+                        "source": "openclaw-plugin",
+                        "names": ["installed_runtime.search"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+        hermes_source_path=str(workspace_dir),
+    )
+
+    result = runner.invoke(
+        app,
+        ["plugins", "inspect", "installed-runtime", "--runtime", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["tools"] == [
+        {"names": ["installed_runtime.search"], "optional": False}
+    ]
+    scoped_context = calls[-1]
+    assert scoped_context["onlyPluginIds"] == ["installed-runtime"]
+    assert scoped_context["workspaceDir"] == str(workspace_dir)
+    assert scoped_context["activationSourceConfig"]["plugins"]["load"]["paths"] == [
+        str(inspected_dir),
+        str(other_dir),
+    ]
 
 
 def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatch) -> None:

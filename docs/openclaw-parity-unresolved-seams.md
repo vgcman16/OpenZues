@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~57.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~57.7% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -5221,6 +5221,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   paths remain ~99.9%. Verified with the focused plugin inspect installed
   activation adapter test, adjacent plugin runtime CLI proof, `ruff check`, and
   `mypy`; checkpoint in `fb4fca1b`.
+- Closed the installed plugin scoped runtime activation load-context seam from
+  OpenClaw `src/plugins/runtime/load-context.ts`,
+  `src/plugins/runtime/runtime-registry-loader.ts`, `src/plugins/status.ts`,
+  and `src/cli/plugins-inspect-command.ts`: native installed-plugin activation
+  adapters now receive `onlyPluginIds`, `workspaceDir`, and
+  `activationSourceConfig` for scoped runtime loads. Repo-wide parity is now
+  estimated at ~57.7%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused plugin inspect scoped
+  activation context test, adjacent plugin runtime CLI proof, `ruff check`, and
+  `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
