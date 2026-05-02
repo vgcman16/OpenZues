@@ -8915,6 +8915,18 @@ def test_plugins_install_reports_missing_local_like_spec(tmp_path) -> None:
     assert f"Path not found: {missing_archive}" in result.stderr
 
 
+def test_plugins_install_reports_missing_absolute_local_like_spec(tmp_path) -> None:
+    missing_path = tmp_path / "missing-plugin"
+
+    result = runner.invoke(
+        app,
+        ["plugins", "install", str(missing_path), "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert f"Path not found: {missing_path}" in result.stderr
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,

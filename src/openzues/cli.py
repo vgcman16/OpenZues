@@ -12618,8 +12618,15 @@ _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES = (
 
 
 def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
-    text = raw.strip().lower()
-    return any(text.endswith(suffix) for suffix in _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES)
+    text = raw.strip()
+    if not text:
+        return False
+    if text.startswith((".", "~")):
+        return True
+    if Path(text).is_absolute():
+        return True
+    lower_text = text.lower()
+    return any(lower_text.endswith(suffix) for suffix in _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES)
 
 
 async def _build_plugins_path_install_payload(

@@ -7108,9 +7108,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\gateway_config.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py src\openzues\services\gateway_config.py`.
 - Missing local-looking plugin install specs now match OpenClaw's
-  `looksLikeLocalInstallSpec` guard for archive/script-shaped paths: the native
-  CLI reports `Path not found: <resolved path>` before falling through to the
-  broader package/npm/clawhub install queue.
+  `looksLikeLocalInstallSpec` guard for dot-relative, home-relative, absolute,
+  archive, and script-shaped paths: the native CLI reports
+  `Path not found: <resolved path>` before falling through to the broader
+  package/npm/clawhub install queue.
 - Progress estimates remain roughly 49% repo-wide and ~98% for the
   CLI/operator control plane after this guard slice. Remaining non-marketplace
   plugin install parity is package/npm/clawhub install/update behavior plus
@@ -7124,6 +7125,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_install_json_copies_local_plugin_path or
   plugins_install_link_json_persists_local_plugin_path or
   plugins_install_marketplace_json_persists_local_manifest_entry"` (`4
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Verified the full local-looking predicate follow-up with `python -m pytest
+  tests\test_cli.py::test_plugins_install_reports_missing_absolute_local_like_spec
+  -q` (`1 failed` before implementation because missing absolute path specs
+  returned the native marketplace boundary), then adjacent plugin CLI proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry"` (`5
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 

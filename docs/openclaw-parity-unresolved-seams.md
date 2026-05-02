@@ -1383,10 +1383,11 @@ install records with `sourcePath`, `installPath`, version metadata from
 `plugins install <local-path>` without `--link` now copies local plugin
 directories/files into a durable `plugins/local/<id>` data-dir install root
 while preserving separate `sourcePath` and `installPath` metadata.
-Missing local-looking archive/script install specs (`.ts`, `.js`, `.mjs`,
-`.cjs`, `.tgz`, `.tar.gz`, `.tar`, and `.zip`) now return OpenClaw's
-`Path not found: <resolved path>` error before the native command reaches the
-broader package/npm/clawhub install boundary.
+Missing local-looking install specs now mirror OpenClaw's
+`looksLikeLocalInstallSpec` predicate: dot-relative, home-relative, absolute,
+archive, and script-shaped specs return `Path not found: <resolved path>`
+before the native command reaches the broader package/npm/clawhub install
+boundary.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
