@@ -13106,8 +13106,10 @@ async def _build_plugins_inventory_payload(
         if str(warning).strip()
     ]
     diagnostics.extend(config_diagnostics)
+    registry = _plugin_registry_snapshot_metadata(services, plugins)
     return {
         "workspaceDir": workspace_dir,
+        "registry": registry,
         "plugins": plugins,
         "runtimeExecutors": _build_doctor_runtime_bridge_plugin_executors_payload(services),
         "diagnostics": diagnostics,
@@ -13171,6 +13173,44 @@ def _plugin_registry_index_from_plugins(
         )
     plugins.sort(key=lambda entry: str(entry.get("pluginId") or ""))
     return {"plugins": plugins}
+
+
+def _plugin_registry_snapshot_metadata(
+    services: CliServices,
+    plugin_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    current = _plugin_registry_index_from_plugins(plugin_rows)
+    persisted = _read_plugin_registry_index(_plugin_registry_storage_path(services))
+    if persisted == current:
+        return {"source": "persisted", "diagnostics": []}
+    if persisted is None:
+        return {
+            "source": "derived",
+            "diagnostics": [
+                {
+                    "level": "info",
+                    "code": "persisted-registry-missing",
+                    "message": (
+                        "Persisted plugin registry is missing or invalid; using "
+                        "derived plugin index."
+                    ),
+                }
+            ],
+        }
+    return {
+        "source": "derived",
+        "diagnostics": [
+            {
+                "level": "warn",
+                "code": "persisted-registry-stale-source",
+                "message": (
+                    "Persisted plugin registry no longer matches current plugin "
+                    "inventory; using derived plugin index. Run `openzues plugins "
+                    "registry --refresh` to update the persisted registry."
+                ),
+            }
+        ],
+    }
 
 
 def _read_plugin_registry_index(path: Path | None) -> dict[str, object] | None:

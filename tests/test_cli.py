@@ -9155,6 +9155,63 @@ def test_plugins_registry_refresh_json_persists_current_index(
     }
 
 
+def test_plugins_list_json_reports_persisted_registry_source_after_refresh(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "persisted-demo"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "persisted-demo",
+                "name": "Persisted Demo",
+                "description": "Persisted list metadata.",
+                "version": "2.0.0",
+                "enabledByDefault": True,
+                "providers": ["persisted-provider"],
+                "commandAliases": [{"name": "persisted-demo"}],
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    refresh = runner.invoke(app, ["plugins", "registry", "--refresh", "--json"])
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert refresh.exit_code == 0, refresh.stdout
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["registry"] == {"source": "persisted", "diagnostics": []}
+    assert payload["plugins"][0]["id"] == "persisted-demo"
+    assert payload["plugins"][0]["providers"] == ["persisted-provider"]
+    assert payload["plugins"][0]["commandAliases"] == [{"name": "persisted-demo"}]
+
+
 def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
