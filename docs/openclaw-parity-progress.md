@@ -9435,7 +9435,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugin records with manifest `channelEnvVars` are auto-enabled when one
   declared env var is present, including external channel ids and
   case-insensitive env names, while preserving explicit channel-disable
-  blocking. Checkpoint pending.
+  blocking. Checkpoint in `f39ca17c`.
 - Progress estimates are now roughly 58.7% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

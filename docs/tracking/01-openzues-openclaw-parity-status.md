@@ -131,7 +131,7 @@ may lag behind this tracker.
 
 - [x] Bundled channel manifest env-var activation, preserving
   `channelEnvVars` as auto-enable triggers for bundled channel plugins.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `f39ca17c`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
