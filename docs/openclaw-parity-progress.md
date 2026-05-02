@@ -9454,7 +9454,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   activation adapters receive an OpenClaw-shaped `autoEnabledReasons` map
   keyed by plugin id for bundled channel plugins auto-enabled from channel
   config/env discovery, while retaining raw config, activation source config,
-  env, scoped plugin ids, and throw-on-load-error options. Checkpoint pending.
+  env, scoped plugin ids, and throw-on-load-error options. Checkpoint in
+  `b44685b1`.
 - Progress estimates are now roughly 58.8% repo-wide and 99.3% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

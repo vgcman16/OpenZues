@@ -136,7 +136,7 @@ may lag behind this tracker.
 - [x] Auto-enabled plugin runtime load-context reasons, preserving
   OpenClaw's `autoEnabledReasons` map when runtime activation adapters load
   bundled channel plugins auto-enabled from channel config/env discovery.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `b44685b1`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
