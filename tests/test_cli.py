@@ -8964,8 +8964,10 @@ def test_plugins_inspect_json_projects_record_runtime_surfaces(monkeypatch) -> N
     monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
 
     result = runner.invoke(app, ["plugins", "inspect", "runtime-surfaces", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "runtime-surfaces"])
 
     assert result.exit_code == 0, result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
     payload = json.loads(result.stdout)
     assert payload["commands"] == ["pair"]
     assert payload["cliCommands"] == ["memory"]
@@ -8973,6 +8975,8 @@ def test_plugins_inspect_json_projects_record_runtime_surfaces(monkeypatch) -> N
     assert payload["gatewayMethods"] == ["memory.search"]
     assert payload["httpRouteCount"] == 2
     assert payload["bundleCapabilities"] == ["skills", "commands"]
+    assert "HTTP routes:" in human_result.stdout
+    assert "- 2" in human_result.stdout
 
 
 def test_plugins_inspect_all_json_includes_saved_install_records(

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~55.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~55.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin inspect human MCP/LSP sections slice is checkpointed in `6fc67848`.
-Any follow-up changes should target the next queue head only:
+The plugin inspect human HTTP routes section slice is verified and pending its
+checkpoint hash. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect human MCP/LSP sections checkpointed in `6fc67848` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect human HTTP routes section verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -582,6 +582,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
     "plugins_inspect_json_projects_bundle_mcp_and_lsp_servers or
     plugins_inspect_json_projects_claude_bundle_commands or
+    plugins_inspect_human_reports_runtime_tools or
+    plugins_inspect_human_reports_runtime_surface_sections or
+    plugins_inspect_human_reports_capability_sections or
+    plugins_inspect_human_reports_base_metadata or
+    plugins_inspect_json_projects_runtime_executor_tools"` (`7 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001T` plugin inspect human HTTP routes section
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: human `plugins inspect <id>` renders OpenClaw-style `HTTP
+    routes` when the inspect payload has a positive route count.
+  - Evidence required: focused plugin inspect runtime-surface test, adjacent
+    plugin inspect human/runtime tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_json_projects_record_runtime_surfaces
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_json_projects_record_runtime_surfaces or
+    plugins_inspect_json_projects_bundle_mcp_and_lsp_servers or
     plugins_inspect_human_reports_runtime_tools or
     plugins_inspect_human_reports_runtime_surface_sections or
     plugins_inspect_human_reports_capability_sections or

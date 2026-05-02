@@ -12320,6 +12320,9 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         "LSP servers",
         _plugin_record_string_list(payload, "lspServers"),
     )
+    http_route_count = _plugin_record_http_route_count(payload)
+    if http_route_count > 0:
+        _emit_plugin_inspect_section("HTTP routes", [str(http_route_count)])
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")
