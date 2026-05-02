@@ -6396,8 +6396,10 @@ def test_plugins_list_json_projects_installed_plugin_activation_state(
     _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
 
     result = runner.invoke(app, ["plugins", "list", "--json"])
+    verbose_result = runner.invoke(app, ["plugins", "list", "--verbose"])
 
     assert result.exit_code == 0, result.stdout
+    assert verbose_result.exit_code == 0, verbose_result.stdout
     plugins = {
         str(plugin["id"]): plugin
         for plugin in json.loads(result.stdout)["plugins"]
@@ -6407,6 +6409,11 @@ def test_plugins_list_json_projects_installed_plugin_activation_state(
     assert plugins["frontend-design"]["explicitlyEnabled"] is True
     assert plugins["frontend-design"]["activationSource"] == "disabled"
     assert plugins["frontend-design"]["activationReason"] == "plugins disabled"
+    assert "  activated: no" in verbose_result.stdout
+    assert "  imported: no" in verbose_result.stdout
+    assert "  explicitly enabled: yes" in verbose_result.stdout
+    assert "  activation source: disabled" in verbose_result.stdout
+    assert "  activation reason: plugins disabled" in verbose_result.stdout
 
 
 def test_plugins_list_json_keeps_installed_plugin_allowlist_authoritative(

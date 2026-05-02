@@ -10371,6 +10371,27 @@ def _emit_plugins_inventory(
             typer.echo(f"  origin: {origin}")
         if parity_status:
             typer.echo(f"  parity: {parity_status}")
+        if isinstance(plugin.get("activated"), bool):
+            typer.echo("  activated: " + ("yes" if plugin["activated"] else "no"))
+        if isinstance(plugin.get("imported"), bool):
+            typer.echo("  imported: " + ("yes" if plugin["imported"] else "no"))
+        if isinstance(plugin.get("explicitlyEnabled"), bool):
+            typer.echo(
+                "  explicitly enabled: "
+                + ("yes" if plugin["explicitlyEnabled"] else "no")
+            )
+        activation_source = _optional_cli_string(plugin.get("activationSource"))
+        if activation_source is not None:
+            typer.echo(f"  activation source: {activation_source}")
+        activation_reason = _optional_cli_string(plugin.get("activationReason"))
+        if activation_reason is not None:
+            reason = (
+                activation_reason.replace("\x1b", "")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t")
+            )
+            typer.echo(f"  activation reason: {reason}")
         capabilities = plugin.get("capabilities")
         if isinstance(capabilities, list) and capabilities:
             typer.echo(
