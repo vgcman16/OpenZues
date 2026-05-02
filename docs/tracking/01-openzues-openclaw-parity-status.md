@@ -155,7 +155,7 @@ may lag behind this tracker.
 
 - [x] Bundled plugin-SDK alias context, preserving dist package SDK root and
   extension-local alias root metadata for native activation adapters.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `e6b506db`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON

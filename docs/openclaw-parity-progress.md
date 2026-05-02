@@ -9529,7 +9529,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   entries loaded from `dist/extensions` or staged `dist-runtime/extensions`
   project `pluginSdkResolution="dist"`, `pluginSdkPackageRoot`,
   `pluginSdkDistRoot`, and `pluginSdkAliasRoot` metadata to activation
-  adapters when SDK imports are present. Checkpoint pending.
+  adapters when SDK imports are present. Checkpoint in `e6b506db`.
 - Progress estimates are now roughly 59.2% repo-wide and 99.7% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
