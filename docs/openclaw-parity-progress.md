@@ -8973,7 +8973,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   scan top-level public source files, rewrite them to built `.js` artifact
   names, exclude primary extension/setup/config/test files, and project
   `publicSurfaceArtifacts` plus `runtimeSidecarArtifacts` without importing
-  the TypeScript runtime. Checkpoint pending.
+  the TypeScript runtime. Checkpointed in `2acd2736`.
 - Progress estimates are now roughly 56.7% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

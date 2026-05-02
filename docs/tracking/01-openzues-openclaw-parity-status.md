@@ -198,7 +198,7 @@ may lag behind this tracker.
 
 - [x] Public-surface/runtime-sidecar artifact metadata for manifest/load-path
   OpenClaw plugin records.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `2acd2736`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -402,7 +402,7 @@ may lag behind this tracker.
     manifest load-path activation-state projection checkpointed in
     `54bf33aa`, and errored runtime-imported plugin projection checkpointed
     in `cc2da90c`, and public-surface/runtime-sidecar artifact metadata
-    verified with checkpoint pending, but deeper module import/runtime
+    checkpointed in `2acd2736`, but deeper module import/runtime
     activation remains.
   - Weight: 5
 
@@ -412,7 +412,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/public-surface-runtime.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `2acd2736`.
   - Weight: 1
   - Last verified: 2026-05-02, focused manifest load-path test (`1 passed`),
     adjacent manifest/bundle inventory proof (`7 passed`), `ruff check`, and
