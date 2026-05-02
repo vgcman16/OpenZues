@@ -8162,6 +8162,82 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_slack_reply_to_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_slack_native_route_falls_back_from_internal_reply_to_thread_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-slack-thread-fallback"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Slack Thread Fallback Native Provider",
+        kind="slack",
+        target="https://slack.com/api",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="xoxb-route-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "slack",
+            "account_id": "workspace-bot",
+            "peer_kind": "channel",
+            "peer_id": "channel:C123",
+        },
+    )
+    slack_posts: list[tuple[str, dict[str, object]]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self, secret_header_name, secret_token
+        slack_posts.append((target, payload))
+        return {
+            "ok": True,
+            "channel": "C123",
+            "ts": "1713980000.000301",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    await service.send_direct_channel_message(
+        channel="slack",
+        to="channel:C123",
+        message="Reply using the valid Slack thread timestamp.",
+        account_id="workspace-bot",
+        reply_to_id="msg-internal-1",
+        thread_id="1712000000.000002",
+        idempotency_key="idem-native-slack-thread-fallback",
+    )
+
+    assert slack_posts == [
+        (
+            "https://slack.com/api/chat.postMessage",
+            {
+                "channel": "C123",
+                "text": "Reply using the valid Slack thread timestamp.",
+                "thread_ts": "1712000000.000002",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_matrix_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

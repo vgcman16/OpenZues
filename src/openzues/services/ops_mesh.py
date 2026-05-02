@@ -254,6 +254,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "matrix",
 }
 NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {"bluebubbles", "line", "matrix", "whatsapp", "zalo"}
+SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
@@ -942,6 +943,21 @@ def _slack_channel_id(target: str | None) -> str | None:
             continue
         break
     return normalized or None
+
+
+def _normalize_slack_thread_ts_candidate(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized if SLACK_THREAD_TS_PATTERN.fullmatch(normalized) else None
+
+
+def _resolve_slack_thread_ts(*, reply_to_id: object, thread_id: object) -> str | None:
+    return _normalize_slack_thread_ts_candidate(
+        reply_to_id
+    ) or _normalize_slack_thread_ts_candidate(thread_id)
 
 
 def _slack_reaction_name(raw: str | None) -> str:
@@ -18169,14 +18185,17 @@ class OpsMeshService:
                 else None
             ),
         )
-        thread_id = str(event.get("replyToId") or event.get("threadId") or "").strip()
+        thread_id = _resolve_slack_thread_ts(
+            reply_to_id=event.get("replyToId"),
+            thread_id=event.get("threadId"),
+        )
         if media_urls and event_type == "gateway/send":
             media_ids = self._upload_slack_media_files(
                 route=route,
                 media_urls=media_urls,
                 channel_id=channel_id,
                 initial_comment=text,
-                thread_id=thread_id or None,
+                thread_id=thread_id,
                 secret_token=secret_token or "",
             )
             return {

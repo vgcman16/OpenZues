@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.2% overall, with a reasonable
   band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~98.6% of the
+- The active gateway/session/tool-contract family is estimated at ~98.7% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,8 +32,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~98.6% after the
-  latest `node.pair.remove` node-pair lifecycle gateway method slice.
+- The gateway session/tool-contract family is estimated at ~98.7% after the
+  latest Slack provider-native thread timestamp route slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -127,6 +127,13 @@ the method returns `{nodeId}`, unknown nodes raise the upstream-shaped
 `decision="removed"` with an empty request id. Verified on 2026-05-02 with
 focused gateway/policy proofs, adjacent node-pair lifecycle tests, `ruff
 check`, and `mypy`; checkpointed in `8a0e6ac6`.
+Slack provider-native route sends now mirror OpenClaw's Slack thread timestamp
+resolution: only Slack timestamp-shaped `replyToId` values become
+`thread_ts`, invalid internal reply ids fall back to valid Slack timestamp
+`threadId` values, and invalid non-Slack ids are omitted instead of being sent
+to Slack. Verified on 2026-05-02 with focused Slack native route tests,
+adjacent Slack native route tests, `ruff check`, and `mypy`; checkpoint commit
+pending.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4523,10 +4530,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~98.6%. Verified with focused
   gateway and policy proofs, adjacent node-pair lifecycle tests, `ruff check`,
   and `mypy`; checkpointed in `8a0e6ac6`.
-- Next repo-wide queue head: rotate from small gateway base-method closures
-  back to the source-backed provider-native adapter breadth queue, starting
-  with remaining OpenClaw channel/provider send, poll, replay, direct announce,
-  media, reply, thread, and result metadata behavior.
+- Closed the Slack provider-native thread timestamp seam from OpenClaw
+  `extensions/slack/src/thread-ts.ts`,
+  `extensions/slack/src/thread-ts.test.ts`, and
+  `extensions/slack/src/outbound-adapter.ts`: route-backed Slack direct sends
+  now validate `thread_ts`, fall back from internal reply ids to valid Slack
+  thread ids, and keep invalid ids out of API payloads. Repo-wide parity is now
+  estimated at ~53.2%; active gateway/session/tool-contract parity is ~98.7%.
+  Verified with focused and adjacent Slack native route tests, `ruff check`,
+  and `mypy`; checkpoint commit pending.
+- Next repo-wide queue head: continue the source-backed provider-native
+  adapter breadth queue, especially remaining channel/provider send, poll,
+  replay, direct announce, media, reply, thread, and result metadata behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.6% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~53.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.7% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,14 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `node.pair.remove` gateway method parity slice is checkpointed in
-`8a0e6ac6`. Any follow-up changes should target the next queue head only:
+The Slack provider-native thread timestamp parity slice is verified and
+awaiting its checkpoint commit. Any follow-up changes should target the next
+queue head only:
 
-- `src/openzues/services/gateway_node_pairing.py`
-- `src/openzues/services/gateway_node_methods.py`
-- `src/openzues/services/gateway_method_policy.py`
-- `tests/test_gateway_node_methods.py`
-- `tests/test_gateway_method_policy.py`
+- `src/openzues/services/ops_mesh.py`
+- `tests/test_ops_mesh.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -53,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Open | Medium | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack thread timestamp fallback verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -196,6 +194,25 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     node_pair_approve or node_pair_reject or node_pair_list or
     node_pair_request or node_pair_verify or node_rename"` (`13 passed`),
     `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001A` Slack native route `thread_ts` fallback
+  - Source: `openclaw-main/extensions/slack/src/thread-ts.ts`,
+    `openclaw-main/extensions/slack/src/thread-ts.test.ts`, and
+    `openclaw-main/extensions/slack/src/outbound-adapter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: Slack native route-backed sends use `replyToId` as Slack
+    `thread_ts` only when it matches Slack timestamp format, fall back to a
+    valid Slack timestamp `threadId`, and omit invalid internal ids from Slack
+    API payloads.
+  - Evidence required: focused Slack native route test, adjacent Slack route
+    test, ruff, mypy
+  - Status: verified; checkpoint commit pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused Slack native route tests (`2 passed`),
+    adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "slack_native_route or direct_channel_message_uses_slack or
+    slack_reply_to_thread"` (`5 passed`), `ruff check`, and `mypy`.
 
 ## Canonical Checklist Format
 
