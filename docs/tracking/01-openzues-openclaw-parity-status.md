@@ -87,7 +87,7 @@ may lag behind this tracker.
 - [x] Slack provider-native route sends with OpenClaw-shaped `thread_ts`
   validation and fallback from internal `replyToId` values to valid Slack
   `threadId` timestamps.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `a461e5eb`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -222,8 +222,8 @@ may lag behind this tracker.
 - [~] Provider-native adapter breadth.
   - Source: OpenClaw channel/provider send, poll, replay, direct announce, media,
     reply, thread, and result metadata behavior.
-  - Status: mapped; Slack thread timestamp fallback verified, checkpoint commit
-    pending
+  - Status: mapped; Slack thread timestamp fallback checkpointed in
+    `a461e5eb`
   - Weight: 3
 
 - [x] Slack native route `thread_ts` fallback.
@@ -232,7 +232,7 @@ may lag behind this tracker.
     `openclaw-main/extensions/slack/src/outbound-adapter.ts`
   - Target: `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `a461e5eb`.
   - Weight: 1
   - Last verified: 2026-05-02, focused Slack native route tests (`2 passed`),
     adjacent Slack native route tests (`5 passed`), `ruff check`, and `mypy`.

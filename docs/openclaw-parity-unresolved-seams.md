@@ -132,8 +132,8 @@ resolution: only Slack timestamp-shaped `replyToId` values become
 `thread_ts`, invalid internal reply ids fall back to valid Slack timestamp
 `threadId` values, and invalid non-Slack ids are omitted instead of being sent
 to Slack. Verified on 2026-05-02 with focused Slack native route tests,
-adjacent Slack native route tests, `ruff check`, and `mypy`; checkpoint commit
-pending.
+adjacent Slack native route tests, `ruff check`, and `mypy`;
+checkpointed in `a461e5eb`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4538,7 +4538,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   thread ids, and keep invalid ids out of API payloads. Repo-wide parity is now
   estimated at ~53.2%; active gateway/session/tool-contract parity is ~98.7%.
   Verified with focused and adjacent Slack native route tests, `ruff check`,
-  and `mypy`; checkpoint commit pending.
+  and `mypy`; checkpointed in `a461e5eb`.
 - Next repo-wide queue head: continue the source-backed provider-native
   adapter breadth queue, especially remaining channel/provider send, poll,
   replay, direct announce, media, reply, thread, and result metadata behavior.

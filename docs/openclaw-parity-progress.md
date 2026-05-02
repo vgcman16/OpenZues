@@ -4435,7 +4435,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `extensions/slack/src/thread-ts.ts` thread resolution: `replyToId` is used
   only when it is a Slack timestamp string, otherwise a valid `threadId`
   supplies `thread_ts`, and internal message ids are never posted as Slack
-  thread timestamps. This slice is verified; checkpoint commit pending.
+  thread timestamps. This slice is checkpointed in `a461e5eb`.
 - Verified the Slack thread timestamp slice with focused Slack native route
   tests (`2 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
   "slack_native_route or direct_channel_message_uses_slack or
@@ -8191,7 +8191,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   route-backed sends: invalid internal `replyToId` values are ignored for
   Slack `thread_ts`, valid Slack timestamp `replyToId` values still win, and
   valid `threadId` values are used as fallback.
-  Checkpoint commit pending.
+  Checkpointed in `a461e5eb`.
 - Progress estimates are now roughly 53.2% repo-wide and ~98.7% for the active
   gateway/session/tool-contract family after this Slack provider slice.
 - Verified the Slack thread timestamp slice with focused Slack native route
