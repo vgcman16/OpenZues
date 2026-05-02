@@ -9141,7 +9141,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   manifest/load-path records, which are projected into native executor specs,
   mark the matching manifest plugin imported, populate
   `runtimeExecutorPlugins`, and clear matching `missingExecutorPlugins`.
-  Checkpoint pending.
+  Checkpointed in `26e55209`.
 - Progress estimates are now roughly 57.4% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
