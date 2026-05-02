@@ -931,7 +931,7 @@ may lag behind this tracker.
     query placement checkpointed in `0d40be27`; WhatsApp document filename
     projection checkpointed in `05c4f0fc`; Discord media iteration
     checkpointed in `b5371fd9`; native provider result metadata passthrough
-    verified and awaiting checkpoint
+    checkpointed in `fb9c9763`
   - Weight: 3
 
 - [x] Native provider result metadata passthrough.
@@ -942,7 +942,7 @@ may lag behind this tracker.
   - Target: `src/openzues/services/gateway_outbound_runtime.py`,
     `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `fb9c9763`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata

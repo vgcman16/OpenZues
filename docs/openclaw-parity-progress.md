@@ -9256,7 +9256,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   file, filename, and document metadata are preserved in direct send responses
   and persisted outbound delivery `provider_result` payloads, while
   caption-capable native providers continue receiving structured media
-  requests instead of synthesized media-list text. Checkpoint pending.
+  requests instead of synthesized media-list text. Checkpoint in `fb9c9763`.
 - Progress estimates are now roughly 57.9% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while the runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

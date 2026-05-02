@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The native provider result metadata passthrough slice is verified and awaiting
-checkpoint. Any follow-up changes should target the next queue head only:
+The native provider result metadata passthrough slice is checkpointed in
+`fb9c9763`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/gateway_outbound_runtime.py`
 - `src/openzues/services/ops_mesh.py`
@@ -51,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed plugin activation adapter failure diagnostics checkpointed in `baa32232` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
 
@@ -1410,7 +1410,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     contract for caption-capable native providers.
   - Evidence required: focused provider metadata test, adjacent native adapter
     binding and provider metadata tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `fb9c9763`
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata

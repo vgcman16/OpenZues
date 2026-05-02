@@ -4862,7 +4862,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   receiving structured media requests. Repo-wide parity is now estimated at
   ~57.9%; active gateway/session/tool-contract parity is ~99.2%. Verified with
   focused and adjacent provider-native metadata/binding tests, `ruff check`,
-  and `mypy`; checkpoint pending.
+  and `mypy`; checkpointed in `fb9c9763`.
 - Closed the plugin manifest activation-plan reason projection seam from
   OpenClaw `src/plugins/activation-planner.ts`,
   `src/plugins/activation-planner.test.ts`, `src/plugins/cli-registry-loader.ts`,
