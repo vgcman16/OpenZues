@@ -12280,6 +12280,20 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
                 f"{kind}: {', '.join(ids) if ids else '(registered)'}"
             )
     _emit_plugin_inspect_section("Capabilities", capability_lines)
+    typed_hooks = payload.get("typedHooks")
+    typed_hook_lines: list[str] = []
+    for entry in typed_hooks if isinstance(typed_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        priority = entry.get("priority")
+        if priority is not None and not isinstance(priority, bool):
+            typed_hook_lines.append(f"{name} (priority {priority})")
+        else:
+            typed_hook_lines.append(name)
+    _emit_plugin_inspect_section("Typed hooks", typed_hook_lines)
     compatibility = payload.get("compatibility")
     compatibility_lines: list[str] = []
     for entry in compatibility if isinstance(compatibility, list) else []:
@@ -12289,6 +12303,17 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         if notice:
             compatibility_lines.append(notice)
     _emit_plugin_inspect_section("Compatibility warnings", compatibility_lines)
+    custom_hooks = payload.get("customHooks")
+    custom_hook_lines: list[str] = []
+    for entry in custom_hooks if isinstance(custom_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        events = _string_list_or_none(entry.get("events")) or []
+        custom_hook_lines.append(f"{name}: {', '.join(events)}")
+    _emit_plugin_inspect_section("Custom hooks", custom_hook_lines)
     tools = payload.get("tools")
     tool_lines: list[str] = []
     for entry in tools if isinstance(tools, list) else []:
@@ -16570,8 +16595,8 @@ def _plugin_inspect_report(
         ),
         "compatibility": _plugin_compatibility_notices(plugin),
         "bundleCapabilities": _plugin_record_string_list(plugin, "bundleCapabilities"),
-        "typedHooks": [],
-        "customHooks": [],
+        "typedHooks": _plugin_record_typed_hooks(plugin),
+        "customHooks": _plugin_record_custom_hooks(plugin),
         "tools": runtime_tool_entries,
         "commands": _plugin_record_string_list(plugin, "commands"),
         "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
@@ -16680,6 +16705,37 @@ def _plugin_record_http_route_count(plugin: dict[str, object]) -> int:
         if isinstance(value, list):
             return len(value)
     return 0
+
+
+def _plugin_record_typed_hooks(plugin: dict[str, object]) -> list[dict[str, object]]:
+    raw_hooks = plugin.get("typedHooks")
+    hooks: list[dict[str, object]] = []
+    for entry in raw_hooks if isinstance(raw_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        hook: dict[str, object] = {"name": name}
+        priority = entry.get("priority")
+        if priority is not None and not isinstance(priority, bool):
+            hook["priority"] = priority
+        hooks.append(hook)
+    return hooks
+
+
+def _plugin_record_custom_hooks(plugin: dict[str, object]) -> list[dict[str, object]]:
+    raw_hooks = plugin.get("customHooks")
+    hooks: list[dict[str, object]] = []
+    for entry in raw_hooks if isinstance(raw_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        events = _string_list_or_none(entry.get("events")) or []
+        hooks.append({"name": name, "events": events})
+    return hooks
 
 
 def _plugin_runtime_specs_from_services(
@@ -16958,6 +17014,12 @@ def _plugin_record_from_deck_item(
         values = _plugin_record_string_list(item, key)
         if values:
             record[key] = values
+    typed_hooks = _plugin_record_typed_hooks(item)
+    if typed_hooks:
+        record["typedHooks"] = typed_hooks
+    custom_hooks = _plugin_record_custom_hooks(item)
+    if custom_hooks:
+        record["customHooks"] = custom_hooks
     command_aliases = _plugin_manifest_command_aliases(item.get("commandAliases"))
     if command_aliases:
         record["commandAliases"] = command_aliases

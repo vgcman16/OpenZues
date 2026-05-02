@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~55.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~56.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -167,6 +167,10 @@ may lag behind this tracker.
 - [x] Plugin inspect human compatibility warnings section, rendering
   compatibility rows without doctor-only severity markers.
   - Status: checkpointed in `38b85a1a`
+
+- [x] Plugin inspect typed/custom hook sections, projecting hook metadata in
+  JSON and human output.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -362,8 +366,19 @@ may lag behind this tracker.
     inspect human diagnostics section checkpointed in `667182c7`, and plugin
     inspect human install section checkpointed in `5ca0a5f2`, and plugin
     inspect human compatibility warnings section checkpointed in `38b85a1a`,
+    and plugin inspect typed/custom hook sections verified pending checkpoint,
     but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin inspect typed/custom hook sections.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect hook-section test (`1
+    passed`), adjacent plugin inspect/doctor proof (`11 passed`), `ruff
+    check`, and `mypy`.
 
 - [x] Plugin inspect human compatibility warnings section.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`

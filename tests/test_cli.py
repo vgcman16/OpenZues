@@ -9884,6 +9884,56 @@ def test_plugins_inspect_human_reports_runtime_tools(monkeypatch) -> None:
     assert "- native_runtime.required" in result.stdout
 
 
+def test_plugins_inspect_projects_and_reports_hook_sections(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "hook_sections",
+                            "label": "Hook Sections",
+                            "status": "ready",
+                            "summary": "Plugin with hook surfaces.",
+                            "typedHooks": [
+                                {"name": "before_prompt_build", "priority": 5},
+                                {"name": "after_response"},
+                            ],
+                            "customHooks": [
+                                {"name": "audit", "events": ["turn.start", "turn.end"]}
+                            ],
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    json_result = runner.invoke(app, ["plugins", "inspect", "hook_sections", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "hook_sections"])
+
+    assert json_result.exit_code == 0, json_result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
+    payload = json.loads(json_result.stdout)
+    assert payload["typedHooks"] == [
+        {"name": "before_prompt_build", "priority": 5},
+        {"name": "after_response"},
+    ]
+    assert payload["customHooks"] == [
+        {"name": "audit", "events": ["turn.start", "turn.end"]}
+    ]
+    assert "Typed hooks:" in human_result.stdout
+    assert "- before_prompt_build (priority 5)" in human_result.stdout
+    assert "- after_response" in human_result.stdout
+    assert "Custom hooks:" in human_result.stdout
+    assert "- audit: turn.start, turn.end" in human_result.stdout
+
+
 def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
