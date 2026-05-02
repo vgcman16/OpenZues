@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~54.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.9% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -36,7 +36,7 @@ Current percentage rollup:
   activation-state projection, installed plugin allowlist activation guard,
   installed plugin slot activation reason, plugin doctor failure-phase
   projection, plugin inspect failure-phase projection, plugin inspect
-  failed-at timestamp projection,
+  failed-at timestamp projection, plugin inspect loader error text projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -59,7 +59,7 @@ Current percentage rollup:
   projection, installed plugin allowlist activation guard, installed plugin
   slot activation reason, plugin doctor failure-phase projection, plugin
   inspect failure-phase projection, plugin inspect failed-at timestamp
-  projection,
+  projection, plugin inspect loader error text projection,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -206,6 +206,13 @@ timestamp, `plugins inspect <id> --json` includes `plugin.failedAt`, and human
 inspect output renders `Failed at: <timestamp>` for error records. Verified on
 2026-05-02 with the focused inspect failed-at CLI test, adjacent plugin
 inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `b3bf64a5`.
+Plugin inspect loader error text projection now mirrors OpenClaw's loader
+`error` metadata from `src/plugins/loader-records.ts` and inspect detail output
+from `src/cli/plugins-inspect-command.ts`: native inventory rows preserve the
+error text, `plugins inspect <id> --json` includes `plugin.error`, and human
+inspect output renders `Error: <text>` for error records. Verified on
+2026-05-02 with the focused inspect loader-error CLI test, adjacent plugin
+inspect/doctor proof, `ruff check`, and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4821,6 +4828,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused inspect failed-at CLI test, adjacent plugin
   inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `b3bf64a5`.
+- Closed the plugin inspect loader error text projection seam from OpenClaw
+  `src/plugins/loader-records.ts`, `src/plugins/registry-types.ts`, and
+  `src/cli/plugins-inspect-command.ts`: native plugin records now preserve
+  loader `error` text, JSON inspect payloads include `plugin.error`, and human
+  inspect output renders `Error: <text>` for error records. Repo-wide parity
+  is now estimated at ~54.9%; runtime/CLI/doctor and CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused inspect loader-error
+  CLI test, adjacent plugin inspect/doctor proof, `ruff check`, and `mypy`;
+  checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

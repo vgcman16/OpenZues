@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~54.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~54.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -122,6 +122,11 @@ may lag behind this tracker.
   preserving `plugin.failedAt` in JSON and printing the OpenClaw-style
   `Failed at: <timestamp>` line in human inspect output.
   - Status: checkpointed in `b3bf64a5`
+
+- [x] Plugin inspect loader error text projection for loader error records,
+  preserving `plugin.error` in JSON and printing the OpenClaw-style
+  `Error: <text>` line in human inspect output.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -305,9 +310,22 @@ may lag behind this tracker.
     and installed plugin slot activation reason child slice checkpointed in
     `209dced0`, plugin doctor failure-phase projection checkpointed in
     `0dc9fc27`, plugin inspect failure-phase projection checkpointed in
-    `6f4d1ad8`, and plugin inspect failed-at timestamp projection checkpointed
-    in `b3bf64a5`, but deeper module import/runtime activation remains.
+    `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
+    `b3bf64a5`, and plugin inspect loader error text projection verified
+    pending checkpoint, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin inspect loader error text projection.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect loader-error test (`1
+    passed`), adjacent plugin inspect/doctor proof (`8 passed`), `ruff
+    check`, and `mypy`.
 
 - [x] Plugin inspect failed-at timestamp projection.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,

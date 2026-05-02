@@ -12244,6 +12244,9 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     shape = str(payload.get("shape") or "").strip()
     if shape:
         typer.echo(f"shape: {shape}")
+    error = _optional_cli_string(plugin.get("error"))
+    if error is not None:
+        typer.echo(f"Error: {error}")
 
 
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
@@ -16778,6 +16781,9 @@ def _plugin_record_from_deck_item(
     failed_at = _plugin_failed_at(item.get("failedAt"))
     if failed_at is not None:
         record["failedAt"] = failed_at
+    error = _optional_cli_string(item.get("error"))
+    if error is not None:
+        record["error"] = error
     item_root_dir = _optional_cli_string(item.get("rootDir"))
     for metadata_key, metadata_value in _plugin_manifest_root_metadata(
         item,
