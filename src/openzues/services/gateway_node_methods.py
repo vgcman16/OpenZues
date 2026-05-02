@@ -5,9 +5,11 @@ import base64
 import hashlib
 import json
 import math
+import posixpath
 import re
 import secrets
 import shutil
+import tempfile
 import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -1357,6 +1359,10 @@ _MAX_NODE_NOTIFICATION_EVENT_TEXT_CHARS = 120
 _DREAM_DIARY_FILE_NAMES = ("DREAMS.md", "dreams.md")
 _DREAM_DIARY_BACKFILL_START = "<!-- openzues:dream-backfill:start -->"
 _DREAM_DIARY_BACKFILL_END = "<!-- openzues:dream-backfill:end -->"
+GatewaySandboxRemoteMediaFetchService = Callable[
+    ...,
+    Awaitable[bytes | bytearray | memoryview | None],
+]
 
 
 class GatewayNodeMethodService:
@@ -1409,6 +1415,7 @@ class GatewayNodeMethodService:
         chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         chat_attachment_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         sandbox_chat_send_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        sandbox_remote_media_fetch_service: GatewaySandboxRemoteMediaFetchService | None = None,
         chat_abort_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         subagent_thread_binder: (
             Callable[
@@ -1516,6 +1523,9 @@ class GatewayNodeMethodService:
         self._chat_send_service = chat_send_service
         self._chat_attachment_send_service = chat_attachment_send_service
         self._sandbox_chat_send_service = sandbox_chat_send_service
+        self._sandbox_remote_media_fetch_service = (
+            sandbox_remote_media_fetch_service or _fetch_gateway_remote_media_with_scp
+        )
         self._chat_abort_service = chat_abort_service
         self._subagent_thread_binder = subagent_thread_binder
         self._subagent_lifecycle_service = subagent_lifecycle_service
@@ -6418,9 +6428,11 @@ class GatewayNodeMethodService:
                 runtime_attachments = attachments
                 if sandbox_media_root is not None:
                     runtime_attachments, sandbox_media_paths = (
-                        _stage_gateway_chat_sandbox_attachments(
+                        await _stage_gateway_chat_sandbox_attachments(
                             sandbox_root=sandbox_media_root,
                             attachments=attachments,
+                            config_service=self._config_service,
+                            remote_media_fetch_service=self._sandbox_remote_media_fetch_service,
                         )
                     )
                     message_for_runtime = _format_gateway_chat_sandbox_media_paths(
@@ -6676,9 +6688,11 @@ class GatewayNodeMethodService:
                 runtime_attachments = attachments
                 if sandbox_media_root is not None:
                     runtime_attachments, sandbox_media_paths = (
-                        _stage_gateway_chat_sandbox_attachments(
+                        await _stage_gateway_chat_sandbox_attachments(
                             sandbox_root=sandbox_media_root,
                             attachments=attachments,
+                            config_service=self._config_service,
+                            remote_media_fetch_service=self._sandbox_remote_media_fetch_service,
                         )
                     )
                     runtime_message = _format_gateway_chat_sandbox_media_paths(
@@ -6851,9 +6865,11 @@ class GatewayNodeMethodService:
                 runtime_message = message
                 if sandbox_media_root is not None:
                     runtime_attachments, sandbox_media_paths = (
-                        _stage_gateway_chat_sandbox_attachments(
+                        await _stage_gateway_chat_sandbox_attachments(
                             sandbox_root=sandbox_media_root,
                             attachments=attachments,
+                            config_service=self._config_service,
+                            remote_media_fetch_service=self._sandbox_remote_media_fetch_service,
                         )
                     )
                     runtime_message = _format_gateway_chat_sandbox_media_paths(
@@ -12206,9 +12222,11 @@ class GatewayNodeMethodService:
             runtime_message = message
             if sandbox_media_root is not None:
                 runtime_attachments, sandbox_media_paths = (
-                    _stage_gateway_chat_sandbox_attachments(
+                    await _stage_gateway_chat_sandbox_attachments(
                         sandbox_root=sandbox_media_root,
                         attachments=attachments,
+                        config_service=self._config_service,
+                        remote_media_fetch_service=self._sandbox_remote_media_fetch_service,
                     )
                 )
                 runtime_message = _format_gateway_chat_sandbox_media_paths(
@@ -18794,6 +18812,21 @@ def _stringified_route_id(value: object) -> str | None:
     return _string_or_none(value)
 
 
+_SCP_REMOTE_HOST_TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_SCP_REMOTE_HOST_BRACKETED_IPV6_RE = re.compile(r"^\[[0-9A-Fa-f:.%]+\]$")
+_SCP_REMOTE_PATH_UNSAFE_CHARS = frozenset({"\\", "'", '"', "`", "$", ";", "|", "&", "<", ">"})
+_WINDOWS_DRIVE_ABS_RE = re.compile(r"^[A-Za-z]:/")
+_WINDOWS_DRIVE_ROOT_RE = re.compile(r"^[A-Za-z]:$")
+
+
+@dataclass(frozen=True)
+class _GatewayChatRemoteMediaRef:
+    remote_host: str
+    remote_path: str
+    provider: str | None
+    account_id: str | None
+
+
 def _has_effective_agent_attachment_content(value: object) -> bool:
     if isinstance(value, str):
         return value != ""
@@ -18812,6 +18845,8 @@ def _has_effective_agent_attachments(value: object) -> bool:
             return True
         saved_path = _chat_attachment_saved_path(entry)
         if saved_path is not None:
+            return True
+        if _chat_attachment_remote_media_ref(entry) is not None:
             return True
         source = entry.get("source")
         if not isinstance(source, dict):
@@ -18843,6 +18878,132 @@ def _chat_attachment_saved_path(attachment: Mapping[str, object]) -> Path | None
     except OSError:
         return None
     return path
+
+
+def _chat_attachment_remote_media_ref(
+    attachment: Mapping[str, object],
+) -> _GatewayChatRemoteMediaRef | None:
+    remote_host = _normalize_gateway_scp_remote_host(
+        _chat_attachment_first_text_for_keys(
+            attachment,
+            ("mediaRemoteHost", "MediaRemoteHost", "remoteHost", "RemoteHost"),
+        )
+    )
+    remote_path = _normalize_gateway_scp_remote_path(
+        _chat_attachment_first_text_for_keys(
+            attachment,
+            (
+                "mediaPath",
+                "MediaPath",
+                "mediaUrl",
+                "MediaUrl",
+                "remotePath",
+                "RemotePath",
+                "path",
+                "Path",
+            ),
+        )
+    )
+    if remote_host is None or remote_path is None:
+        return None
+    provider = _chat_attachment_first_text_for_keys(
+        attachment,
+        ("provider", "Provider", "surface", "Surface", "channel", "Channel"),
+    )
+    account_id = _chat_attachment_first_text_for_keys(
+        attachment,
+        ("accountId", "AccountId", "account", "Account"),
+    )
+    return _GatewayChatRemoteMediaRef(
+        remote_host=remote_host,
+        remote_path=remote_path,
+        provider=provider.lower() if provider is not None else None,
+        account_id=account_id,
+    )
+
+
+def _chat_attachment_first_text_for_keys(
+    attachment: Mapping[str, object],
+    keys: Iterable[str],
+) -> str | None:
+    for key in keys:
+        value = _chat_attachment_first_text_value(attachment.get(key))
+        if value is not None:
+            return value
+    source = attachment.get("source")
+    if isinstance(source, Mapping):
+        for key in keys:
+            value = _chat_attachment_first_text_value(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _chat_attachment_first_text_value(value: object) -> str | None:
+    text = _chat_attachment_text_value(value)
+    if text is not None:
+        return text
+    if not isinstance(value, list):
+        return None
+    for entry in value:
+        text = _chat_attachment_text_value(entry)
+        if text is not None:
+            return text
+    return None
+
+
+def _normalize_gateway_scp_remote_host(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed or _has_gateway_control_or_whitespace(trimmed):
+        return None
+    if trimmed.startswith("-") or "/" in trimmed or "\\" in trimmed:
+        return None
+
+    first_at = trimmed.find("@")
+    last_at = trimmed.rfind("@")
+    user: str | None = None
+    host = trimmed
+    if first_at != -1:
+        if first_at != last_at or first_at == 0 or first_at == len(trimmed) - 1:
+            return None
+        user = trimmed[:first_at]
+        host = trimmed[first_at + 1 :]
+        if _SCP_REMOTE_HOST_TOKEN_RE.fullmatch(user) is None:
+            return None
+
+    if not host or host.startswith("-") or "@" in host:
+        return None
+    if ":" in host and _SCP_REMOTE_HOST_BRACKETED_IPV6_RE.fullmatch(host) is None:
+        return None
+    if (
+        _SCP_REMOTE_HOST_TOKEN_RE.fullmatch(host) is None
+        and _SCP_REMOTE_HOST_BRACKETED_IPV6_RE.fullmatch(host) is None
+    ):
+        return None
+    return f"{user}@{host}" if user is not None else host
+
+
+def _normalize_gateway_scp_remote_path(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed or not trimmed.startswith("/"):
+        return None
+    for char in trimmed:
+        code = ord(char)
+        if code <= 0x1F or code == 0x7F or char in _SCP_REMOTE_PATH_UNSAFE_CHARS:
+            return None
+    return trimmed
+
+
+def _has_gateway_control_or_whitespace(value: str) -> bool:
+    for char in value:
+        code = ord(char)
+        if code <= 0x1F or code == 0x7F or char.isspace():
+            return True
+    return False
 
 
 def _chat_attachment_local_path(value: str) -> Path | None:
@@ -18910,16 +19071,205 @@ def _chat_attachment_image_order(attachments: list[dict[str, object]]) -> list[s
     return image_order
 
 
-def _stage_gateway_chat_sandbox_attachments(
+def _gateway_remote_attachment_roots(
+    config_service: GatewayConfigService | None,
+    *,
+    provider: str | None,
+    account_id: str | None,
+) -> tuple[str, ...]:
+    if config_service is None or provider is None:
+        return ()
+    try:
+        snapshot = config_service.build_snapshot()
+    except Exception:
+        return ()
+    roots: list[str] = []
+    for container_key in ("channels", "providers"):
+        container = snapshot.get(container_key)
+        if not isinstance(container, Mapping):
+            continue
+        provider_entry = _mapping_value_casefold(container, provider)
+        _extend_gateway_remote_roots_from_entry(
+            provider_entry,
+            account_id=account_id,
+            roots=roots,
+        )
+    normalized = _normalize_gateway_inbound_path_roots(roots)
+    return tuple(dict.fromkeys(normalized))
+
+
+def _mapping_value_casefold(mapping: Mapping[object, object], key: str) -> object:
+    normalized = key.lower()
+    for candidate_key, candidate_value in mapping.items():
+        if isinstance(candidate_key, str) and candidate_key.lower() == normalized:
+            return candidate_value
+    return None
+
+
+def _extend_gateway_remote_roots_from_entry(
+    entry: object,
+    *,
+    account_id: str | None,
+    roots: list[str],
+) -> None:
+    if not isinstance(entry, Mapping):
+        return
+    _extend_gateway_remote_roots(roots, entry.get("remoteAttachmentRoots"))
+    if account_id is None:
+        return
+    for accounts_key in ("accounts", "providers"):
+        accounts = entry.get(accounts_key)
+        if not isinstance(accounts, Mapping):
+            continue
+        account_entry = _mapping_value_casefold(accounts, account_id)
+        if isinstance(account_entry, Mapping):
+            _extend_gateway_remote_roots(
+                roots,
+                account_entry.get("remoteAttachmentRoots"),
+            )
+
+
+def _extend_gateway_remote_roots(roots: list[str], value: object) -> None:
+    if isinstance(value, str) and value.strip():
+        roots.append(value)
+        return
+    if not isinstance(value, list):
+        return
+    roots.extend(entry for entry in value if isinstance(entry, str) and entry.strip())
+
+
+def _is_gateway_remote_attachment_path_allowed(
+    remote_path: str,
+    roots: tuple[str, ...],
+) -> bool:
+    candidate = _normalize_gateway_inbound_path(remote_path)
+    if candidate is None or not roots:
+        return False
+    return any(
+        _gateway_inbound_path_matches_root(
+            candidate_path=candidate,
+            root_pattern=root,
+        )
+        for root in roots
+    )
+
+
+def _normalize_gateway_inbound_path_roots(roots: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        candidate = _normalize_gateway_inbound_path(root)
+        if candidate is None or candidate in seen:
+            continue
+        segments = _gateway_inbound_path_segments(candidate)
+        if not segments:
+            continue
+        if any(segment != "*" and "*" in segment for segment in segments):
+            continue
+        seen.add(candidate)
+        normalized.append(candidate)
+    return normalized
+
+
+def _normalize_gateway_inbound_path(value: str) -> str | None:
+    trimmed = value.strip()
+    if not trimmed or "\0" in trimmed:
+        return None
+    normalized = posixpath.normpath(trimmed.replace("\\", "/"))
+    is_absolute = normalized.startswith("/") or _WINDOWS_DRIVE_ABS_RE.match(normalized) is not None
+    if not is_absolute or normalized == "/":
+        return None
+    without_trailing_slash = (
+        normalized[:-1] if normalized.endswith("/") else normalized
+    )
+    if _WINDOWS_DRIVE_ROOT_RE.fullmatch(without_trailing_slash) is not None:
+        return None
+    return without_trailing_slash
+
+
+def _gateway_inbound_path_segments(value: str) -> list[str]:
+    return [segment for segment in value.split("/") if segment]
+
+
+def _gateway_inbound_path_matches_root(
+    *,
+    candidate_path: str,
+    root_pattern: str,
+) -> bool:
+    candidate_segments = _gateway_inbound_path_segments(candidate_path)
+    root_segments = _gateway_inbound_path_segments(root_pattern)
+    if len(candidate_segments) < len(root_segments):
+        return False
+    for index, expected in enumerate(root_segments):
+        actual = candidate_segments[index]
+        if expected == "*":
+            continue
+        if expected != actual:
+            return False
+    return True
+
+
+async def _fetch_gateway_remote_media_with_scp(
+    *,
+    remote_host: str,
+    remote_path: str,
+    provider: str | None,
+    account_id: str | None,
+    attachment: dict[str, object],
+) -> bytes | None:
+    del provider, account_id, attachment
+    safe_remote_host = _normalize_gateway_scp_remote_host(remote_host)
+    safe_remote_path = _normalize_gateway_scp_remote_path(remote_path)
+    if safe_remote_host is None or safe_remote_path is None:
+        return None
+    scp_bin = shutil.which("scp")
+    if scp_bin is None:
+        unix_scp = Path("/usr/bin/scp")
+        scp_bin = str(unix_scp) if unix_scp.exists() else None
+    if scp_bin is None:
+        return None
+    tmp_dir = Path(tempfile.mkdtemp(prefix="openzues-remote-media-"))
+    tmp_path = tmp_dir / "download"
+    try:
+        process = await asyncio.create_subprocess_exec(
+            scp_bin,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "--",
+            f"{safe_remote_host}:{safe_remote_path}",
+            str(tmp_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await process.communicate()
+        if process.returncode != 0:
+            return None
+        try:
+            if tmp_path.stat().st_size > _CHAT_ATTACHMENT_MAX_BYTES:
+                return None
+            return tmp_path.read_bytes()
+        except OSError:
+            return None
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+async def _stage_gateway_chat_sandbox_attachments(
     *,
     sandbox_root: str,
     attachments: list[dict[str, object]],
+    config_service: GatewayConfigService | None,
+    remote_media_fetch_service: GatewaySandboxRemoteMediaFetchService | None,
 ) -> tuple[list[dict[str, object]], list[str]]:
     staged: list[dict[str, object]] = []
     sandbox_paths: list[str] = []
     used_names: set[str] = set()
     inbound_dir = Path(sandbox_root).expanduser() / "media" / "inbound"
     for index, attachment in enumerate(attachments, start=1):
+        remote_media_ref: _GatewayChatRemoteMediaRef | None = None
+        staged_remote_media = False
         base64_value = _chat_attachment_base64_value(attachment)
         decoded = (
             _decode_gateway_chat_attachment_base64(base64_value)
@@ -18934,6 +19284,32 @@ def _stage_gateway_chat_sandbox_attachments(
                 except OSError:
                     decoded = None
         if decoded is None:
+            remote_media_ref = _chat_attachment_remote_media_ref(attachment)
+            if (
+                remote_media_ref is not None
+                and remote_media_fetch_service is not None
+                and _is_gateway_remote_attachment_path_allowed(
+                    remote_media_ref.remote_path,
+                    _gateway_remote_attachment_roots(
+                        config_service,
+                        provider=remote_media_ref.provider,
+                        account_id=remote_media_ref.account_id,
+                    ),
+                )
+            ):
+                try:
+                    fetched = await remote_media_fetch_service(
+                        remote_host=remote_media_ref.remote_host,
+                        remote_path=remote_media_ref.remote_path,
+                        provider=remote_media_ref.provider,
+                        account_id=remote_media_ref.account_id,
+                        attachment=dict(attachment),
+                    )
+                except Exception:
+                    fetched = None
+                decoded = _coerce_gateway_chat_attachment_bytes(fetched)
+                staged_remote_media = decoded is not None
+        if decoded is None:
             staged.append(dict(attachment))
             continue
         safe_name = _safe_gateway_chat_sandbox_attachment_name(
@@ -18946,7 +19322,14 @@ def _stage_gateway_chat_sandbox_attachments(
         target_path.write_bytes(decoded)
         rel_path = f"media/inbound/{safe_name}"
         digest = hashlib.sha256(decoded).hexdigest()
-        staged_attachment = _copy_chat_attachment_without_inline_payload(attachment)
+        staged_attachment = (
+            _copy_chat_attachment_without_remote_media(
+                attachment,
+                remote_media_ref=remote_media_ref,
+            )
+            if staged_remote_media and remote_media_ref is not None
+            else _copy_chat_attachment_without_inline_payload(attachment)
+        )
         staged_attachment.update(
             {
                 "openzuesMediaRef": f"media://inbound/{safe_name}",
@@ -18959,6 +19342,17 @@ def _stage_gateway_chat_sandbox_attachments(
         staged.append(staged_attachment)
         sandbox_paths.append(rel_path)
     return staged, sandbox_paths
+
+
+def _coerce_gateway_chat_attachment_bytes(
+    value: bytes | bytearray | memoryview | None,
+) -> bytes | None:
+    if value is None:
+        return None
+    decoded = bytes(value)
+    if not decoded or len(decoded) > _CHAT_ATTACHMENT_MAX_BYTES:
+        return None
+    return decoded
 
 
 def _decode_gateway_chat_attachment_base64(value: str) -> bytes | None:
@@ -19040,6 +19434,47 @@ def _copy_chat_attachment_without_inline_payload(
         source_copy.pop("data", None)
         copied["source"] = source_copy
     return copied
+
+
+def _copy_chat_attachment_without_remote_media(
+    attachment: Mapping[str, object],
+    *,
+    remote_media_ref: _GatewayChatRemoteMediaRef,
+) -> dict[str, object]:
+    copied = _copy_chat_attachment_without_inline_payload(attachment)
+    _remove_gateway_remote_media_keys(copied, remote_path=remote_media_ref.remote_path)
+    source = copied.get("source")
+    if isinstance(source, Mapping):
+        source_copy = dict(source)
+        _remove_gateway_remote_media_keys(
+            source_copy,
+            remote_path=remote_media_ref.remote_path,
+        )
+        copied["source"] = source_copy
+    return copied
+
+
+def _remove_gateway_remote_media_keys(
+    value: dict[str, object],
+    *,
+    remote_path: str,
+) -> None:
+    for key in (
+        "mediaRemoteHost",
+        "MediaRemoteHost",
+        "remoteHost",
+        "RemoteHost",
+        "mediaPath",
+        "MediaPath",
+        "mediaUrl",
+        "MediaUrl",
+        "remotePath",
+        "RemotePath",
+    ):
+        value.pop(key, None)
+    for key in ("path", "Path"):
+        if _chat_attachment_text_value(value.get(key)) == remote_path:
+            value.pop(key, None)
 
 
 def _format_gateway_chat_sandbox_media_paths(

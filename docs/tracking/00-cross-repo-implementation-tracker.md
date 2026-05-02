@@ -20,28 +20,32 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~52.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~52.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~98% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
-| Chat/session contract subfamily | ~98.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Chat/session contract subfamily | ~98.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
 | Warp reference surface | Mixed | Reference-only; client-local plus backend-gated areas | `docs/tracking/04-warp-reference-status.md` |
 
 ## Current Worktree Boundary
 
-The tracker files are separate from the interrupted remote-media parity slice.
-Do not stage these unrelated implementation edits when committing tracker docs:
+The remote-media parity slice is now part of the active checkpoint and may be
+staged with its source, test, and ledger updates:
 
 - `src/openzues/services/gateway_node_methods.py`
 - `tests/test_gateway_node_methods.py`
+- `docs/openclaw-parity-progress.md`
+- `docs/openclaw-parity-unresolved-seams.md`
+- `docs/tracking/00-cross-repo-implementation-tracker.md`
+- `docs/tracking/01-openzues-openclaw-parity-status.md`
 
-Known untracked temp/log artifacts are also unrelated and must remain unstaged.
+Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
 ## Current Queue
 
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
-| OZ-RM-001 | Sandboxed remote inbound provider media staging | Implemented locally, focused proof passed, not checkpointed | Small repo-wide, session-family +0.1% after full verification | Finish adjacent tests, ruff, mypy, ledger update, commit |
+| OZ-RM-001 | Sandboxed remote inbound provider media staging | Verified, checkpoint commit pending | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Commit and push this seam checkpoint |
 | OZ-RT-001 | Runtime-control hard gaps | Open | TBD | Map next source-backed `chat.*` or `sessions.*` runtime mismatch |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Open | Broad | Compare OpenClaw plugin activation/import lifecycle and implement next seam |

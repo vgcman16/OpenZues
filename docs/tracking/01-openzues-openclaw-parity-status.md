@@ -16,9 +16,9 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~52.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~52.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~98% | High for bounded local path | Does not mean whole product parity |
-| Chat/session contract subfamily | ~98.1% | High for bounded local path | Current local session/chat contracts are near complete |
+| Chat/session contract subfamily | ~98.2% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
 | CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are plugin import/activation and packaging surfaces |
@@ -67,14 +67,16 @@ may lag behind this tracker.
 
 ## Active / Remaining Queue Heads
 
-- [~] Sandboxed remote inbound provider media staging.
+- [x] Sandboxed remote inbound provider media staging.
   - Source: `openclaw-main/src/auto-reply/reply/stage-sandbox-media.ts`
   - Target: `src/openzues/services/gateway_node_methods.py`
   - Test: `tests/test_gateway_node_methods.py`
-  - Status: implemented locally, focused proof passed, adjacent verification
-    and ledger checkpoint still pending.
+  - Status: verified; checkpoint commit pending.
   - Weight: 1
-  - Last verified: focused test only, 2026-05-02
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_gateway_node_methods.py::test_chat_send_sandboxed_remote_provider_attachment_stages_allowed_media
+    -q` (`1 passed`), adjacent sandbox attachment proof (`6 passed`), `ruff
+    check`, and `mypy`.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.

@@ -4,14 +4,14 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.5% overall, with a reasonable
   band of ~48-57%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98.1% after the latest
+- The chat/session contract subfamily is estimated at ~98.2% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
-  `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
-  runtime seams.
+  `sessions.patch`, `sessions.delete`, `sessions.spawn`, sandboxed remote
+  media staging, and `tools.invoke` runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
@@ -31,8 +31,8 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~97.1% after the
-  latest `sessions.spawn` attachment mount-path sanitizer slice.
+- The gateway session/tool-contract family is estimated at ~97.2% after the
+  latest sandboxed remote inbound provider media staging slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -4414,11 +4414,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~52.4%; gateway session/tool-contract parity is ~97.1%.
   Verified with focused and adjacent sessions.spawn attachment proofs, `ruff
   check`, and `mypy`.
+- Closed the sandboxed remote inbound provider media staging seam from OpenClaw
+  `src/auto-reply/reply/stage-sandbox-media.ts`,
+  `src/infra/scp-host.ts`, and `src/media/inbound-path-policy.ts`: native
+  chat/session attachment dispatch now recognizes safe provider remote media
+  metadata, honors configured `remoteAttachmentRoots`, stages fetched media
+  into the child workspace under `media/inbound`, and removes remote host/path
+  metadata from runtime attachments after sandbox rewriting. Repo-wide parity
+  is now estimated at ~52.5%; chat/session contract parity is ~98.2%, and
+  gateway session/tool-contract parity is ~97.2%. Verified with focused and
+  adjacent sandbox attachment proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open while the next source-backed seam is selected. Source anchors remain
   OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
-  and doctor/runtime owners; the next likely runtime seam is sandboxed spawn
-  media/workspace staging or another source-backed session/runtime mismatch.
+  and doctor/runtime owners; the next likely runtime seam is another
+  source-backed session/runtime mismatch or packaging/installed-plugin
+  activation gap from the tracking workspace.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
