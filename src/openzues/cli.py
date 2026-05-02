@@ -12231,7 +12231,7 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         typer.echo(description)
     status = str(plugin.get("status") or "").strip()
     if status:
-        typer.echo(f"status: {status}")
+        typer.echo(f"Status: {status}")
     failure_phase = _plugin_failure_phase(plugin.get("failurePhase"))
     if failure_phase is not None:
         typer.echo(f"Failure phase: {failure_phase}")
@@ -12240,10 +12240,13 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         typer.echo(f"Failed at: {failed_at}")
     format_name = str(plugin.get("format") or "").strip()
     if format_name:
-        typer.echo(f"format: {format_name}")
+        typer.echo(f"Format: {format_name}")
+    bundle_format = _optional_cli_string(plugin.get("bundleFormat"))
+    if bundle_format is not None:
+        typer.echo(f"Bundle format: {bundle_format}")
     source = str(plugin.get("source") or "").strip()
     if source:
-        typer.echo(f"source: {source}")
+        typer.echo(f"Source: {source}")
     origin = _optional_cli_string(plugin.get("origin"))
     if origin is not None:
         typer.echo(f"Origin: {origin}")
@@ -12252,7 +12255,7 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         typer.echo(f"Version: {version}")
     shape = str(payload.get("shape") or "").strip()
     if shape:
-        typer.echo(f"shape: {shape}")
+        typer.echo(f"Shape: {shape}")
     capability_mode = _optional_cli_string(payload.get("capabilityMode"))
     if capability_mode is not None:
         typer.echo(f"Capability mode: {capability_mode}")

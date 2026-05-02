@@ -6993,12 +6993,16 @@ Do not expose this command.
     _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
 
     result = runner.invoke(app, ["plugins", "inspect", "claude-commands", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "claude-commands"])
 
     assert result.exit_code == 0, result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
     payload = json.loads(result.stdout)
     assert payload["plugin"]["commands"] == ["ship-it", "ops:status"]
     assert payload["commands"] == ["ship-it", "ops:status"]
     assert payload["bundleCapabilities"] == ["skills", "commands"]
+    assert "Format: bundle" in human_result.stdout
+    assert "Bundle format: claude" in human_result.stdout
 
 
 def test_plugins_inspect_json_projects_bundle_mcp_and_lsp_servers(
