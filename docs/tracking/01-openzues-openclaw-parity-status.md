@@ -134,7 +134,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human capability sections, rendering bundle capabilities
   and capability rows from the inspect payload.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `2b161d5a`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -321,15 +321,15 @@ may lag behind this tracker.
     `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
     `b3bf64a5`, plugin inspect loader error text projection checkpointed in
     `88ff1768`, plugin inspect human base metadata checkpointed in
-    `c11085d1`, and plugin inspect human capability sections verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    `c11085d1`, and plugin inspect human capability sections checkpointed in
+    `2b161d5a`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin inspect human capability sections.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `2b161d5a`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect human capability test
     (`1 passed`), adjacent plugin inspect/doctor proof (`10 passed`), `ruff

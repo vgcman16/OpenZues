@@ -8618,7 +8618,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect human capability sections are now landed for OpenClaw's
   inspect detail surface: human `plugins inspect <id>` renders bundle
   capabilities and capability rows from the native inspect payload, including
-  registered/inventory capability ids. Checkpoint pending.
+  registered/inventory capability ids. Checkpointed in `2b161d5a`.
 - Progress estimates are now roughly 55.1% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
