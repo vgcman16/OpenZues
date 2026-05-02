@@ -235,7 +235,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   enabled installed plugins outside the allowlist project disabled activation
   state with `activationReason="not in allowlist"` while preserving
   `explicitlyEnabled=true`.
-  Checkpoint pending.
+  This slice is checkpointed in `73089117`.
 - Verified the installed allowlist activation slice with `python -m pytest
   tests\test_cli.py::test_plugins_list_json_keeps_installed_plugin_allowlist_authoritative
   -q` (`1 passed`), adjacent plugin config/install list and doctor proof
@@ -8482,7 +8482,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   activation decision precedence: `plugins.allow` remains authoritative over
   explicit installed plugin enablement, preserving `explicitlyEnabled=true`
   while projecting disabled status and `activationReason="not in allowlist"`.
-  Checkpoint pending.
+  Checkpointed in `73089117`.
 - Progress estimates are now roughly 54.4% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
