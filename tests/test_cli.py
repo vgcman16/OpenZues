@@ -8740,6 +8740,87 @@ def test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state(
     assert payload["tools"] == []
 
 
+def test_plugins_inspect_runtime_json_uses_installed_activation_adapter_tools(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-runtime"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-runtime",
+        contracts={"tools": ["installed_runtime.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-runtime",
+                        "pluginName": "Installed Runtime",
+                        "source": "openclaw-plugin",
+                        "names": ["installed_runtime.search"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(
+        app,
+        ["plugins", "inspect", "installed-runtime", "--runtime", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plugin"]["id"] == "installed-runtime"
+    assert payload["plugin"]["imported"] is True
+    assert payload["capabilityMode"] == "runtime"
+    assert payload["capabilities"] == [
+        {"kind": "runtime-tools", "ids": ["installed_runtime.search"]}
+    ]
+    assert payload["tools"] == [
+        {"names": ["installed_runtime.search"], "optional": False}
+    ]
+    assert [plugin["id"] for plugin in calls[-1]["plugins"]] == ["installed-runtime"]
+
+
 def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatch) -> None:
     runtime_flags: list[bool] = []
 

@@ -16817,8 +16817,8 @@ async def _build_plugin_inspect_payload(
         enabled_only=False,
         runtime_inspection=False,
     )
-    runtime_specs = _plugin_runtime_specs_from_services(services)
     plugin_rows, diagnostics = parse_inventory(static_inventory)
+    runtime_specs = _plugin_runtime_specs_from_services(services)
     if inspect_all:
         if runtime_inspection:
             runtime_inventory = await _build_plugins_inventory_payload(
@@ -16827,6 +16827,10 @@ async def _build_plugin_inspect_payload(
                 runtime_inspection=True,
             )
             plugin_rows, diagnostics = parse_inventory(runtime_inventory)
+            runtime_specs = _plugin_inspect_runtime_specs_from_rows(
+                services,
+                plugin_rows,
+            )
         return [
             _plugin_inspect_report(
                 plugin,
@@ -16851,11 +16855,29 @@ async def _build_plugin_inspect_payload(
         )
         runtime_plugin_rows, diagnostics = parse_inventory(runtime_inventory)
         plugin = _find_plugin_record(runtime_plugin_rows, normalized_id) or plugin
+        runtime_specs = _plugin_inspect_runtime_specs_from_rows(
+            services,
+            runtime_plugin_rows,
+        )
     return _plugin_inspect_report(
         plugin,
         runtime_specs=runtime_specs,
         policy=_plugin_inspect_policy_from_services(services, plugin),
         diagnostics=diagnostics,
+    )
+
+
+def _plugin_inspect_runtime_specs_from_rows(
+    services: object,
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    config_snapshot = _doctor_config_snapshot(getattr(services, "gateway_config", None))
+    return _plugin_runtime_specs_from_services(
+        services,
+        plugin_rows=[
+            plugin for plugin in plugin_rows if _plugin_row_runtime_activated(plugin)
+        ],
+        config_snapshot=config_snapshot,
     )
 
 

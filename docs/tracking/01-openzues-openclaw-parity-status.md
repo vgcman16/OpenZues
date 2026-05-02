@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~57.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~57.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -229,6 +229,9 @@ may lag behind this tracker.
 - [x] Installed plugin disabled activation gate in plugin doctor/list posture.
   - Status: checkpointed in `457021d6`
 
+- [x] Installed plugin inspect runtime activation adapter tool projection.
+  - Status: verified; checkpoint pending
+
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
   and `capability/infer tts personas` plus `set-persona` JSON output.
@@ -440,8 +443,22 @@ may lag behind this tracker.
     `bb9ef28a`, and manifest toolMetadata availability gate checkpointed in
     `78d905c6`, and installed plugin runtime activation adapter checkpointed
     in `26e55209`, and installed plugin disabled activation gate checkpointed
-    in `457021d6`, but deeper module import/runtime activation remains.
+    in `457021d6`, and installed plugin inspect runtime activation adapter
+    tool projection verified with checkpoint pending, but deeper module
+    import/runtime activation remains.
   - Weight: 5
+
+- [x] Installed plugin inspect runtime adapter tool projection.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect installed activation
+    adapter tool projection test (`1 passed`), adjacent plugin runtime CLI
+    proof (`6 passed`), `ruff check`, and `mypy`.
 
 - [x] Installed plugin disabled activation gate.
   - Source: `openclaw-main/src/plugins/loader.test.ts`,
