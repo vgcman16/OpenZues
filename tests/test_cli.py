@@ -6089,6 +6089,7 @@ def test_plugins_list_json_projects_hermes_plugin_inventory(monkeypatch) -> None
             "description": "Connected lanes currently expose 2 plugin surface(s).",
             "capabilities": ["plugin inventory"],
             "parityStatus": "ready",
+            "imported": False,
         },
         {
             "id": "hermes_plugin:slack",
@@ -6100,6 +6101,7 @@ def test_plugins_list_json_projects_hermes_plugin_inventory(monkeypatch) -> None
             "description": "Hermes source tree includes this plugin family.",
             "capabilities": ["plugin discovery"],
             "parityStatus": "advisory",
+            "imported": False,
         },
     ]
 
@@ -6212,6 +6214,7 @@ def test_plugins_list_json_includes_saved_config_install_records(tmp_path, monke
             "capabilities": [],
             "parityStatus": "configured",
             "version": "0.2.0",
+            "imported": False,
             "install": {
                 "source": "marketplace",
                 "installPath": str(plugin_dir),
@@ -6319,6 +6322,7 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
                 "webSearchProviders": ["native-search"],
             },
             "toolNames": ["native_runtime.search"],
+            "imported": False,
         }
     ]
 
@@ -6468,6 +6472,7 @@ def test_plugins_list_json_discovers_openclaw_bundle_manifest_load_paths(
         "skills": ["skills"],
         "hooks": ["hooks"],
         "mcpServers": ["sample"],
+        "imported": False,
     }
     assert plugins["claude-sample"]["bundleFormat"] == "claude"
     assert plugins["claude-sample"]["bundleCapabilities"] == [
@@ -6564,6 +6569,7 @@ def test_plugins_list_json_discovers_manifestless_claude_bundle_load_paths(
             "skills": ["skills", "commands"],
             "hooks": [],
             "settingsFiles": ["settings.json"],
+            "imported": False,
         }
     ]
 
@@ -7769,6 +7775,99 @@ def test_plugins_list_json_projects_runtime_executor_inventory(
     }
 
 
+def test_plugins_list_json_marks_runtime_executor_plugins_imported(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    native_dir = tmp_path / "plugins" / "native-runtime"
+    _write_openclaw_runtime_plugin(
+        native_dir,
+        plugin_id="native-runtime",
+        contracts={"tools": ["native_runtime.search"]},
+    )
+    bundle_dir = tmp_path / "plugins" / "bundle-loaded"
+    (bundle_dir / ".codex-plugin").mkdir(parents=True)
+    (bundle_dir / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "Bundle Loaded",
+                "description": "Bundle fixture.",
+                "version": "1.0.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {
+                        "native-runtime": {"enabled": True},
+                        "bundle-loaded": {"enabled": True},
+                    },
+                    "load": {"paths": [str(native_dir), str(bundle_dir)]},
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.search",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                source="registry",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="bundle.loaded",
+                executor=fake_executor,
+                plugin_id="bundle-loaded",
+                plugin_name="Bundle Loaded",
+                source="registry",
+            ),
+        ]
+    )
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        plugin_runtime_service=plugin_runtime,
+    )
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    assert plugins["native-runtime"]["imported"] is True
+    assert plugins["bundle-loaded"]["format"] == "bundle"
+    assert plugins["bundle-loaded"]["imported"] is False
+
+
 def test_plugins_list_verbose_reports_runtime_executor_inventory(
     tmp_path,
     monkeypatch,
@@ -7861,21 +7960,23 @@ def _write_openclaw_runtime_plugin(
     optional_dependencies: dict[str, object] | None = None,
     enabled_by_default: bool = True,
     channels: list[str] | None = None,
+    contracts: dict[str, object] | None = None,
 ) -> Path:
     plugin_dir.mkdir(parents=True)
+    manifest_payload: dict[str, object] = {
+        "id": plugin_id,
+        "name": plugin_id,
+        "description": f"{plugin_id} runtime plugin.",
+        "version": "1.0.0",
+        "enabledByDefault": enabled_by_default,
+        "channels": list(channels or []),
+        "configSchema": {"type": "object"},
+    }
+    if contracts is not None:
+        manifest_payload["contracts"] = contracts
     manifest_path = plugin_dir / "openclaw.plugin.json"
     manifest_path.write_text(
-        json.dumps(
-            {
-                "id": plugin_id,
-                "name": plugin_id,
-                "description": f"{plugin_id} runtime plugin.",
-                "version": "1.0.0",
-                "enabledByDefault": enabled_by_default,
-                "channels": list(channels or []),
-                "configSchema": {"type": "object"},
-            }
-        ),
+        json.dumps(manifest_payload),
         encoding="utf-8",
     )
     package_payload: dict[str, object] = {}
@@ -7894,6 +7995,7 @@ def _patch_plugins_cli_services(
     monkeypatch,
     *,
     gateway_config: GatewayConfigService,
+    plugin_runtime_service: GatewayPluginRuntimeService | None = None,
 ) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
@@ -7908,6 +8010,7 @@ def _patch_plugins_cli_services(
             SimpleNamespace(
                 hermes_platform=FakeHermesPlatform(),
                 gateway_config=gateway_config,
+                plugin_runtime_service=plugin_runtime_service,
             )
         )
 

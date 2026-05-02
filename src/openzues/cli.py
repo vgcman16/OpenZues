@@ -12993,6 +12993,8 @@ async def _build_plugins_inventory_payload(
             for plugin in plugins
             if str(plugin.get("status") or "").strip() == "loaded"
         ]
+    runtime_specs = _plugin_runtime_specs_from_services(services)
+    _mark_plugin_import_state(plugins, runtime_specs)
     warnings = view_payload.get("warnings")
     diagnostics: list[dict[str, object]] = [
         {"level": "warn", "message": str(warning)}
@@ -16104,6 +16106,20 @@ def _plugin_inspect_report(
     if runtime_dependencies:
         report["runtimeDependencies"] = runtime_dependencies
     return report
+
+
+def _mark_plugin_import_state(
+    plugins: list[dict[str, object]],
+    runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...],
+) -> None:
+    for plugin in plugins:
+        runtime_tools = _plugin_runtime_tool_names(
+            _plugin_runtime_tool_entries(plugin, runtime_specs)
+        )
+        is_bundle = str(plugin.get("format") or "").strip() == "bundle"
+        plugin["imported"] = (
+            not is_bundle and (plugin.get("imported") is True or bool(runtime_tools))
+        )
 
 
 def _plugin_record_string_list(plugin: dict[str, object], key: str) -> list[str]:
