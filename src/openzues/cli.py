@@ -12312,6 +12312,14 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         "Gateway methods",
         _plugin_record_string_list(payload, "gatewayMethods"),
     )
+    _emit_plugin_inspect_section(
+        "MCP servers",
+        _plugin_record_string_list(payload, "mcpServers"),
+    )
+    _emit_plugin_inspect_section(
+        "LSP servers",
+        _plugin_record_string_list(payload, "lspServers"),
+    )
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")

@@ -7072,14 +7072,20 @@ def test_plugins_inspect_json_projects_bundle_mcp_and_lsp_servers(
     _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
 
     result = runner.invoke(app, ["plugins", "inspect", "claude-servers", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "claude-servers"])
 
     assert result.exit_code == 0, result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
     payload = json.loads(result.stdout)
     assert payload["plugin"]["mcpServers"] == ["bundleProbe"]
     assert payload["plugin"]["lspServers"] == ["languageProbe"]
     assert payload["mcpServers"] == ["bundleProbe"]
     assert payload["lspServers"] == ["languageProbe"]
     assert payload["bundleCapabilities"] == ["mcpServers", "lspServers"]
+    assert "MCP servers:" in human_result.stdout
+    assert "- bundleProbe" in human_result.stdout
+    assert "LSP servers:" in human_result.stdout
+    assert "- languageProbe" in human_result.stdout
 
 
 def test_plugins_list_json_preserves_manifest_command_aliases(

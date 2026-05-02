@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~55.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~55.4% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -39,7 +39,7 @@ Current percentage rollup:
   failed-at timestamp projection, plugin inspect loader error text projection,
   plugin inspect human base metadata, plugin inspect human capability sections,
   plugin inspect human runtime surface sections, plugin inspect human tools
-  section,
+  section, plugin inspect human MCP/LSP sections,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -64,7 +64,8 @@ Current percentage rollup:
   inspect failure-phase projection, plugin inspect failed-at timestamp
   projection, plugin inspect loader error text projection, plugin inspect
   human base metadata, plugin inspect human capability sections, plugin inspect
-  human runtime surface sections, plugin inspect human tools section,
+  human runtime surface sections, plugin inspect human tools section, plugin
+  inspect human MCP/LSP sections,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -242,6 +243,12 @@ Plugin inspect human tools section now mirrors OpenClaw's
 markers. Verified on 2026-05-02 with the focused inspect human tools CLI test,
 adjacent plugin inspect/doctor proof, `ruff check`, and `mypy`; checkpoint
 in `5ac316c1`.
+Plugin inspect human MCP/LSP server sections now mirror OpenClaw's
+`src/cli/plugins-inspect-command.ts` server output: human inspect renders
+`MCP servers` and `LSP servers` sections from the native inspect payload.
+Verified on 2026-05-02 with the focused inspect bundle MCP/LSP CLI test,
+adjacent plugin inspect bundle/runtime proof, `ruff check`, and `mypy`;
+checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4897,6 +4904,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   inspect human tools CLI test, adjacent plugin inspect/doctor proof,
   `ruff check`, and `mypy`; checkpoint in `5ac316c1`.
+- Closed the plugin inspect human MCP/LSP server sections seam from OpenClaw
+  `src/cli/plugins-inspect-command.ts`: human inspect output now renders
+  `MCP servers` and `LSP servers` sections from the native inspect payload.
+  Repo-wide parity is now estimated at ~55.4%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  inspect bundle MCP/LSP CLI test, adjacent plugin inspect bundle/runtime
+  proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
