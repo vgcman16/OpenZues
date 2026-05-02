@@ -9352,7 +9352,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugin list/doctor inventory, records are marked `origin=bundled`,
   `OPENCLAW_DISABLE_BUNDLED_PLUGINS` suppresses bundled discovery, and bundled
   plugins without `enabledByDefault=true` remain disabled even when listed in
-  `plugins.allow`. Checkpoint pending.
+  `plugins.allow`. Checkpoint in `3de3621e`.
 - Progress estimates are now roughly 58.3% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

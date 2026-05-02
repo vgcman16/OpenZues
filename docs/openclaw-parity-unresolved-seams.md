@@ -5295,8 +5295,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `plugins.allow`. Repo-wide parity is now estimated at ~58.3%;
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused bundled plugin default-disable test, adjacent
-  bundled/install/plugin-list proof, `ruff check`, and `mypy`; checkpoint
-  pending.
+  bundled/install/plugin-list proof, `ruff check`, and `mypy`; checkpointed in
+  `3de3621e`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially bundled package plugin-sdk import/runtime
   activation and standalone text-transform projection. The provider-native

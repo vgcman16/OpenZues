@@ -111,7 +111,7 @@ may lag behind this tracker.
 - [x] Bundled plugin env discovery/default-disable gate, discovering
   `OPENCLAW_BUNDLED_PLUGINS_DIR` manifests while keeping bundled plugins
   disabled by default unless upstream activation rules enable them.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `3de3621e`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
