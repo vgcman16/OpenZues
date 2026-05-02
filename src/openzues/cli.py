@@ -5293,6 +5293,26 @@ def _doctor_channel_adapter(
     return None
 
 
+def _doctor_write_config_snapshot(
+    config_service: object | None,
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    if config_service is None:
+        raise RuntimeError("Gateway config is unavailable.")
+    set_raw = getattr(config_service, "set_raw", None)
+    if callable(set_raw):
+        current = _doctor_config_snapshot(config_service)
+        snapshot_hash = getattr(config_service, "_snapshot_hash", None)
+        base_hash = snapshot_hash(current) if callable(snapshot_hash) else None
+        result = set_raw(json.dumps(snapshot), base_hash=base_hash)
+        return dict(result) if isinstance(result, dict) else {"result": result}
+    patch_object = getattr(config_service, "patch_object", None)
+    if callable(patch_object):
+        result = patch_object(snapshot)
+        return dict(result) if isinstance(result, dict) else {"result": result}
+    raise RuntimeError("Gateway config repair runtime is unavailable.")
+
+
 async def _doctor_channel_preview_warnings(
     *,
     adapter: object,
@@ -5305,7 +5325,7 @@ async def _doctor_channel_preview_warnings(
     )
     if not callable(collect):
         return []
-    result = collect(config=snapshot, doctorFixCommand="openzues doctor --fix")
+    result = collect(cfg=snapshot, doctorFixCommand="openzues doctor --fix")
     if inspect.isawaitable(result):
         result = await result
     if not isinstance(result, list):
@@ -5313,40 +5333,128 @@ async def _doctor_channel_preview_warnings(
     return [str(item) for item in result if str(item).strip()]
 
 
+async def _doctor_channel_repair_mutation(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    repair = getattr(adapter, "repair_config", None) or getattr(
+        adapter,
+        "repairConfig",
+        None,
+    )
+    if not callable(repair):
+        return None
+    result = repair(cfg=snapshot, doctorFixCommand="openzues doctor --fix")
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return None
+    next_config = result.get("config")
+    changes = [str(item) for item in _object_list(result.get("changes")) if str(item).strip()]
+    warnings = [str(item) for item in _object_list(result.get("warnings")) if str(item).strip()]
+    if not changes and not warnings:
+        return None
+    return {
+        "config": next_config if isinstance(next_config, dict) else snapshot,
+        "changes": changes,
+        "warnings": warnings,
+    }
+
+
 async def _build_doctor_channel_doctor_payload(
     config_service: object | None,
     adapters: object | None,
+    *,
+    should_repair: bool = False,
 ) -> dict[str, object]:
     snapshot = _doctor_config_snapshot(config_service)
     channel_ids = _doctor_configured_channel_ids(snapshot)
     warnings: list[str] = []
+    changes: list[str] = []
     adapter_count = 0
+    changed = False
+    next_snapshot = snapshot
     for channel_id in channel_ids:
         adapter = _doctor_channel_adapter(adapters, channel_id)
         if adapter is None:
             continue
         adapter_count += 1
         try:
-            warnings.extend(
-                await _doctor_channel_preview_warnings(
+            if should_repair:
+                mutation = await _doctor_channel_repair_mutation(
                     adapter=adapter,
-                    snapshot=snapshot,
+                    snapshot=next_snapshot,
                 )
-            )
+                if mutation is None:
+                    continue
+                changes.extend(
+                    str(item)
+                    for item in _object_list(mutation.get("changes"))
+                    if str(item).strip()
+                )
+                warnings.extend(
+                    str(item)
+                    for item in _object_list(mutation.get("warnings"))
+                    if str(item).strip()
+                )
+                mutation_config = mutation.get("config")
+                if isinstance(mutation_config, dict) and _object_list(
+                    mutation.get("changes")
+                ):
+                    next_snapshot = mutation_config
+                    changed = True
+            else:
+                warnings.extend(
+                    await _doctor_channel_preview_warnings(
+                        adapter=adapter,
+                        snapshot=snapshot,
+                    )
+                )
         except Exception as exc:  # pragma: no cover - defensive adapter boundary
             warnings.append(f"- channels.{channel_id} doctor hook failed: {exc}")
+    path: object | None = _config_service_path_label(config_service)
+    if should_repair and changed:
+        try:
+            write_result = _doctor_write_config_snapshot(config_service, next_snapshot)
+            path = write_result.get("path") or path
+        except Exception as exc:
+            warnings.append(f"- Channel plugin doctor repair failed: {exc}")
+            return {
+                "status": "error",
+                "summary": "Channel plugin doctor repair failed.",
+                "source": "openzues-native",
+                "openClawContribution": "doctor:channel-plugin-contracts",
+                "repairRequested": should_repair,
+                "repairAvailable": adapter_count > 0,
+                "configuredChannels": channel_ids,
+                "adapterCount": adapter_count,
+                "changed": False,
+                "changes": changes,
+                "warnings": warnings,
+                "path": path,
+            }
     return {
         "status": "warning" if warnings else "ok",
         "summary": (
-            "Channel plugin doctor hooks reported warnings."
-            if warnings
-            else "No channel plugin doctor warnings detected."
+            "Channel plugin doctor repair applied changes."
+            if should_repair and changed
+            else (
+                "Channel plugin doctor hooks reported warnings."
+                if warnings
+                else "No channel plugin doctor warnings detected."
+            )
         ),
         "source": "openzues-native",
         "openClawContribution": "doctor:channel-plugin-contracts",
+        "repairRequested": should_repair,
+        "repairAvailable": adapter_count > 0,
         "configuredChannels": channel_ids,
         "adapterCount": adapter_count,
+        "changed": changed,
+        "changes": changes,
         "warnings": warnings,
+        "path": path,
     }
 
 
@@ -5354,8 +5462,14 @@ async def _with_doctor_channel_doctor_payload(
     payload: dict[str, object],
     config_service: object | None,
     adapters: object | None,
+    *,
+    should_repair: bool = False,
 ) -> dict[str, object]:
-    channel_doctor = await _build_doctor_channel_doctor_payload(config_service, adapters)
+    channel_doctor = await _build_doctor_channel_doctor_payload(
+        config_service,
+        adapters,
+        should_repair=should_repair,
+    )
     next_payload = dict(payload)
     next_payload["channelDoctor"] = channel_doctor
     warnings = [str(item) for item in _object_list(channel_doctor.get("warnings"))]
@@ -26243,6 +26357,7 @@ def doctor(
             payload,
             services.gateway_config,
             getattr(services, "channel_doctor_adapters", None),
+            should_repair=fix,
         )
         payload = _with_doctor_shell_completion_payload(
             payload,

@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~50.5% overall, with a reasonable band of ~46-55%.
+- Estimated repo-wide parity: ~50.6% overall, with a reasonable band of ~46-55%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.8% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, channel-plugin doctor preview hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.8% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, channel-plugin doctor preview hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, channel-plugin doctor preview/repair hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, channel-plugin doctor preview/repair hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7621,6 +7621,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_profile_coverage
   tests\test_cli.py::test_doctor_json_reports_exec_safe_bin_trusted_dir_hints
   -q` (`4 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`.
+- Top-level `doctor --fix --json` now also mirrors OpenClaw's channel doctor
+  repair sequencing from `doctor/shared/channel-doctor.ts` and
+  `doctor/repair-sequencing.ts`: registered native adapters can expose
+  `repair_config` / `repairConfig`, receive `{ cfg, doctorFixCommand }`,
+  return sequential config mutations plus change/warning notes, and OpenZues
+  persists the final config with full replacement semantics so removals survive.
+- Progress estimates are now roughly 50.6% repo-wide, ~99.9% for the
+  runtime/CLI/doctor native bridge, and ~99.9% for the CLI/operator control
+  plane after this channel-plugin doctor repair slice.
+- Verified the channel-plugin doctor repair slice with `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  -q` (`2 passed`), adjacent repair/security proof `python -m pytest
+  tests\test_cli.py::test_doctor_fix_runs_channel_plugin_repair_config
+  tests\test_cli.py::test_doctor_json_reports_channel_plugin_preview_warnings
+  tests\test_cli.py::test_doctor_fix_removes_stale_plugin_config
+  tests\test_cli.py::test_doctor_fix_repairs_open_policy_allow_from
+  tests\test_cli.py::test_doctor_fix_recovers_allowlist_policy_allow_from_from_store
+  -q` (`5 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`.
 
 ## References

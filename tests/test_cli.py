@@ -18861,6 +18861,18 @@ def _invoke_doctor_json_with_config_snapshot(
         def build_snapshot(self) -> dict[str, object]:
             return snapshot
 
+        def set_raw(self, raw: str, *, base_hash: str | None = None) -> dict[str, object]:
+            del base_hash
+            next_snapshot = json.loads(raw)
+            snapshot.clear()
+            snapshot.update(next_snapshot)
+            return {
+                "ok": True,
+                "changed": True,
+                "config": snapshot,
+                "hash": "updated",
+            }
+
     async def fake_live_view(_settings: object) -> None:
         return None
 
@@ -18917,7 +18929,7 @@ def test_doctor_json_reports_channel_plugin_preview_warnings(
     ]
     assert calls == [
         {
-            "config": {
+            "cfg": {
                 "channels": {
                     "defaults": {"dmPolicy": "allowlist"},
                     "matrix": {"enabled": True, "config": {"legacy": True}},
@@ -18927,6 +18939,57 @@ def test_doctor_json_reports_channel_plugin_preview_warnings(
         }
     ]
     assert channel_doctor["warnings"][0] in payload["warnings"]
+
+
+def test_doctor_fix_runs_channel_plugin_repair_config(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    snapshot: dict[str, object] = {
+        "channels": {
+            "defaults": {"dmPolicy": "allowlist"},
+            "matrix": {"enabled": True, "config": {"legacy": True}},
+        }
+    }
+
+    class FakeChannelDoctorAdapter:
+        async def repair_config(self, **kwargs: object) -> dict[str, object]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            next_config = json.loads(json.dumps(kwargs["cfg"]))
+            matrix_config = next_config["channels"]["matrix"]["config"]
+            matrix_config.pop("legacy")
+            matrix_config["modern"] = True
+            return {
+                "config": next_config,
+                "changes": ["channels.matrix.config: migrated legacy key"],
+            }
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        args=["doctor", "--fix", "--json"],
+        channel_doctor_adapters={"matrix": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["status"] == "ok"
+    assert channel_doctor["changed"] is True
+    assert channel_doctor["changes"] == ["channels.matrix.config: migrated legacy key"]
+    assert channel_doctor["warnings"] == []
+    assert snapshot["channels"]["matrix"]["config"] == {"modern": True}
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "defaults": {"dmPolicy": "allowlist"},
+                    "matrix": {"enabled": True, "config": {"legacy": True}},
+                }
+            },
+            "doctorFixCommand": "openzues doctor --fix",
+        }
+    ]
 
 
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
