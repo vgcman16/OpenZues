@@ -7547,11 +7547,14 @@ def _plugin_runtime_activation_payload(
     services: object,
 ) -> dict[str, object]:
     manifest_plugins = [plugin for plugin in plugin_rows if isinstance(plugin, Mapping)]
+    active_manifest_plugins = [
+        plugin for plugin in manifest_plugins if _plugin_row_runtime_activated(plugin)
+    ]
     manifest_tool_plugins: list[dict[str, object]] = []
     unavailable_tool_plugins: list[dict[str, object]] = []
     evaluated_tool_availability = False
     config_snapshot = _doctor_config_snapshot(getattr(services, "gateway_config", None))
-    for plugin in manifest_plugins:
+    for plugin in active_manifest_plugins:
         plugin_id = _optional_cli_string(plugin.get("id"))
         if plugin_id is None:
             continue
@@ -7587,7 +7590,7 @@ def _plugin_runtime_activation_payload(
     runtime_tool_map: dict[str, list[str]] = {}
     for spec in _plugin_runtime_specs_from_services(
         services,
-        plugin_rows=manifest_plugins,
+        plugin_rows=active_manifest_plugins,
         config_snapshot=config_snapshot,
     ):
         plugin_id = _optional_cli_string(spec.plugin_id)
@@ -7638,6 +7641,10 @@ def _plugin_runtime_activation_payload(
     if configured_channel_plan.get("entries"):
         payload["configuredChannelPlugins"] = configured_channel_plan
     return payload
+
+
+def _plugin_row_runtime_activated(plugin: Mapping[str, object]) -> bool:
+    return _optional_cli_string(plugin.get("status")) == "loaded"
 
 
 def _plugin_manifest_tool_availability(
@@ -13600,7 +13607,9 @@ async def _build_plugins_inventory_payload(
         ]
     runtime_specs = _plugin_runtime_specs_from_services(
         services,
-        plugin_rows=plugins,
+        plugin_rows=[
+            plugin for plugin in plugins if _plugin_row_runtime_activated(plugin)
+        ],
         config_snapshot=config_snapshot,
     )
     _mark_plugin_import_state(

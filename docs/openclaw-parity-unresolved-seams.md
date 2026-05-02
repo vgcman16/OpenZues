@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~57.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~57.5% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -54,6 +54,7 @@ Current percentage rollup:
   configured-channel workspace owner activation gate,
   manifest toolMetadata availability gate,
   installed plugin runtime activation adapter,
+  installed plugin disabled activation gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -94,6 +95,7 @@ Current percentage rollup:
   configured-channel workspace owner activation gate,
   manifest toolMetadata availability gate,
   installed plugin runtime activation adapter,
+  installed plugin disabled activation gate,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -5198,6 +5200,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   plugin doctor installed activation adapter test, adjacent plugin runtime CLI
   proof, `ruff check`, and `mypy`; checkpoint in `26e55209`.
+- Closed the installed plugin disabled activation gate seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/config-state.ts`, and
+  `src/plugins/runtime/runtime-registry-loader.ts`: disabled manifest/load-path
+  plugins are now excluded before native installed-plugin activation adapter
+  dispatch, do not count as missing runtime executor gaps, and remain
+  `imported=false`. Repo-wide parity is now estimated at ~57.5%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused plugin doctor disabled activation adapter test,
+  adjacent plugin runtime CLI proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

@@ -9458,6 +9458,74 @@ def test_plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter(
     assert [plugin["id"] for plugin in calls[0]["plugins"]] == ["installed-tools"]
 
 
+def test_plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "disabled-tools"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="disabled-tools",
+        contracts={"tools": ["disabled.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"disabled-tools": {"enabled": False}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
+            }
+        )
+    )
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["manifestToolPlugins"] == []
+    assert runtime_activation["runtimeExecutorPlugins"] == []
+    assert runtime_activation["missingExecutorPlugins"] == []
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["disabled-tools"]["status"] == "disabled"
+    assert plugins["disabled-tools"]["imported"] is False
+    assert calls == []
+
+
 def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(
     tmp_path,
     monkeypatch,
