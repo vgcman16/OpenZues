@@ -17166,12 +17166,13 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
             if (plugin_id := _optional_cli_string(plugin.get("id"))) is not None
         ]
     )
+    auto_enabled_reasons = _plugin_auto_enabled_reasons_from_rows(plugin_rows)
     context: dict[str, object] = {
         "plugins": [dict(plugin) for plugin in plugin_rows],
         "rawConfig": dict(config_snapshot),
         "config": dict(config_snapshot),
         "activationSourceConfig": dict(config_snapshot),
-        "autoEnabledReasons": {},
+        "autoEnabledReasons": auto_enabled_reasons,
         "env": dict(os.environ),
         "onlyPluginIds": only_plugin_ids,
         "throwOnLoadError": True,
@@ -17210,6 +17211,35 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
         plugin_rows=plugin_rows,
         diagnostics=diagnostics,
     )
+
+
+def _plugin_auto_enabled_reasons_from_rows(
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> dict[str, list[str]]:
+    reasons_by_plugin: dict[str, list[str]] = {}
+    for plugin in plugin_rows:
+        if _optional_cli_string(plugin.get("activationSource")) != "auto":
+            continue
+        plugin_id = _optional_cli_string(plugin.get("id")) or _optional_cli_string(
+            plugin.get("pluginId")
+        )
+        if plugin_id is None:
+            continue
+        reason_candidates = _plugin_manifest_string_list(
+            plugin.get("autoEnabledReasons")
+        )
+        for key in ("autoEnabledReason", "activationReason"):
+            reason = _optional_cli_string(plugin.get(key))
+            if reason is not None:
+                reason_candidates.append(reason)
+        if not reason_candidates:
+            continue
+        merged = [
+            *reasons_by_plugin.get(plugin_id, []),
+            *reason_candidates,
+        ]
+        reasons_by_plugin[plugin_id] = _dedupe_cli_strings(merged)
+    return reasons_by_plugin
 
 
 def _filter_plugin_runtime_specs_by_manifest_contracts(

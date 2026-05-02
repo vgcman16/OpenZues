@@ -9450,6 +9450,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 
+- Auto-enabled plugin runtime load-context reasons are now landed: runtime
+  activation adapters receive an OpenClaw-shaped `autoEnabledReasons` map
+  keyed by plugin id for bundled channel plugins auto-enabled from channel
+  config/env discovery, while retaining raw config, activation source config,
+  env, scoped plugin ids, and throw-on-load-error options. Checkpoint pending.
+- Progress estimates are now roughly 58.8% repo-wide and 99.3% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the auto-enabled runtime load-context reason slice with `python -m
+  pytest tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_auto_enabled_channel_reasons
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "auto_enabled_channel_reasons or
+  activation_adapter_receives_openclaw_runtime_load_options or
+  configured_bundled_channel_as_auto_enabled or manifest_env_var or
+  activation_adapter_skips_disabled_manifest_plugins"` (`5 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

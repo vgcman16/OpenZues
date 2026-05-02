@@ -5344,6 +5344,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   import/activation queue, especially bundled package plugin-sdk import/runtime
   activation and standalone text-transform projection. The provider-native
   adapter breadth queue remains the next alternate after that slice.
+- Closed the auto-enabled plugin runtime load-context reason seam from
+  OpenClaw `src/plugins/activation-context.ts`,
+  `src/plugins/runtime/load-context.ts`, and `src/plugins/loader.test.ts`:
+  runtime activation adapters now receive an OpenClaw-shaped
+  `autoEnabledReasons` map keyed by plugin id for bundled channel plugins
+  auto-enabled from channel config/env discovery, while retaining raw config,
+  activation source config, env, scoped plugin ids, and throw-on-load-error
+  options. Repo-wide parity is now estimated at ~58.8%; the active
+  gateway/session/tool-contract family is now estimated at ~99.3%, and
+  runtime/CLI/doctor plus CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused runtime load-context reason test, adjacent adapter
+  context and bundled auto-enable proof, `ruff check`, and `mypy`; checkpoint
+  pending.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk import/runtime
+  activation and standalone text-transform projection. The provider-native
+  adapter breadth queue remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

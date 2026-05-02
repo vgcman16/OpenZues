@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~58.7% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~99.2% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~58.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.3% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -132,6 +132,11 @@ may lag behind this tracker.
 - [x] Bundled channel manifest env-var activation, preserving
   `channelEnvVars` as auto-enable triggers for bundled channel plugins.
   - Status: checkpointed in `f39ca17c`
+
+- [x] Auto-enabled plugin runtime load-context reasons, preserving
+  OpenClaw's `autoEnabledReasons` map when runtime activation adapters load
+  bundled channel plugins auto-enabled from channel config/env discovery.
+  - Status: verified pending checkpoint
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
