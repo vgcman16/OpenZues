@@ -12619,6 +12619,21 @@ _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES = (
     ".zip",
 )
 _CLI_BARE_NPM_PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9\-._~]*$")
+_CLI_NPM_EXACT_SEMVER_RE = re.compile(
+    r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$"
+)
+_CLI_NPM_DIST_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_CLI_NPM_UNSCOPED_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-._~]*$")
+_CLI_NPM_SCOPED_NAME_RE = re.compile(
+    r"^@[a-z0-9][a-z0-9\-._~]*/[a-z0-9][a-z0-9\-._~]*$"
+)
+
+
+class _CliClawHubInstallError(ValueError):
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -12633,6 +12648,12 @@ class _CliBundledPluginSource:
 class _CliClawHubPluginSpec:
     name: str
     version: str | None = None
+
+
+@dataclass(frozen=True)
+class _CliRegistryNpmSpec:
+    name: str
+    selector: str | None = None
 
 
 def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
@@ -12759,6 +12780,46 @@ def _format_cli_clawhub_spec(name: str, version: str | None = None) -> str:
     return f"clawhub:{name}{f'@{version}' if version else ''}"
 
 
+def _parse_cli_registry_npm_spec(raw: str) -> _CliRegistryNpmSpec | None:
+    spec = raw.strip()
+    if not spec or re.search(r"\s", spec):
+        return None
+    if "://" in spec or "#" in spec or ":" in spec:
+        return None
+    at_index = spec.rfind("@")
+    has_selector = at_index > 0
+    name = spec[:at_index] if has_selector else spec
+    selector = spec[at_index + 1 :] if has_selector else None
+    name_is_valid = (
+        _CLI_NPM_SCOPED_NAME_RE.match(name) is not None
+        if name.startswith("@")
+        else _CLI_NPM_UNSCOPED_NAME_RE.match(name) is not None
+    )
+    if not name_is_valid:
+        return None
+    if selector is None:
+        return _CliRegistryNpmSpec(name=name)
+    if not selector or "\\" in selector or "/" in selector:
+        return None
+    if (
+        _CLI_NPM_EXACT_SEMVER_RE.match(selector) is None
+        and _CLI_NPM_DIST_TAG_RE.match(selector) is None
+    ):
+        return None
+    return _CliRegistryNpmSpec(name=name, selector=selector)
+
+
+def _build_cli_preferred_clawhub_spec(raw: str) -> str | None:
+    parsed = _parse_cli_registry_npm_spec(raw)
+    if parsed is None:
+        return None
+    return _format_cli_clawhub_spec(parsed.name, parsed.selector)
+
+
+def _should_cli_preferred_clawhub_fallback(code: str | None) -> bool:
+    return code in {"package_not_found", "version_not_found"}
+
+
 async def _build_plugins_path_install_payload(
     services: CliServices,
     *,
@@ -12837,7 +12898,10 @@ async def _build_plugins_clawhub_install_payload(
         force=force,
     )
     if result.get("ok") is False:
-        raise ValueError(str(result.get("error") or "ClawHub plugin install failed."))
+        raise _CliClawHubInstallError(
+            str(result.get("error") or "ClawHub plugin install failed."),
+            _optional_cli_string(result.get("code")),
+        )
     plugin_id = _optional_cli_string(result.get("pluginId"))
     install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
         result.get("installPath")
@@ -19812,6 +19876,31 @@ def plugins_install_command(
                 raise typer.Exit(code=1) from exc
             _emit_plugins_install(payload, json_output=json_output)
             return
+        preferred_clawhub_spec = _build_cli_preferred_clawhub_spec(plugin_id)
+        if preferred_clawhub_spec is not None:
+
+            async def _preferred_clawhub_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_clawhub_install_payload(
+                    services,
+                    raw_spec=preferred_clawhub_spec,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_preferred_clawhub_action))
+            except _CliClawHubInstallError as exc:
+                if not _should_cli_preferred_clawhub_fallback(exc.code):
+                    typer.echo(str(exc), err=True)
+                    raise typer.Exit(code=1) from exc
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            else:
+                _emit_plugins_install(payload, json_output=json_output)
+                return
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",

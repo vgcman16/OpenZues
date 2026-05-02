@@ -9155,6 +9155,120 @@ def test_plugins_install_clawhub_reports_unavailable_runtime(
     assert "ClawHub plugin install runtime is unavailable." in result.stderr
 
 
+def test_plugins_install_json_prefers_clawhub_for_registry_npm_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    install_dir = tmp_path / "plugins" / "clawhub" / "demo"
+    install_dir.mkdir(parents=True)
+    calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "clawhub": {
+                    "source": "clawhub",
+                    "clawhubUrl": "https://clawhub.ai",
+                    "clawhubPackage": "demo",
+                    "clawhubFamily": "code-plugin",
+                    "clawhubChannel": "community",
+                    "version": "1.2.3",
+                    "integrity": "sha256-demo",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert calls == [{"spec": "clawhub:@openclaw/demo", "mode": "install"}]
+    payload = json.loads(result.stdout)
+    assert payload["source"] == "clawhub"
+    assert payload["pluginId"] == "demo"
+    assert payload["install"]["source"] == "clawhub"
+    assert payload["install"]["spec"] == "clawhub:demo@1.2.3"
+    assert payload["install"]["clawhubChannel"] == "community"
+
+
+def test_plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/missing", "--json"])
+
+    assert calls == [{"spec": "clawhub:@openclaw/missing", "mode": "install"}]
+    assert result.exit_code == 1
+    assert (
+        "Native plugin install currently supports local marketplace installs via --marketplace."
+        in result.stderr
+    )
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,

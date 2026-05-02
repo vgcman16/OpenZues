@@ -21,13 +21,13 @@ Current percentage rollup:
   marketplace listing, remote marketplace path-entry install/update,
   Git/GitHub entry-source install, URL/archive entry-source install, local
   path link/copy install, missing local-looking install-spec guard, and bundled
-  pre-npm plus explicit ClawHub install slices.
+  pre-npm plus explicit/preferred ClawHub install slices.
 - The CLI/operator control-plane family is estimated at ~98% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
-  bundled pre-npm plus explicit ClawHub install; remaining CLI gaps are now
-  dominated by preferred ClawHub fallback, npm install/update breadth, runtime
-  activation/import depth, and packaging surfaces.
+  bundled pre-npm plus explicit/preferred ClawHub install; remaining CLI gaps
+  are now dominated by npm install/update breadth, runtime activation/import
+  depth, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1404,6 +1404,12 @@ family/channel/url, integrity, resolved-at metadata, and load/allow/entry
 state. Remaining non-marketplace install parity is preferred ClawHub fallback
 before npm, npm install/update behavior, and deeper runtime activation/import
 metadata.
+Registry npm-looking specs now mirror OpenClaw's preferred ClawHub attempt
+before npm: valid registry specs map to `clawhub:<name>[@selector]`, successful
+installs persist the same ClawHub record shape, and package/version-not-found
+ClawHub outcomes fall through to the current native npm boundary. Remaining
+non-marketplace install parity is npm install/update behavior and deeper
+runtime activation/import metadata.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
