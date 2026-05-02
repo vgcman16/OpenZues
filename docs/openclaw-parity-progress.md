@@ -9070,8 +9070,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   OpenClaw's channel presence policy: non-bundled `config`/`global` channel
   owners require explicit trust via `plugins.allow` or
   `plugins.entries.<id>.enabled=true` before scoped configured-channel
-  activation, otherwise they are projected as `untrusted-plugin`. Checkpoint
-  pending.
+  activation, otherwise they are projected as `untrusted-plugin`. Checkpointed
+  in `0e6ce093`.
 - Progress estimates are now roughly 57.1% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

@@ -213,7 +213,7 @@ may lag behind this tracker.
 
 - [x] Configured-channel config/global owner trust gate in runtime activation
   planning.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `0e6ce093`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -421,7 +421,7 @@ may lag behind this tracker.
     projection checkpointed in `ae5c3986`, and configured-channel disabled
     owner policy checkpointed in `d2d0e9c3`, and configured-channel bundled
     owner allowlist bypass checkpointed in `6ad518d4`, and configured-channel
-    config/global owner trust gate verified with checkpoint pending, but
+    config/global owner trust gate checkpointed in `0e6ce093`, but
     deeper module import/runtime activation remains.
   - Weight: 5
 
@@ -430,7 +430,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/manifest-owner-policy.ts`
   - Target: `src/openzues/services/gateway_plugin_activation.py`
   - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `0e6ce093`.
   - Weight: 1
   - Last verified: 2026-05-02, focused config-owner trust helper test (`1
     passed`), full activation helper suite (`8 passed`), adjacent plugin
