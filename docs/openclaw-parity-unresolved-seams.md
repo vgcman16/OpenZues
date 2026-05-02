@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~49.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~49.9% overall, with a reasonable
   band of ~45-54%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -12,7 +12,7 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.1% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.2% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
@@ -24,18 +24,18 @@ Current percentage rollup:
   pre-npm plus explicit/preferred ClawHub, production-wired ClawHub API/archive
   install, fakeable plus production-wired npm install/update, update
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
-  hook-pack npm install fallback, and native manifest activation-planner
-  slices.
-- The CLI/operator control-plane family is estimated at ~99.1% after the bundle
+  hook-pack npm install fallback, native manifest activation-planner, and
+  active-registry executor projection slices.
+- The CLI/operator control-plane family is estimated at ~99.2% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
   API/archive install, fakeable plus production-wired npm install/update,
   update spec-overrides,
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
-  install fallback, plus native manifest activation planning; remaining CLI
-  gaps are now dominated by runtime import/executor activation depth and
-  packaging surfaces.
+  install fallback, native manifest activation planning, and active-registry
+  executor projection; remaining CLI gaps are now dominated by real installed
+  plugin module import/activation and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1467,8 +1467,12 @@ The native manifest activation-planner helper now mirrors OpenClaw's
 and `activation.onCommands`, providers plus setup providers, agent harnesses,
 channels, routes, capability hints, contract-owned tools, hooks, origin
 filters, and explicit empty plugin scopes resolve to stable sorted plugin ids.
-Remaining plugin activation parity is runtime import/executor activation wiring
-that feeds installed manifest records into the planner and runtime service.
+The native plugin runtime service can now also project OpenClaw-shaped active
+registry tool entries into ordered executor specs, including optional-tool
+allowlist checks, core tool-name conflict skips, and plugin-id conflict blocks.
+Remaining plugin activation parity is real installed plugin module import and
+activation wiring that feeds installed manifest records and native executor
+entries into the planner and runtime service.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
