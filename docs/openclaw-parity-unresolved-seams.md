@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~56.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~56.4% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -44,7 +44,8 @@ Current percentage rollup:
   diagnostics section, plugin inspect human install section, plugin inspect
   human compatibility warnings section, plugin inspect typed/custom hook
   sections, plugin inspect human header/bundle-format labels, plugin list
-  verbose activation/import state, plugin list human enabled label,
+  verbose activation/import state, plugin list human enabled label, plugin list
+  human enabled count,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -75,7 +76,8 @@ Current percentage rollup:
   section, plugin inspect human install section, plugin inspect human
   compatibility warnings section, plugin inspect typed/custom hook sections,
   plugin inspect human header/bundle-format labels, plugin list verbose
-  activation/import state, plugin list human enabled label,
+  activation/import state, plugin list human enabled label, plugin list human
+  enabled count,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -317,6 +319,13 @@ than leaking the internal OpenZues `loaded` status label, while JSON status
 fields and loaded counts remain unchanged. Verified on 2026-05-02 with the
 focused runtime-inventory CLI test, adjacent plugin list/runtime proof,
 `ruff check`, and `mypy`; checkpoint in `bc362484`.
+Plugin list human enabled counts now mirror OpenClaw's
+`src/cli/plugins-list-command.ts` header contract: human `plugins list
+--verbose` renders `Plugins (enabled/total enabled)` instead of `loaded`,
+using explicit record `enabled` values when present and falling back to
+`status="loaded"` for native records. Verified on 2026-05-02 with the focused
+runtime-inventory CLI test, adjacent plugin list/runtime proof, `ruff check`,
+and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -5048,6 +5057,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused runtime-inventory CLI test, adjacent plugin
   list/runtime proof, `ruff check`, and `mypy`; checkpoint in `bc362484`.
+- Closed the plugin list human enabled-count seam from OpenClaw
+  `src/cli/plugins-list-command.ts`: human `plugins list --verbose` now
+  renders `Plugins (enabled/total enabled)` instead of `loaded`, using
+  explicit `enabled` fields when present and status fallback for native
+  OpenZues records. Repo-wide parity is now estimated at ~56.4%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused runtime-inventory CLI test, adjacent plugin
+  list/runtime proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

@@ -10340,12 +10340,12 @@ def _emit_plugins_inventory(
     if not plugin_rows:
         typer.echo("No plugins found.")
         return
-    loaded_count = sum(
+    enabled_count = sum(
         1
         for plugin in plugin_rows
-        if isinstance(plugin, dict) and str(plugin.get("status") or "") == "loaded"
+        if isinstance(plugin, dict) and _plugin_inventory_row_enabled(plugin)
     )
-    typer.echo(f"Plugins ({loaded_count}/{len(plugin_rows)} loaded)")
+    typer.echo(f"Plugins ({enabled_count}/{len(plugin_rows)} enabled)")
     for plugin in plugin_rows:
         if not isinstance(plugin, dict):
             continue
@@ -10436,6 +10436,13 @@ def _emit_plugins_inventory(
                 if entry.get("ownerOnly") is True:
                     parts.append("owner-only")
                 typer.echo(" ".join(parts))
+
+
+def _plugin_inventory_row_enabled(plugin: dict[str, object]) -> bool:
+    enabled = plugin.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    return str(plugin.get("status") or "").strip() == "loaded"
 
 
 def _plugin_registry_counts(registry: dict[str, object] | None) -> tuple[int, int]:
