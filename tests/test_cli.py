@@ -9100,8 +9100,10 @@ def test_plugins_inspect_json_projects_config_policy(tmp_path, monkeypatch) -> N
     monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
 
     result = runner.invoke(app, ["plugins", "inspect", "policy-plugin", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "policy-plugin"])
 
     assert result.exit_code == 0, result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
     payload = json.loads(result.stdout)
     assert payload["policy"] == {
         "allowPromptInjection": False,
@@ -9109,6 +9111,10 @@ def test_plugins_inspect_json_projects_config_policy(tmp_path, monkeypatch) -> N
         "allowedModels": ["openai/gpt-5.4"],
         "hasAllowedModelsConfig": True,
     }
+    assert "Policy:" in human_result.stdout
+    assert "- allowPromptInjection: false" in human_result.stdout
+    assert "- allowModelOverride: true" in human_result.stdout
+    assert "- allowedModels: openai/gpt-5.4" in human_result.stdout
 
 
 def test_plugins_doctor_human_reports_no_plugin_issues(monkeypatch) -> None:

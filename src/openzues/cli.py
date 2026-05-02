@@ -12323,6 +12323,24 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     http_route_count = _plugin_record_http_route_count(payload)
     if http_route_count > 0:
         _emit_plugin_inspect_section("HTTP routes", [str(http_route_count)])
+    policy = payload.get("policy")
+    policy_lines: list[str] = []
+    if isinstance(policy, dict):
+        for key in (
+            "allowPromptInjection",
+            "allowConversationAccess",
+            "allowModelOverride",
+        ):
+            value = policy.get(key)
+            if isinstance(value, bool):
+                policy_lines.append(f"{key}: {str(value).lower()}")
+        if policy.get("hasAllowedModelsConfig") is True:
+            allowed_models = _string_list_or_none(policy.get("allowedModels"))
+            if allowed_models:
+                policy_lines.append(f"allowedModels: {', '.join(allowed_models)}")
+            else:
+                policy_lines.append("allowedModels: (configured but empty)")
+    _emit_plugin_inspect_section("Policy", policy_lines)
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")
