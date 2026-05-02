@@ -2802,6 +2802,44 @@ def _whatsapp_document_filename(media_url: str, *, fallback: str = "file") -> st
     return filename.strip() or fallback
 
 
+def _whatsapp_media_is_audio(
+    media_url: str,
+    *,
+    media_kind: object,
+    audio_as_voice: object,
+) -> bool:
+    normalized_kind = str(media_kind or "").strip().lower()
+    if normalized_kind in {"audio", "voice"} or audio_as_voice is True:
+        return True
+    parsed_path = unquote(urlparse(str(media_url)).path)
+    content_type = str(mimetypes.guess_type(parsed_path)[0] or "").split(";", 1)[0].lower()
+    return content_type.startswith("audio/")
+
+
+def _whatsapp_media_payload_key(
+    media_url: str,
+    *,
+    media_kind: object,
+    force_document: bool,
+    gif_playback: bool,
+    audio_as_voice: object,
+) -> str:
+    if force_document:
+        return "document"
+    if _whatsapp_media_is_audio(
+        media_url,
+        media_kind=media_kind,
+        audio_as_voice=audio_as_voice,
+    ):
+        return "audio"
+    if gif_playback:
+        return "video"
+    normalized_kind = str(media_kind or "").strip().lower()
+    if normalized_kind in {"video", "image"}:
+        return normalized_kind
+    return "image"
+
+
 def _fixed_text_chunks(text: str, *, limit: int) -> list[str]:
     if not text:
         return [""]
@@ -18707,6 +18745,8 @@ class OpsMeshService:
         )
         if recipient_id is None:
             raise RuntimeError("WhatsApp route is missing a recipient target.")
+        reply_to_id = ""
+        follow_up_text_after_media: str | None = None
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             options = [str(option).strip() for option in event.get("options", [])]
@@ -18747,9 +18787,8 @@ class OpsMeshService:
             reply_to_id = str(event.get("replyToId") or "").strip()
             force_document = _optional_bool_payload_value(event, "forceDocument") is True
             gif_playback = _optional_bool_payload_value(event, "gifPlayback") is True
-            media_payload_key = (
-                "document" if force_document else "video" if gif_playback else "image"
-            )
+            audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice")
+            media_kind = event.get("mediaKind")
             raw_media_urls = event.get("mediaUrls")
             media_urls = _normalize_direct_channel_media_urls(
                 media_url=(
@@ -18769,10 +18808,19 @@ class OpsMeshService:
                     message_ids: list[str] = []
                     delivered_contact = recipient_id
                     for index, media_url in enumerate(media_urls):
+                        media_payload_key = _whatsapp_media_payload_key(
+                            media_url,
+                            media_kind=media_kind,
+                            force_document=force_document,
+                            gif_playback=gif_playback,
+                            audio_as_voice=audio_as_voice,
+                        )
                         media_payload: dict[str, Any] = {"link": media_url}
                         if media_payload_key == "document":
                             media_payload["filename"] = _whatsapp_document_filename(media_url)
-                        if index == 0 and text:
+                        if index == 0 and media_payload_key == "audio" and text:
+                            follow_up_text_after_media = text[:4096]
+                        elif index == 0 and text:
                             media_payload["caption"] = text[:1024]
                         message_payload: dict[str, Any] = {
                             "messaging_product": "whatsapp",
@@ -18806,6 +18854,23 @@ class OpsMeshService:
                             )
                         message_ids.append(message_id)
                         delivered_contact = _whatsapp_contact_id(result, delivered_contact)
+                    if follow_up_text_after_media:
+                        self._post_json_webhook(
+                            endpoint,
+                            {
+                                "messaging_product": "whatsapp",
+                                "to": recipient_id,
+                                "type": "text",
+                                "text": {"body": follow_up_text_after_media},
+                                **(
+                                    {"context": {"message_id": reply_to_id}}
+                                    if reply_to_id
+                                    else {}
+                                ),
+                            },
+                            secret_header_name="Authorization",
+                            secret_token=bearer_token,
+                        )
                     return {
                         "runtime": "native-provider-backed",
                         "messageId": message_ids[-1],
@@ -18814,12 +18879,21 @@ class OpsMeshService:
                         "mediaIds": message_ids,
                         "mediaUrls": media_urls,
                     }
+                media_payload_key = _whatsapp_media_payload_key(
+                    media_urls[0],
+                    media_kind=media_kind,
+                    force_document=force_document,
+                    gif_playback=gif_playback,
+                    audio_as_voice=audio_as_voice,
+                )
                 media_payload = {
                     "link": media_urls[0],
                 }
                 if media_payload_key == "document":
                     media_payload["filename"] = _whatsapp_document_filename(media_urls[0])
-                if text:
+                if media_payload_key == "audio" and text:
+                    follow_up_text_after_media = text[:4096]
+                elif text:
                     media_payload["caption"] = text[:1024]
                 payload = {
                     "messaging_product": "whatsapp",
@@ -18922,6 +18996,29 @@ class OpsMeshService:
             )
             if media_urls:
                 native_result["mediaUrls"] = media_urls
+            if follow_up_text_after_media:
+                follow_up_payload: dict[str, Any] = {
+                    "messaging_product": "whatsapp",
+                    "to": recipient_id,
+                    "type": "text",
+                    "text": {"body": follow_up_text_after_media},
+                }
+                _whatsapp_apply_reply_context(follow_up_payload, reply_to_id)
+                follow_up_result = self._post_json_webhook(
+                    _whatsapp_messages_endpoint(str(route.get("target") or "")),
+                    follow_up_payload,
+                    secret_header_name="Authorization",
+                    secret_token=_whatsapp_bearer_token(secret_token),
+                )
+                if not isinstance(follow_up_result, dict):
+                    raise RuntimeError("WhatsApp API returned a non-JSON response.")
+                if follow_up_result.get("error"):
+                    error = follow_up_result.get("error")
+                    if isinstance(error, dict):
+                        detail = str(error.get("message") or error.get("code") or "unknown")
+                    else:
+                        detail = str(error)
+                    raise RuntimeError(f"WhatsApp API returned {detail}.")
         return native_result
 
     def _post_zalo_provider_event(

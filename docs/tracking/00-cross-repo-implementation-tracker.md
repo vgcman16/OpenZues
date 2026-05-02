@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.8% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Telegram GIF media send slice is checkpointed in `51ee9573`.
+The WhatsApp audio/voice media send slice is verified and awaiting checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled plugin-SDK alias context checkpointed in `e6b506db` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram GIF media send checkpointed in `51ee9573` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
 
@@ -1778,6 +1778,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     or send_direct_channel_poll_uses_telegram_native_route"` (`5 passed`),
     `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
     and `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001H` WhatsApp audio/voice media send payload
+  - Source: `openclaw-main/extensions/whatsapp/src/send.ts`,
+    `openclaw-main/extensions/whatsapp/src/send.test.ts`, and
+    `openclaw-main/extensions/whatsapp/src/outbound-media-contract.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: WhatsApp route-backed direct sends detect audio media from media
+    kind, URL mime, or `audioAsVoice=true`, send Cloud API `type="audio"`
+    payloads instead of default image payloads, split visible text into a
+    follow-up text message because audio payloads do not support captions, and
+    preserve reply context plus audio delivery result metadata.
+  - Evidence required: focused WhatsApp audio send test, adjacent WhatsApp
+    native media/reply/gif/poll tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "whatsapp_audio_voice_payload or whatsapp_gif_video or whatsapp_reply_document
+    or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5
+    passed`), `ruff check src\openzues\services\ops_mesh.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## Canonical Checklist Format
 

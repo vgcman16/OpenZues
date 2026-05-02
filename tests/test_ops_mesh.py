@@ -19541,6 +19541,112 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_gif_vi
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-whatsapp-audio-voice"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="WhatsApp Native Audio Voice Provider",
+        kind="whatsapp",
+        target="https://graph.facebook.com/v20.0/123456789",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="wa-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "whatsapp",
+            "account_id": "wa-business",
+            "peer_kind": "direct",
+            "peer_id": "direct:+15551234567",
+        },
+    )
+    whatsapp_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        whatsapp_posts.append((target, payload, secret_header_name, secret_token))
+        payload_type = str(payload.get("type") or "unknown")
+        return {
+            "messaging_product": "whatsapp",
+            "contacts": [{"input": "+15551234567", "wa_id": "15551234567"}],
+            "messages": [{"id": f"wamid.{payload_type}.1"}],
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="whatsapp",
+        to="direct:+15551234567",
+        message="Ship voice note.",
+        media_urls=["https://example.com/voice.ogg"],
+        account_id="wa-business",
+        audio_as_voice=True,
+        reply_to_id="wamid.reply.99",
+        idempotency_key="idem-native-whatsapp-audio-voice",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "wamid.audio.1"
+    assert result["mediaUrls"] == ["https://example.com/voice.ogg"]
+    assert whatsapp_posts == [
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+15551234567",
+                "context": {"message_id": "wamid.reply.99"},
+                "type": "audio",
+                "audio": {"link": "https://example.com/voice.ogg"},
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        ),
+        (
+            "https://graph.facebook.com/v20.0/123456789/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": "+15551234567",
+                "context": {"message_id": "wamid.reply.99"},
+                "type": "text",
+                "text": {"body": "Ship voice note."},
+            },
+            "Authorization",
+            "Bearer wa-access-token",
+        ),
+    ]
+    assert delivery is not None
+    assert delivery["event_payload"]["audioAsVoice"] is True
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "wamid.audio.1",
+        "chatId": "15551234567",
+        "channelId": "15551234567",
+        "mediaUrls": ["https://example.com/voice.ogg"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_gateway_route_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

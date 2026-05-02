@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~59.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~59.4% overall, with a reasonable
   band of ~50-60%.
-- The active gateway/session/tool-contract family is estimated at ~99.8% of the
+- The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -57,8 +57,8 @@ Current percentage rollup:
   installed plugin disabled activation gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~99.8% after the
-  latest Telegram GIF media send slice.
+- The gateway session/tool-contract family is estimated at ~99.9% after the
+  latest WhatsApp audio/voice media send slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5443,6 +5443,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   checkpointed in `51ee9573`.
 - Next repo-wide queue head: continue provider-specific send/poll/replay edge
   cases or return to deeper bundled plugin runtime activation, whichever is the
+  strongest source-backed seam after the next discovery pass.
+- Closed the WhatsApp audio/voice media send seam from OpenClaw
+  `extensions/whatsapp/src/send.ts`,
+  `extensions/whatsapp/src/send.test.ts`, and
+  `extensions/whatsapp/src/outbound-media-contract.ts`: native WhatsApp
+  route-backed direct sends now detect audio media from media kind, URL mime,
+  or `audioAsVoice=true` and send Cloud API `type="audio"` payloads instead of
+  default image payloads. Visible text is split into a follow-up text message
+  because WhatsApp audio messages do not support captions, while reply context
+  and media result metadata remain on the audio delivery. Repo-wide parity is
+  now estimated at ~59.4%; the active gateway/session/tool-contract family is
+  now estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused WhatsApp audio pytest,
+  adjacent WhatsApp native media/reply/gif/poll proof, `ruff check`, and
+  `mypy`; checkpoint pending commit.
+- Next repo-wide queue head: continue provider-specific send/poll/replay edge
+  cases or rotate to packaging/companion/plugin breadth, whichever is the
   strongest source-backed seam after the next discovery pass.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

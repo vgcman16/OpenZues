@@ -3,8 +3,8 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~59.3% overall, with a reasonable band of ~50-60%.
-- Estimated active gateway/session/tool-contract family parity: ~99.8% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~59.4% overall, with a reasonable band of ~50-60%.
+- Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
@@ -57,6 +57,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native WhatsApp document parity now derives and includes document
   filenames from outbound media URLs while preserving reply context and split
   media delivery behavior.
+- Provider-native WhatsApp audio parity now sends audio/voice media as Cloud
+  API `type="audio"` payloads, preserving reply context and splitting visible
+  text into a follow-up message instead of an unsupported media caption.
 - Provider-native Discord media parity now follows OpenClaw's shared outbound
   media sequence contract with one webhook send per media URL, text only on the
   first media send, final-id projection, and ordered provider `messageIds`.
@@ -9567,6 +9570,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or send_direct_channel_poll_uses_telegram_native_route"` (`5 passed`), `ruff
   check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`.
+
+- WhatsApp audio/voice media send parity is now landed: native WhatsApp
+  route-backed direct sends detect audio media from media kind, URL mime, or
+  `audioAsVoice=true` and send Cloud API `type="audio"` payloads. Visible text
+  is sent as a follow-up text message because WhatsApp audio payloads do not
+  support captions, while reply context and media result metadata remain on
+  the audio delivery. Checkpoint pending commit.
+- Progress estimates are now roughly 59.4% repo-wide and 99.9% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the provider queue
+  continues with remaining provider-specific send/poll/replay edge cases, and
+  package/companion/plugin breadth remains open in the repo-wide tracker.
+- Verified the WhatsApp audio/voice media send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "whatsapp_audio_voice_payload or whatsapp_gif_video or whatsapp_reply_document
+  or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
 
 ## References
 
