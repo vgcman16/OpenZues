@@ -4,11 +4,11 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.2% overall, with a reasonable
   band of ~48-57%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
-- The chat/session contract subfamily is estimated at ~98% after the latest
+- The chat/session contract subfamily is estimated at ~98.1% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
@@ -4384,6 +4384,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~52.1%; runtime/CLI/doctor and CLI/operator remain ~99.9%.
   Verified with focused and adjacent CLI/plugin inspect proofs, `ruff check`,
   and `mypy`.
+- Closed the `chat.inject` live `chat` event seam from OpenClaw
+  `src/gateway/server-methods/chat.ts` and
+  `src/gateway/server-methods/chat.directive-tags.test.ts`: native
+  `chat.inject` now publishes a live `chat` gateway event with
+  `runId="inject-<messageId>"`, canonical session key, `seq=0`, final state,
+  and sanitized assistant message payload, then routes the same event through
+  subscribed gateway nodes for that canonical session. Repo-wide parity is now
+  estimated at ~52.2%; chat/session contract parity is ~98.1%. Verified with
+  focused and adjacent gateway node method proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open while the next source-backed seam is selected. Source anchors remain
   OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer

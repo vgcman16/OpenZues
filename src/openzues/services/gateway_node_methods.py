@@ -6511,6 +6511,7 @@ class GatewayNodeMethodService:
             message_row = await self._database.get_control_chat_message(message_id)
             assert message_row is not None
             await self._publish_session_message_events(message_row=message_row, now_ms=timestamp_ms)
+            await self._publish_chat_inject_event(message_row=message_row, now_ms=timestamp_ms)
             return {"ok": True, "messageId": str(message_id)}
 
         if resolved_method == "sessions.send":
@@ -11862,6 +11863,35 @@ class GatewayNodeMethodService:
         )
         if changed_payload is not None:
             await self._publish_gateway_event("sessions.changed", changed_payload)
+
+    async def _publish_chat_inject_event(
+        self,
+        *,
+        message_row: dict[str, Any],
+        now_ms: int,
+    ) -> None:
+        if self._sessions_service is None:
+            return
+        message_payload = await self._sessions_service.build_message_event_payload(
+            message_row=message_row,
+            now_ms=now_ms,
+        )
+        if message_payload is None:
+            return
+        message_id = str(message_payload.get("messageId") or message_row.get("id") or "").strip()
+        session_key = str(message_payload.get("sessionKey") or "").strip()
+        message = message_payload.get("message")
+        if not message_id or not session_key or not isinstance(message, dict):
+            return
+        chat_payload: dict[str, Any] = {
+            "runId": f"inject-{message_id}",
+            "sessionKey": session_key,
+            "seq": 0,
+            "state": "final",
+            "message": dict(message),
+        }
+        await self._publish_gateway_event("chat", chat_payload)
+        self.registry.send_to_session(session_key, "chat", chat_payload)
 
     async def _recorded_apns_registration(self, node_id: str) -> dict[str, Any] | None:
         if self._database is None:

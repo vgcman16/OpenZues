@@ -9362,8 +9362,26 @@ async def test_chat_inject_appends_assistant_message_and_publishes_session_messa
         allow_failover=True,
     )
 
+    registry = GatewayNodeRegistry()
+
+    class _RecordingNodeConnection:
+        conn_id = "conn-chat-inject"
+
+        def __init__(self) -> None:
+            self.events: list[tuple[str, object | None]] = []
+
+        def send_gateway_event(self, event: str, payload: object | None) -> None:
+            self.events.append((event, payload))
+
+    node_connection = _RecordingNodeConnection()
+    registry.register(
+        node_connection,
+        GatewayNodeConnect(client_id="node-chat-inject"),
+    )
+    assert registry.subscribe_node_to_session("node-chat-inject", session_key)
+
     service = GatewayNodeMethodService(
-        GatewayNodeRegistry(),
+        registry,
         database=database,
         hub=hub,
         sessions_service=GatewaySessionsService(database),
@@ -9444,6 +9462,42 @@ async def test_chat_inject_appends_assistant_message_and_publishes_session_messa
     assert sessions_changed_events[0]["payload"]["sessionKey"] == session_key
     assert sessions_changed_events[0]["payload"]["phase"] == "message"
     assert sessions_changed_events[0]["payload"]["messageId"] == "1"
+
+    chat_events = [
+        event
+        for event in hub.published_events
+        if event.get("type") == "gateway_event" and event.get("event") == "chat"
+    ]
+    assert len(chat_events) == 1
+    assert chat_events[0]["payload"] == {
+        "runId": "inject-1",
+        "sessionKey": session_key,
+        "seq": 0,
+        "state": "final",
+        "message": {
+            "id": "1",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Injected parity note"}],
+            "__openclaw": {"id": "1", "seq": 1},
+        },
+    }
+    assert node_connection.events == [
+        (
+            "chat",
+            {
+                "runId": "inject-1",
+                "sessionKey": session_key,
+                "seq": 0,
+                "state": "final",
+                "message": {
+                    "id": "1",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Injected parity note"}],
+                    "__openclaw": {"id": "1", "seq": 1},
+                },
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
