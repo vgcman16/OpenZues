@@ -63,7 +63,7 @@ may lag behind this tracker.
   control UI descriptor projection, empty-param validation, descriptor
   `pluginId`/`pluginName` stamping, JSON-compatible schema preservation, and
   valid required-scope projection.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `9fb5098b`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -111,7 +111,7 @@ may lag behind this tracker.
     `src/openzues/services/gateway_plugin_runtime.py`,
     `src/openzues/services/gateway_method_policy.py`
   - Test: `tests/test_gateway_node_methods.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `9fb5098b`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors

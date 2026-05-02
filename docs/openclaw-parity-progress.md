@@ -66,7 +66,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   from the fakeable plugin runtime registry, projected rows are stamped with
   registry-owned `pluginId` and optional `pluginName`, JSON-compatible
   descriptor schemas and valid required scopes are preserved, and invalid or
-  disabled descriptor registrations are skipped before clients see them.
+  disabled descriptor registrations are skipped before clients see them. This
+  slice is checkpointed in `9fb5098b`.
 - Verified the `plugins.uiDescriptors` slice with `python -m pytest
   tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors
   -q` (`1 passed`), adjacent plugin-runtime proof `python -m pytest

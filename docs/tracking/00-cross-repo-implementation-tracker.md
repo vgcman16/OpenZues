@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `plugins.uiDescriptors` plugin-host parity slice is now part of the
-active checkpoint and may be staged with its source, test, and ledger updates:
+The `plugins.uiDescriptors` plugin-host parity slice is checkpointed in
+`9fb5098b`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_plugin_runtime.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `e0c02761` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; local `chat.*` / `sessions.*` base methods rechecked |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Active | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` verified; checkpoint pending |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Open | Medium | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -93,7 +93,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     preserves JSON-compatible `schema` and valid `requiredScopes`, and skips
     invalid/disabled descriptor registrations before projection.
   - Evidence required: focused test, adjacent plugin-runtime test, ruff, mypy
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `9fb5098b`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors

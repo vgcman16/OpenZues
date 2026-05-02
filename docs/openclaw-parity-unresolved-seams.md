@@ -96,7 +96,7 @@ registry-owned `pluginId` and optional `pluginName`, JSON-compatible descriptor
 schemas and valid required scopes are preserved, and invalid or disabled
 registrations are skipped before projection. Verified on 2026-05-02 with the
 focused `plugins.uiDescriptors` pytest, adjacent plugin-runtime proof, `ruff
-check`, and `mypy`.
+check`, and `mypy`; checkpointed in `9fb5098b`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4453,7 +4453,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   registrations before projection. Repo-wide parity is now estimated at
   ~52.7%; active gateway/session/tool-contract parity is ~98.2%, and gateway
   session/tool-contract parity is ~97.4%. Verified with focused and adjacent
-  plugin-runtime gateway proofs, `ruff check`, and `mypy`.
+  plugin-runtime gateway proofs, `ruff check`, and `mypy`; checkpointed in
+  `9fb5098b`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open while the next source-backed seam is selected. Source anchors remain
   OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
