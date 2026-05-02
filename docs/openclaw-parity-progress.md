@@ -8575,7 +8575,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect loader error text projection is now landed for OpenClaw's
   plugin loader error records: native inventory preserves `error`, JSON
   inspect payloads include `plugin.error`, and human inspect output renders
-  `Error: <text>` for errored plugin records. Checkpoint pending.
+  `Error: <text>` for errored plugin records. Checkpointed in `88ff1768`.
 - Progress estimates are now roughly 54.9% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

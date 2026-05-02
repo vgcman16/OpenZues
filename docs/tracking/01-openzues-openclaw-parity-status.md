@@ -126,7 +126,7 @@ may lag behind this tracker.
 - [x] Plugin inspect loader error text projection for loader error records,
   preserving `plugin.error` in JSON and printing the OpenClaw-style
   `Error: <text>` line in human inspect output.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `88ff1768`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -311,8 +311,8 @@ may lag behind this tracker.
     `209dced0`, plugin doctor failure-phase projection checkpointed in
     `0dc9fc27`, plugin inspect failure-phase projection checkpointed in
     `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
-    `b3bf64a5`, and plugin inspect loader error text projection verified
-    pending checkpoint, but deeper module import/runtime activation remains.
+    `b3bf64a5`, and plugin inspect loader error text projection checkpointed
+    in `88ff1768`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin inspect loader error text projection.
@@ -321,7 +321,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/registry-types.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `88ff1768`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect loader-error test (`1
     passed`), adjacent plugin inspect/doctor proof (`8 passed`), `ruff

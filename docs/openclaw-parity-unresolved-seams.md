@@ -212,7 +212,7 @@ from `src/cli/plugins-inspect-command.ts`: native inventory rows preserve the
 error text, `plugins inspect <id> --json` includes `plugin.error`, and human
 inspect output renders `Error: <text>` for error records. Verified on
 2026-05-02 with the focused inspect loader-error CLI test, adjacent plugin
-inspect/doctor proof, `ruff check`, and `mypy`; checkpoint pending.
+inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `88ff1768`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4836,7 +4836,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~54.9%; runtime/CLI/doctor and CLI/operator-control
   bounded paths remain ~99.9%. Verified with the focused inspect loader-error
   CLI test, adjacent plugin inspect/doctor proof, `ruff check`, and `mypy`;
-  checkpoint pending.
+  checkpoint in `88ff1768`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
