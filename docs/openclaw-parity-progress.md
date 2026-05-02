@@ -8516,7 +8516,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   error records: native plugin inventory preserves `failurePhase` values from
   deck/plugin rows, `plugins doctor --json` includes the phase on error
   entries, and human doctor output renders the phase marker beside the plugin
-  id. Checkpoint pending.
+  id. Checkpointed in `0dc9fc27`.
 - Progress estimates are now roughly 54.6% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

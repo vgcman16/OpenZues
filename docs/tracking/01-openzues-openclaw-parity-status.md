@@ -111,7 +111,7 @@ may lag behind this tracker.
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
   and human doctor output.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `0dc9fc27`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -293,8 +293,8 @@ may lag behind this tracker.
     activation-state child slice checkpointed in `78658f29`, and installed
     plugin allowlist activation guard child slice checkpointed in `73089117`,
     and installed plugin slot activation reason child slice checkpointed in
-    `209dced0`, and plugin doctor failure-phase projection verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    `209dced0`, and plugin doctor failure-phase projection checkpointed in
+    `0dc9fc27`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin doctor failure-phase projection.
@@ -303,7 +303,7 @@ may lag behind this tracker.
     `openclaw-main/src/cli/plugins-cli.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `0dc9fc27`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin doctor failure-phase test (`1
     passed`), adjacent plugin doctor/activation proof (`5 passed`), `ruff
