@@ -49,7 +49,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Verified slice; checkpoint pending | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; map next source-backed `chat.*` or `sessions.*` runtime mismatch |
+| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `e0c02761` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; map next source-backed `chat.*` or `sessions.*` runtime mismatch |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Open | Broad | Compare OpenClaw plugin activation/import lifecycle and implement next seam |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -71,7 +71,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     by plugin id and namespace, projects registered extension values on
     session rows, and removes state on explicit `unset=true`.
   - Evidence required: focused test, adjacent session-control test, ruff, mypy
-  - Status: verified
+  - Status: checkpointed in `e0c02761`
   - Weight: 1
   - Last verified: 2026-05-02, `python -m pytest
     tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state

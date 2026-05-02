@@ -88,7 +88,7 @@ may lag behind this tracker.
     `src/openzues/services/gateway_sessions.py`,
     `src/openzues/services/gateway_method_policy.py`
   - Test: `tests/test_gateway_node_methods.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `e0c02761`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_gateway_node_methods.py::test_sessions_plugin_patch_persists_registered_extension_state
