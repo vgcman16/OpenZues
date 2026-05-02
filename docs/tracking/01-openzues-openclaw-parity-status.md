@@ -122,7 +122,7 @@ may lag behind this tracker.
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
   configured bundled channel plugins.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `e92cfcae`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON

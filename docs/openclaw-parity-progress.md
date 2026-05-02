@@ -9395,7 +9395,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   records discovered from `OPENCLAW_BUNDLED_PLUGINS_DIR` are explicitly
   activated when `channels.<id>.enabled=true`, bypass restrictive
   `plugins.allow` lists, and report `activationReason="channel enabled in
-  config"`. Checkpoint pending.
+  config"`. Checkpoint in `e92cfcae`.
 - Progress estimates are now roughly 58.5% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
