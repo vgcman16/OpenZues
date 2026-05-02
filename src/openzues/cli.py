@@ -4134,6 +4134,7 @@ _DOCTOR_EXEC_SECURITY_RANK = {"deny": 0, "allowlist": 1, "full": 2}
 _DOCTOR_EXEC_ASK_RANK = {"off": 0, "on-miss": 1, "always": 2}
 _DOCTOR_EXEC_DEFAULT_SECURITY = "full"
 _DOCTOR_EXEC_DEFAULT_ASK = "off"
+_DOCTOR_DEFAULT_SAFE_BIN_TRUSTED_DIRS = ("/bin", "/usr/bin")
 _DOCTOR_INTERPRETER_LIKE_SAFE_BINS = {
     "ash",
     "awk",
@@ -4267,6 +4268,18 @@ def _doctor_safe_bin_profiles(value: object) -> dict[str, object]:
     }
 
 
+def _doctor_safe_bin_trusted_dirs(value: object) -> list[Path]:
+    dirs: list[Path] = []
+    if not isinstance(value, list):
+        return dirs
+    for entry in value:
+        path_text = _optional_cli_string(entry)
+        if path_text is None:
+            continue
+        dirs.append(_bundled_lookup_path(path_text))
+    return dirs
+
+
 def _doctor_is_interpreter_like_safe_bin(bin_name: str) -> bool:
     if bin_name in _DOCTOR_INTERPRETER_LIKE_SAFE_BINS:
         return True
@@ -4278,14 +4291,21 @@ def _doctor_is_interpreter_like_safe_bin(bin_name: str) -> bool:
 
 def _doctor_exec_safe_bin_scopes(
     snapshot: dict[str, object],
-) -> list[tuple[str, list[str], dict[str, object]]]:
-    scopes: list[tuple[str, list[str], dict[str, object]]] = []
+) -> list[tuple[str, list[str], dict[str, object], list[Path]]]:
+    scopes: list[tuple[str, list[str], dict[str, object], list[Path]]] = []
     tools = _dict_config(snapshot.get("tools"))
     global_exec = _dict_config(tools.get("exec"))
     global_safe_bins = _doctor_safe_bin_list(global_exec.get("safeBins"))
     global_profiles = _doctor_safe_bin_profiles(global_exec.get("safeBinProfiles"))
+    default_trusted_dirs = [
+        _bundled_lookup_path(path_text) for path_text in _DOCTOR_DEFAULT_SAFE_BIN_TRUSTED_DIRS
+    ]
+    global_trusted_dirs = [
+        *default_trusted_dirs,
+        *_doctor_safe_bin_trusted_dirs(global_exec.get("safeBinTrustedDirs")),
+    ]
     if global_safe_bins:
-        scopes.append(("tools.exec", global_safe_bins, global_profiles))
+        scopes.append(("tools.exec", global_safe_bins, global_profiles, global_trusted_dirs))
     agents = _dict_config(snapshot.get("agents"))
     for agent in _object_list(agents.get("list")):
         if not isinstance(agent, dict):
@@ -4302,11 +4322,16 @@ def _doctor_exec_safe_bin_scopes(
             **global_profiles,
             **_doctor_safe_bin_profiles(agent_exec.get("safeBinProfiles")),
         }
+        agent_trusted_dirs = [
+            *global_trusted_dirs,
+            *_doctor_safe_bin_trusted_dirs(agent_exec.get("safeBinTrustedDirs")),
+        ]
         scopes.append(
             (
                 f"agents.list.{agent_id}.tools.exec",
                 agent_safe_bins,
                 agent_profiles,
+                agent_trusted_dirs,
             )
         )
     return scopes
@@ -4316,7 +4341,9 @@ def _doctor_exec_safe_bin_coverage_hits(
     snapshot: dict[str, object],
 ) -> list[dict[str, object]]:
     hits: list[dict[str, object]] = []
-    for scope_path, safe_bins, merged_profiles in _doctor_exec_safe_bin_scopes(snapshot):
+    for scope_path, safe_bins, merged_profiles, _trusted_dirs in _doctor_exec_safe_bin_scopes(
+        snapshot
+    ):
         for bin_name in safe_bins:
             if bin_name in merged_profiles:
                 continue
@@ -4341,6 +4368,41 @@ def _doctor_exec_safe_bin_coverage_hits(
                 }
             )
     return hits
+
+
+def _doctor_is_trusted_safe_bin_path(
+    resolved_path: Path,
+    trusted_dirs: Sequence[Path],
+) -> bool:
+    try:
+        resolved_parent = resolved_path.resolve(strict=False).parent
+    except OSError:
+        resolved_parent = resolved_path.parent
+    return any(resolved_parent == trusted_dir for trusted_dir in trusted_dirs)
+
+
+def _doctor_exec_safe_bin_trusted_dir_hints(
+    snapshot: dict[str, object],
+) -> list[dict[str, object]]:
+    hints: list[dict[str, object]] = []
+    for scope_path, safe_bins, _merged_profiles, trusted_dirs in _doctor_exec_safe_bin_scopes(
+        snapshot
+    ):
+        for bin_name in safe_bins:
+            resolved = shutil.which(bin_name)
+            if resolved is None:
+                continue
+            resolved_path = _bundled_lookup_path(resolved)
+            if _doctor_is_trusted_safe_bin_path(resolved_path, trusted_dirs):
+                continue
+            hints.append(
+                {
+                    "scopePath": scope_path,
+                    "bin": bin_name,
+                    "resolvedPath": str(resolved_path),
+                }
+            )
+    return hints
 
 
 def _doctor_exec_safe_bin_warnings(hits: Sequence[dict[str, object]]) -> list[str]:
@@ -4394,6 +4456,28 @@ def _doctor_exec_safe_bin_warnings(hits: Sequence[dict[str, object]]) -> list[st
             '- Run "openzues doctor --fix" to scaffold missing custom '
             "safeBinProfiles entries."
         )
+    return warnings
+
+
+def _doctor_exec_safe_bin_trusted_dir_warnings(
+    hints: Sequence[dict[str, object]],
+) -> list[str]:
+    if not hints:
+        return []
+    warnings = [
+        f"- {hint.get('scopePath')}.safeBins entry '{hint.get('bin')}' resolves to "
+        f"'{hint.get('resolvedPath')}' outside trusted safe-bin dirs."
+        for hint in hints[:5]
+    ]
+    if len(hints) > 5:
+        warnings.append(
+            f"- {len(hints) - 5} more safeBins entries resolve outside trusted "
+            "safe-bin dirs."
+        )
+    warnings.append(
+        "- If intentional, add the binary directory to tools.exec.safeBinTrustedDirs "
+        "(global or agent scope)."
+    )
     return warnings
 
 
@@ -4477,7 +4561,11 @@ def _build_doctor_exec_safe_bins_payload(
     changes: Sequence[str] = (),
 ) -> dict[str, object]:
     hits = _doctor_exec_safe_bin_coverage_hits(snapshot)
-    warnings = _doctor_exec_safe_bin_warnings(hits)
+    trusted_dir_hints = _doctor_exec_safe_bin_trusted_dir_hints(snapshot)
+    warnings = [
+        *_doctor_exec_safe_bin_warnings(hits),
+        *_doctor_exec_safe_bin_trusted_dir_warnings(trusted_dir_hints),
+    ]
     custom_missing = any(
         hit.get("kind") == "missingProfile" and hit.get("isInterpreter") is not True
         for hit in hits
@@ -4490,6 +4578,7 @@ def _build_doctor_exec_safe_bins_payload(
             else "Exec safe-bin coverage has no warnings."
         ),
         "coverageHits": hits,
+        "trustedDirHints": trusted_dir_hints,
         "warnings": warnings,
         "repairAvailable": bool(changes) or custom_missing,
         "repairRequested": repair_requested,

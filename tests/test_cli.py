@@ -24318,6 +24318,49 @@ def test_doctor_fix_scaffolds_custom_exec_safe_bin_profiles(
     }
 
 
+def test_doctor_json_reports_exec_safe_bin_trusted_dir_hints(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    resolved_bin = tmp_path / "user-bin" / "custom-tool"
+    resolved_bin.parent.mkdir()
+    resolved_bin.write_text("echo custom\n", encoding="utf-8")
+
+    def fake_which(command: str) -> str | None:
+        return str(resolved_bin) if command == "custom-tool" else None
+
+    monkeypatch.setattr(cli_module.shutil, "which", fake_which)
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "tools": {
+                "exec": {
+                    "safeBins": ["custom-tool"],
+                    "safeBinProfiles": {"custom-tool": {}},
+                    "safeBinTrustedDirs": [str(tmp_path / "trusted-bin")],
+                }
+            },
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    safe_bins = payload["security"]["execSafeBins"]
+    assert safe_bins["status"] == "warning"
+    assert safe_bins["trustedDirHints"] == [
+        {
+            "scopePath": "tools.exec",
+            "bin": "custom-tool",
+            "resolvedPath": str(resolved_bin),
+        }
+    ]
+    warning = safe_bins["warnings"][0]
+    assert "tools.exec.safeBins entry 'custom-tool'" in warning
+    assert "outside trusted safe-bin dirs" in warning
+    assert "tools.exec.safeBinTrustedDirs" in safe_bins["warnings"][-1]
+    assert warning in payload["warnings"]
+
+
 def test_gateway_config_preserves_exec_policy_config_for_security_doctor(
     tmp_path,
 ) -> None:
