@@ -5455,6 +5455,82 @@ async def _doctor_channel_empty_allowlist_extra_warnings(
     return warnings
 
 
+async def _doctor_should_skip_empty_group_allowlist_warning(
+    *,
+    adapter: object | None,
+    context: dict[str, object],
+) -> bool:
+    if adapter is None:
+        return False
+    should_skip = getattr(
+        adapter,
+        "should_skip_default_empty_group_allowlist_warning",
+        None,
+    ) or getattr(adapter, "shouldSkipDefaultEmptyGroupAllowlistWarning", None)
+    if not callable(should_skip):
+        return False
+    result = should_skip(**context)
+    if inspect.isawaitable(result):
+        result = await result
+    return result is True
+
+
+async def _doctor_channel_empty_group_allowlist_warnings(
+    *,
+    adapter: object | None,
+    channel_id: str,
+    channel_config: dict[str, object],
+) -> list[str]:
+    contexts = [
+        _doctor_empty_allowlist_context(
+            account=channel_config,
+            channel_id=channel_id,
+            prefix=f"channels.{channel_id}",
+        )
+    ]
+    for account_id, raw_account in _dict_config(channel_config.get("accounts")).items():
+        if not isinstance(raw_account, dict):
+            continue
+        contexts.append(
+            _doctor_empty_allowlist_context(
+                account=raw_account,
+                channel_id=channel_id,
+                parent=channel_config,
+                prefix=f"channels.{channel_id}.accounts.{account_id}",
+            )
+        )
+    warnings: list[str] = []
+    for context in contexts:
+        account = _dict_config(context.get("account"))
+        parent = _dict_config(context.get("parent"))
+        group_policy = _optional_cli_string(account.get("groupPolicy")) or _optional_cli_string(
+            parent.get("groupPolicy")
+        )
+        if group_policy != "allowlist":
+            continue
+        group_allow_from = _doctor_dm_list(account.get("groupAllowFrom")) or _doctor_dm_list(
+            parent.get("groupAllowFrom")
+        )
+        effective_allow_from = context.get("effectiveAllowFrom")
+        if group_allow_from or (
+            isinstance(effective_allow_from, list) and len(effective_allow_from) > 0
+        ):
+            continue
+        if await _doctor_should_skip_empty_group_allowlist_warning(
+            adapter=adapter,
+            context=context,
+        ):
+            continue
+        prefix = str(context.get("prefix") or f"channels.{channel_id}")
+        warnings.append(
+            f'- {prefix}.groupPolicy is "allowlist" but groupAllowFrom '
+            "(and allowFrom) is empty - all group messages will be silently dropped. "
+            f"Add sender IDs to {prefix}.groupAllowFrom or {prefix}.allowFrom, "
+            'or set groupPolicy to "open".'
+        )
+    return warnings
+
+
 async def _doctor_channel_config_sequence(
     *,
     adapter: object,
@@ -5681,6 +5757,25 @@ async def _build_doctor_channel_doctor_payload(
                 "warnings": warnings,
                 "path": path,
             }
+    for channel_id in channel_ids:
+        channel_config = _dict_config(next_snapshot.get("channels")).get(channel_id)
+        if not isinstance(channel_config, dict):
+            continue
+        adapter = _doctor_channel_adapter(adapters, channel_id)
+        try:
+            current_empty_group_warnings = (
+                await _doctor_channel_empty_group_allowlist_warnings(
+                    adapter=adapter,
+                    channel_id=channel_id,
+                    channel_config=channel_config,
+                )
+            )
+            empty_allowlist_warnings.extend(current_empty_group_warnings)
+            warnings.extend(current_empty_group_warnings)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            warnings.append(
+                f"- channels.{channel_id} empty group allowlist doctor hook failed: {exc}"
+            )
     for channel_id in channel_ids:
         adapter = _doctor_channel_adapter(adapters, channel_id)
         if adapter is None:

@@ -19067,7 +19067,6 @@ def test_doctor_json_reports_channel_config_sequence_notes(
         "channels": {
             "telegram": {
                 "enabled": True,
-                "groupPolicy": "allowlist",
             }
         }
     }
@@ -19229,7 +19228,6 @@ def test_doctor_json_reports_channel_empty_allowlist_extra_warnings(
             "channels": {
                 "telegram": {
                     "enabled": True,
-                    "groupPolicy": "allowlist",
                     "accounts": {
                         "ops": {
                             "dmPolicy": "allowlist",
@@ -19253,7 +19251,6 @@ def test_doctor_json_reports_channel_empty_allowlist_extra_warnings(
         {
             "account": {
                 "enabled": True,
-                "groupPolicy": "allowlist",
                 "accounts": {
                     "ops": {
                         "dmPolicy": "allowlist",
@@ -19277,7 +19274,6 @@ def test_doctor_json_reports_channel_empty_allowlist_extra_warnings(
             "effectiveAllowFrom": ["U123"],
             "parent": {
                 "enabled": True,
-                "groupPolicy": "allowlist",
                 "accounts": {
                     "ops": {
                         "dmPolicy": "allowlist",
@@ -19287,6 +19283,47 @@ def test_doctor_json_reports_channel_empty_allowlist_extra_warnings(
             },
             "prefix": "channels.telegram.accounts.ops",
         },
+    ]
+
+
+def test_doctor_json_honors_channel_empty_group_allowlist_skip(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        def should_skip_default_empty_group_allowlist_warning(
+            self,
+            **kwargs: object,
+        ) -> bool:
+            calls.append(json.loads(json.dumps(kwargs)))
+            return True
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "signal": {"enabled": True, "groupPolicy": "allowlist"},
+                "zalouser": {"enabled": True, "groupPolicy": "allowlist"},
+            }
+        },
+        channel_doctor_adapters={"zalouser": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    warnings = payload["channelDoctor"]["emptyAllowlistWarnings"]
+    assert any("channels.signal.groupPolicy" in warning for warning in warnings)
+    assert not any("channels.zalouser.groupPolicy" in warning for warning in warnings)
+    assert calls == [
+        {
+            "account": {"enabled": True, "groupPolicy": "allowlist"},
+            "channelName": "zalouser",
+            "dmPolicy": None,
+            "effectiveAllowFrom": None,
+            "parent": None,
+            "prefix": "channels.zalouser",
+        }
     ]
 
 
