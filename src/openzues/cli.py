@@ -12260,9 +12260,37 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         "Legacy before_agent_start: "
         + ("yes" if plugin.get("usesLegacyBeforeAgentStart") is True else "no")
     )
+    bundle_capabilities = _plugin_record_string_list(payload, "bundleCapabilities")
+    if bundle_capabilities:
+        typer.echo("Bundle capabilities: " + ", ".join(bundle_capabilities))
+    capabilities = payload.get("capabilities")
+    capability_lines: list[str] = []
+    for entry in capabilities if isinstance(capabilities, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        kind = _optional_cli_string(entry.get("kind"))
+        raw_ids = entry.get("ids")
+        ids = [
+            str(capability_id)
+            for capability_id in (raw_ids if isinstance(raw_ids, list) else [])
+            if str(capability_id).strip()
+        ]
+        if kind is not None:
+            capability_lines.append(
+                f"{kind}: {', '.join(ids) if ids else '(registered)'}"
+            )
+    _emit_plugin_inspect_section("Capabilities", capability_lines)
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")
+
+
+def _emit_plugin_inspect_section(title: str, rows: Sequence[str]) -> None:
+    if not rows:
+        return
+    typer.echo(f"{title}:")
+    for row in rows:
+        typer.echo(f"- {row}")
 
 
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:

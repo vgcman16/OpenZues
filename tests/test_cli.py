@@ -9714,6 +9714,39 @@ def test_plugins_inspect_human_reports_base_metadata(monkeypatch) -> None:
     assert "Legacy before_agent_start: yes" in result.stdout
 
 
+def test_plugins_inspect_human_reports_capability_sections(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "capability_plugin",
+                            "label": "Capability Plugin",
+                            "status": "ready",
+                            "summary": "Capability plugin.",
+                            "capabilities": ["alpha", "beta"],
+                            "bundleCapabilities": ["node-host", "media"],
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "capability_plugin"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Bundle capabilities: node-host, media" in result.stdout
+    assert "Capabilities:" in result.stdout
+    assert "- inventory: alpha, beta" in result.stdout
+
+
 def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

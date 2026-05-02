@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~55.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~55.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -131,6 +131,10 @@ may lag behind this tracker.
 - [x] Plugin inspect human base metadata, rendering description, origin,
   version, capability mode, and legacy `before_agent_start` posture.
   - Status: checkpointed in `c11085d1`
+
+- [x] Plugin inspect human capability sections, rendering bundle capabilities
+  and capability rows from the inspect payload.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -316,9 +320,20 @@ may lag behind this tracker.
     `0dc9fc27`, plugin inspect failure-phase projection checkpointed in
     `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
     `b3bf64a5`, plugin inspect loader error text projection checkpointed in
-    `88ff1768`, and plugin inspect human base metadata checkpointed in
-    `c11085d1`, but deeper module import/runtime activation remains.
+    `88ff1768`, plugin inspect human base metadata checkpointed in
+    `c11085d1`, and plugin inspect human capability sections verified pending
+    checkpoint, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin inspect human capability sections.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect human capability test
+    (`1 passed`), adjacent plugin inspect/doctor proof (`10 passed`), `ruff
+    check`, and `mypy`.
 
 - [x] Plugin inspect human base metadata.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
