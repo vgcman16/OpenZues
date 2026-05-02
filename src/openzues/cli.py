@@ -18725,6 +18725,12 @@ def _plugin_record_from_openclaw_manifest(
         or _optional_cli_string(package_metadata.get("description"))
         or ""
     )
+    status = _plugin_manifest_status(
+        manifest,
+        plugin_id=plugin_id,
+        plugins_config=plugins_config,
+        config_snapshot=config_snapshot,
+    )
     record: dict[str, object] = {
         "id": plugin_id,
         "name": (
@@ -18732,12 +18738,7 @@ def _plugin_record_from_openclaw_manifest(
             or _optional_cli_string(package_metadata.get("name"))
             or plugin_id
         ),
-        "status": _plugin_manifest_status(
-            manifest,
-            plugin_id=plugin_id,
-            plugins_config=plugins_config,
-            config_snapshot=config_snapshot,
-        ),
+        "status": status,
         "format": "openclaw",
         "source": str(manifest_path),
         "origin": "config",
@@ -18748,6 +18749,13 @@ def _plugin_record_from_openclaw_manifest(
         "manifestPath": str(manifest_path),
         "configSchema": True,
     }
+    record.update(
+        _plugin_activation_state_payload(
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+            status=status,
+        )
+    )
     version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
         package_metadata.get("version")
     )

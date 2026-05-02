@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~56.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~56.5% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -45,7 +45,7 @@ Current percentage rollup:
   human compatibility warnings section, plugin inspect typed/custom hook
   sections, plugin inspect human header/bundle-format labels, plugin list
   verbose activation/import state, plugin list human enabled label, plugin list
-  human enabled count,
+  human enabled count, manifest load-path activation-state projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -77,7 +77,7 @@ Current percentage rollup:
   compatibility warnings section, plugin inspect typed/custom hook sections,
   plugin inspect human header/bundle-format labels, plugin list verbose
   activation/import state, plugin list human enabled label, plugin list human
-  enabled count,
+  enabled count, manifest load-path activation-state projection,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -326,6 +326,15 @@ using explicit record `enabled` values when present and falling back to
 `status="loaded"` for native records. Verified on 2026-05-02 with the focused
 runtime-inventory CLI test, adjacent plugin list/runtime proof, `ruff check`,
 and `mypy`; checkpoint in `cc9983c3`.
+Manifest load-path activation-state projection now mirrors OpenClaw's cold
+plugin metadata inventory path from `src/plugins/status.ts` and
+`src/plugins/config-state.ts`: OpenClaw manifest and bundle records discovered
+through `plugins.load.paths` project `activated`, `explicitlyEnabled`,
+`activationSource`, and optional `activationReason` while remaining
+metadata-only and not forcing runtime module import. Verified on 2026-05-02
+with the focused manifest load-path CLI test, adjacent plugin
+activation/manifest inventory proof, `ruff check`, and `mypy`; checkpoint
+pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -5065,6 +5074,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused runtime-inventory CLI test, adjacent plugin
   list/runtime proof, `ruff check`, and `mypy`; checkpoint in `cc9983c3`.
+- Closed the manifest load-path activation-state projection seam from OpenClaw
+  `src/plugins/status.ts` and `src/plugins/config-state.ts`: manifest and
+  bundle plugin records discovered through `plugins.load.paths` now project
+  `activated`, `explicitlyEnabled`, `activationSource`, and optional
+  `activationReason` without forcing runtime module import. Repo-wide parity is
+  now estimated at ~56.5%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused manifest load-path CLI test,
+  adjacent plugin activation/manifest inventory proof, `ruff check`, and
+  `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~56.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~56.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The plugin list human enabled-count slice is checkpointed in `cc9983c3`. Any
-follow-up changes should target the next queue head only:
+The manifest load-path activation-state slice is verified and awaiting a
+checkpoint hash. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
 - `src/openzues/services/gateway_plugin_activation.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin list human enabled count checkpointed in `cc9983c3` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Manifest load-path activation state verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -843,6 +843,33 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_list_json_projects_installed_plugin_slot_activation_reason or
     plugins_list_json_includes_saved_config_install_records"` (`6 passed`),
     `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AD` manifest load-path activation-state projection
+  - Source: `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/config-state.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: manifest and bundle records discovered through
+    `plugins.load.paths` project OpenClaw-shaped `activated`,
+    `explicitlyEnabled`, `activationSource`, and optional
+    `activationReason` fields without forcing runtime module import.
+  - Evidence required: focused manifest load-path test, adjacent plugin
+    activation/manifest inventory tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_discovers_openclaw_manifest_load_paths
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_keeps_installed_plugin_allowlist_authoritative or
+    plugins_list_json_projects_installed_plugin_slot_activation_reason or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_list_json_discovers_openclaw_bundle_manifest_load_paths or
+    plugins_list_json_discovers_manifestless_claude_bundle_load_paths or
+    plugins_list_json_accepts_json5_bundle_manifests"` (`8 passed`), `ruff
+    check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
