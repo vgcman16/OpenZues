@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~50.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~50.1% overall, with a reasonable
   band of ~46-55%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -12,7 +12,7 @@ Current percentage rollup:
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~99.3% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~99.4% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
@@ -22,16 +22,16 @@ Current percentage rollup:
   Git/GitHub entry-source install, URL/archive entry-source install, local
   path link/copy install, missing local-looking install-spec guard, and bundled
   pre-npm plus explicit/preferred ClawHub, production-wired ClawHub API/archive
-  install, fakeable plus production-wired npm install/update, update
+  install/update, fakeable plus production-wired npm install/update, update
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The CLI/operator control-plane family is estimated at ~99.3% after the bundle
+- The CLI/operator control-plane family is estimated at ~99.4% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
-  API/archive install, fakeable plus production-wired npm install/update,
+  API/archive install/update, fakeable plus production-wired npm install/update,
   update spec-overrides,
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
   install fallback, native manifest activation planning, active-registry
@@ -1464,6 +1464,12 @@ installs the downloaded archive into durable `plugins/clawhub/<id>` data-dir
 targets, and returns the OpenClaw-shaped ClawHub package/channel/integrity
 metadata for the existing persistence path. Remaining npm/plugin CLI parity is
 deeper runtime activation/import metadata and packaging/distribution ergonomics.
+ClawHub install records now also update through the native adapter:
+`plugins update` dispatches `source="clawhub"` records with the stored
+ClawHub URL, package spec, and expected plugin id, refreshes version,
+family/channel, integrity, and resolved-at metadata, and keeps dry-run checks
+from mutating the install directory. Remaining npm/plugin CLI parity is deeper
+runtime activation/import metadata and packaging/distribution ergonomics.
 The native manifest activation-planner helper now mirrors OpenClaw's
 `plugins/activation-planner.ts` data-level trigger semantics: command aliases
 and `activation.onCommands`, providers plus setup providers, agent harnesses,

@@ -12976,13 +12976,24 @@ async def _call_cli_clawhub_plugin_installer(
     services: CliServices,
     *,
     spec: str,
-    force: bool,
+    force: bool = False,
+    mode: str | None = None,
+    base_url: str | None = None,
+    expected_plugin_id: str | None = None,
+    dry_run: bool = False,
 ) -> dict[str, object]:
     installer = getattr(services, "plugin_clawhub_installer", None)
     install = getattr(installer, "install", None)
     if not callable(install):
         raise RuntimeError("ClawHub plugin install runtime is unavailable.")
-    result = install(spec=spec, mode="update" if force else "install")
+    kwargs: dict[str, object] = {"spec": spec, "mode": mode or ("update" if force else "install")}
+    if base_url is not None:
+        kwargs["baseUrl"] = base_url
+    if expected_plugin_id is not None:
+        kwargs["expectedPluginId"] = expected_plugin_id
+    if dry_run:
+        kwargs["dryRun"] = True
+    result = install(**kwargs)
     if inspect.isawaitable(result):
         result = await result
     if not isinstance(result, dict):
@@ -13537,6 +13548,142 @@ async def _build_plugins_update_payload(
                 npm_outcome["nextVersion"] = npm_next_version
             outcomes.append(npm_outcome)
             continue
+        if source == "clawhub":
+            clawhub_package = _optional_cli_string(record.get("clawhubPackage"))
+            if clawhub_package is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "skipped",
+                        "message": f'Skipping "{target}" (missing ClawHub package metadata).',
+                    }
+                )
+                continue
+            spec = _optional_cli_string(record.get("spec")) or _format_cli_clawhub_spec(
+                clawhub_package,
+                None,
+            )
+            phase = "check" if dry_run else "update"
+            try:
+                update_result = await _call_cli_clawhub_plugin_installer(
+                    services,
+                    spec=spec,
+                    mode="update",
+                    base_url=_optional_cli_string(record.get("clawhubUrl")),
+                    expected_plugin_id=target,
+                    dry_run=dry_run,
+                )
+            except RuntimeError as exc:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {exc}",
+                    }
+                )
+                continue
+            if update_result.get("ok") is False:
+                message = str(update_result.get("error") or "ClawHub plugin update failed.")
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {message}",
+                    }
+                )
+                continue
+            plugin_id_value = _optional_cli_string(update_result.get("pluginId")) or target
+            install_path = _optional_cli_string(
+                update_result.get("targetDir")
+            ) or _optional_cli_string(update_result.get("installPath"))
+            if install_path is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to update {target}: missing targetDir.",
+                    }
+                )
+                continue
+            clawhub = update_result.get("clawhub")
+            clawhub_payload = clawhub if isinstance(clawhub, dict) else {}
+            clawhub_next_package = (
+                _optional_cli_string(clawhub_payload.get("clawhubPackage")) or clawhub_package
+            )
+            clawhub_next_family = _optional_cli_string(
+                clawhub_payload.get("clawhubFamily")
+            ) or _optional_cli_string(record.get("clawhubFamily"))
+            if clawhub_next_family is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to update {target}: missing ClawHub package family.",
+                    }
+                )
+                continue
+            current_version = _optional_cli_string(record.get("version"))
+            next_version = (
+                _optional_cli_string(clawhub_payload.get("version"))
+                or _optional_cli_string(update_result.get("version"))
+            )
+            if not dry_run:
+                result = services.gateway_config.record_clawhub_plugin_install(
+                    plugin_id=plugin_id_value,
+                    install_path=install_path,
+                    spec=_format_cli_clawhub_spec(clawhub_next_package, next_version),
+                    clawhub_url=(
+                        _optional_cli_string(clawhub_payload.get("clawhubUrl"))
+                        or _optional_cli_string(record.get("clawhubUrl"))
+                        or "https://clawhub.ai"
+                    ),
+                    clawhub_package=clawhub_next_package,
+                    clawhub_family=clawhub_next_family,
+                    clawhub_channel=(
+                        _optional_cli_string(clawhub_payload.get("clawhubChannel"))
+                        or _optional_cli_string(record.get("clawhubChannel"))
+                    ),
+                    version=next_version,
+                    integrity=(
+                        _optional_cli_string(clawhub_payload.get("integrity"))
+                        or _optional_cli_string(record.get("integrity"))
+                    ),
+                    resolved_at=_optional_cli_string(clawhub_payload.get("resolvedAt")),
+                    force=True,
+                )
+                changed = changed or result.get("ok") is True
+            current_label = current_version or "unknown"
+            next_label = next_version or "unknown"
+            same_version = (
+                current_version is not None
+                and next_version is not None
+                and current_version == next_version
+            )
+            if dry_run:
+                status = "unchanged" if same_version else "updated"
+                message = (
+                    f"{target} is up to date ({current_label})."
+                    if same_version
+                    else f"Would update {target}: {current_label} -> {next_label}."
+                )
+            else:
+                status = "unchanged" if same_version else "updated"
+                message = (
+                    f"{target} already at {current_label}."
+                    if same_version
+                    else f"Updated {target}: {current_label} -> {next_label}."
+                )
+            clawhub_outcome: dict[str, object] = {
+                "pluginId": target,
+                "status": status,
+                "message": message,
+            }
+            if current_version is not None:
+                clawhub_outcome["currentVersion"] = current_version
+            if next_version is not None:
+                clawhub_outcome["nextVersion"] = next_version
+            outcomes.append(clawhub_outcome)
+            continue
         if source != "marketplace":
             outcomes.append(
                 {
@@ -13575,8 +13722,8 @@ async def _build_plugins_update_payload(
                 }
             )
             continue
-        current_version = update["currentVersion"]
-        next_version = update["nextVersion"]
+        current_version = cast(str | None, update["currentVersion"])
+        next_version = cast(str | None, update["nextVersion"])
         current_label = current_version or "unknown"
         next_label = next_version or "unknown"
         same_version = (
@@ -13594,14 +13741,13 @@ async def _build_plugins_update_payload(
         else:
             if not same_version:
                 marketplace_name = cast(str | None, update["marketplaceName"])
-                version = cast(str | None, next_version)
                 result = services.gateway_config.record_marketplace_plugin_install(
                     plugin_id=target,
                     install_path=str(update["installPath"]),
                     marketplace_source=str(update["marketplaceSource"]),
                     marketplace_plugin=marketplace_plugin,
                     marketplace_name=marketplace_name,
-                    version=version,
+                    version=next_version,
                     force=True,
                 )
                 changed = changed or result.get("ok") is True

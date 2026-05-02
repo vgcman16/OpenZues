@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~50.0% overall, with a reasonable band of ~46-55%.
+- Estimated repo-wide parity: ~50.1% overall, with a reasonable band of ~46-55%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.3% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.3% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.4% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.4% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner behavior, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7517,6 +7517,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_doctor_human_reports_error_plugins or
   plugins_doctor_human_reports_compatibility_notices"` (`6 passed`), `ruff
   check src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+- ClawHub-installed plugins now participate in `plugins update`: recorded
+  `source="clawhub"` install metadata dispatches to the native ClawHub adapter
+  with the stored base URL and expected plugin id, refreshes package
+  family/channel/version/integrity/resolved-at metadata, supports dry-run
+  checks without archive installation, and preserves the existing npm and
+  marketplace update paths.
+- Progress estimates are now roughly 50.1% repo-wide, ~99.4% for the
+  runtime/CLI/doctor native bridge, and ~99.4% for the CLI/operator control
+  plane after this ClawHub update slice.
+- Verified the ClawHub update slice with `python -m pytest
+  tests\test_cli.py::test_plugins_update_json_refreshes_clawhub_install_record
+  -q` (`1 passed`), adjacent CLI/plugin installer proof `python -m pytest
+  tests\test_cli.py -q -k
+  "clawhub or plugins_update_json_refreshes_npm_install_record or
+  plugins_update_json_maps_npm_spec_override_to_tracked_install or
+  plugins_update_json_refreshes_local_marketplace_install"` (`11 passed`),
+  `python -m pytest tests\test_plugin_clawhub_installers.py -q` (`2 passed`),
+  `ruff check src\openzues\cli.py
+  src\openzues\services\plugin_clawhub_installers.py tests\test_cli.py
+  tests\test_plugin_clawhub_installers.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\plugin_clawhub_installers.py`.
 
 ## References
 

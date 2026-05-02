@@ -199,7 +199,15 @@ class CliClawHubPluginInstaller:
         self._runtime_version = runtime_version or _resolve_compatibility_host_version()
         self._now = now or (lambda: datetime.now(UTC))
 
-    async def install(self, *, spec: str, mode: str = "install") -> dict[str, object]:
+    async def install(
+        self,
+        *,
+        spec: str,
+        mode: str = "install",
+        baseUrl: str | None = None,
+        expectedPluginId: str | None = None,
+        dryRun: bool = False,
+    ) -> dict[str, object]:
         parsed = _parse_clawhub_spec(spec)
         if parsed is None:
             return {
@@ -207,8 +215,9 @@ class CliClawHubPluginInstaller:
                 "code": "invalid_spec",
                 "error": f"invalid ClawHub plugin spec: {spec}",
             }
+        base_url = _normalize_base_url(baseUrl) if baseUrl is not None else self._base_url
         try:
-            detail = await self._request_json(_package_detail_path(parsed.name))
+            detail = await self._request_json(_package_detail_path(parsed.name), base_url=base_url)
         except _ClawHubHttpError as exc:
             return _map_package_request_error(exc)
         except Exception as exc:
@@ -228,7 +237,8 @@ class CliClawHubPluginInstaller:
         canonical_name = _optional_string(package.get("name")) or parsed.name
         try:
             version_detail = await self._request_json(
-                _package_version_path(canonical_name, requested_version)
+                _package_version_path(canonical_name, requested_version),
+                base_url=base_url,
             )
         except _ClawHubHttpError as exc:
             return _map_version_request_error(
@@ -274,6 +284,7 @@ class CliClawHubPluginInstaller:
             archive_bytes = await self._request_archive(
                 _package_download_path(parsed.name),
                 search={"version": resolved_version},
+                base_url=base_url,
             )
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -307,16 +318,32 @@ class CliClawHubPluginInstaller:
                 archive_path=archive_path,
                 data_dir=self._data_dir,
                 mode=mode,
+                dry_run=dryRun,
             )
         if install_result.get("ok") is False:
             return install_result
+        installed_plugin_id = _optional_string(install_result.get("pluginId"))
+        expected_plugin_id = _optional_string(expectedPluginId)
+        if (
+            expected_plugin_id is not None
+            and installed_plugin_id is not None
+            and installed_plugin_id != expected_plugin_id
+        ):
+            return {
+                "ok": False,
+                "code": "plugin_id_mismatch",
+                "error": (
+                    f'ClawHub package "{parsed.name}" resolved plugin id '
+                    f'"{installed_plugin_id}", expected "{expected_plugin_id}".'
+                ),
+            }
         installed_version = _optional_string(install_result.get("version")) or resolved_version
         return {
             **install_result,
             "packageName": parsed.name,
             "clawhub": {
                 "source": "clawhub",
-                "clawhubUrl": self._base_url,
+                "clawhubUrl": base_url,
                 "clawhubPackage": parsed.name,
                 "clawhubFamily": package.get("family"),
                 "clawhubChannel": package.get("channel"),
@@ -331,12 +358,13 @@ class CliClawHubPluginInstaller:
         path: str,
         *,
         search: dict[str, str] | None = None,
+        base_url: str | None = None,
     ) -> dict[str, object]:
         if self._fetch_json is not None:
             return await self._fetch_json(path, search=search)
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
             response = await client.get(
-                _build_url(self._base_url, path, search),
+                _build_url(base_url or self._base_url, path, search),
                 headers=self._headers(),
             )
             if response.status_code >= 400:
@@ -353,12 +381,13 @@ class CliClawHubPluginInstaller:
         path: str,
         *,
         search: dict[str, str] | None = None,
+        base_url: str | None = None,
     ) -> bytes:
         if self._download_bytes is not None:
             return await self._download_bytes(path, search=search)
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
             response = await client.get(
-                _build_url(self._base_url, path, search),
+                _build_url(base_url or self._base_url, path, search),
                 headers=self._headers(),
             )
             if response.status_code >= 400:
@@ -874,6 +903,7 @@ def _install_plugin_archive(
     archive_path: Path,
     data_dir: Path,
     mode: str,
+    dry_run: bool = False,
 ) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="openzues-clawhub-extract-") as temp_name:
         extracted_dir = Path(temp_name)
@@ -892,6 +922,16 @@ def _install_plugin_archive(
                 "error": "package missing openclaw.plugin.json",
             }
         target_dir = data_dir / "plugins" / "clawhub" / _safe_segment(plugin_id)
+        version = _optional_string(manifest.get("version")) or _optional_string(
+            package_json.get("version")
+        )
+        if dry_run:
+            return {
+                "ok": True,
+                "pluginId": plugin_id,
+                "targetDir": str(target_dir),
+                "version": version,
+            }
         if target_dir.exists():
             if mode != "update":
                 return {
@@ -902,9 +942,6 @@ def _install_plugin_archive(
             shutil.rmtree(target_dir)
         target_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(package_root, target_dir)
-        version = _optional_string(manifest.get("version")) or _optional_string(
-            package_json.get("version")
-        )
         return {
             "ok": True,
             "pluginId": plugin_id,

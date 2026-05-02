@@ -10408,6 +10408,127 @@ def test_plugins_update_json_refreshes_npm_install_record(
     assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
 
 
+def test_plugins_update_json_refreshes_clawhub_install_record(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "plugins" / "clawhub" / "demo"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "allow": ["demo"],
+                    "entries": {"demo": {"enabled": True}},
+                    "installs": {
+                        "demo": {
+                            "source": "clawhub",
+                            "spec": "clawhub:demo",
+                            "installPath": str(install_dir),
+                            "version": "1.2.2",
+                            "integrity": "sha256-old",
+                            "clawhubUrl": "https://clawhub.ai",
+                            "clawhubPackage": "demo",
+                            "clawhubFamily": "code-plugin",
+                            "clawhubChannel": "official",
+                            "installedAt": "2026-04-29T12:00:00Z",
+                        },
+                    },
+                    "load": {"paths": [str(install_dir)]},
+                },
+            }
+        )
+    )
+    clawhub_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            clawhub_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "pluginId": "demo",
+                "targetDir": str(install_dir),
+                "version": "1.2.3",
+                "clawhub": {
+                    "source": "clawhub",
+                    "clawhubUrl": "https://clawhub.ai",
+                    "clawhubPackage": "demo",
+                    "clawhubFamily": "code-plugin",
+                    "clawhubChannel": "official",
+                    "version": "1.2.3",
+                    "integrity": "sha256-new",
+                    "resolvedAt": "2026-05-01T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "demo", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert clawhub_calls == [
+        {
+            "spec": "clawhub:demo",
+            "mode": "update",
+            "baseUrl": "https://clawhub.ai",
+            "expectedPluginId": "demo",
+        }
+    ]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["dryRun"] is False
+    assert payload["changed"] is True
+    assert payload["restart"] == "gateway"
+    assert payload["outcomes"] == [
+        {
+            "pluginId": "demo",
+            "status": "updated",
+            "currentVersion": "1.2.2",
+            "nextVersion": "1.2.3",
+            "message": "Updated demo: 1.2.2 -> 1.2.3.",
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["plugins"]["installs"]["demo"]
+    assert install["source"] == "clawhub"
+    assert install["spec"] == "clawhub:demo@1.2.3"
+    assert install["installPath"] == str(install_dir)
+    assert install["version"] == "1.2.3"
+    assert install["integrity"] == "sha256-new"
+    assert install["resolvedAt"] == "2026-05-01T00:00:00Z"
+    assert install["clawhubUrl"] == "https://clawhub.ai"
+    assert install["clawhubPackage"] == "demo"
+    assert install["clawhubFamily"] == "code-plugin"
+    assert install["clawhubChannel"] == "official"
+    assert stored["plugins"]["load"]["paths"] == [str(install_dir)]
+
+
 def test_plugins_update_json_maps_npm_spec_override_to_tracked_install(
     tmp_path,
     monkeypatch,
