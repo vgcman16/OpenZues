@@ -9414,7 +9414,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Bundled channel auto-enable activation is now landed: bundled channel plugin
   records with meaningful `channels.<id>` config are treated as auto-enabled
   even without `enabled=true`, remain non-explicit, bypass allowlist misses, and
-  report `<channel> configured` as the activation reason. Checkpoint pending.
+  report `<channel> configured` as the activation reason. Checkpoint in
+  `f1de1e28`.
 - Progress estimates are now roughly 58.6% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

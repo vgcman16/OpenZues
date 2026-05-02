@@ -127,7 +127,7 @@ may lag behind this tracker.
 - [x] Bundled channel auto-enable activation, preserving OpenClaw's
   `<channel> configured` auto activation reason for meaningful bundled channel
   config without `enabled=true`.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `f1de1e28`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
