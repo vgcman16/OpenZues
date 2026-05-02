@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~52.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~52.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,12 +29,11 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `sessions.pluginPatch` runtime-control parity slice is now part of the
+The `plugins.uiDescriptors` plugin-host parity slice is now part of the
 active checkpoint and may be staged with its source, test, and ledger updates:
 
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_plugin_runtime.py`
-- `src/openzues/services/gateway_sessions.py`
 - `src/openzues/services/gateway_method_policy.py`
 - `tests/test_gateway_node_methods.py`
 - `docs/openclaw-parity-progress.md`
@@ -49,9 +48,9 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `e0c02761` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; map next source-backed `chat.*` or `sessions.*` runtime mismatch |
+| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `e0c02761` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; local `chat.*` / `sessions.*` base methods rechecked |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Open | Broad | Compare OpenClaw plugin activation/import lifecycle and implement next seam |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Active | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` verified; checkpoint pending |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Open | Medium | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -79,6 +78,30 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     tests\test_gateway_node_methods.py -q -k "sessions_plugin_patch or
     sessions_patch or sessions_resolve"` (`27 passed`), `ruff check`, and
     `mypy`.
+
+- [x] `OZ-PLUGIN-001A` `plugins.uiDescriptors` control UI descriptor gateway method
+  - Source: `openclaw-main/src/gateway/server-methods/plugin-host-hooks.ts`,
+    `openclaw-main/src/gateway/protocol/schema/plugins.ts`, and
+    `openclaw-main/src/plugins/registry.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Contract: `plugins.uiDescriptors` accepts only `{}`, returns
+    `{ok: true, descriptors}` from the active plugin runtime registry, stamps
+    each descriptor with registry-owned `pluginId` and optional `pluginName`,
+    preserves JSON-compatible `schema` and valid `requiredScopes`, and skips
+    invalid/disabled descriptor registrations before projection.
+  - Evidence required: focused test, adjacent plugin-runtime test, ruff, mypy
+  - Status: verified; checkpoint commit pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors
+    -q` (`1 passed`), adjacent `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "plugins_ui_descriptors or
+    tools_invoke_uses_plugin_runtime or tools_invoke_runs_registry_plugin_executor
+    or tools_invoke_keeps_registry_owner_only or sessions_plugin_patch"` (`5
+    passed`), `ruff check`, and `mypy`.
 
 ## Canonical Checklist Format
 

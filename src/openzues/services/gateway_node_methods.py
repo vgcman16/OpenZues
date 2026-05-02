@@ -2775,6 +2775,16 @@ class GatewayNodeMethodService:
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return self._tts_service.build_provider_catalog()
 
+        if resolved_method == "plugins.uiDescriptors":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return {
+                "ok": True,
+                "descriptors": [
+                    dict(descriptor)
+                    for descriptor in self._plugin_runtime_service.control_ui_descriptors()
+                ],
+            }
+
         if resolved_method == "commands.list":
             _validate_exact_keys(
                 resolved_method,

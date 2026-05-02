@@ -45,6 +45,7 @@ from openzues.services.gateway_identity import GatewayIdentityService
 from openzues.services.gateway_message_actions import GatewayMessageActionDispatchRequest
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
+    READ_GATEWAY_METHOD_SCOPE,
     WRITE_GATEWAY_METHOD_SCOPE,
 )
 from openzues.services.gateway_models import GatewayModelsService
@@ -60,6 +61,7 @@ from openzues.services.gateway_node_registry import (
     KnownNode,
 )
 from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginControlUiDescriptorSpec,
     GatewayPluginRuntimeExecutorSpec,
     GatewayPluginRuntimeService,
     GatewayPluginSessionExtensionSpec,
@@ -6311,6 +6313,95 @@ async def test_tools_invoke_skips_disabled_registry_plugin_executor(
 
     assert payload == {"ok": True, "result": {"ok": True, "executor": "enabled"}}
     assert observed_calls == ["enabled"]
+
+
+@pytest.mark.asyncio
+async def test_plugins_ui_descriptors_returns_registered_control_ui_descriptors(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "gateway-plugins-ui-descriptors.db")
+    await database.initialize()
+
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            control_ui_descriptors=(
+                GatewayPluginControlUiDescriptorSpec(
+                    plugin_id="session-tools",
+                    plugin_name="Session Tools",
+                    descriptor={
+                        "id": "session-actions",
+                        "surface": "session",
+                        "label": "Session Actions",
+                        "description": "Session controls exposed by a plugin.",
+                        "placement": "sidebar",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"mode": {"type": "string"}},
+                        },
+                        "requiredScopes": [READ_GATEWAY_METHOD_SCOPE],
+                    },
+                ),
+                {
+                    "pluginId": "disabled-tools",
+                    "pluginName": "Disabled Tools",
+                    "enabled": False,
+                    "descriptor": {
+                        "id": "disabled-actions",
+                        "surface": "session",
+                        "label": "Disabled Actions",
+                    },
+                },
+                {
+                    "pluginId": "invalid-tools",
+                    "descriptor": {
+                        "id": "invalid-actions",
+                        "surface": "session",
+                        "label": "Invalid Actions",
+                        "requiredScopes": ["operator.not-real"],
+                    },
+                },
+                {
+                    "pluginId": "invalid-null-tools",
+                    "descriptor": {
+                        "id": "invalid-null-actions",
+                        "surface": "session",
+                        "label": "Invalid Null Actions",
+                        "description": None,
+                    },
+                },
+            ),
+        ),
+    )
+
+    payload = await service.call("plugins.uiDescriptors", {})
+
+    assert payload == {
+        "ok": True,
+        "descriptors": [
+            {
+                "id": "session-actions",
+                "pluginId": "session-tools",
+                "pluginName": "Session Tools",
+                "surface": "session",
+                "label": "Session Actions",
+                "description": "Session controls exposed by a plugin.",
+                "placement": "sidebar",
+                "schema": {
+                    "type": "object",
+                    "properties": {"mode": {"type": "string"}},
+                },
+                "requiredScopes": [READ_GATEWAY_METHOD_SCOPE],
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="plugins.uiDescriptors does not accept: pluginId",
+    ):
+        await service.call("plugins.uiDescriptors", {"pluginId": "session-tools"})
 
 
 @pytest.mark.asyncio

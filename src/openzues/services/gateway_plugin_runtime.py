@@ -6,7 +6,10 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from openzues.services.gateway_method_policy import ADMIN_GATEWAY_METHOD_SCOPE
+from openzues.services.gateway_method_policy import (
+    ADMIN_GATEWAY_METHOD_SCOPE,
+    ORDERED_OPERATOR_SCOPES,
+)
 
 type GatewayPluginExecutor = Callable[[str, dict[str, Any]], Awaitable[object]]
 type GatewayPluginSessionExtensionProjector = Callable[[dict[str, object]], object]
@@ -17,6 +20,8 @@ _PLUGIN_JSON_VALUE_MAX_OBJECT_KEYS = 512
 _PLUGIN_JSON_VALUE_MAX_STRING_LENGTH = 64 * 1024
 _PLUGIN_JSON_VALUE_MAX_SERIALIZED_BYTES = 256 * 1024
 _MISSING = object()
+_CONTROL_UI_SURFACES = frozenset({"session", "tool", "run", "settings"})
+_KNOWN_OPERATOR_SCOPES = frozenset(ORDERED_OPERATOR_SCOPES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +48,15 @@ class GatewayPluginSessionExtensionSpec:
     source: str = "plugin"
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayPluginControlUiDescriptorSpec:
+    plugin_id: str
+    descriptor: Mapping[str, object]
+    plugin_name: str | None = None
+    enabled: bool = True
+    source: str = "plugin"
+
+
 type GatewayPluginRuntimeExecutorEntry = (
     GatewayPluginRuntimeExecutorSpec
     | Mapping[str, object]
@@ -50,6 +64,11 @@ type GatewayPluginRuntimeExecutorEntry = (
 )
 type GatewayPluginSessionExtensionEntry = (
     GatewayPluginSessionExtensionSpec | Mapping[str, object] | tuple[str, str]
+)
+type GatewayPluginControlUiDescriptorEntry = (
+    GatewayPluginControlUiDescriptorSpec
+    | Mapping[str, object]
+    | tuple[str, Mapping[str, object]]
 )
 
 
@@ -59,6 +78,12 @@ class GatewayPluginRuntimeExecutorRegistry(Protocol):
 
 class GatewayPluginSessionExtensionRegistry(Protocol):
     def list_session_extensions(self) -> Iterable[GatewayPluginSessionExtensionEntry]: ...
+
+
+class GatewayPluginControlUiDescriptorRegistry(Protocol):
+    def list_control_ui_descriptors(
+        self,
+    ) -> Iterable[GatewayPluginControlUiDescriptorEntry]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +108,8 @@ class GatewayPluginRuntimeService:
         executor_registry: GatewayPluginRuntimeExecutorRegistry | None = None,
         session_extensions: Iterable[GatewayPluginSessionExtensionEntry] | None = None,
         session_extension_registry: GatewayPluginSessionExtensionRegistry | None = None,
+        control_ui_descriptors: Iterable[GatewayPluginControlUiDescriptorEntry] | None = None,
+        control_ui_descriptor_registry: GatewayPluginControlUiDescriptorRegistry | None = None,
         owner_only: Iterable[str] = (),
     ) -> None:
         self._owner_only = {
@@ -115,6 +142,12 @@ class GatewayPluginRuntimeService:
             if session_extension_spec is not None:
                 self._session_extensions.append(session_extension_spec)
         self._session_extension_registry = session_extension_registry
+        self._control_ui_descriptors: list[GatewayPluginControlUiDescriptorSpec] = []
+        for descriptor_entry in control_ui_descriptors or ():
+            descriptor_spec = _normalize_control_ui_descriptor_spec(descriptor_entry)
+            if descriptor_spec is not None:
+                self._control_ui_descriptors.append(descriptor_spec)
+        self._control_ui_descriptor_registry = control_ui_descriptor_registry
 
     def resolve_executor(
         self,
@@ -186,6 +219,22 @@ class GatewayPluginRuntimeService:
             for spec in self._iter_ordered_specs()
             if include_owner_only or not spec.owner_only
         )
+
+    def control_ui_descriptors(self) -> tuple[dict[str, object], ...]:
+        descriptors: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for spec in self._iter_control_ui_descriptor_specs():
+            descriptor_id = cast(str, spec.descriptor["id"])
+            key = (spec.plugin_id, descriptor_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            payload = dict(spec.descriptor)
+            payload["pluginId"] = spec.plugin_id
+            if spec.plugin_name is not None:
+                payload["pluginName"] = spec.plugin_name
+            descriptors.append(payload)
+        return tuple(descriptors)
 
     def has_session_extension(self, plugin_id: str, namespace: str) -> bool:
         return self._resolve_session_extension(plugin_id, namespace) is not None
@@ -266,6 +315,19 @@ class GatewayPluginRuntimeService:
                 continue
             seen.add(key)
             yield registry_spec
+
+    def _iter_control_ui_descriptor_specs(
+        self,
+    ) -> Iterable[GatewayPluginControlUiDescriptorSpec]:
+        for spec in self._control_ui_descriptors:
+            if spec.enabled:
+                yield spec
+        if self._control_ui_descriptor_registry is None:
+            return
+        for entry in self._control_ui_descriptor_registry.list_control_ui_descriptors():
+            descriptor_spec = _normalize_control_ui_descriptor_spec(entry)
+            if descriptor_spec is not None and descriptor_spec.enabled:
+                yield descriptor_spec
 
 
 def _normalize_executor_spec(
@@ -362,6 +424,109 @@ def _normalize_session_extension_spec(
         else None,
         source=str(entry.get("source") or "plugin").strip() or "plugin",
     )
+
+
+def _normalize_control_ui_descriptor_spec(
+    entry: GatewayPluginControlUiDescriptorEntry,
+) -> GatewayPluginControlUiDescriptorSpec | None:
+    if isinstance(entry, GatewayPluginControlUiDescriptorSpec):
+        plugin_id = _optional_string(entry.plugin_id)
+        if plugin_id is None:
+            return None
+        descriptor = _normalize_control_ui_descriptor_payload(entry.descriptor)
+        if descriptor is None:
+            return None
+        return GatewayPluginControlUiDescriptorSpec(
+            plugin_id=plugin_id,
+            plugin_name=_optional_string(entry.plugin_name),
+            descriptor=descriptor,
+            enabled=entry.enabled,
+            source=str(entry.source or "plugin").strip() or "plugin",
+        )
+    if isinstance(entry, tuple):
+        if len(entry) != 2:
+            return None
+        plugin_id = _optional_string(entry[0])
+        if plugin_id is None:
+            return None
+        descriptor = _normalize_control_ui_descriptor_payload(entry[1])
+        if descriptor is None:
+            return None
+        return GatewayPluginControlUiDescriptorSpec(
+            plugin_id=plugin_id,
+            descriptor=descriptor,
+        )
+
+    plugin_id = _optional_string(entry.get("plugin_id", entry.get("pluginId")))
+    if plugin_id is None:
+        return None
+    raw_descriptor = entry.get("descriptor")
+    descriptor_source = raw_descriptor if isinstance(raw_descriptor, Mapping) else entry
+    descriptor = _normalize_control_ui_descriptor_payload(descriptor_source)
+    if descriptor is None:
+        return None
+    return GatewayPluginControlUiDescriptorSpec(
+        plugin_id=plugin_id,
+        plugin_name=_optional_string(entry.get("plugin_name", entry.get("pluginName"))),
+        descriptor=descriptor,
+        enabled=bool(entry.get("enabled", True)),
+        source=str(entry.get("source") or "plugin").strip() or "plugin",
+    )
+
+
+def _normalize_control_ui_descriptor_payload(
+    descriptor: Mapping[str, object],
+) -> Mapping[str, object] | None:
+    descriptor_id = _optional_string(descriptor.get("id"))
+    surface = _optional_string(descriptor.get("surface"))
+    label = _optional_string(descriptor.get("label"))
+    if (
+        descriptor_id is None
+        or surface not in _CONTROL_UI_SURFACES
+        or label is None
+    ):
+        return None
+
+    payload: dict[str, object] = {
+        "id": descriptor_id,
+        "surface": surface,
+        "label": label,
+    }
+    if "description" in descriptor:
+        normalized_description = _optional_string(descriptor.get("description"))
+        if normalized_description is None:
+            return None
+        payload["description"] = normalized_description
+    if "placement" in descriptor:
+        normalized_placement = _optional_string(descriptor.get("placement"))
+        if normalized_placement is None:
+            return None
+        payload["placement"] = normalized_placement
+    if "requiredScopes" in descriptor:
+        required_scopes = _normalize_control_ui_required_scopes(
+            descriptor.get("requiredScopes")
+        )
+        if required_scopes is None:
+            return None
+        payload["requiredScopes"] = list(required_scopes)
+    if "schema" in descriptor:
+        schema = descriptor.get("schema")
+        if not is_plugin_json_value(schema):
+            return None
+        payload["schema"] = copy_plugin_json_value(schema)
+    return payload
+
+
+def _normalize_control_ui_required_scopes(value: object) -> tuple[str, ...] | None:
+    if not isinstance(value, list):
+        return None
+    scopes: list[str] = []
+    for entry in value:
+        scope = _optional_string(entry)
+        if scope is None or scope not in _KNOWN_OPERATOR_SCOPES:
+            return None
+        scopes.append(scope)
+    return tuple(scopes)
 
 
 def build_plugin_runtime_executor_specs_from_active_registry(

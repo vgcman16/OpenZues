@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.7% overall, with a reasonable
   band of ~48-57%.
-- The active gateway/session/tool-contract family is estimated at ~98.1% of the
+- The active gateway/session/tool-contract family is estimated at ~98.2% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -32,9 +32,9 @@ Current percentage rollup:
   hook-pack npm install fallback, native manifest activation-planner,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~97.3% after the
-  latest `sessions.pluginPatch` registered plugin session extension state
-  slice.
+- The gateway session/tool-contract family is estimated at ~97.4% after the
+  latest `plugins.uiDescriptors` active-registry control UI descriptor
+  gateway method slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -89,6 +89,14 @@ namespace, registered extension values project on session rows, and
 `unset=true` removes empty plugin extension state. Verified on 2026-05-02 with
 the focused `sessions.pluginPatch` pytest, adjacent `sessions_plugin_patch or
 sessions_patch or sessions_resolve` proof, `ruff check`, and `mypy`.
+Plugin-host `plugins.uiDescriptors` now mirrors OpenClaw's active-registry
+control UI descriptor gateway method: params must be `{}`, descriptors are
+projected from the fakeable plugin runtime registry, rows are stamped with
+registry-owned `pluginId` and optional `pluginName`, JSON-compatible descriptor
+schemas and valid required scopes are preserved, and invalid or disabled
+registrations are skipped before projection. Verified on 2026-05-02 with the
+focused `plugins.uiDescriptors` pytest, adjacent plugin-runtime proof, `ruff
+check`, and `mypy`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4435,6 +4443,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~52.5%; chat/session contract parity is ~98.2%, and
   gateway session/tool-contract parity is ~97.2%. Verified with focused and
   adjacent sandbox attachment proofs, `ruff check`, and `mypy`.
+- Closed the `plugins.uiDescriptors` plugin-host gateway seam from OpenClaw
+  `src/gateway/server-methods/plugin-host-hooks.ts`,
+  `src/gateway/protocol/schema/plugins.ts`, and `src/plugins/registry.ts`:
+  native gateway methods now expose active plugin control UI descriptors from
+  the fakeable plugin runtime registry, enforce empty params, stamp
+  `pluginId`/`pluginName` from the registry entry, preserve JSON-compatible
+  schemas plus valid required scopes, and skip invalid or disabled descriptor
+  registrations before projection. Repo-wide parity is now estimated at
+  ~52.7%; active gateway/session/tool-contract parity is ~98.2%, and gateway
+  session/tool-contract parity is ~97.4%. Verified with focused and adjacent
+  plugin-runtime gateway proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open while the next source-backed seam is selected. Source anchors remain
   OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer

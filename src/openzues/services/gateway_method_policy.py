@@ -163,6 +163,7 @@ EXPLICIT_GATEWAY_METHOD_SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
         "models.authStatus",
         "tools.catalog",
         "tools.effective",
+        "plugins.uiDescriptors",
         "agents.list",
         "agent.identity.get",
         "skills.status",

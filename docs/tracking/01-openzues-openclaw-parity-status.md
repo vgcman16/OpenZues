@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~52.6% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.1% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~52.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.2% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -59,6 +59,12 @@ may lag behind this tracker.
   projection.
   - Status: verified in ledger
 
+- [x] `plugins.uiDescriptors` plugin-host gateway method for active registry
+  control UI descriptor projection, empty-param validation, descriptor
+  `pluginId`/`pluginName` stamping, JSON-compatible schema preservation, and
+  valid required-scope projection.
+  - Status: verified; checkpoint commit pending
+
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
   binding, shared provider-native send metadata, and Telegram native document,
@@ -96,6 +102,24 @@ may lag behind this tracker.
     tests\test_gateway_node_methods.py -q -k "sessions_plugin_patch or
     sessions_patch or sessions_resolve"` (`27 passed`), `ruff check`, and
     `mypy`.
+
+- [x] Plugin-host `plugins.uiDescriptors` control UI descriptor gateway method.
+  - Source: `openclaw-main/src/gateway/server-methods/plugin-host-hooks.ts`,
+    `openclaw-main/src/gateway/protocol/schema/plugins.ts`, and
+    `openclaw-main/src/plugins/registry.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `src/openzues/services/gateway_method_policy.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: verified; checkpoint commit pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_gateway_node_methods.py::test_plugins_ui_descriptors_returns_registered_control_ui_descriptors
+    -q` (`1 passed`), adjacent `python -m pytest
+    tests\test_gateway_node_methods.py -q -k "plugins_ui_descriptors or
+    tools_invoke_uses_plugin_runtime or tools_invoke_runs_registry_plugin_executor
+    or tools_invoke_keeps_registry_owner_only or sessions_plugin_patch"` (`5
+    passed`), `ruff check`, and `mypy`.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.
