@@ -228,3 +228,42 @@ def test_resolve_configured_channel_plugin_plan_respects_disabled_owner() -> Non
         ],
         "diagnostics": [],
     }
+
+
+def test_resolve_configured_channel_plugin_plan_bypasses_allowlist_for_bundled_owner() -> None:
+    plugins = [
+        {
+            "id": "bundled-telegram",
+            "channels": ["telegram"],
+            "origin": "bundled",
+            "enabledByDefault": False,
+        }
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "plugins": {"allow": ["other-plugin"]},
+            "channels": {"telegram": {"enabled": True}},
+        },
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": ["bundled-telegram"],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": True,
+                "pluginIds": ["bundled-telegram"],
+                "blockedReasons": [],
+            }
+        ],
+        "diagnostics": [],
+        "activationConfig": {
+            "plugins": {
+                "allow": ["bundled-telegram"],
+                "entries": {"bundled-telegram": {"enabled": True}},
+            }
+        },
+    }

@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~56.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~57.0% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -49,6 +49,7 @@ Current percentage rollup:
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
   configured-channel disabled-owner policy,
+  configured-channel bundled-owner allowlist bypass,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -84,6 +85,7 @@ Current percentage rollup:
   plugin public-surface/runtime-sidecar artifact metadata projection,
   configured-channel owner activation projection,
   configured-channel disabled-owner policy,
+  configured-channel bundled-owner allowlist bypass,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -5137,6 +5139,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   paths remain ~99.9%. Verified with the focused disabled-owner activation
   helper test, full activation helper suite, adjacent plugin doctor proof,
   `ruff check`, and `mypy`; checkpoint in `d2d0e9c3`.
+- Closed the configured-channel bundled-owner allowlist bypass seam from
+  OpenClaw `src/plugins/channel-presence-policy.ts` and
+  `src/plugins/manifest-owner-policy.ts`: explicit channel configuration can
+  activate a bundled manifest owner even when `plugins.allow` is restrictive
+  and omits that owner, while explicit disable/denylist policy still wins.
+  Repo-wide parity is now estimated at ~57.0%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  bundled-owner allowlist-bypass helper test, full activation helper suite,
+  adjacent plugin doctor proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

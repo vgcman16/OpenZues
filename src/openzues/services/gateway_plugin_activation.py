@@ -105,6 +105,7 @@ def resolve_configured_channel_plugin_plan(
             blocked_reason = _configured_channel_owner_block_reason(
                 plugins_by_id.get(candidate_owner_id),
                 config,
+                channel_id=channel_id,
             )
             if blocked_reason is not None:
                 blocked_reasons.append(blocked_reason)
@@ -591,6 +592,8 @@ def _channel_config_value_present(value: object) -> bool:
 def _configured_channel_owner_block_reason(
     plugin: Mapping[str, object] | None,
     config: Mapping[str, object],
+    *,
+    channel_id: str,
 ) -> str | None:
     if plugin is None:
         return "no-channel-owner"
@@ -605,7 +608,11 @@ def _configured_channel_owner_block_reason(
     if entry.get("enabled") is False:
         return "plugin-disabled"
     allow = _plugin_id_list(plugins.get("allow"))
-    if allow and plugin_id not in allow:
+    allowlist_bypass = (
+        _normalize_command_id(plugin.get("origin")) == "bundled"
+        and _configured_channel_enabled(_mapping(config.get("channels")).get(channel_id))
+    )
+    if allow and plugin_id not in allow and not allowlist_bypass:
         return "not-in-allowlist"
     return None
 
