@@ -13002,13 +13002,17 @@ async def _call_cli_npm_plugin_installer(
     services: CliServices,
     *,
     spec: str,
-    force: bool,
+    mode: str = "install",
+    dry_run: bool = False,
 ) -> dict[str, object]:
     installer = getattr(services, "plugin_npm_installer", None)
     install = getattr(installer, "install", None)
     if not callable(install):
         raise RuntimeError("npm plugin install runtime is unavailable.")
-    result = install(spec=spec, mode="update" if force else "install")
+    params: dict[str, object] = {"spec": spec, "mode": mode}
+    if dry_run:
+        params["dryRun"] = True
+    result = install(**params)
     if inspect.isawaitable(result):
         result = await result
     if not isinstance(result, dict):
@@ -13049,7 +13053,7 @@ async def _build_plugins_npm_install_payload(
     result = await _call_cli_npm_plugin_installer(
         services,
         spec=raw_spec,
-        force=force,
+        mode="update" if force else "install",
     )
     if result.get("ok") is False:
         raise _CliNpmInstallError(
@@ -13198,6 +13202,111 @@ async def _build_plugins_update_payload(
             )
             continue
         source = _optional_cli_string(record.get("source"))
+        if source == "npm":
+            spec = _optional_cli_string(record.get("spec"))
+            if spec is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "skipped",
+                        "message": f'Skipping "{target}" (missing npm spec).',
+                    }
+                )
+                continue
+            try:
+                update_result = await _call_cli_npm_plugin_installer(
+                    services,
+                    spec=spec,
+                    mode="update",
+                    dry_run=dry_run,
+                )
+            except RuntimeError as exc:
+                phase = "check" if dry_run else "update"
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {exc}",
+                    }
+                )
+                continue
+            if update_result.get("ok") is False:
+                phase = "check" if dry_run else "update"
+                message = str(update_result.get("error") or "npm plugin update failed.")
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to {phase} {target}: {message}",
+                    }
+                )
+                continue
+            plugin_id_value = _optional_cli_string(update_result.get("pluginId")) or target
+            install_path = _optional_cli_string(
+                update_result.get("targetDir")
+            ) or _optional_cli_string(update_result.get("installPath"))
+            if install_path is None:
+                outcomes.append(
+                    {
+                        "pluginId": target,
+                        "status": "error",
+                        "message": f"Failed to update {target}: missing targetDir.",
+                    }
+                )
+                continue
+            npm_current_version = _optional_cli_string(record.get("version"))
+            npm_next_version = _optional_cli_string(update_result.get("version"))
+            if not dry_run:
+                resolution = update_result.get("npmResolution")
+                resolution_payload = resolution if isinstance(resolution, dict) else {}
+                result = services.gateway_config.record_npm_plugin_install(
+                    plugin_id=plugin_id_value,
+                    install_path=install_path,
+                    spec=spec,
+                    version=npm_next_version,
+                    resolved_name=_optional_cli_string(resolution_payload.get("resolvedName")),
+                    resolved_version=_optional_cli_string(
+                        resolution_payload.get("resolvedVersion")
+                    ),
+                    resolved_spec=_optional_cli_string(resolution_payload.get("resolvedSpec")),
+                    integrity=_optional_cli_string(resolution_payload.get("integrity")),
+                    shasum=_optional_cli_string(resolution_payload.get("shasum")),
+                    resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+                    force=True,
+                )
+                changed = changed or result.get("ok") is True
+            npm_current_label = npm_current_version or "unknown"
+            npm_next_label = npm_next_version or "unknown"
+            npm_same_version = (
+                npm_current_version is not None
+                and npm_next_version is not None
+                and npm_current_version == npm_next_version
+            )
+            if dry_run:
+                status = "unchanged" if npm_same_version else "updated"
+                message = (
+                    f"{target} is up to date ({npm_current_label})."
+                    if npm_same_version
+                    else f"Would update {target}: {npm_current_label} -> {npm_next_label}."
+                )
+            else:
+                status = "unchanged" if npm_same_version else "updated"
+                message = (
+                    f"{target} already at {npm_current_label}."
+                    if npm_same_version
+                    else f"Updated {target}: {npm_current_label} -> {npm_next_label}."
+                )
+            npm_outcome: dict[str, object] = {
+                "pluginId": target,
+                "status": status,
+                "message": message,
+            }
+            if npm_current_version is not None:
+                npm_outcome["currentVersion"] = npm_current_version
+            if npm_next_version is not None:
+                npm_outcome["nextVersion"] = npm_next_version
+            outcomes.append(npm_outcome)
+            continue
         if source != "marketplace":
             outcomes.append(
                 {

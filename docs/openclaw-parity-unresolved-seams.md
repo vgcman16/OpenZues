@@ -1,18 +1,18 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-01
+Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~49% overall, with a reasonable
-  band of ~44-54%.
+- Repo-wide OpenClaw parity is estimated at ~49.5% overall, with a reasonable
+  band of ~45-54%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
-- The runtime/CLI/doctor native-bridge family is estimated at ~98% after the
+- The runtime/CLI/doctor native-bridge family is estimated at ~98.5% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
@@ -21,14 +21,14 @@ Current percentage rollup:
   marketplace listing, remote marketplace path-entry install/update,
   Git/GitHub entry-source install, URL/archive entry-source install, local
   path link/copy install, missing local-looking install-spec guard, and bundled
-  pre-npm plus explicit/preferred ClawHub, fakeable npm install, and
+  pre-npm plus explicit/preferred ClawHub, fakeable npm install/update, and
   npm-not-found bundled fallback slices.
-- The CLI/operator control-plane family is estimated at ~98% after the bundle
+- The CLI/operator control-plane family is estimated at ~98.5% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
   path link/copy installs, missing local-looking install-spec guard, and
-  bundled pre-npm plus explicit/preferred ClawHub, fakeable npm install, and
-  npm-not-found bundled fallback; remaining CLI gaps are now dominated by npm
-  update/hook fallback breadth, runtime activation/import depth, and packaging
+  bundled pre-npm plus explicit/preferred ClawHub, fakeable npm install/update,
+  and npm-not-found bundled fallback; remaining CLI gaps are now dominated by
+  hook fallback breadth, runtime activation/import depth, and packaging
   surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
@@ -1421,9 +1421,14 @@ deeper runtime activation/import metadata.
 npm package-not-found failures now fall back to bundled plugins whose
 `openclaw.install.npmSpec` or package name matches the requested spec,
 persisting a path install with the original npm spec and upstream-shaped
-warning. Remaining npm/plugin CLI parity is npm update behavior, hook-pack
-fallback breadth, production npm installer wiring, and deeper runtime
-activation/import metadata.
+warning. The next npm/plugin CLI queue head after this slice was npm update
+behavior, with hook-pack fallback breadth, production npm installer wiring, and
+deeper runtime activation/import metadata still following behind it.
+Npm install records now update through the native fakeable npm adapter:
+`plugins update` dispatches `source="npm"` records with `mode="update"`,
+refreshes version and npm resolution metadata, and preserves marketplace update
+behavior. Remaining npm/plugin CLI parity is hook-pack fallback breadth,
+production npm installer wiring, and deeper runtime activation/import metadata.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories
