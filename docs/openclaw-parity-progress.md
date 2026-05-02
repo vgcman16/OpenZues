@@ -9281,7 +9281,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   undeclared tools are dropped from executor projection, manifest-declared
   tools remain missing until a declared executor exists, and doctor diagnostics
   use OpenClaw's `plugin must declare contracts.tools for: <tool>` message.
-  Checkpoint pending.
+  Checkpoint in `aac25d80`.
 - Progress estimates are now roughly 58.0% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
