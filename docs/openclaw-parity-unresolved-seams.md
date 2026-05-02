@@ -4,8 +4,8 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~50.9% overall, with a reasonable
-  band of ~46-55%.
+- Repo-wide OpenClaw parity is estimated at ~51.0% overall, with a reasonable
+  band of ~47-56%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98% after the latest
@@ -15,7 +15,7 @@ Current percentage rollup:
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
   plugin runtime executor inventory, channel-plugin doctor
-  sequence/stale-cleanup/preview/repair/mutable-allowlist hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root
+  compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root
   preference, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
   JSON5-capable explicit/manifestless bundle metadata, Claude bundle command
@@ -32,7 +32,7 @@ Current percentage rollup:
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, exec
   safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
-  sequence/stale-cleanup/preview/repair/mutable-allowlist hooks, packaged bundled runtime root preference, local path link/copy
+  compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
   API/archive install/update, fakeable plus production-wired npm install/update,
@@ -1033,6 +1033,11 @@ reported as sequence changes/warnings in the contribution.
 adapters exposing `clean_stale_config` or `cleanStaleConfig` receive `{ cfg }`,
 return sequential config mutations, and repair mode persists the final
 candidate while reporting `staleChanges`.
+`channelDoctor` now also runs the upstream compatibility normalizer hook:
+native adapters exposing `normalize_compatibility_config` or
+`normalizeCompatibilityConfig` receive `{ cfg }`, return sequential
+compatibility mutations, and repair mode persists those changes before later
+channel doctor hooks run.
 Top-level doctor output now also includes OpenClaw's `doctor:oauth-tls`
 contribution for configured Codex OAuth profiles: the native preflight probes
 the OpenAI auth endpoint through a fakeable boundary, classifies TLS
@@ -4258,6 +4263,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   repair mode. Repo-wide parity is now estimated at ~50.9%; runtime/CLI/doctor
   and CLI/operator remain ~99.9%. Verified with focused and adjacent CLI doctor
   repair proofs, `ruff check`, and `mypy`.
+- Closed the channel-plugin compatibility-normalizer seam from OpenClaw
+  `src/commands/doctor/shared/channel-doctor.ts`: top-level native
+  `doctor --fix --json` now invokes registered provider
+  `normalizeCompatibilityConfig` equivalents for configured channel ids,
+  records `compatibilityChanges` under `channelDoctor`, and persists the
+  normalized candidate before later sequence/stale/repair hooks. Repo-wide
+  parity is now estimated at ~51.0%; runtime/CLI/doctor and CLI/operator
+  remain ~99.9%. Verified with focused and adjacent CLI doctor repair proofs,
+  `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open. Source anchors are OpenClaw CLI runtime/session/provider command
   surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human

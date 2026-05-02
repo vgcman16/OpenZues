@@ -19155,6 +19155,61 @@ def test_doctor_fix_runs_channel_clean_stale_config(
     ]
 
 
+def test_doctor_fix_runs_channel_compatibility_normalizer(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    snapshot: dict[str, object] = {
+        "channels": {
+            "discord": {
+                "enabled": True,
+                "allowFrom": [123],
+            }
+        }
+    }
+
+    class FakeChannelDoctorAdapter:
+        def normalize_compatibility_config(self, **kwargs: object) -> dict[str, object]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            next_config = json.loads(json.dumps(kwargs["cfg"]))
+            next_config["channels"]["discord"]["allowFrom"] = ["123"]
+            return {
+                "config": next_config,
+                "changes": ["channels.discord.allowFrom: converted numeric ids to strings"],
+            }
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        args=["doctor", "--fix", "--json"],
+        channel_doctor_adapters={"discord": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["changed"] is True
+    assert channel_doctor["compatibilityChanges"] == [
+        "channels.discord.allowFrom: converted numeric ids to strings"
+    ]
+    assert channel_doctor["changes"] == [
+        "channels.discord.allowFrom: converted numeric ids to strings"
+    ]
+    assert snapshot["channels"]["discord"]["allowFrom"] == ["123"]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "discord": {
+                        "enabled": True,
+                        "allowFrom": [123],
+                    }
+                }
+            }
+        }
+    ]
+
+
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
     monkeypatch,
 ) -> None:

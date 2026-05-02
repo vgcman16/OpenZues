@@ -5443,6 +5443,35 @@ async def _doctor_channel_stale_config_mutation(
     }
 
 
+async def _doctor_channel_compatibility_mutation(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    normalize = getattr(adapter, "normalize_compatibility_config", None) or getattr(
+        adapter,
+        "normalizeCompatibilityConfig",
+        None,
+    )
+    if not callable(normalize):
+        return None
+    result = normalize(cfg=snapshot)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return None
+    next_config = result.get("config")
+    changes = [str(item) for item in _object_list(result.get("changes")) if str(item).strip()]
+    warnings = [str(item) for item in _object_list(result.get("warnings")) if str(item).strip()]
+    if not changes and not warnings:
+        return None
+    return {
+        "config": next_config if isinstance(next_config, dict) else snapshot,
+        "changes": changes,
+        "warnings": warnings,
+    }
+
+
 async def _build_doctor_channel_doctor_payload(
     config_service: object | None,
     adapters: object | None,
@@ -5457,6 +5486,8 @@ async def _build_doctor_channel_doctor_payload(
     sequence_warnings: list[str] = []
     stale_changes: list[str] = []
     stale_warnings: list[str] = []
+    compatibility_changes: list[str] = []
+    compatibility_warnings: list[str] = []
     adapter_count = 0
     changed = False
     next_snapshot = snapshot
@@ -5466,6 +5497,29 @@ async def _build_doctor_channel_doctor_payload(
             continue
         adapter_count += 1
         try:
+            compatibility_mutation = await _doctor_channel_compatibility_mutation(
+                adapter=adapter,
+                snapshot=next_snapshot,
+            )
+            if compatibility_mutation is not None:
+                current_compatibility_changes = [
+                    str(item)
+                    for item in _object_list(compatibility_mutation.get("changes"))
+                    if str(item).strip()
+                ]
+                current_compatibility_warnings = [
+                    str(item)
+                    for item in _object_list(compatibility_mutation.get("warnings"))
+                    if str(item).strip()
+                ]
+                compatibility_changes.extend(current_compatibility_changes)
+                compatibility_warnings.extend(current_compatibility_warnings)
+                changes.extend(current_compatibility_changes)
+                warnings.extend(current_compatibility_warnings)
+                compatibility_config = compatibility_mutation.get("config")
+                if isinstance(compatibility_config, dict) and current_compatibility_changes:
+                    next_snapshot = compatibility_config
+                    changed = should_repair
             sequence = await _doctor_channel_config_sequence(
                 adapter=adapter,
                 snapshot=next_snapshot,
@@ -5591,6 +5645,8 @@ async def _build_doctor_channel_doctor_payload(
         "sequenceWarnings": sequence_warnings,
         "staleChanges": stale_changes,
         "staleWarnings": stale_warnings,
+        "compatibilityChanges": compatibility_changes,
+        "compatibilityWarnings": compatibility_warnings,
         "warnings": warnings,
         "path": path,
     }
