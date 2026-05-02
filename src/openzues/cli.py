@@ -8609,7 +8609,11 @@ def _build_doctor_workspace_status_payload(
 ) -> dict[str, object]:
     snapshot = _doctor_config_snapshot(config_service)
     records = _plugin_records_from_config_snapshot(snapshot)
-    _mark_plugin_import_state(records, runtime_specs)
+    _mark_plugin_import_state(
+        records,
+        runtime_specs,
+        loaded_non_bundle_imported=True,
+    )
     plugin_summary = _doctor_workspace_plugin_summary(records)
     errors = _doctor_int_record_value(plugin_summary, "errors")
     task_flow_recovery = _doctor_task_flow_recovery_payload(task_flows or ())
@@ -16115,14 +16119,25 @@ def _plugin_inspect_report(
 def _mark_plugin_import_state(
     plugins: list[dict[str, object]],
     runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...],
+    *,
+    loaded_non_bundle_imported: bool = False,
 ) -> None:
     for plugin in plugins:
         runtime_tools = _plugin_runtime_tool_names(
             _plugin_runtime_tool_entries(plugin, runtime_specs)
         )
         is_bundle = str(plugin.get("format") or "").strip() == "bundle"
+        is_diagnostics_loaded = (
+            loaded_non_bundle_imported
+            and str(plugin.get("status") or "").strip() == "loaded"
+        )
         plugin["imported"] = (
-            not is_bundle and (plugin.get("imported") is True or bool(runtime_tools))
+            not is_bundle
+            and (
+                plugin.get("imported") is True
+                or bool(runtime_tools)
+                or is_diagnostics_loaded
+            )
         )
 
 

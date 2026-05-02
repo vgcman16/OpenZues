@@ -20214,7 +20214,7 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
     assert workspace_status["openClawContribution"] == "doctor:workspace-status"
     assert workspace_status["plugins"] == {
         "loaded": 1,
-        "imported": 0,
+        "imported": 1,
         "disabled": 0,
         "errors": 0,
         "bundlePlugins": 0,
@@ -20223,7 +20223,7 @@ def test_doctor_json_includes_workspace_status_plugin_counts(
                 "id": "native-search",
                 "status": "loaded",
                 "format": "openclaw",
-                "imported": False,
+                "imported": True,
             }
         ],
     }
@@ -20275,6 +20275,35 @@ def test_doctor_json_workspace_status_counts_runtime_imported_plugins(
     assert workspace_status["plugins"]["records"] == [
         {
             "id": "native-runtime",
+            "status": "loaded",
+            "format": "openclaw",
+            "imported": True,
+        }
+    ]
+
+
+def test_doctor_json_workspace_status_marks_diagnostics_loaded_plugins_imported(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin_dir = tmp_path / "plugins" / "diagnostics-loaded"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="diagnostics-loaded")
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "plugins": {
+                "load": {"paths": [str(plugin_dir)]},
+            }
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    workspace_status = json.loads(result.stdout)["workspaceStatus"]
+    assert workspace_status["plugins"]["imported"] == 1
+    assert workspace_status["plugins"]["records"] == [
+        {
+            "id": "diagnostics-loaded",
             "status": "loaded",
             "format": "openclaw",
             "imported": True,
