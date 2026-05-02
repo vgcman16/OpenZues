@@ -5414,6 +5414,35 @@ async def _doctor_channel_config_sequence(
     }
 
 
+async def _doctor_channel_stale_config_mutation(
+    *,
+    adapter: object,
+    snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    clean = getattr(adapter, "clean_stale_config", None) or getattr(
+        adapter,
+        "cleanStaleConfig",
+        None,
+    )
+    if not callable(clean):
+        return None
+    result = clean(cfg=snapshot)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        return None
+    next_config = result.get("config")
+    changes = [str(item) for item in _object_list(result.get("changes")) if str(item).strip()]
+    warnings = [str(item) for item in _object_list(result.get("warnings")) if str(item).strip()]
+    if not changes and not warnings:
+        return None
+    return {
+        "config": next_config if isinstance(next_config, dict) else snapshot,
+        "changes": changes,
+        "warnings": warnings,
+    }
+
+
 async def _build_doctor_channel_doctor_payload(
     config_service: object | None,
     adapters: object | None,
@@ -5426,6 +5455,8 @@ async def _build_doctor_channel_doctor_payload(
     changes: list[str] = []
     sequence_changes: list[str] = []
     sequence_warnings: list[str] = []
+    stale_changes: list[str] = []
+    stale_warnings: list[str] = []
     adapter_count = 0
     changed = False
     next_snapshot = snapshot
@@ -5446,6 +5477,29 @@ async def _build_doctor_channel_doctor_payload(
             sequence_warnings.extend(current_sequence_warnings)
             changes.extend(current_sequence_changes)
             warnings.extend(current_sequence_warnings)
+            stale_mutation = await _doctor_channel_stale_config_mutation(
+                adapter=adapter,
+                snapshot=next_snapshot,
+            )
+            if stale_mutation is not None:
+                current_stale_changes = [
+                    str(item)
+                    for item in _object_list(stale_mutation.get("changes"))
+                    if str(item).strip()
+                ]
+                current_stale_warnings = [
+                    str(item)
+                    for item in _object_list(stale_mutation.get("warnings"))
+                    if str(item).strip()
+                ]
+                stale_changes.extend(current_stale_changes)
+                stale_warnings.extend(current_stale_warnings)
+                changes.extend(current_stale_changes)
+                warnings.extend(current_stale_warnings)
+                stale_config = stale_mutation.get("config")
+                if isinstance(stale_config, dict) and current_stale_changes:
+                    next_snapshot = stale_config
+                    changed = should_repair
             if should_repair:
                 mutation = await _doctor_channel_repair_mutation(
                     adapter=adapter,
@@ -5535,6 +5589,8 @@ async def _build_doctor_channel_doctor_payload(
         "changes": changes,
         "sequenceChanges": sequence_changes,
         "sequenceWarnings": sequence_warnings,
+        "staleChanges": stale_changes,
+        "staleWarnings": stale_warnings,
         "warnings": warnings,
         "path": path,
     }

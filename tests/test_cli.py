@@ -19100,6 +19100,61 @@ def test_doctor_json_reports_channel_config_sequence_notes(
     ]
 
 
+def test_doctor_fix_runs_channel_clean_stale_config(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    snapshot: dict[str, object] = {
+        "channels": {
+            "matrix": {
+                "enabled": True,
+                "staleInstallPath": "C:/gone/matrix",
+            }
+        }
+    }
+
+    class FakeChannelDoctorAdapter:
+        async def clean_stale_config(self, **kwargs: object) -> dict[str, object]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            next_config = json.loads(json.dumps(kwargs["cfg"]))
+            next_config["channels"]["matrix"].pop("staleInstallPath")
+            return {
+                "config": next_config,
+                "changes": ["channels.matrix.staleInstallPath: removed stale path"],
+            }
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        snapshot,
+        args=["doctor", "--fix", "--json"],
+        channel_doctor_adapters={"matrix": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    channel_doctor = payload["channelDoctor"]
+    assert channel_doctor["changed"] is True
+    assert channel_doctor["staleChanges"] == [
+        "channels.matrix.staleInstallPath: removed stale path"
+    ]
+    assert channel_doctor["changes"] == [
+        "channels.matrix.staleInstallPath: removed stale path"
+    ]
+    assert "staleInstallPath" not in snapshot["channels"]["matrix"]
+    assert calls == [
+        {
+            "cfg": {
+                "channels": {
+                    "matrix": {
+                        "enabled": True,
+                        "staleInstallPath": "C:/gone/matrix",
+                    }
+                }
+            }
+        }
+    ]
+
+
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
     monkeypatch,
 ) -> None:
