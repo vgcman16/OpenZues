@@ -119,7 +119,8 @@ params validate `channel` plus optional `accountId`, known channel ids are
 normalized, invalid channel input returns OpenClaw-shaped invalid-channel
 errors, and the native boundary returns idempotent `{channel, accountId,
 stopped: true}` payloads. Verified on 2026-05-02 with focused gateway/policy
-proofs, adjacent channel start/logout/stop tests, `ruff check`, and `mypy`.
+proofs, adjacent channel start/logout/stop tests, `ruff check`, and `mypy`;
+checkpointed in `64f6937a`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4507,7 +4508,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   admin-scoped. Repo-wide parity is now estimated at ~53.0%; active
   gateway/session/tool-contract parity is ~98.5%. Verified with focused
   gateway and policy proofs, adjacent start/logout/stop tests, `ruff check`,
-  and `mypy`.
+  and `mypy`; checkpointed in `64f6937a`.
 - Next repo-wide queue head: the broader method-policy sweep still exposes the
   source-backed small base-method gap `node.pair.remove`. Source anchors are
   OpenClaw `src/gateway/server-methods/nodes.ts`,

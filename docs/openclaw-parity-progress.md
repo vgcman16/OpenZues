@@ -131,7 +131,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - `channels.stop` now mirrors OpenClaw's gateway method layer: admin scope,
   strict `channel`/`accountId` params, channel normalization, invalid-channel
   errors, and idempotent `{channel, accountId, stopped: true}` native stop
-  projection.
+  projection. This slice is checkpointed in `64f6937a`.
 - Verified the `channels.stop` slice with focused gateway stop tests (`2
   passed`), focused channel policy test (`1 passed`), adjacent `python -m
   pytest tests\test_gateway_node_methods.py -q -k "channels_stop or
@@ -8137,6 +8137,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Channel stop gateway parity is now landed for OpenClaw's `channels.stop`
   method: admin scope, channel/account validation, normalized channel id,
   invalid-channel errors, and idempotent stopped projection.
+  Checkpointed in `64f6937a`.
 - Progress estimates are now roughly 53.0% repo-wide and ~98.5% for the active
   gateway/session/tool-contract family after this `channels.stop` slice.
 - Verified the `channels.stop` slice with focused gateway/policy proofs,

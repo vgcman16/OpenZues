@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `channels.stop` gateway method parity slice is verified and ready for
-checkpointing with these intended files:
+The `channels.stop` gateway method parity slice is checkpointed in
+`64f6937a`. Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/gateway_node_methods.py`
 - `src/openzues/services/gateway_method_policy.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Active | Repo-wide +0.1%, active gateway/method +0.1% | `channels.stop` verified; next small base-method gap is `node.pair.remove` |
+| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `64f6937a` | Repo-wide +0.1%, active gateway/method +0.1% | `channels.stop` done; next small base-method gap is `node.pair.remove` |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -165,7 +165,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     OpenClaw-shaped invalid-channel errors.
   - Evidence required: focused gateway/policy tests, adjacent channel mutation
     tests, ruff, mypy
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `64f6937a`
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway stop tests (`2 passed`),
     focused channel policy proof (`1 passed`), adjacent `python -m pytest

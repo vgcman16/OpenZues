@@ -77,7 +77,7 @@ may lag behind this tracker.
 
 - [x] `channels.stop` admin-scoped gateway method with native idempotent stop
   projection and invalid-channel guards.
-  - Status: verified; checkpoint commit pending
+  - Status: checkpointed in `64f6937a`
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -173,7 +173,7 @@ may lag behind this tracker.
     `src/openzues/services/gateway_method_policy.py`
   - Test: `tests/test_gateway_node_methods.py`,
     `tests/test_gateway_method_policy.py`
-  - Status: verified; checkpoint commit pending.
+  - Status: checkpointed in `64f6937a`.
   - Weight: 1
   - Last verified: 2026-05-02, focused gateway stop tests (`2 passed`),
     focused channel policy proof (`1 passed`), adjacent start/logout/stop tests
