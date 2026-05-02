@@ -133,7 +133,7 @@ and `plugins info` accept `--runtime`, default inspect stays on the static
 metadata path, and loaded non-bundle rows are marked imported only when runtime
 inspection is explicitly requested. Verified on 2026-05-02 with the focused
 plugin inspect runtime CLI test, adjacent plugin inspect/runtime inventory
-proof, `ruff check`, and `mypy`; checkpoint pending.
+proof, `ruff check`, and `mypy`; checkpointed in `5fce4371`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4666,8 +4666,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   importing OpenClaw's TypeScript runtime. Repo-wide parity is now estimated at
   ~54.0%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
   ~99.9%. Verified with the focused plugin inspect runtime CLI test, adjacent
-  plugin inspect/runtime inventory proof, `ruff check`, and `mypy`; checkpoint
-  pending.
+  plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
+  checkpointed in `5fce4371`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

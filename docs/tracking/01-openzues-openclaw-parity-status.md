@@ -84,7 +84,7 @@ may lag behind this tracker.
 - [x] Plugin inspect runtime-inspection flag in `plugins inspect --runtime`,
   including explicit runtime posture and imported-state projection for loaded
   non-bundle metadata rows.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `5fce4371`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -260,7 +260,8 @@ may lag behind this tracker.
     checkpointed in `721ec0f2`, plugin registry inspect/refresh child slice
     checkpointed in `cdb3035e`, and plugin list registry-source child slice
     checkpointed in `6468e305`, and plugin inspect runtime flag child slice
-    verified, but deeper module import/runtime activation remains.
+    checkpointed in `5fce4371`, but deeper module import/runtime activation
+    remains.
   - Weight: 5
 
 - [x] Plugin inspect runtime-inspection flag.
@@ -269,7 +270,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/status.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `5fce4371`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_cli.py::test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state

@@ -170,7 +170,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `plugins inspect --runtime` operator surface: the flag is accepted by
   `inspect` and `info`, runtime inspection is explicit, and loaded non-bundle
   metadata rows are marked imported only in that native runtime-inspection
-  posture. Checkpoint pending.
+  posture. This slice is checkpointed in `5fce4371`.
 - Verified the plugin inspect runtime flag slice with `python -m pytest
   tests\test_cli.py::test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state
   -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
@@ -8373,7 +8373,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `plugins inspect --runtime` surface: native `inspect` and `info` accept the
   flag, keep default inspect on the static metadata path, and explicitly mark
   loaded non-bundle rows as imported only for runtime inspection. Checkpoint
-  pending.
+  in `5fce4371`.
 - Progress estimates are now roughly 54.0% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
