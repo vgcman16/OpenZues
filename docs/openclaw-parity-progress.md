@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~49.7% overall, with a reasonable band of ~45-54%.
+- Estimated repo-wide parity: ~49.8% overall, with a reasonable band of ~45-54%.
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.0% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, deeper plugin activation/import behavior, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.0% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm install fallback; remaining CLI gaps are now dominated by deeper runtime activation/import depth and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.1% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, and native manifest activation-planner slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, runtime plugin import/executor activation wiring, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.1% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, and native manifest activation-planner behavior; remaining CLI gaps are now dominated by runtime import/executor activation depth and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7456,6 +7456,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_plugin_clawhub_installers.py tests\test_plugin_npm_installers.py
   tests\test_cli.py`, and `mypy
   src\openzues\services\plugin_clawhub_installers.py src\openzues\cli.py`.
+- OpenZues now has a native manifest activation planner matching OpenClaw's
+  `plugins/activation-planner.ts` trigger rules. The helper resolves plugin
+  ids from command aliases and `activation.onCommands`, provider metadata plus
+  setup providers, agent harnesses, channels, routes, capability hints,
+  contracts-owned tools, hooks, origin filters, and explicit empty plugin
+  scopes. This closes the data-level planner seam; remaining plugin activation
+  parity is runtime import/executor activation wiring that feeds real installed
+  manifests into this planner.
+- Progress estimates are now roughly 49.8% repo-wide, ~99.1% for the
+  runtime/CLI/doctor native bridge, and ~99.1% for the CLI/operator control
+  plane after this activation-planner slice.
+- Verified the activation-planner slice with `python -m pytest
+  tests\test_gateway_plugin_activation.py -q` (`3 passed`), adjacent manifest
+  metadata proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_command_aliases or
+  plugins_list_json_preserves_manifest_tool_contracts"` (`1 passed`), `ruff
+  check src\openzues\services\gateway_plugin_activation.py
+  tests\test_gateway_plugin_activation.py`, and `mypy
+  src\openzues\services\gateway_plugin_activation.py`.
 
 ## References
 
