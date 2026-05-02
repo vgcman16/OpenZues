@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -85,8 +85,14 @@ from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
-from openzues.services.gateway_plugin_activation import resolve_manifest_activation_plans
-from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
+from openzues.services.gateway_plugin_activation import (
+    resolve_configured_channel_plugin_plan,
+    resolve_manifest_activation_plans,
+)
+from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginRuntimeExecutorSpec,
+    build_plugin_runtime_executor_specs_from_active_registry,
+)
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
 from openzues.services.github import GitHubService
@@ -7540,10 +7546,15 @@ def _plugin_runtime_activation_payload(
     plugin_rows: list[object],
     services: object,
 ) -> dict[str, object]:
+    manifest_plugins = [plugin for plugin in plugin_rows if isinstance(plugin, Mapping)]
+    active_manifest_plugins = [
+        plugin for plugin in manifest_plugins if _plugin_row_runtime_activated(plugin)
+    ]
     manifest_tool_plugins: list[dict[str, object]] = []
-    for plugin in plugin_rows:
-        if not isinstance(plugin, dict):
-            continue
+    unavailable_tool_plugins: list[dict[str, object]] = []
+    evaluated_tool_availability = False
+    config_snapshot = _doctor_config_snapshot(getattr(services, "gateway_config", None))
+    for plugin in active_manifest_plugins:
         plugin_id = _optional_cli_string(plugin.get("id"))
         if plugin_id is None:
             continue
@@ -7551,9 +7562,37 @@ def _plugin_runtime_activation_payload(
         contract_payload = contracts if isinstance(contracts, dict) else {}
         tools = _plugin_manifest_string_list(contract_payload.get("tools"))
         if tools:
-            manifest_tool_plugins.append({"pluginId": plugin_id, "tools": tools})
+            available_tools, unavailable_tools, availability_evaluated = (
+                _plugin_manifest_tool_availability(
+                    plugin,
+                    tools,
+                    config_snapshot=config_snapshot,
+                    env=os.environ,
+                )
+            )
+            evaluated_tool_availability = (
+                evaluated_tool_availability or availability_evaluated
+            )
+            entry: dict[str, object] = {"pluginId": plugin_id, "tools": tools}
+            if availability_evaluated:
+                if unavailable_tools and available_tools:
+                    entry["availability"] = "partial"
+                elif unavailable_tools:
+                    entry["availability"] = "unavailable"
+                else:
+                    entry["availability"] = "available"
+                if unavailable_tools:
+                    entry["unavailableTools"] = unavailable_tools
+                    unavailable_tool_plugins.append(
+                        {"pluginId": plugin_id, "tools": unavailable_tools}
+                    )
+            manifest_tool_plugins.append(entry)
     runtime_tool_map: dict[str, list[str]] = {}
-    for spec in _plugin_runtime_specs_from_services(services):
+    for spec in _plugin_runtime_specs_from_services(
+        services,
+        plugin_rows=active_manifest_plugins,
+        config_snapshot=config_snapshot,
+    ):
         plugin_id = _optional_cli_string(spec.plugin_id)
         if plugin_id is None:
             continue
@@ -7562,17 +7601,26 @@ def _plugin_runtime_activation_payload(
         {"pluginId": plugin_id, "tools": sorted(_dedupe_cli_strings(tools))}
         for plugin_id, tools in sorted(runtime_tool_map.items())
     ]
-    missing_executor_plugins = [
-        entry
-        for entry in manifest_tool_plugins
-        if _optional_cli_string(entry.get("pluginId")) not in runtime_tool_map
-    ]
+    missing_executor_plugins: list[dict[str, object]] = []
+    for entry in manifest_tool_plugins:
+        plugin_id = _optional_cli_string(entry.get("pluginId"))
+        if plugin_id is None:
+            continue
+        unavailable_tool_set = set(_plugin_manifest_string_list(entry.get("unavailableTools")))
+        manifest_tools = _plugin_manifest_string_list(entry.get("tools"))
+        available_tools = [tool for tool in manifest_tools if tool not in unavailable_tool_set]
+        runtime_tools = set(runtime_tool_map.get(plugin_id, []))
+        missing_tools = [tool for tool in available_tools if tool not in runtime_tools]
+        if missing_tools:
+            missing_executor_plugins.append({"pluginId": plugin_id, "tools": missing_tools})
     if not manifest_tool_plugins:
         status = "ok"
     elif missing_executor_plugins and runtime_executor_plugins:
         status = "partial"
     elif missing_executor_plugins:
         status = "metadata_only"
+    elif unavailable_tool_plugins and not runtime_executor_plugins:
+        status = "unavailable"
     else:
         status = "ok"
     payload: dict[str, object] = {
@@ -7581,10 +7629,231 @@ def _plugin_runtime_activation_payload(
         "runtimeExecutorPlugins": runtime_executor_plugins,
         "missingExecutorPlugins": missing_executor_plugins,
     }
+    if evaluated_tool_availability:
+        payload["unavailableToolPlugins"] = unavailable_tool_plugins
     activation_plans = _plugin_manifest_activation_plans(plugin_rows)
     if activation_plans:
         payload["activationPlans"] = activation_plans
+    configured_channel_plan = resolve_configured_channel_plugin_plan(
+        plugins=manifest_plugins,
+        config=config_snapshot,
+    )
+    if configured_channel_plan.get("entries"):
+        payload["configuredChannelPlugins"] = configured_channel_plan
     return payload
+
+
+def _plugin_row_runtime_activated(plugin: Mapping[str, object]) -> bool:
+    return _optional_cli_string(plugin.get("status")) == "loaded"
+
+
+def _plugin_manifest_tool_availability(
+    plugin: Mapping[str, object],
+    tools: Sequence[str],
+    *,
+    config_snapshot: Mapping[str, object],
+    env: Mapping[str, str],
+) -> tuple[list[str], list[str], bool]:
+    tool_metadata = plugin.get("toolMetadata")
+    metadata_by_tool = tool_metadata if isinstance(tool_metadata, Mapping) else {}
+    available_tools: list[str] = []
+    unavailable_tools: list[str] = []
+    evaluated = False
+    for tool in tools:
+        metadata = metadata_by_tool.get(tool)
+        if not isinstance(metadata, Mapping):
+            available_tools.append(tool)
+            continue
+        evaluated = True
+        if _plugin_manifest_tool_metadata_available(
+            plugin,
+            metadata,
+            config_snapshot=config_snapshot,
+            env=env,
+        ):
+            available_tools.append(tool)
+        else:
+            unavailable_tools.append(tool)
+    return available_tools, unavailable_tools, evaluated
+
+
+def _plugin_manifest_tool_metadata_available(
+    plugin: Mapping[str, object],
+    metadata: Mapping[str, object],
+    *,
+    config_snapshot: Mapping[str, object],
+    env: Mapping[str, str],
+) -> bool:
+    config_signals = metadata.get("configSignals")
+    for signal in config_signals if isinstance(config_signals, list) else []:
+        if isinstance(signal, Mapping) and _plugin_manifest_config_signal_passes(
+            signal,
+            config_snapshot=config_snapshot,
+            env=env,
+        ):
+            return True
+    for signal in _plugin_manifest_tool_auth_signals(metadata):
+        provider = _optional_cli_string(signal.get("provider"))
+        if provider is None:
+            continue
+        if not _plugin_manifest_provider_base_url_guard_passes(
+            signal.get("providerBaseUrl"),
+            config_snapshot=config_snapshot,
+        ):
+            continue
+        if _plugin_manifest_has_non_empty_env_candidate(
+            env,
+            _plugin_manifest_setup_provider_env_vars(plugin, provider),
+        ):
+            return True
+    return False
+
+
+def _plugin_manifest_tool_auth_signals(
+    metadata: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    auth_signals = metadata.get("authSignals")
+    signals: list[Mapping[str, object]] = []
+    if isinstance(auth_signals, list):
+        for signal in auth_signals:
+            if isinstance(signal, Mapping):
+                signals.append(signal)
+        return signals
+    for key in ("authProviders", "aliases"):
+        for provider in _plugin_manifest_string_list(metadata.get(key)):
+            signals.append({"provider": provider})
+    return signals
+
+
+def _plugin_manifest_config_signal_passes(
+    signal: Mapping[str, object],
+    *,
+    config_snapshot: Mapping[str, object],
+    env: Mapping[str, str],
+) -> bool:
+    del env
+    root_path = _optional_cli_string(signal.get("rootPath"))
+    if root_path is None:
+        return False
+    effective_config = _plugin_read_path(config_snapshot, root_path)
+    if not isinstance(effective_config, Mapping):
+        return False
+    overlay_path = _optional_cli_string(signal.get("overlayPath"))
+    overlay = _plugin_read_path(effective_config, overlay_path)
+    if isinstance(overlay, Mapping):
+        effective_config = {**dict(effective_config), **dict(overlay)}
+    mode_signal = signal.get("mode")
+    if isinstance(mode_signal, Mapping) and not _plugin_manifest_config_mode_passes(
+        effective_config,
+        mode_signal,
+    ):
+        return False
+    required = _plugin_manifest_string_list(signal.get("required"))
+    for path_value in required:
+        if not _plugin_has_configured_value(_plugin_read_path(effective_config, path_value)):
+            return False
+    required_any = _plugin_manifest_string_list(signal.get("requiredAny"))
+    if required_any and not any(
+        _plugin_has_configured_value(_plugin_read_path(effective_config, path_value))
+        for path_value in required_any
+    ):
+        return False
+    return bool(required or required_any or mode_signal)
+
+
+def _plugin_manifest_config_mode_passes(
+    config: Mapping[str, object],
+    mode_signal: Mapping[str, object],
+) -> bool:
+    mode_path = _optional_cli_string(mode_signal.get("path")) or "mode"
+    mode = _optional_cli_string(_plugin_read_path(config, mode_path)) or _optional_cli_string(
+        mode_signal.get("default")
+    )
+    if mode is None:
+        return False
+    allowed = _plugin_manifest_string_list(mode_signal.get("allowed"))
+    if allowed and mode not in allowed:
+        return False
+    disallowed = _plugin_manifest_string_list(mode_signal.get("disallowed"))
+    return mode not in disallowed
+
+
+def _plugin_manifest_provider_base_url_guard_passes(
+    value: object,
+    *,
+    config_snapshot: Mapping[str, object],
+) -> bool:
+    if not isinstance(value, Mapping):
+        return True
+    provider = _optional_cli_string(value.get("provider"))
+    allowed_base_urls = _plugin_manifest_string_list(value.get("allowedBaseUrls"))
+    if provider is None or not allowed_base_urls:
+        return True
+    provider_config = _plugin_read_path(
+        config_snapshot,
+        f"models.providers.{provider}",
+    )
+    raw_base_url = None
+    if isinstance(provider_config, Mapping):
+        raw_base_url = _optional_cli_string(provider_config.get("baseUrl"))
+    base_url = raw_base_url or _optional_cli_string(value.get("defaultBaseUrl"))
+    if base_url is None:
+        return False
+    normalized = base_url.rstrip("/")
+    return any(allowed.rstrip("/") == normalized for allowed in allowed_base_urls)
+
+
+def _plugin_manifest_setup_provider_env_vars(
+    plugin: Mapping[str, object],
+    provider: str,
+) -> list[str]:
+    setup = plugin.get("setup")
+    if isinstance(setup, Mapping):
+        providers = setup.get("providers")
+        for entry in providers if isinstance(providers, list) else []:
+            if not isinstance(entry, Mapping):
+                continue
+            if _optional_cli_string(entry.get("id")) == provider:
+                env_vars = _plugin_manifest_string_list(entry.get("envVars"))
+                if env_vars:
+                    return env_vars
+    provider_auth_env_vars = plugin.get("providerAuthEnvVars")
+    if isinstance(provider_auth_env_vars, Mapping):
+        return _plugin_manifest_string_list(provider_auth_env_vars.get(provider))
+    return []
+
+
+def _plugin_manifest_has_non_empty_env_candidate(
+    env: Mapping[str, str],
+    env_vars: Sequence[str],
+) -> bool:
+    return any(bool(env.get(env_var, "").strip()) for env_var in env_vars if env_var.strip())
+
+
+def _plugin_read_path(root: object, path_value: str | None) -> object:
+    if path_value is None or not path_value.strip():
+        return root
+    current = root
+    for raw_segment in path_value.split("."):
+        segment = raw_segment.strip()
+        if not segment:
+            return None
+        if not isinstance(current, Mapping) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _plugin_has_configured_value(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value)
+    if isinstance(value, Mapping):
+        return bool(value)
+    return True
 
 
 def _plugin_manifest_activation_plans(
@@ -10340,21 +10609,22 @@ def _emit_plugins_inventory(
     if not plugin_rows:
         typer.echo("No plugins found.")
         return
-    loaded_count = sum(
+    enabled_count = sum(
         1
         for plugin in plugin_rows
-        if isinstance(plugin, dict) and str(plugin.get("status") or "") == "loaded"
+        if isinstance(plugin, dict) and _plugin_inventory_row_enabled(plugin)
     )
-    typer.echo(f"Plugins ({loaded_count}/{len(plugin_rows)} loaded)")
+    typer.echo(f"Plugins ({enabled_count}/{len(plugin_rows)} enabled)")
     for plugin in plugin_rows:
         if not isinstance(plugin, dict):
             continue
         name = str(plugin.get("name") or plugin.get("id") or "").strip()
         plugin_id = str(plugin.get("id") or "").strip()
         status = str(plugin.get("status") or "").strip()
+        display_status = "enabled" if status == "loaded" else status
         format_name = str(plugin.get("format") or "openzues").strip()
         description = _first_text_line(plugin.get("description"), limit=72)
-        heading = f"- {name or plugin_id} {status} [{format_name}]".strip()
+        heading = f"- {name or plugin_id} {display_status} [{format_name}]".strip()
         if plugin_id and name and plugin_id != name:
             heading += f" ({plugin_id})"
         if description:
@@ -10371,6 +10641,27 @@ def _emit_plugins_inventory(
             typer.echo(f"  origin: {origin}")
         if parity_status:
             typer.echo(f"  parity: {parity_status}")
+        if isinstance(plugin.get("activated"), bool):
+            typer.echo("  activated: " + ("yes" if plugin["activated"] else "no"))
+        if isinstance(plugin.get("imported"), bool):
+            typer.echo("  imported: " + ("yes" if plugin["imported"] else "no"))
+        if isinstance(plugin.get("explicitlyEnabled"), bool):
+            typer.echo(
+                "  explicitly enabled: "
+                + ("yes" if plugin["explicitlyEnabled"] else "no")
+            )
+        activation_source = _optional_cli_string(plugin.get("activationSource"))
+        if activation_source is not None:
+            typer.echo(f"  activation source: {activation_source}")
+        activation_reason = _optional_cli_string(plugin.get("activationReason"))
+        if activation_reason is not None:
+            reason = (
+                activation_reason.replace("\x1b", "")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t")
+            )
+            typer.echo(f"  activation reason: {reason}")
         capabilities = plugin.get("capabilities")
         if isinstance(capabilities, list) and capabilities:
             typer.echo(
@@ -10414,6 +10705,13 @@ def _emit_plugins_inventory(
                 if entry.get("ownerOnly") is True:
                     parts.append("owner-only")
                 typer.echo(" ".join(parts))
+
+
+def _plugin_inventory_row_enabled(plugin: dict[str, object]) -> bool:
+    enabled = plugin.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    return str(plugin.get("status") or "").strip() == "loaded"
 
 
 def _plugin_registry_counts(registry: dict[str, object] | None) -> tuple[int, int]:
@@ -12226,9 +12524,12 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     plugin_id = str(plugin.get("id") or "").strip()
     if plugin_id:
         typer.echo(f"id: {plugin_id}")
+    description = _optional_cli_string(plugin.get("description"))
+    if description is not None:
+        typer.echo(description)
     status = str(plugin.get("status") or "").strip()
     if status:
-        typer.echo(f"status: {status}")
+        typer.echo(f"Status: {status}")
     failure_phase = _plugin_failure_phase(plugin.get("failurePhase"))
     if failure_phase is not None:
         typer.echo(f"Failure phase: {failure_phase}")
@@ -12237,16 +12538,199 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
         typer.echo(f"Failed at: {failed_at}")
     format_name = str(plugin.get("format") or "").strip()
     if format_name:
-        typer.echo(f"format: {format_name}")
+        typer.echo(f"Format: {format_name}")
+    bundle_format = _optional_cli_string(plugin.get("bundleFormat"))
+    if bundle_format is not None:
+        typer.echo(f"Bundle format: {bundle_format}")
     source = str(plugin.get("source") or "").strip()
     if source:
-        typer.echo(f"source: {source}")
+        typer.echo(f"Source: {source}")
+    origin = _optional_cli_string(plugin.get("origin"))
+    if origin is not None:
+        typer.echo(f"Origin: {origin}")
+    version = _optional_cli_string(plugin.get("version"))
+    if version is not None:
+        typer.echo(f"Version: {version}")
     shape = str(payload.get("shape") or "").strip()
     if shape:
-        typer.echo(f"shape: {shape}")
+        typer.echo(f"Shape: {shape}")
+    capability_mode = _optional_cli_string(payload.get("capabilityMode"))
+    if capability_mode is not None:
+        typer.echo(f"Capability mode: {capability_mode}")
+    typer.echo(
+        "Legacy before_agent_start: "
+        + ("yes" if plugin.get("usesLegacyBeforeAgentStart") is True else "no")
+    )
+    bundle_capabilities = _plugin_record_string_list(payload, "bundleCapabilities")
+    if bundle_capabilities:
+        typer.echo("Bundle capabilities: " + ", ".join(bundle_capabilities))
+    capabilities = payload.get("capabilities")
+    capability_lines: list[str] = []
+    for entry in capabilities if isinstance(capabilities, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        kind = _optional_cli_string(entry.get("kind"))
+        raw_ids = entry.get("ids")
+        ids = [
+            str(capability_id)
+            for capability_id in (raw_ids if isinstance(raw_ids, list) else [])
+            if str(capability_id).strip()
+        ]
+        if kind is not None:
+            capability_lines.append(
+                f"{kind}: {', '.join(ids) if ids else '(registered)'}"
+            )
+    _emit_plugin_inspect_section("Capabilities", capability_lines)
+    typed_hooks = payload.get("typedHooks")
+    typed_hook_lines: list[str] = []
+    for entry in typed_hooks if isinstance(typed_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        priority = entry.get("priority")
+        if priority is not None and not isinstance(priority, bool):
+            typed_hook_lines.append(f"{name} (priority {priority})")
+        else:
+            typed_hook_lines.append(name)
+    _emit_plugin_inspect_section("Typed hooks", typed_hook_lines)
+    compatibility = payload.get("compatibility")
+    compatibility_lines: list[str] = []
+    for entry in compatibility if isinstance(compatibility, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        notice = _format_plugin_compatibility_notice(entry)
+        if notice:
+            compatibility_lines.append(notice)
+    _emit_plugin_inspect_section("Compatibility warnings", compatibility_lines)
+    custom_hooks = payload.get("customHooks")
+    custom_hook_lines: list[str] = []
+    for entry in custom_hooks if isinstance(custom_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        events = _string_list_or_none(entry.get("events")) or []
+        custom_hook_lines.append(f"{name}: {', '.join(events)}")
+    _emit_plugin_inspect_section("Custom hooks", custom_hook_lines)
+    tools = payload.get("tools")
+    tool_lines: list[str] = []
+    for entry in tools if isinstance(tools, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        raw_names = entry.get("names")
+        names = [
+            str(name)
+            for name in (raw_names if isinstance(raw_names, list) else [])
+            if str(name).strip()
+        ]
+        label = ", ".join(names) if names else "(anonymous)"
+        if entry.get("optional") is True:
+            label = f"{label} [optional]"
+        tool_lines.append(label)
+    _emit_plugin_inspect_section("Tools", tool_lines)
+    _emit_plugin_inspect_section(
+        "Commands",
+        _plugin_record_string_list(payload, "commands"),
+    )
+    _emit_plugin_inspect_section(
+        "CLI commands",
+        _plugin_record_string_list(payload, "cliCommands"),
+    )
+    _emit_plugin_inspect_section(
+        "Services",
+        _plugin_record_string_list(payload, "services"),
+    )
+    _emit_plugin_inspect_section(
+        "Gateway methods",
+        _plugin_record_string_list(payload, "gatewayMethods"),
+    )
+    _emit_plugin_inspect_section(
+        "MCP servers",
+        _plugin_record_string_list(payload, "mcpServers"),
+    )
+    _emit_plugin_inspect_section(
+        "LSP servers",
+        _plugin_record_string_list(payload, "lspServers"),
+    )
+    http_route_count = _plugin_record_http_route_count(payload)
+    if http_route_count > 0:
+        _emit_plugin_inspect_section("HTTP routes", [str(http_route_count)])
+    policy = payload.get("policy")
+    policy_lines: list[str] = []
+    if isinstance(policy, dict):
+        for key in (
+            "allowPromptInjection",
+            "allowConversationAccess",
+            "allowModelOverride",
+        ):
+            value = policy.get(key)
+            if isinstance(value, bool):
+                policy_lines.append(f"{key}: {str(value).lower()}")
+        if policy.get("hasAllowedModelsConfig") is True:
+            allowed_models = _string_list_or_none(policy.get("allowedModels"))
+            if allowed_models:
+                policy_lines.append(f"allowedModels: {', '.join(allowed_models)}")
+            else:
+                policy_lines.append("allowedModels: (configured but empty)")
+    _emit_plugin_inspect_section("Policy", policy_lines)
+    diagnostic_lines: list[str] = []
+    diagnostics = payload.get("diagnostics")
+    for entry in diagnostics if isinstance(diagnostics, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        message = _optional_cli_string(entry.get("message"))
+        if message is None:
+            continue
+        level = (_optional_cli_string(entry.get("level")) or "info").upper()
+        diagnostic_lines.append(f"{level}: {message}")
+    _emit_plugin_inspect_section("Diagnostics", diagnostic_lines)
+    _emit_plugin_inspect_section("Install", _plugin_inspect_install_lines(payload.get("install")))
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")
+
+
+def _plugin_inspect_install_lines(install: object) -> list[str]:
+    if not isinstance(install, dict):
+        return []
+    lines: list[str] = []
+    for key, label in (
+        ("source", "Source"),
+        ("spec", "Spec"),
+        ("sourcePath", "Source path"),
+        ("installPath", "Install path"),
+        ("version", "Recorded version"),
+        ("clawhubPackage", "ClawHub package"),
+        ("clawhubChannel", "ClawHub channel"),
+        ("clawpackSha256", "ClawPack sha256"),
+    ):
+        value = _optional_cli_string(install.get(key))
+        if value is not None:
+            lines.append(f"{label}: {value}")
+    spec_version = install.get("clawpackSpecVersion")
+    if spec_version is not None and not isinstance(spec_version, bool):
+        lines.append(f"ClawPack spec: {spec_version}")
+    manifest_sha = _optional_cli_string(install.get("clawpackManifestSha256"))
+    if manifest_sha is not None:
+        lines.append(f"ClawPack manifest sha256: {manifest_sha}")
+    size = install.get("clawpackSize")
+    if size is not None and not isinstance(size, bool):
+        lines.append(f"ClawPack size: {size} bytes")
+    installed_at = _optional_cli_string(install.get("installedAt"))
+    if installed_at is not None:
+        lines.append(f"Installed at: {installed_at}")
+    return lines
+
+
+def _emit_plugin_inspect_section(title: str, rows: Sequence[str]) -> None:
+    if not rows:
+        return
+    typer.echo(f"{title}:")
+    for row in rows:
+        typer.echo(f"- {row}")
 
 
 def _emit_sandbox_inventory(payload: dict[str, object], *, json_output: bool) -> None:
@@ -13115,18 +13599,6 @@ async def _build_plugins_inventory_payload(
         plugins,
         host_version=_plugin_report_host_version(config_snapshot),
     )
-    if enabled_only:
-        plugins = [
-            plugin
-            for plugin in plugins
-            if str(plugin.get("status") or "").strip() == "loaded"
-        ]
-    runtime_specs = _plugin_runtime_specs_from_services(services)
-    _mark_plugin_import_state(
-        plugins,
-        runtime_specs,
-        loaded_non_bundle_imported=runtime_inspection,
-    )
     warnings = view_payload.get("warnings")
     diagnostics: list[dict[str, object]] = [
         {"level": "warn", "message": str(warning)}
@@ -13134,6 +13606,26 @@ async def _build_plugins_inventory_payload(
         if str(warning).strip()
     ]
     diagnostics.extend(config_diagnostics)
+    if enabled_only:
+        plugins = [
+            plugin
+            for plugin in plugins
+            if str(plugin.get("status") or "").strip() == "loaded"
+        ]
+    runtime_specs = _plugin_runtime_specs_from_services(
+        services,
+        plugin_rows=[
+            plugin for plugin in plugins if _plugin_row_runtime_activated(plugin)
+        ],
+        config_snapshot=config_snapshot,
+        workspace_dir=workspace_dir,
+        diagnostics=diagnostics,
+    )
+    _mark_plugin_import_state(
+        plugins,
+        runtime_specs,
+        loaded_non_bundle_imported=runtime_inspection,
+    )
     registry = _plugin_registry_snapshot_metadata(services, plugins)
     return {
         "workspaceDir": workspace_dir,
@@ -16327,8 +16819,8 @@ async def _build_plugin_inspect_payload(
         enabled_only=False,
         runtime_inspection=False,
     )
-    runtime_specs = _plugin_runtime_specs_from_services(services)
     plugin_rows, diagnostics = parse_inventory(static_inventory)
+    runtime_specs = _plugin_runtime_specs_from_services(services)
     if inspect_all:
         if runtime_inspection:
             runtime_inventory = await _build_plugins_inventory_payload(
@@ -16337,6 +16829,11 @@ async def _build_plugin_inspect_payload(
                 runtime_inspection=True,
             )
             plugin_rows, diagnostics = parse_inventory(runtime_inventory)
+            runtime_specs = _plugin_inspect_runtime_specs_from_rows(
+                services,
+                plugin_rows,
+                workspace_dir=_optional_cli_string(runtime_inventory.get("workspaceDir")),
+            )
         return [
             _plugin_inspect_report(
                 plugin,
@@ -16361,11 +16858,33 @@ async def _build_plugin_inspect_payload(
         )
         runtime_plugin_rows, diagnostics = parse_inventory(runtime_inventory)
         plugin = _find_plugin_record(runtime_plugin_rows, normalized_id) or plugin
+        runtime_specs = _plugin_inspect_runtime_specs_from_rows(
+            services,
+            runtime_plugin_rows,
+            workspace_dir=_optional_cli_string(runtime_inventory.get("workspaceDir")),
+        )
     return _plugin_inspect_report(
         plugin,
         runtime_specs=runtime_specs,
         policy=_plugin_inspect_policy_from_services(services, plugin),
         diagnostics=diagnostics,
+    )
+
+
+def _plugin_inspect_runtime_specs_from_rows(
+    services: object,
+    plugin_rows: Sequence[Mapping[str, object]],
+    *,
+    workspace_dir: str | None = None,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    config_snapshot = _doctor_config_snapshot(getattr(services, "gateway_config", None))
+    return _plugin_runtime_specs_from_services(
+        services,
+        plugin_rows=[
+            plugin for plugin in plugin_rows if _plugin_row_runtime_activated(plugin)
+        ],
+        config_snapshot=config_snapshot,
+        workspace_dir=workspace_dir,
     )
 
 
@@ -16412,8 +16931,8 @@ def _plugin_inspect_report(
         ),
         "compatibility": _plugin_compatibility_notices(plugin),
         "bundleCapabilities": _plugin_record_string_list(plugin, "bundleCapabilities"),
-        "typedHooks": [],
-        "customHooks": [],
+        "typedHooks": _plugin_record_typed_hooks(plugin),
+        "customHooks": _plugin_record_custom_hooks(plugin),
         "tools": runtime_tool_entries,
         "commands": _plugin_record_string_list(plugin, "commands"),
         "cliCommands": _plugin_record_string_list(plugin, "cliCommands"),
@@ -16456,9 +16975,10 @@ def _mark_plugin_import_state(
             _plugin_runtime_tool_entries(plugin, runtime_specs)
         )
         is_bundle = str(plugin.get("format") or "").strip() == "bundle"
+        plugin_status = str(plugin.get("status") or "").strip()
         is_diagnostics_loaded = (
             loaded_non_bundle_imported
-            and str(plugin.get("status") or "").strip() == "loaded"
+            and plugin_status in {"loaded", "error"}
         )
         plugin["imported"] = (
             not is_bundle
@@ -16524,9 +17044,47 @@ def _plugin_record_http_route_count(plugin: dict[str, object]) -> int:
     return 0
 
 
+def _plugin_record_typed_hooks(plugin: dict[str, object]) -> list[dict[str, object]]:
+    raw_hooks = plugin.get("typedHooks")
+    hooks: list[dict[str, object]] = []
+    for entry in raw_hooks if isinstance(raw_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        hook: dict[str, object] = {"name": name}
+        priority = entry.get("priority")
+        if priority is not None and not isinstance(priority, bool):
+            hook["priority"] = priority
+        hooks.append(hook)
+    return hooks
+
+
+def _plugin_record_custom_hooks(plugin: dict[str, object]) -> list[dict[str, object]]:
+    raw_hooks = plugin.get("customHooks")
+    hooks: list[dict[str, object]] = []
+    for entry in raw_hooks if isinstance(raw_hooks, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = _optional_cli_string(entry.get("name"))
+        if name is None:
+            continue
+        events = _string_list_or_none(entry.get("events")) or []
+        hooks.append({"name": name, "events": events})
+    return hooks
+
+
 def _plugin_runtime_specs_from_services(
     services: object,
+    *,
+    plugin_rows: Sequence[Mapping[str, object]] = (),
+    config_snapshot: Mapping[str, object] | None = None,
+    workspace_dir: str | None = None,
+    diagnostics: list[dict[str, object]] | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    specs: list[GatewayPluginRuntimeExecutorSpec] = []
+    seen_tools: set[str] = set()
     for candidate in (
         getattr(services, "plugin_runtime_service", None),
         getattr(services, "gateway_plugin_runtime", None),
@@ -16536,20 +17094,146 @@ def _plugin_runtime_specs_from_services(
         catalog_specs = getattr(candidate, "catalog_specs", None)
         if not callable(catalog_specs):
             continue
-        specs = catalog_specs(include_owner_only=True)
-        if isinstance(specs, tuple):
-            return tuple(
-                spec
-                for spec in specs
-                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
-            )
-        if isinstance(specs, list):
-            return tuple(
-                spec
-                for spec in specs
-                if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
-            )
+        raw_specs = catalog_specs(include_owner_only=True)
+        if isinstance(raw_specs, tuple | list):
+            _extend_plugin_runtime_specs(specs, seen_tools, raw_specs)
+            break
+    adapter_specs = _plugin_runtime_specs_from_installed_activation_adapter(
+        services,
+        plugin_rows=plugin_rows,
+        config_snapshot=config_snapshot or {},
+        existing_tool_names=seen_tools,
+        workspace_dir=workspace_dir,
+        diagnostics=diagnostics,
+    )
+    _extend_plugin_runtime_specs(specs, seen_tools, adapter_specs)
+    return tuple(specs)
+
+
+def _extend_plugin_runtime_specs(
+    specs: list[GatewayPluginRuntimeExecutorSpec],
+    seen_tools: set[str],
+    candidates: Iterable[object],
+) -> None:
+    for candidate in candidates:
+        if not isinstance(candidate, GatewayPluginRuntimeExecutorSpec):
+            continue
+        tool_key = candidate.tool.strip()
+        if not tool_key or tool_key in seen_tools:
+            continue
+        seen_tools.add(tool_key)
+        specs.append(candidate)
+
+
+def _plugin_runtime_specs_from_installed_activation_adapter(
+    services: object,
+    *,
+    plugin_rows: Sequence[Mapping[str, object]],
+    config_snapshot: Mapping[str, object],
+    existing_tool_names: Iterable[str],
+    workspace_dir: str | None,
+    diagnostics: list[dict[str, object]] | None,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    if not plugin_rows:
+        return ()
+    adapter = None
+    for attr in (
+        "installed_plugin_runtime_activation_adapter",
+        "plugin_runtime_activation_adapter",
+        "installed_plugin_runtime_loader",
+        "plugin_runtime_loader",
+    ):
+        candidate = getattr(services, attr, None)
+        if candidate is not None:
+            adapter = candidate
+            break
+    if adapter is None:
+        return ()
+    only_plugin_ids = _dedupe_cli_strings(
+        [
+            plugin_id
+            for plugin in plugin_rows
+            if (plugin_id := _optional_cli_string(plugin.get("id"))) is not None
+        ]
+    )
+    context: dict[str, object] = {
+        "plugins": [dict(plugin) for plugin in plugin_rows],
+        "config": dict(config_snapshot),
+        "activationSourceConfig": dict(config_snapshot),
+        "env": dict(os.environ),
+        "onlyPluginIds": only_plugin_ids,
+    }
+    if workspace_dir is not None:
+        context["workspaceDir"] = workspace_dir
+    try:
+        result = _call_plugin_runtime_activation_adapter(adapter, context)
+    except Exception as exc:
+        _record_plugin_runtime_activation_adapter_error(
+            plugin_rows,
+            error=exc,
+            diagnostics=diagnostics,
+        )
+        return ()
+    if result is None:
+        return ()
+    if isinstance(result, tuple | list):
+        return tuple(
+            spec
+            for spec in result
+            if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
+        )
+    if isinstance(result, Mapping):
+        registry = result.get("registry")
+        registry_payload = registry if isinstance(registry, Mapping) else result
+        return build_plugin_runtime_executor_specs_from_active_registry(
+            registry_payload,
+            existing_tool_names=existing_tool_names,
+            tool_allowlist=("group:plugins",),
+        )
     return ()
+
+
+def _record_plugin_runtime_activation_adapter_error(
+    plugin_rows: Sequence[Mapping[str, object]],
+    *,
+    error: Exception,
+    diagnostics: list[dict[str, object]] | None,
+) -> None:
+    message = f"failed to load plugin: {error}"
+    failed_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    for plugin in plugin_rows:
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        source = _optional_cli_string(plugin.get("source"))
+        if isinstance(plugin, dict):
+            plugin["status"] = "error"
+            plugin["description"] = message
+            plugin["failurePhase"] = "load"
+            plugin["failedAt"] = failed_at
+        if diagnostics is None:
+            continue
+        diagnostic: dict[str, object] = {
+            "level": "error",
+            "message": message,
+            "failurePhase": "load",
+        }
+        if plugin_id is not None:
+            diagnostic["pluginId"] = plugin_id
+        if source is not None:
+            diagnostic["source"] = source
+        diagnostics.append(diagnostic)
+
+
+def _call_plugin_runtime_activation_adapter(
+    adapter: object,
+    context: Mapping[str, object],
+) -> object | None:
+    for method_name in ("activate_installed_plugins", "activate", "load"):
+        method = getattr(adapter, method_name, None)
+        if callable(method):
+            return method(dict(context))
+    if callable(adapter):
+        return adapter(dict(context))
+    return None
 
 
 def _plugin_runtime_tool_entries(
@@ -16800,6 +17484,12 @@ def _plugin_record_from_deck_item(
         values = _plugin_record_string_list(item, key)
         if values:
             record[key] = values
+    typed_hooks = _plugin_record_typed_hooks(item)
+    if typed_hooks:
+        record["typedHooks"] = typed_hooks
+    custom_hooks = _plugin_record_custom_hooks(item)
+    if custom_hooks:
+        record["customHooks"] = custom_hooks
     command_aliases = _plugin_manifest_command_aliases(item.get("commandAliases"))
     if command_aliases:
         record["commandAliases"] = command_aliases
@@ -16842,6 +17532,21 @@ _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES = (
     "index.cjs",
 )
 _OPENCLAW_CONTRACT_API_EXTENSIONS = (".ts", ".mts", ".cts", ".js", ".mjs", ".cjs")
+_OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS = (
+    ".ts",
+    ".mts",
+    ".cts",
+    ".js",
+    ".mjs",
+    ".cjs",
+)
+_OPENCLAW_RUNTIME_SIDECAR_ARTIFACTS = {
+    "helper-api.js",
+    "light-runtime-api.js",
+    "runtime-api.js",
+    "runtime-setter-api.js",
+    "thread-bindings-runtime.js",
+}
 _OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS = (
     "skills",
     "commands",
@@ -17358,6 +18063,115 @@ def _plugin_manifest_config_contracts(value: object) -> dict[str, object]:
     return contracts
 
 
+def _plugin_manifest_tool_metadata(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    metadata: dict[str, object] = {}
+    for raw_tool_name, raw_metadata in value.items():
+        tool_name = _optional_cli_string(raw_tool_name)
+        if tool_name is None or not isinstance(raw_metadata, dict):
+            continue
+        entry: dict[str, object] = {}
+        auth_signals = _plugin_manifest_auth_signals(raw_metadata.get("authSignals"))
+        if auth_signals:
+            entry["authSignals"] = auth_signals
+        for key in ("authProviders", "aliases"):
+            values = _plugin_manifest_string_list(raw_metadata.get(key))
+            if values:
+                entry[key] = values
+        config_signals = _plugin_manifest_config_signals(
+            raw_metadata.get("configSignals")
+        )
+        if config_signals:
+            entry["configSignals"] = config_signals
+        if entry:
+            metadata[tool_name] = entry
+    return metadata
+
+
+def _plugin_manifest_auth_signals(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    signals: list[dict[str, object]] = []
+    for raw_signal in value:
+        if not isinstance(raw_signal, dict):
+            continue
+        provider = _optional_cli_string(raw_signal.get("provider"))
+        if provider is None:
+            continue
+        signal: dict[str, object] = {"provider": provider}
+        provider_base_url = _plugin_manifest_provider_base_url_guard(
+            raw_signal.get("providerBaseUrl")
+        )
+        if provider_base_url:
+            signal["providerBaseUrl"] = provider_base_url
+        signals.append(signal)
+    return signals
+
+
+def _plugin_manifest_provider_base_url_guard(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    provider = _optional_cli_string(value.get("provider"))
+    allowed_base_urls = _plugin_manifest_string_list(value.get("allowedBaseUrls"))
+    if provider is None or not allowed_base_urls:
+        return {}
+    guard: dict[str, object] = {
+        "provider": provider,
+        "allowedBaseUrls": allowed_base_urls,
+    }
+    default_base_url = _optional_cli_string(value.get("defaultBaseUrl"))
+    if default_base_url is not None:
+        guard["defaultBaseUrl"] = default_base_url
+    return guard
+
+
+def _plugin_manifest_config_signals(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    signals: list[dict[str, object]] = []
+    for raw_signal in value:
+        if not isinstance(raw_signal, dict):
+            continue
+        root_path = _optional_cli_string(raw_signal.get("rootPath"))
+        if root_path is None:
+            continue
+        signal: dict[str, object] = {"rootPath": root_path}
+        overlay_path = _optional_cli_string(raw_signal.get("overlayPath"))
+        if overlay_path is not None:
+            signal["overlayPath"] = overlay_path
+        required = _plugin_manifest_string_list(raw_signal.get("required"))
+        if required:
+            signal["required"] = required
+        required_any = _plugin_manifest_string_list(raw_signal.get("requiredAny"))
+        if required_any:
+            signal["requiredAny"] = required_any
+        mode = _plugin_manifest_config_signal_mode(raw_signal.get("mode"))
+        if mode:
+            signal["mode"] = mode
+        signals.append(signal)
+    return signals
+
+
+def _plugin_manifest_config_signal_mode(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    mode: dict[str, object] = {}
+    path_value = _optional_cli_string(value.get("path"))
+    if path_value is not None:
+        mode["path"] = path_value
+    default = _optional_cli_string(value.get("default"))
+    if default is not None:
+        mode["default"] = default
+    allowed = _plugin_manifest_string_list(value.get("allowed"))
+    if allowed:
+        mode["allowed"] = allowed
+    disallowed = _plugin_manifest_string_list(value.get("disallowed"))
+    if disallowed:
+        mode["disallowed"] = disallowed
+    return mode
+
+
 def _read_cli_json_object(path: Path) -> dict[str, object] | None:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
@@ -17464,6 +18278,62 @@ def _plugin_package_channel_catalog_meta(value: object) -> dict[str, object]:
     return metadata
 
 
+def _plugin_rewrite_public_surface_artifact(name: str) -> str:
+    stem = name.rsplit(".", 1)[0]
+    return f"{stem}.js"
+
+
+def _plugin_is_public_surface_source(name: str) -> bool:
+    if name.startswith(".") or name.startswith("test-") or ".test-" in name:
+        return False
+    if name.endswith(".d.ts"):
+        return False
+    if re.match(r"^config-api(\.[cm]?[jt]s)$", name):
+        return False
+    if re.search(r"(\.test|\.spec)(\.[cm]?[jt]s)$", name):
+        return False
+    return Path(name).suffix in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS
+
+
+def _plugin_public_surface_artifacts(
+    plugin_root: Path,
+    package_openclaw: dict[str, object],
+) -> dict[str, list[str]]:
+    excluded: set[str] = set()
+    raw_extensions = package_openclaw.get("extensions")
+    for entry in raw_extensions if isinstance(raw_extensions, list) else []:
+        text = _optional_cli_string(entry)
+        if text is not None:
+            excluded.add(Path(text).name)
+    setup_entry = _optional_cli_string(package_openclaw.get("setupEntry"))
+    if setup_entry is not None:
+        excluded.add(Path(setup_entry).name)
+    try:
+        entries = list(plugin_root.iterdir())
+    except OSError:
+        return {}
+    public_artifacts = sorted(
+        {
+            _plugin_rewrite_public_surface_artifact(entry.name)
+            for entry in entries
+            if entry.is_file()
+            and entry.name not in excluded
+            and _plugin_is_public_surface_source(entry.name)
+        }
+    )
+    metadata: dict[str, list[str]] = {}
+    if public_artifacts:
+        metadata["publicSurfaceArtifacts"] = public_artifacts
+    runtime_sidecars = [
+        artifact
+        for artifact in public_artifacts
+        if artifact in _OPENCLAW_RUNTIME_SIDECAR_ARTIFACTS
+    ]
+    if runtime_sidecars:
+        metadata["runtimeSidecarArtifacts"] = runtime_sidecars
+    return metadata
+
+
 def _plugin_package_openclaw_record_metadata(
     value: object,
     *,
@@ -17475,6 +18345,7 @@ def _plugin_package_openclaw_record_metadata(
     setup_entry = _optional_cli_string(value.get("setupEntry"))
     if setup_entry is not None:
         metadata["setupSource"] = str((plugin_root / setup_entry).resolve(strict=False))
+    metadata.update(_plugin_public_surface_artifacts(plugin_root, value))
     startup = value.get("startup")
     if (
         isinstance(startup, dict)
@@ -18473,6 +19344,12 @@ def _plugin_record_from_openclaw_manifest(
         or _optional_cli_string(package_metadata.get("description"))
         or ""
     )
+    status = _plugin_manifest_status(
+        manifest,
+        plugin_id=plugin_id,
+        plugins_config=plugins_config,
+        config_snapshot=config_snapshot,
+    )
     record: dict[str, object] = {
         "id": plugin_id,
         "name": (
@@ -18480,12 +19357,7 @@ def _plugin_record_from_openclaw_manifest(
             or _optional_cli_string(package_metadata.get("name"))
             or plugin_id
         ),
-        "status": _plugin_manifest_status(
-            manifest,
-            plugin_id=plugin_id,
-            plugins_config=plugins_config,
-            config_snapshot=config_snapshot,
-        ),
+        "status": status,
         "format": "openclaw",
         "source": str(manifest_path),
         "origin": "config",
@@ -18496,6 +19368,13 @@ def _plugin_record_from_openclaw_manifest(
         "manifestPath": str(manifest_path),
         "configSchema": True,
     }
+    record.update(
+        _plugin_activation_state_payload(
+            plugin_id=plugin_id,
+            plugins_config=plugins_config,
+            status=status,
+        )
+    )
     version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
         package_metadata.get("version")
     )
@@ -18541,6 +19420,9 @@ def _plugin_record_from_openclaw_manifest(
     config_contracts = _plugin_manifest_config_contracts(manifest.get("configContracts"))
     if config_contracts:
         record["configContracts"] = config_contracts
+    tool_metadata = _plugin_manifest_tool_metadata(manifest.get("toolMetadata"))
+    if tool_metadata:
+        record["toolMetadata"] = tool_metadata
     for metadata_key, metadata_value in _plugin_manifest_auth_env_metadata(manifest).items():
         record[metadata_key] = metadata_value
     for key in (

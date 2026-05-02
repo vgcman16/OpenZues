@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~54.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~57.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -127,6 +127,116 @@ may lag behind this tracker.
   preserving `plugin.error` in JSON and printing the OpenClaw-style
   `Error: <text>` line in human inspect output.
   - Status: checkpointed in `88ff1768`
+
+- [x] Plugin inspect human base metadata, rendering description, origin,
+  version, capability mode, and legacy `before_agent_start` posture.
+  - Status: checkpointed in `c11085d1`
+
+- [x] Plugin inspect human capability sections, rendering bundle capabilities
+  and capability rows from the inspect payload.
+  - Status: checkpointed in `2b161d5a`
+
+- [x] Plugin inspect human runtime surface sections, rendering commands, CLI
+  commands, services, and gateway methods.
+  - Status: checkpointed in `f2221877`
+
+- [x] Plugin inspect human tools section, rendering runtime tools plus optional
+  markers.
+  - Status: checkpointed in `5ac316c1`
+
+- [x] Plugin inspect human MCP/LSP sections, rendering server names from bundle
+  and native inspect payloads.
+  - Status: checkpointed in `6fc67848`
+
+- [x] Plugin inspect human HTTP routes section, rendering a positive route
+  count from the inspect payload.
+  - Status: checkpointed in `efef8270`
+
+- [x] Plugin inspect human policy section, rendering native inspect policy
+  fields.
+  - Status: checkpointed in `e0af8199`
+
+- [x] Plugin inspect human diagnostics section, rendering scoped diagnostic
+  rows.
+  - Status: checkpointed in `667182c7`
+
+- [x] Plugin inspect human install section, rendering saved install record
+  rows.
+  - Status: checkpointed in `5ca0a5f2`
+
+- [x] Plugin inspect human compatibility warnings section, rendering
+  compatibility rows without doctor-only severity markers.
+  - Status: checkpointed in `38b85a1a`
+
+- [x] Plugin inspect typed/custom hook sections, projecting hook metadata in
+  JSON and human output.
+  - Status: checkpointed in `0a6e8bcd`
+
+- [x] Plugin inspect human header/bundle-format labels, matching OpenClaw
+  capitalized label output.
+  - Status: checkpointed in `df4d586c`
+
+- [x] Plugin list verbose activation/import state, rendering activation and
+  import metadata rows.
+  - Status: checkpointed in `83146bc1`
+
+- [x] Plugin list human enabled label, rendering active registry rows as
+  `enabled` instead of leaking the internal `loaded` status label.
+  - Status: checkpointed in `bc362484`
+
+- [x] Plugin list human enabled count, rendering the header count as
+  `Plugins (enabled/total enabled)`.
+  - Status: checkpointed in `cc9983c3`
+
+- [x] Manifest load-path activation-state projection for OpenClaw plugin and
+  bundle records discovered through `plugins.load.paths`.
+  - Status: checkpointed in `54bf33aa`
+
+- [x] Errored runtime-imported plugin projection for runtime diagnostics and
+  inspect paths.
+  - Status: checkpointed in `cc2da90c`
+
+- [x] Public-surface/runtime-sidecar artifact metadata for manifest/load-path
+  OpenClaw plugin records.
+  - Status: checkpointed in `2acd2736`
+
+- [x] Configured-channel plugin owner activation projection in `plugins
+  doctor --json`.
+  - Status: checkpointed in `ae5c3986`
+
+- [x] Configured-channel disabled-owner policy in runtime activation planning.
+  - Status: checkpointed in `d2d0e9c3`
+
+- [x] Configured-channel bundled-owner allowlist bypass in runtime activation
+  planning.
+  - Status: checkpointed in `6ad518d4`
+
+- [x] Configured-channel config/global owner trust gate in runtime activation
+  planning.
+  - Status: checkpointed in `0e6ce093`
+
+- [x] Configured-channel workspace owner activation gate in runtime activation
+  planning.
+  - Status: checkpointed in `bb9ef28a`
+
+- [x] Manifest toolMetadata availability gate in runtime activation posture.
+  - Status: checkpointed in `78d905c6`
+
+- [x] Installed plugin runtime activation adapter in plugin doctor/list
+  posture.
+  - Status: checkpointed in `26e55209`
+
+- [x] Installed plugin disabled activation gate in plugin doctor/list posture.
+  - Status: checkpointed in `457021d6`
+
+- [x] Installed plugin inspect runtime activation adapter tool projection.
+  - Status: checkpointed in `fb4fca1b`
+
+- [x] Installed plugin scoped runtime activation load context.
+  - Status: checkpointed in `0ebf7884`
+
+- [x] Installed plugin activation adapter failure diagnostic projection.
+  - Status: checkpointed in `baa32232`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -311,9 +421,357 @@ may lag behind this tracker.
     `209dced0`, plugin doctor failure-phase projection checkpointed in
     `0dc9fc27`, plugin inspect failure-phase projection checkpointed in
     `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
-    `b3bf64a5`, and plugin inspect loader error text projection checkpointed
-    in `88ff1768`, but deeper module import/runtime activation remains.
+    `b3bf64a5`, plugin inspect loader error text projection checkpointed in
+    `88ff1768`, plugin inspect human base metadata checkpointed in
+    `c11085d1`, plugin inspect human capability sections checkpointed in
+    `2b161d5a`, plugin inspect human runtime surface sections checkpointed in
+    `f2221877`, plugin inspect human tools section checkpointed in `5ac316c1`,
+    plugin inspect human MCP/LSP sections checkpointed in `6fc67848`, and
+    plugin inspect human HTTP routes section checkpointed in `efef8270`, and
+    plugin inspect human policy section checkpointed in `e0af8199`, and plugin
+    inspect human diagnostics section checkpointed in `667182c7`, and plugin
+    inspect human install section checkpointed in `5ca0a5f2`, and plugin
+    inspect human compatibility warnings section checkpointed in `38b85a1a`,
+    plugin inspect typed/custom hook sections checkpointed in `0a6e8bcd`, and
+    plugin inspect human header/bundle-format labels checkpointed in
+    `df4d586c`, plugin list verbose activation/import state checkpointed
+    in `83146bc1`, plugin list human enabled label checkpointed in
+    `bc362484`, plugin list human enabled count checkpointed in `cc9983c3`,
+    manifest load-path activation-state projection checkpointed in
+    `54bf33aa`, and errored runtime-imported plugin projection checkpointed
+    in `cc2da90c`, and public-surface/runtime-sidecar artifact metadata
+    checkpointed in `2acd2736`, and configured-channel owner activation
+    projection checkpointed in `ae5c3986`, and configured-channel disabled
+    owner policy checkpointed in `d2d0e9c3`, and configured-channel bundled
+    owner allowlist bypass checkpointed in `6ad518d4`, and configured-channel
+    config/global owner trust gate checkpointed in `0e6ce093`, and
+    configured-channel workspace owner activation gate checkpointed in
+    `bb9ef28a`, and manifest toolMetadata availability gate checkpointed in
+    `78d905c6`, and installed plugin runtime activation adapter checkpointed
+    in `26e55209`, and installed plugin disabled activation gate checkpointed
+    in `457021d6`, installed plugin inspect runtime activation adapter
+    tool projection checkpointed in `fb4fca1b`, and installed plugin scoped
+    runtime activation load context checkpointed in `0ebf7884`, and installed
+    plugin activation adapter failure diagnostics checkpointed in `baa32232`,
+    but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Installed plugin activation adapter failure diagnostic projection.
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `baa32232`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin doctor activation adapter error
+    test (`1 passed`), adjacent plugin runtime CLI proof (`7 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Installed plugin scoped runtime activation load context.
+  - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `0ebf7884`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect scoped activation
+    context test (`1 passed`), adjacent plugin runtime CLI proof (`7 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Installed plugin inspect runtime adapter tool projection.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `fb4fca1b`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect installed activation
+    adapter tool projection test (`1 passed`), adjacent plugin runtime CLI
+    proof (`6 passed`), `ruff check`, and `mypy`.
+
+- [x] Installed plugin disabled activation gate.
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/config-state.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `457021d6`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused disabled activation adapter test (`1
+    passed`), adjacent plugin runtime CLI proof (`7 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Installed plugin runtime activation adapter.
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/runtime.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `26e55209`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin doctor installed activation
+    adapter test (`1 passed`), adjacent plugin runtime CLI proof (`6 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest toolMetadata availability gate.
+  - Source: `openclaw-main/src/plugins/tools.optional.test.ts`,
+    `openclaw-main/src/plugins/tools.ts`,
+    `openclaw-main/src/plugins/manifest-tool-availability.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `78d905c6`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin doctor toolMetadata
+    availability test (`1 passed`), adjacent plugin doctor/list manifest proof
+    (`5 passed`), `ruff check`, and `mypy`.
+
+- [x] Configured-channel workspace owner activation gate.
+  - Source: `openclaw-main/src/plugins/channel-presence-policy.ts`,
+    `openclaw-main/src/plugins/config-activation-shared.ts`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
+  - Status: checkpointed in `bb9ef28a`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused workspace-owner activation helper test
+    (`1 passed`), full activation helper suite (`9 passed`), adjacent plugin
+    doctor proof (`3 passed`), `ruff check`, and `mypy`.
+
+- [x] Configured-channel config/global owner trust gate.
+  - Source: `openclaw-main/src/plugins/channel-presence-policy.ts`,
+    `openclaw-main/src/plugins/manifest-owner-policy.ts`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
+  - Status: checkpointed in `0e6ce093`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused config-owner trust helper test (`1
+    passed`), full activation helper suite (`8 passed`), adjacent plugin
+    doctor proof (`3 passed`), `ruff check`, and `mypy`.
+
+- [x] Configured-channel bundled-owner allowlist bypass.
+  - Source: `openclaw-main/src/plugins/channel-presence-policy.ts`,
+    `openclaw-main/src/plugins/manifest-owner-policy.ts`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
+  - Status: checkpointed in `6ad518d4`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused bundled-owner allowlist-bypass helper
+    test (`1 passed`), full activation helper suite (`7 passed`), adjacent
+    plugin doctor proof (`3 passed`), `ruff check`, and `mypy`.
+
+- [x] Configured-channel disabled-owner policy.
+  - Source: `openclaw-main/src/plugins/channel-presence-policy.ts`,
+    `openclaw-main/src/plugins/manifest-owner-policy.ts`, and
+    `openclaw-main/src/plugins/activation-context.ts`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
+  - Status: checkpointed in `d2d0e9c3`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused disabled-owner helper test (`1
+    passed`), full activation helper suite (`6 passed`), adjacent plugin
+    doctor proof (`3 passed`), `ruff check`, and `mypy`.
+
+- [x] Configured-channel plugin owner activation projection.
+  - Source: `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/channel-presence-policy.ts`, and
+    `openclaw-main/src/plugins/activation-context.ts`
+  - Target: `src/openzues/services/gateway_plugin_activation.py`,
+    `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`, `tests/test_gateway_plugin_activation.py`
+  - Status: checkpointed in `ae5c3986`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused configured-channel doctor test (`1
+    passed`), adjacent plugin doctor/manifest proof (`5 passed`), activation
+    helper focused proof (`1 passed`), full activation helper proof (`5
+    passed`), `ruff check`, and `mypy`.
+
+- [x] Public-surface/runtime-sidecar artifact metadata.
+  - Source: `openclaw-main/src/plugins/bundled-plugin-metadata.test.ts`,
+    `openclaw-main/src/plugins/bundled-plugin-scan.ts`, and
+    `openclaw-main/src/plugins/public-surface-runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `2acd2736`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused manifest load-path test (`1 passed`),
+    adjacent manifest/bundle inventory proof (`7 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Errored runtime-imported plugin projection.
+  - Source: `openclaw-main/src/plugins/status.test.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `cc2da90c`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused runtime inspect error-import test (`1
+    passed`), adjacent loader-error/workspace-status proof (`7 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest load-path activation-state projection.
+  - Source: `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/config-state.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `54bf33aa`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused manifest load-path test (`1 passed`),
+    adjacent plugin activation/manifest inventory proof (`8 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin list human enabled count.
+  - Source: `openclaw-main/src/cli/plugins-list-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `cc9983c3`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin list runtime-inventory test (`1
+    passed`), adjacent plugin list/runtime proof (`6 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Plugin list human enabled label.
+  - Source: `openclaw-main/src/cli/plugins-list-format.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `bc362484`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin list runtime-inventory test (`1
+    passed`), adjacent plugin list/runtime proof (`6 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Plugin list verbose activation/import state.
+  - Source: `openclaw-main/src/cli/plugins-list-format.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `83146bc1`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin list activation-state test (`1
+    passed`), adjacent plugin list/runtime proof (`6 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Plugin inspect human header/bundle-format labels.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `df4d586c`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect Claude bundle test (`1
+    passed`), adjacent plugin inspect/doctor proof (`12 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect typed/custom hook sections.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `0a6e8bcd`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect hook-section test (`1
+    passed`), adjacent plugin inspect/doctor proof (`11 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect human compatibility warnings section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `38b85a1a`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect human metadata test (`1
+    passed`), adjacent plugin inspect/doctor proof (`10 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect human install section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `5ca0a5f2`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect saved-install test (`1
+    passed`), adjacent plugin inspect proof (`9 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Plugin inspect human diagnostics section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `667182c7`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect scoped-diagnostics test
+    (`1 passed`), adjacent plugin inspect proof (`8 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Plugin inspect human policy section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `e0af8199`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect config-policy test (`1
+    passed`), adjacent plugin inspect proof (`7 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Plugin inspect human HTTP routes section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `efef8270`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect runtime-surface test (`1
+    passed`), adjacent plugin inspect proof (`7 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Plugin inspect human MCP/LSP sections.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `6fc67848`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect MCP/LSP test (`1
+    passed`), adjacent plugin inspect bundle/runtime proof (`7 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Plugin inspect human tools section.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `5ac316c1`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect human tools test (`1
+    passed`), adjacent plugin inspect/doctor proof (`13 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect human runtime surface sections.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `f2221877`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect human runtime-surface
+    test (`1 passed`), adjacent plugin inspect/doctor proof (`11 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Plugin inspect human capability sections.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `2b161d5a`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect human capability test
+    (`1 passed`), adjacent plugin inspect/doctor proof (`10 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect human base metadata.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `c11085d1`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect human metadata test (`1
+    passed`), adjacent plugin inspect/doctor proof (`9 passed`), `ruff
+    check`, and `mypy`.
 
 - [x] Plugin inspect loader error text projection.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,

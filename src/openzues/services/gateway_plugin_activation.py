@@ -80,6 +80,71 @@ def resolve_manifest_activation_plugin_ids(
     return [str(plugin_id) for plugin_id in plugin_ids]
 
 
+def resolve_configured_channel_plugin_plan(
+    *,
+    plugins: Iterable[Mapping[str, object]],
+    config: Mapping[str, object],
+) -> dict[str, object]:
+    channel_ids = _configured_channel_ids(config)
+    plugin_rows = tuple(plugins)
+    plugins_by_id = {
+        plugin_id: plugin
+        for plugin in plugin_rows
+        if (plugin_id := _normalize_plugin_id(plugin.get("id")))
+    }
+    entries: list[dict[str, object]] = []
+    plugin_ids: list[str] = []
+    for channel_id in channel_ids:
+        candidate_owner_ids = resolve_manifest_activation_plugin_ids(
+            plugins=plugin_rows,
+            trigger={"kind": "channel", "channel": channel_id},
+        )
+        owner_ids: list[str] = []
+        blocked_reasons: list[str] = []
+        for candidate_owner_id in candidate_owner_ids:
+            blocked_reason = _configured_channel_owner_block_reason(
+                plugins_by_id.get(candidate_owner_id),
+                config,
+                channel_id=channel_id,
+            )
+            if blocked_reason is not None:
+                blocked_reasons.append(blocked_reason)
+                continue
+            owner_ids.append(candidate_owner_id)
+        plugin_ids.extend(owner_ids)
+        entries.append(
+            {
+                "channelId": channel_id,
+                "sources": ["explicit-config"],
+                "effective": bool(owner_ids),
+                "pluginIds": owner_ids,
+                "blockedReasons": (
+                    []
+                    if owner_ids
+                    else (_dedupe(blocked_reasons) or ["no-channel-owner"])
+                ),
+            }
+        )
+    scoped_plugin_ids = _dedupe(plugin_ids)
+    payload: dict[str, object] = {
+        "scope": "configured-channels",
+        "channelIds": channel_ids,
+        "pluginIds": scoped_plugin_ids,
+        "entries": entries,
+        "diagnostics": [],
+    }
+    if scoped_plugin_ids:
+        payload["activationConfig"] = {
+            "plugins": {
+                "allow": scoped_plugin_ids,
+                "entries": {
+                    plugin_id: {"enabled": True} for plugin_id in scoped_plugin_ids
+                },
+            }
+        }
+    return payload
+
+
 def _manifest_activation_triggers(
     plugins: Iterable[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -484,6 +549,89 @@ def _dedupe(values: Iterable[str]) -> list[str]:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _configured_channel_ids(config: Mapping[str, object]) -> list[str]:
+    channels = _mapping(config.get("channels"))
+    channel_ids: list[str] = []
+    for channel_id, value in channels.items():
+        normalized_channel_id = _normalize_command_id(channel_id)
+        if not normalized_channel_id or normalized_channel_id in {
+            "defaults",
+            "modelbychannel",
+        }:
+            continue
+        if _configured_channel_enabled(value):
+            channel_ids.append(normalized_channel_id)
+    return _dedupe(channel_ids)
+
+
+def _configured_channel_enabled(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("enabled") is False:
+        return False
+    if value.get("enabled") is True:
+        return True
+    return any(
+        key != "enabled" and _channel_config_value_present(config_value)
+        for key, config_value in value.items()
+    )
+
+
+def _channel_config_value_present(value: object) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Mapping | list | tuple | set):
+        return bool(value)
+    return True
+
+
+def _configured_channel_owner_block_reason(
+    plugin: Mapping[str, object] | None,
+    config: Mapping[str, object],
+    *,
+    channel_id: str,
+) -> str | None:
+    if plugin is None:
+        return "no-channel-owner"
+    plugin_id = _normalize_plugin_id(plugin.get("id"))
+    plugins = _mapping(config.get("plugins"))
+    if plugins.get("enabled") is False:
+        return "plugins-disabled"
+    if plugin_id in _plugin_id_list(plugins.get("deny")):
+        return "blocked-by-denylist"
+    entries = _mapping(plugins.get("entries"))
+    entry = _mapping(entries.get(plugin_id))
+    if entry.get("enabled") is False:
+        return "plugin-disabled"
+    allow = _plugin_id_list(plugins.get("allow"))
+    origin = _normalize_command_id(plugin.get("origin"))
+    if (
+        origin in {"config", "global", "workspace"}
+        and plugin_id not in allow
+        and entry.get("enabled") is not True
+    ):
+        return "untrusted-plugin"
+    allowlist_bypass = (
+        origin == "bundled"
+        and _configured_channel_enabled(_mapping(config.get("channels")).get(channel_id))
+    )
+    if allow and plugin_id not in allow and not allowlist_bypass:
+        return "not-in-allowlist"
+    return None
+
+
+def _plugin_id_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        plugin_id
+        for item in value
+        if (plugin_id := _normalize_plugin_id(item))
+    ]
 
 
 def _mapping_items(value: object) -> list[Mapping[str, object]]:

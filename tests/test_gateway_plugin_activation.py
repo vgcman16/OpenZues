@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from openzues.services.gateway_plugin_activation import (
+    resolve_configured_channel_plugin_plan,
     resolve_manifest_activation_plan,
     resolve_manifest_activation_plugin_ids,
 )
@@ -166,3 +167,164 @@ def test_resolve_manifest_activation_plan_projects_reason_entries() -> None:
         "manifest-provider-owner",
         "manifest-setup-provider-owner",
     ]
+
+
+def test_resolve_configured_channel_plugin_plan_projects_activation_config() -> None:
+    plugins = _activation_plugins()
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "plugins": {"entries": {"demo-channel": {"enabled": True}}},
+            "channels": {
+                "telegram": {"enabled": True},
+                "defaults": {"account": "primary"},
+                "modelByChannel": {"telegram": "codex"},
+            }
+        },
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": ["demo-channel"],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": True,
+                "pluginIds": ["demo-channel"],
+                "blockedReasons": [],
+            }
+        ],
+        "diagnostics": [],
+        "activationConfig": {
+            "plugins": {
+                "allow": ["demo-channel"],
+                "entries": {"demo-channel": {"enabled": True}},
+            }
+        },
+    }
+
+
+def test_resolve_configured_channel_plugin_plan_respects_disabled_owner() -> None:
+    plugins = _activation_plugins()
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "plugins": {"entries": {"demo-channel": {"enabled": False}}},
+            "channels": {"telegram": {"enabled": True}},
+        },
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": [],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": False,
+                "pluginIds": [],
+                "blockedReasons": ["plugin-disabled"],
+            }
+        ],
+        "diagnostics": [],
+    }
+
+
+def test_resolve_configured_channel_plugin_plan_bypasses_allowlist_for_bundled_owner() -> None:
+    plugins = [
+        {
+            "id": "bundled-telegram",
+            "channels": ["telegram"],
+            "origin": "bundled",
+            "enabledByDefault": False,
+        }
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "plugins": {"allow": ["other-plugin"]},
+            "channels": {"telegram": {"enabled": True}},
+        },
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": ["bundled-telegram"],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": True,
+                "pluginIds": ["bundled-telegram"],
+                "blockedReasons": [],
+            }
+        ],
+        "diagnostics": [],
+        "activationConfig": {
+            "plugins": {
+                "allow": ["bundled-telegram"],
+                "entries": {"bundled-telegram": {"enabled": True}},
+            }
+        },
+    }
+
+
+def test_resolve_configured_channel_plugin_plan_requires_trust_for_config_owner() -> None:
+    plugins = [
+        {
+            "id": "external-telegram",
+            "channels": ["telegram"],
+            "origin": "config",
+            "enabledByDefault": True,
+        }
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={"channels": {"telegram": {"enabled": True}}},
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": [],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": False,
+                "pluginIds": [],
+                "blockedReasons": ["untrusted-plugin"],
+            }
+        ],
+        "diagnostics": [],
+    }
+
+
+def test_resolve_configured_channel_plugin_plan_requires_activation_for_workspace_owner() -> None:
+    plugins = [
+        {
+            "id": "workspace-telegram",
+            "channels": ["telegram"],
+            "origin": "workspace",
+            "enabledByDefault": True,
+        }
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={"channels": {"telegram": {"enabled": True}}},
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": [],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": False,
+                "pluginIds": [],
+                "blockedReasons": ["untrusted-plugin"],
+            }
+        ],
+        "diagnostics": [],
+    }
