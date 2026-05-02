@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from openzues.services.gateway_plugin_activation import resolve_manifest_activation_plugin_ids
+from openzues.services.gateway_plugin_activation import (
+    resolve_manifest_activation_plan,
+    resolve_manifest_activation_plugin_ids,
+)
 
 
 def _activation_plugins() -> list[dict[str, object]]:
@@ -106,3 +109,60 @@ def test_resolve_manifest_activation_plugin_ids_matches_capabilities_and_scopes(
         )
         == []
     )
+
+
+def test_resolve_manifest_activation_plan_projects_reason_entries() -> None:
+    plugins = [
+        {
+            "id": "demo-channel",
+            "providers": ["openai"],
+            "channels": ["telegram"],
+            "commandAliases": [
+                {
+                    "name": "demo",
+                    "kind": "runtime-slash",
+                    "cliCommand": "demo-tools",
+                }
+            ],
+            "setup": {"providers": [{"id": "openai-codex"}]},
+            "contracts": {"tools": ["custom-tool"]},
+            "activation": {
+                "onAgentHarnesses": ["codex"],
+                "onCommands": ["demo-tools"],
+                "onProviders": ["custom-provider"],
+                "onChannels": ["telegram"],
+                "onRoutes": ["webhook"],
+                "onCapabilities": ["provider", "tool"],
+            },
+            "origin": "workspace",
+        }
+    ]
+
+    assert resolve_manifest_activation_plan(
+        plugins=plugins,
+        trigger={"kind": "command", "command": "demo-tools"},
+    ) == {
+        "trigger": {"kind": "command", "command": "demo-tools"},
+        "pluginIds": ["demo-channel"],
+        "entries": [
+            {
+                "pluginId": "demo-channel",
+                "origin": "workspace",
+                "reasons": ["activation-command-hint", "manifest-command-alias"],
+            }
+        ],
+        "diagnostics": [],
+    }
+    assert resolve_manifest_activation_plan(
+        plugins=plugins,
+        trigger={"kind": "provider", "provider": "openai-codex"},
+    )["entries"][0]["reasons"] == ["manifest-setup-provider-owner"]
+    assert resolve_manifest_activation_plan(
+        plugins=plugins,
+        trigger={"kind": "capability", "capability": "provider"},
+    )["entries"][0]["reasons"] == [
+        "activation-capability-hint",
+        "activation-provider-hint",
+        "manifest-provider-owner",
+        "manifest-setup-provider-owner",
+    ]

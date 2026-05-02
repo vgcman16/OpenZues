@@ -85,6 +85,7 @@ from openzues.services.gateway_models import GatewayModelsService
 from openzues.services.gateway_node_methods import GatewayNodeMethodService
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_registry import GatewayNodeRegistry
+from openzues.services.gateway_plugin_activation import resolve_manifest_activation_plans
 from openzues.services.gateway_plugin_runtime import GatewayPluginRuntimeExecutorSpec
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
@@ -7574,12 +7575,24 @@ def _plugin_runtime_activation_payload(
         status = "metadata_only"
     else:
         status = "ok"
-    return {
+    payload: dict[str, object] = {
         "status": status,
         "manifestToolPlugins": manifest_tool_plugins,
         "runtimeExecutorPlugins": runtime_executor_plugins,
         "missingExecutorPlugins": missing_executor_plugins,
     }
+    activation_plans = _plugin_manifest_activation_plans(plugin_rows)
+    if activation_plans:
+        payload["activationPlans"] = activation_plans
+    return payload
+
+
+def _plugin_manifest_activation_plans(
+    plugin_rows: list[object],
+) -> list[dict[str, object]]:
+    return resolve_manifest_activation_plans(
+        plugins=[plugin for plugin in plugin_rows if isinstance(plugin, Mapping)]
+    )
 
 
 def _build_doctor_runtime_bridge_acp_payload(

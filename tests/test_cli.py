@@ -8892,7 +8892,138 @@ def test_plugins_doctor_json_reports_metadata_only_tool_activation(
         "missingExecutorPlugins": [
             {"pluginId": "metadata-tools", "tools": ["metadata.search"]}
         ],
+        "activationPlans": [
+            {
+                "trigger": {"kind": "capability", "capability": "tool"},
+                "pluginIds": ["metadata-tools"],
+                "entries": [
+                    {
+                        "pluginId": "metadata-tools",
+                        "origin": "config",
+                        "reasons": ["manifest-tool-contract"],
+                    }
+                ],
+                "diagnostics": [],
+            }
+        ],
     }
+
+
+def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "demo-channel"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "demo-channel",
+                "name": "Demo Channel",
+                "description": "Manifest activation planner coverage.",
+                "version": "1.0.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "commandAliases": [
+                    {
+                        "name": "demo",
+                        "kind": "runtime-slash",
+                        "cliCommand": "demo-tools",
+                    }
+                ],
+                "providers": ["openai"],
+                "channels": ["telegram"],
+                "setup": {"providers": [{"id": "openai-codex"}]},
+                "activation": {
+                    "onAgentHarnesses": ["codex"],
+                    "onCommands": ["demo-tools"],
+                    "onProviders": ["custom-provider"],
+                    "onChannels": ["telegram"],
+                    "onRoutes": ["webhook"],
+                    "onCapabilities": ["provider", "tool"],
+                },
+                "contracts": {"tools": ["custom-tool"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    plans = payload["runtimeActivation"]["activationPlans"]
+    keyed = {
+        (
+            plan["trigger"]["kind"],
+            plan["trigger"].get("command")
+            or plan["trigger"].get("provider")
+            or plan["trigger"].get("runtime")
+            or plan["trigger"].get("channel")
+            or plan["trigger"].get("route")
+            or plan["trigger"].get("capability"),
+        ): plan
+        for plan in plans
+    }
+    assert keyed[("command", "demo-tools")]["entries"] == [
+        {
+            "pluginId": "demo-channel",
+            "origin": "config",
+            "reasons": ["activation-command-hint", "manifest-command-alias"],
+        }
+    ]
+    assert keyed[("provider", "openai")]["entries"][0]["reasons"] == [
+        "manifest-provider-owner"
+    ]
+    assert keyed[("provider", "openai-codex")]["entries"][0]["reasons"] == [
+        "manifest-setup-provider-owner"
+    ]
+    assert keyed[("provider", "custom-provider")]["entries"][0]["reasons"] == [
+        "activation-provider-hint"
+    ]
+    assert keyed[("agentHarness", "codex")]["entries"][0]["reasons"] == [
+        "activation-agent-harness-hint"
+    ]
+    assert keyed[("channel", "telegram")]["entries"][0]["reasons"] == [
+        "activation-channel-hint",
+        "manifest-channel-owner",
+    ]
+    assert keyed[("route", "webhook")]["entries"][0]["reasons"] == [
+        "activation-route-hint"
+    ]
+    assert keyed[("capability", "provider")]["entries"][0]["reasons"] == [
+        "activation-capability-hint",
+        "activation-provider-hint",
+        "manifest-provider-owner",
+        "manifest-setup-provider-owner",
+    ]
+    assert keyed[("capability", "tool")]["entries"][0]["reasons"] == [
+        "activation-capability-hint",
+        "manifest-tool-contract",
+    ]
 
 
 def test_plugins_doctor_human_reports_error_plugins(monkeypatch) -> None:

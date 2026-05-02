@@ -16,12 +16,12 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~53.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
-| CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -64,6 +64,12 @@ may lag behind this tracker.
   `pluginId`/`pluginName` stamping, JSON-compatible schema preservation, and
   valid required-scope projection.
   - Status: checkpointed in `9fb5098b`
+
+- [x] Plugin manifest activation-plan reason projection in `plugins doctor
+  --json`, covering command aliases, providers, setup providers, agent
+  harnesses, channels, routes, and capability triggers with upstream
+  `activation-*` and `manifest-*` reason strings.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -235,15 +241,38 @@ may lag behind this tracker.
 
 - [ ] Real installed plugin module import/activation.
   - Source: OpenClaw plugin lifecycle and activation runtime.
-  - Status: open
+  - Status: open; manifest activation-plan reason projection child slice
+    verified and awaiting checkpoint, but deeper module import/runtime
+    activation remains.
   - Weight: 5
 
 - [~] Provider-native adapter breadth.
   - Source: OpenClaw channel/provider send, poll, replay, direct announce, media,
     reply, thread, and result metadata behavior.
   - Status: mapped; Slack thread timestamp fallback checkpointed in
-    `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`
+    `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`; Discord thread
+    query placement checkpointed in `0d40be27`; WhatsApp document filename
+    projection checkpointed in `05c4f0fc`; Discord media iteration
+    checkpointed in `b5371fd9`
   - Weight: 3
+
+- [x] Plugin manifest activation-plan reason projection.
+  - Source: `openclaw-main/src/plugins/activation-planner.ts`,
+    `openclaw-main/src/plugins/activation-planner.test.ts`,
+    `openclaw-main/src/plugins/cli-registry-loader.ts`,
+    `openclaw-main/src/plugins/providers.runtime.ts`,
+    `openclaw-main/src/plugins/channel-presence-policy.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_cli.py`, `tests/test_gateway_plugin_activation.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_projects_manifest_activation_plan_reasons
+    -q` (`1 passed`), service proof `python -m pytest
+    tests\test_gateway_plugin_activation.py::test_resolve_manifest_activation_plan_projects_reason_entries
+    -q` (`1 passed`), adjacent plugin CLI proof (`5 passed`), adjacent
+    activation service proof (`4 passed`), `ruff check`, and `mypy`.
 
 - [x] Slack native route `thread_ts` fallback.
   - Source: `openclaw-main/extensions/slack/src/thread-ts.ts`,

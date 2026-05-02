@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~53.7% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -29,7 +29,7 @@ Current percentage rollup:
   pre-npm plus explicit/preferred ClawHub, production-wired ClawHub API/archive
   install/update, fakeable plus production-wired npm install/update, update
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
-  hook-pack npm install fallback, native manifest activation-planner,
+  hook-pack npm install fallback, native manifest activation-planner reason projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -45,7 +45,7 @@ Current percentage rollup:
   API/archive install/update, fakeable plus production-wired npm install/update,
   update spec-overrides,
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
-  install fallback, native manifest activation planning, active-registry
+  install fallback, native manifest activation planning reason projection, active-registry
   executor projection, and runtime activation doctor posture; remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
@@ -96,6 +96,15 @@ schemas and valid required scopes are preserved, and invalid or disabled
 registrations are skipped before projection. Verified on 2026-05-02 with the
 focused `plugins.uiDescriptors` pytest, adjacent plugin-runtime proof, `ruff
 check`, and `mypy`; checkpointed in `9fb5098b`.
+Plugin runtime activation doctor parity now mirrors OpenClaw's manifest
+activation planner (`src/plugins/activation-planner.ts`) reason vocabulary for
+installed manifests: `plugins doctor --json` projects activation plans for
+command aliases, providers, setup providers, agent harnesses, channels, routes,
+and capability triggers, including upstream-shaped `activation-*` and
+`manifest-*` reasons without importing the TypeScript runtime. Verified on
+2026-05-02 with the focused activation-plan CLI pytest, focused activation
+service reason-plan pytest, adjacent plugin CLI and activation service proofs,
+`ruff check`, and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4587,9 +4596,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~99.1%. Verified with focused and
   adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
   in `b5371fd9`.
-- Next repo-wide queue head: continue the source-backed provider-native
-  adapter breadth queue, especially remaining channel/provider send, poll,
-  replay, direct announce, media, reply, thread, and result metadata behavior.
+- Closed the plugin manifest activation-plan reason projection seam from
+  OpenClaw `src/plugins/activation-planner.ts`,
+  `src/plugins/activation-planner.test.ts`, `src/plugins/cli-registry-loader.ts`,
+  `src/plugins/providers.runtime.ts`, and
+  `src/plugins/channel-presence-policy.ts`: `plugins doctor --json` now
+  includes activation plans under `runtimeActivation`, with command,
+  provider/setup-provider, agent-harness, channel, route, and capability
+  triggers plus upstream-shaped reason entries. Repo-wide parity is now
+  estimated at ~53.7%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with focused CLI and activation service tests,
+  adjacent plugin CLI and activation service proofs, `ruff check`, and `mypy`;
+  checkpoint pending.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially the source-backed boundary that turns
+  installed manifest/load-path records into native runtime executor or honest
+  unavailable activation posture. The provider-native adapter breadth queue
+  remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
