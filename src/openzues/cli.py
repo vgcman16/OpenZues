@@ -14638,6 +14638,16 @@ def _cli_bundled_plugin_root_candidates(root: Path) -> list[Path]:
 
 
 def _cli_bundled_plugin_roots() -> list[Path]:
+    disable_bundled = _optional_cli_string(
+        os.environ.get("OPENCLAW_DISABLE_BUNDLED_PLUGINS")
+    )
+    if disable_bundled is not None and disable_bundled.lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return []
     roots: list[Path] = []
     for env_key in ("OPENCLAW_BUNDLED_PLUGINS_DIR", "OPENZUES_BUNDLED_PLUGINS_DIR"):
         raw_root = _optional_cli_string(os.environ.get(env_key))
@@ -19261,6 +19271,7 @@ def _plugin_manifest_status(
     plugin_id: str,
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
+    origin: str = "config",
 ) -> str:
     if plugins_config.get("enabled") is False:
         return "disabled"
@@ -19278,6 +19289,12 @@ def _plugin_manifest_status(
         return "loaded"
     allow = plugins_config.get("allow")
     allow_values = {str(value) for value in allow} if isinstance(allow, list) else set()
+    if origin == "bundled":
+        if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
+            return "loaded"
+        if allow_values and plugin_id not in allow_values:
+            return "disabled"
+        return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
     if plugin_id in allow_values:
         return "loaded"
     if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
@@ -19347,13 +19364,15 @@ def _plugin_activation_state_payload(
     plugin_id: str,
     plugins_config: dict[str, object],
     status: str,
+    origin: str = "config",
+    enabled_by_default: bool | None = None,
 ) -> dict[str, object]:
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     allow_values = _plugin_config_string_set(plugins_config, "allow")
     slot_reason = _plugin_config_slot_reason(plugins_config, plugin_id)
     explicitly_enabled = (
         entry_payload.get("enabled") is True
-        or plugin_id in allow_values
+        or (origin != "bundled" and plugin_id in allow_values)
         or slot_reason is not None
     )
     activated = status == "loaded"
@@ -19379,8 +19398,13 @@ def _plugin_activation_state_payload(
         reason = "not in allowlist"
     elif activated and entry_payload.get("enabled") is True:
         reason = "enabled in config"
-    elif activated and plugin_id in allow_values:
+    elif activated and origin != "bundled" and plugin_id in allow_values:
         reason = "selected in allowlist"
+    elif origin == "bundled" and activated and enabled_by_default is True:
+        reason = "bundled default enablement"
+    elif origin == "bundled" and not activated:
+        source = "disabled"
+        reason = "bundled (disabled by default)"
     elif not activated:
         source = "disabled"
 
@@ -19400,6 +19424,7 @@ def _plugin_record_from_openclaw_manifest(
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
     diagnostics: list[dict[str, object]] | None = None,
+    origin: str = "config",
 ) -> dict[str, object] | None:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -19440,6 +19465,7 @@ def _plugin_record_from_openclaw_manifest(
         plugin_id=plugin_id,
         plugins_config=plugins_config,
         config_snapshot=config_snapshot,
+        origin=origin,
     )
     record: dict[str, object] = {
         "id": plugin_id,
@@ -19451,7 +19477,7 @@ def _plugin_record_from_openclaw_manifest(
         "status": status,
         "format": "openclaw",
         "source": str(manifest_path),
-        "origin": "config",
+        "origin": origin,
         "description": description,
         "capabilities": capabilities,
         "parityStatus": "metadata",
@@ -19464,6 +19490,8 @@ def _plugin_record_from_openclaw_manifest(
             plugin_id=plugin_id,
             plugins_config=plugins_config,
             status=status,
+            origin=origin,
+            enabled_by_default=manifest.get("enabledByDefault") is True,
         )
     )
     version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
@@ -19575,6 +19603,50 @@ def _plugin_manifest_records_from_config_snapshot(
     return records
 
 
+def _plugin_bundled_manifest_records_from_env(
+    plugins_config: dict[str, object],
+    *,
+    config_snapshot: dict[str, object],
+    diagnostics: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    seen_paths: set[Path] = set()
+    for bundled_root in _cli_bundled_plugin_roots():
+        try:
+            children = sorted(bundled_root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            try:
+                resolved_child = child.resolve(strict=False)
+            except OSError:
+                resolved_child = child
+            if resolved_child in seen_paths:
+                continue
+            seen_paths.add(resolved_child)
+            manifest_path = _plugin_manifest_path_for_load_path(child)
+            if manifest_path is None:
+                continue
+            record = _plugin_record_from_openclaw_manifest(
+                manifest_path,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+                diagnostics=diagnostics,
+                origin="bundled",
+            )
+            if record is None:
+                continue
+            plugin_id = str(record.get("id") or "")
+            if not plugin_id or plugin_id in seen_ids:
+                continue
+            seen_ids.add(plugin_id)
+            records.append(record)
+    return records
+
+
 def _plugin_manifest_record_from_install_path(
     plugin_id: str,
     install_path: str | None,
@@ -19626,11 +19698,20 @@ def _plugin_records_from_config_snapshot(
         config_snapshot=snapshot,
         diagnostics=diagnostics,
     )
+    bundled_manifest_records = _plugin_bundled_manifest_records_from_env(
+        plugins_config,
+        config_snapshot=snapshot,
+        diagnostics=diagnostics,
+    )
     records_by_id = {
         str(record.get("id") or ""): dict(record)
         for record in manifest_records
         if str(record.get("id") or "")
     }
+    for bundled_record in bundled_manifest_records:
+        plugin_id = str(bundled_record.get("id") or "")
+        if plugin_id and plugin_id not in records_by_id:
+            records_by_id[plugin_id] = dict(bundled_record)
     entries = plugins_config.get("entries")
     entry_records = entries if isinstance(entries, dict) else {}
     installs = plugins_config.get("installs")
@@ -19712,6 +19793,7 @@ def _plugin_records_from_config_snapshot(
                     plugin_id=plugin_id,
                     plugins_config=plugins_config,
                     config_snapshot=snapshot,
+                    origin=_optional_cli_string(merged.get("origin")) or "config",
                 )
             )
             merged["status"] = status
@@ -19720,6 +19802,8 @@ def _plugin_records_from_config_snapshot(
                     plugin_id=plugin_id,
                     plugins_config=plugins_config,
                     status=status,
+                    origin=_optional_cli_string(merged.get("origin")) or "config",
+                    enabled_by_default=merged.get("enabledByDefault") is True,
                 )
             )
             if version is not None:

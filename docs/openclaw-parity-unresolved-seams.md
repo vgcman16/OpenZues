@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~58.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~58.3% overall, with a reasonable
   band of ~50-59%.
 - The active gateway/session/tool-contract family is estimated at ~99.2% of the
   bounded OpenZues-local parity path.
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -62,7 +62,7 @@ Current percentage rollup:
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -5286,11 +5286,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with the focused installed-record activation test, adjacent
   installed-plugin CLI proof, `ruff check`, and `mypy`; checkpointed in
   `b8f39fe3`.
+- Closed the bundled plugin env discovery/default-disable seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/discovery.ts`, and
+  `src/plugins/config-activation-shared.ts`: native plugin list/doctor
+  inventory now discovers manifests under `OPENCLAW_BUNDLED_PLUGINS_DIR`,
+  marks them `origin=bundled`, respects `OPENCLAW_DISABLE_BUNDLED_PLUGINS`,
+  and keeps bundled plugins disabled by default even when their id appears in
+  `plugins.allow`. Repo-wide parity is now estimated at ~58.3%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused bundled plugin default-disable test, adjacent
+  bundled/install/plugin-list proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
-  import/activation queue, especially the deeper boundary that turns installed
-  manifest/load-path registry records into native runtime executor or honest
-  unavailable activation posture. The provider-native adapter breadth queue
-  remains the next alternate after that slice.
+  import/activation queue, especially bundled package plugin-sdk import/runtime
+  activation and standalone text-transform projection. The provider-native
+  adapter breadth queue remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
