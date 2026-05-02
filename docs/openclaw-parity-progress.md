@@ -9475,7 +9475,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   that return active registry `textTransforms` now surface
   `runtimeTextTransformPlugins` in `plugins doctor --json`, preserving plugin
   id/name/source/root plus safe input/output replacement counts without
-  requiring tool executor registrations. Checkpoint pending.
+  requiring tool executor registrations. Checkpoint in `5216fb70`.
 - Progress estimates are now roughly 58.9% repo-wide and 99.4% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

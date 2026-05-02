@@ -141,7 +141,7 @@ may lag behind this tracker.
 - [x] Runtime text-transform plugin projection, preserving standalone
   `textTransforms` registrations from activation adapter registries in plugin
   doctor runtime activation metadata.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `5216fb70`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
