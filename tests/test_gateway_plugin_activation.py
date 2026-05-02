@@ -267,3 +267,33 @@ def test_resolve_configured_channel_plugin_plan_bypasses_allowlist_for_bundled_o
             }
         },
     }
+
+
+def test_resolve_configured_channel_plugin_plan_requires_trust_for_config_owner() -> None:
+    plugins = [
+        {
+            "id": "external-telegram",
+            "channels": ["telegram"],
+            "origin": "config",
+            "enabledByDefault": True,
+        }
+    ]
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={"channels": {"telegram": {"enabled": True}}},
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": [],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": False,
+                "pluginIds": [],
+                "blockedReasons": ["untrusted-plugin"],
+            }
+        ],
+        "diagnostics": [],
+    }

@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~57.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~57.1% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -50,6 +50,7 @@ Current percentage rollup:
   configured-channel owner activation projection,
   configured-channel disabled-owner policy,
   configured-channel bundled-owner allowlist bypass,
+  configured-channel config/global owner trust gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -86,6 +87,7 @@ Current percentage rollup:
   configured-channel owner activation projection,
   configured-channel disabled-owner policy,
   configured-channel bundled-owner allowlist bypass,
+  configured-channel config/global owner trust gate,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -5149,6 +5151,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   bundled-owner allowlist-bypass helper test, full activation helper suite,
   adjacent plugin doctor proof, `ruff check`, and `mypy`; checkpoint in
   `6ad518d4`.
+- Closed the configured-channel config/global owner trust gate seam from
+  OpenClaw `src/plugins/channel-presence-policy.ts` and
+  `src/plugins/manifest-owner-policy.ts`: non-bundled `config`/`global`
+  channel owners now require explicit trust through `plugins.allow` or
+  `plugins.entries.<id>.enabled=true` before scoped configured-channel
+  activation, otherwise the owner is projected as `untrusted-plugin`.
+  Repo-wide parity is now estimated at ~57.1%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  config-owner trust helper test, full activation helper suite, adjacent plugin
+  doctor proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

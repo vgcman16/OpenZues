@@ -608,8 +608,15 @@ def _configured_channel_owner_block_reason(
     if entry.get("enabled") is False:
         return "plugin-disabled"
     allow = _plugin_id_list(plugins.get("allow"))
+    origin = _normalize_command_id(plugin.get("origin"))
+    if (
+        origin in {"config", "global"}
+        and plugin_id not in allow
+        and entry.get("enabled") is not True
+    ):
+        return "untrusted-plugin"
     allowlist_bypass = (
-        _normalize_command_id(plugin.get("origin")) == "bundled"
+        origin == "bundled"
         and _configured_channel_enabled(_mapping(config.get("channels")).get(channel_id))
     )
     if allow and plugin_id not in allow and not allowlist_bypass:

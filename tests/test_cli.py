@@ -9439,7 +9439,10 @@ def test_plugins_doctor_json_projects_configured_channel_plugin_activation(
                 "localMediaPreviewRoots": [],
                 "embedSandbox": "scripts",
                 "allowExternalEmbedUrls": False,
-                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+                "plugins": {
+                    "entries": {"telegram-native": {"enabled": True}},
+                    "load": {"paths": [str(plugin_dir)]},
+                },
                 "channels": {"telegram": {"enabled": True, "botToken": "configured"}},
             }
         )
