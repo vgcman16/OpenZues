@@ -938,6 +938,7 @@ class GatewayConfigService:
         plugin_id: str,
         install_path: str,
         source_path: str,
+        spec: str | None = None,
         version: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -948,6 +949,7 @@ class GatewayConfigService:
             plugin_id=plugin_id,
             install_path=install_path,
             source_path=source_path,
+            spec=spec,
             version=version,
             force=force,
         )
@@ -1769,6 +1771,7 @@ def _record_path_plugin_install_in_snapshot(
     plugin_id: str,
     install_path: str,
     source_path: str,
+    spec: str | None,
     version: str | None,
     force: bool,
 ) -> dict[str, Any]:
@@ -1795,6 +1798,9 @@ def _record_path_plugin_install_in_snapshot(
         "installPath": normalized_install_path,
         "installedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
+    normalized_spec = spec.strip() if isinstance(spec, str) else None
+    if normalized_spec:
+        install_record["spec"] = normalized_spec
     normalized_version = version.strip() if isinstance(version, str) else None
     if normalized_version:
         install_record["version"] = normalized_version

@@ -20,12 +20,14 @@ Current percentage rollup:
   plus MCP/LSP server projection, known Claude marketplace shortcut, remote
   marketplace listing, remote marketplace path-entry install/update,
   Git/GitHub entry-source install, URL/archive entry-source install, local
-  path link/copy install, and missing local-looking install-spec guard slices.
+  path link/copy install, missing local-looking install-spec guard, and bundled
+  pre-npm install slices.
 - The CLI/operator control-plane family is estimated at ~98% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, local
-  path link/copy installs, and missing local-looking install-spec guard;
-  remaining CLI gaps are now dominated by package/npm/clawhub install breadth,
-  runtime activation/import depth, and packaging surfaces.
+  path link/copy installs, missing local-looking install-spec guard, and
+  bundled pre-npm install; remaining CLI gaps are now dominated by
+  explicit/preferred ClawHub install, npm install/update breadth, runtime
+  activation/import depth, and packaging surfaces.
 - Fully locked bounded slices are now tracked in
   `docs/openclaw-parity-progress.md` under "Fully Completed / Locked Bounded
   Slices"; remaining queue heads here should focus on sandbox runtime setup,
@@ -1388,6 +1390,13 @@ Missing local-looking install specs now mirror OpenClaw's
 archive, and script-shaped specs return `Path not found: <resolved path>`
 before the native command reaches the broader package/npm/clawhub install
 boundary.
+`plugins install <bare-plugin-id>` now also mirrors OpenClaw's bundled
+pre-npm branch: native bundled sources resolve from
+`OPENCLAW_BUNDLED_PLUGINS_DIR` / `OPENZUES_BUNDLED_PLUGINS_DIR`, persist path
+install records with the raw `spec`, and warn operators that scoped npm package
+names bypass the bundled plugin. Remaining non-marketplace install parity is
+explicit/preferred ClawHub install, npm install/update behavior, and deeper
+runtime activation/import metadata.
 `plugins uninstall` now removes native plugin config
 entries, install records, allowlist entries, load paths, memory slot ownership,
 and owned channel config while keeping local marketplace source directories

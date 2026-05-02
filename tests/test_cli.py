@@ -8927,6 +8927,119 @@ def test_plugins_install_reports_missing_absolute_local_like_spec(tmp_path) -> N
     assert f"Path not found: {missing_path}" in result.stderr
 
 
+def test_plugins_install_json_uses_bundled_plugin_for_bare_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    extensions_dir = tmp_path / "openclaw-runtime" / "dist" / "extensions"
+    plugin_dir = extensions_dir / "feishu"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="feishu")
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(extensions_dir))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "install", "feishu", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    bundled_path = str(plugin_dir.resolve())
+    assert payload["ok"] is True
+    assert payload["action"] == "install"
+    assert payload["pluginId"] == "feishu"
+    assert payload["source"] == "path"
+    assert payload["install"]["source"] == "path"
+    assert payload["install"]["spec"] == "feishu"
+    assert payload["install"]["sourcePath"] == bundled_path
+    assert payload["install"]["installPath"] == bundled_path
+    assert payload["install"]["version"] == "1.0.0"
+    assert payload["restart"] == "gateway"
+    assert payload["warning"] == (
+        f'Using bundled plugin "feishu" from {bundled_path} for bare install spec '
+        '"feishu". To install an npm package with the same name, use a scoped '
+        "package name (for example @scope/feishu)."
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["allow"] == ["feishu"]
+    assert stored["plugins"]["entries"]["feishu"]["enabled"] is True
+    assert stored["plugins"]["load"]["paths"] == [bundled_path]
+    install = stored["plugins"]["installs"]["feishu"]
+    assert install["source"] == "path"
+    assert install["spec"] == "feishu"
+    assert install["sourcePath"] == bundled_path
+    assert install["installPath"] == bundled_path
+    assert isinstance(install["installedAt"], str)
+
+
+def test_plugins_install_human_warns_for_bundled_bare_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    extensions_dir = tmp_path / "openclaw-runtime" / "dist" / "extensions"
+    plugin_dir = extensions_dir / "feishu"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="feishu")
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(extensions_dir))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "install", "feishu"])
+
+    bundled_path = str(plugin_dir.resolve())
+    assert result.exit_code == 0, result.stderr
+    assert (
+        f'Using bundled plugin "feishu" from {bundled_path} for bare install spec '
+        '"feishu". To install an npm package with the same name, use a scoped '
+        "package name (for example @scope/feishu)."
+    ) in result.stdout
+    assert 'Installed plugin "feishu" from path.' in result.stdout
+    assert f"path: {bundled_path}" in result.stdout
+    assert "Restart the gateway to apply changes." in result.stdout
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,

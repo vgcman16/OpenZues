@@ -7,8 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, and missing local-looking install-spec guard slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, and missing local-looking install-spec guard; remaining CLI gaps are now dominated by package/npm/clawhub install breadth, runtime activation/import depth, and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, and bundled pre-npm install slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, and bundled pre-npm install; remaining CLI gaps are now dominated by explicit/preferred ClawHub install, npm install/update breadth, runtime activation/import depth, and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7139,6 +7139,35 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_install_marketplace_json_persists_local_manifest_entry"` (`5
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+- `plugins install <bare-plugin-id>` now follows OpenClaw's bundled pre-npm
+  branch before ClawHub/npm fallback. Native bundled sources resolve from
+  `OPENCLAW_BUNDLED_PLUGINS_DIR` / `OPENZUES_BUNDLED_PLUGINS_DIR`, persist
+  path install records with `spec=<raw id>`, keep source/install paths pointed
+  at the bundled plugin directory, and emit the upstream-shaped warning that a
+  scoped npm package name is required to bypass the bundled plugin.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this bundled pre-npm slice. Remaining
+  non-marketplace plugin install parity is explicit/preferred ClawHub
+  install, npm install/update behavior, and deeper runtime activation/import
+  depth.
+- Verified the bundled pre-npm install slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_json_uses_bundled_plugin_for_bare_id
+  -q` and `python -m pytest
+  tests\test_cli.py::test_plugins_install_human_warns_for_bundled_bare_id -q`
+  (`1 failed` each before implementation because bare bundled ids returned the
+  native marketplace boundary), then both commands (`1 passed` each), adjacent
+  plugin CLI proof `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`8 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
 
 ## References
 

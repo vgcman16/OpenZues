@@ -9323,6 +9323,9 @@ def _emit_plugins_install(payload: dict[str, object], *, json_output: bool) -> N
     if json_output:
         _emit_payload(payload, json_output=True)
         return
+    warning = _optional_cli_string(payload.get("warning"))
+    if warning is not None:
+        typer.echo(warning)
     plugin_id = str(payload.get("pluginId") or "").strip()
     install = payload.get("install")
     install_payload = install if isinstance(install, dict) else {}
@@ -12615,6 +12618,15 @@ _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES = (
     ".tar",
     ".zip",
 )
+_CLI_BARE_NPM_PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9\-._~]*$")
+
+
+@dataclass(frozen=True)
+class _CliBundledPluginSource:
+    plugin_id: str
+    local_path: Path
+    version: str | None = None
+    npm_spec: str | None = None
 
 
 def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
@@ -12627,6 +12639,99 @@ def _looks_like_cli_local_plugin_install_spec(raw: str) -> bool:
         return True
     lower_text = text.lower()
     return any(lower_text.endswith(suffix) for suffix in _CLI_LOCAL_PLUGIN_INSTALL_SUFFIXES)
+
+
+def _is_cli_bare_npm_package_name(raw: str) -> bool:
+    return _CLI_BARE_NPM_PACKAGE_RE.match(raw.strip()) is not None
+
+
+def _cli_bundled_plugin_roots() -> list[Path]:
+    roots: list[Path] = []
+    for env_key in ("OPENCLAW_BUNDLED_PLUGINS_DIR", "OPENZUES_BUNDLED_PLUGINS_DIR"):
+        raw_root = _optional_cli_string(os.environ.get(env_key))
+        if raw_root is None:
+            continue
+        root = _bundled_lookup_path(raw_root)
+        if root.is_dir() and root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _read_cli_bundled_plugin_source(plugin_dir: Path) -> _CliBundledPluginSource | None:
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    plugin_id = _optional_cli_string(manifest.get("id"))
+    if plugin_id is None:
+        return None
+    package_metadata = _plugin_package_json_metadata(plugin_dir)
+    package_openclaw = package_metadata.get("openclaw")
+    install_metadata = (
+        package_openclaw.get("install")
+        if isinstance(package_openclaw, dict)
+        else None
+    )
+    npm_spec = (
+        _optional_cli_string(install_metadata.get("npmSpec"))
+        if isinstance(install_metadata, dict)
+        else None
+    ) or _optional_cli_string(package_metadata.get("name"))
+    return _CliBundledPluginSource(
+        plugin_id=plugin_id,
+        local_path=plugin_dir.resolve(),
+        version=(
+            _optional_cli_string(manifest.get("version"))
+            or _optional_cli_string(package_metadata.get("version"))
+        ),
+        npm_spec=npm_spec,
+    )
+
+
+def _find_cli_bundled_plugin_source_by_id(plugin_id: str) -> _CliBundledPluginSource | None:
+    requested_id = plugin_id.strip()
+    if not requested_id:
+        return None
+    seen: set[Path] = set()
+    for root in _cli_bundled_plugin_roots():
+        candidates: list[Path] = [root / requested_id]
+        try:
+            candidates.extend(sorted(root.iterdir(), key=lambda path: path.name.lower()))
+        except OSError:
+            continue
+        for candidate in candidates:
+            try:
+                resolved_candidate = candidate.resolve(strict=False)
+            except OSError:
+                resolved_candidate = candidate
+            if resolved_candidate in seen or not candidate.is_dir():
+                continue
+            seen.add(resolved_candidate)
+            source = _read_cli_bundled_plugin_source(candidate)
+            if source is not None and source.plugin_id == requested_id:
+                return source
+    return None
+
+
+def _resolve_cli_bundled_install_plan_before_npm(
+    raw_spec: str,
+) -> _CliBundledPluginSource | None:
+    if not _is_cli_bare_npm_package_name(raw_spec):
+        return None
+    return _find_cli_bundled_plugin_source_by_id(raw_spec)
+
+
+def _cli_bundled_install_warning(source: _CliBundledPluginSource, raw_spec: str) -> str:
+    return (
+        f'Using bundled plugin "{source.plugin_id}" from {source.local_path} '
+        f'for bare install spec "{raw_spec}". To install an npm package with the same '
+        f"name, use a scoped package name (for example @scope/{raw_spec})."
+    )
 
 
 async def _build_plugins_path_install_payload(
@@ -12671,6 +12776,37 @@ async def _build_plugins_path_install_payload(
         "path": result.get("path"),
         "hash": result.get("hash"),
         "restart": result.get("restart") or "gateway",
+    }
+
+
+async def _build_plugins_bundled_install_payload(
+    services: CliServices,
+    *,
+    raw_spec: str,
+    source: _CliBundledPluginSource,
+    force: bool,
+) -> dict[str, object]:
+    result = services.gateway_config.record_path_plugin_install(
+        plugin_id=source.plugin_id,
+        install_path=str(source.local_path),
+        source_path=str(source.local_path),
+        spec=raw_spec,
+        version=source.version,
+        force=force,
+    )
+    install = result.get("install")
+    install_payload = dict(install) if isinstance(install, dict) else {}
+    return {
+        "ok": True,
+        "action": "install",
+        "pluginId": result.get("pluginId") or source.plugin_id,
+        "source": "path",
+        "install": install_payload,
+        "loadPath": result.get("loadPath"),
+        "path": result.get("path"),
+        "hash": result.get("hash"),
+        "restart": result.get("restart") or "gateway",
+        "warning": _cli_bundled_install_warning(source, raw_spec),
     }
 
 
@@ -19526,6 +19662,27 @@ def plugins_install_command(
                 resolved_missing_path = missing_path
             typer.echo(f"Path not found: {resolved_missing_path}", err=True)
             raise typer.Exit(code=1)
+        bundled_source = _resolve_cli_bundled_install_plan_before_npm(plugin_id)
+        if bundled_source is not None:
+
+            async def _bundled_action(services: CliServices) -> dict[str, object]:
+                return await _build_plugins_bundled_install_payload(
+                    services,
+                    raw_spec=plugin_id,
+                    source=bundled_source,
+                    force=force,
+                )
+
+            try:
+                payload = _run(_run_with_services(_bundled_action))
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            except RuntimeError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+            _emit_plugins_install(payload, json_output=json_output)
+            return
         typer.echo(
             "Native plugin install currently supports local marketplace installs via "
             "--marketplace.",
