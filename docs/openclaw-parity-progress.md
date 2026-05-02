@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~54.0% overall, with a reasonable band of ~49-58%.
+- Estimated repo-wide parity: ~54.1% overall, with a reasonable band of ~49-58%.
 - Estimated active gateway/session/tool-contract family parity: ~99.1% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag and missing-target static preflight, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag and missing-target static preflight, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -180,6 +180,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_marks_runtime_executor_plugins_imported or
   plugins_list_json_projects_runtime_executor_inventory or
   plugins_doctor_json_reports_metadata_only_tool_activation"` (`6 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+- Plugin inspect runtime missing-target preflight now mirrors OpenClaw's guard
+  that checks the static plugin snapshot before runtime inspection: missing
+  targets return `Plugin not found` without entering the runtime-inspection
+  inventory path.
+- Verified the missing-target runtime inspect slice with `python -m pytest
+  tests\test_cli.py::test_plugins_inspect_runtime_missing_target_uses_static_inventory
+  -q` (`1 passed`), focused runtime inspect pair (`2 passed`), adjacent
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_inspect_runtime_json_uses_runtime_loaded_import_state or
+  plugins_inspect_runtime_missing_target_uses_static_inventory or
+  plugins_inspect_json_projects_runtime_executor_tools or
+  plugins_inspect_json_includes_plugin_scoped_diagnostics or
+  plugins_list_json_marks_runtime_executor_plugins_imported or
+  plugins_list_json_projects_runtime_executor_inventory or
+  plugins_doctor_json_reports_metadata_only_tool_activation"` (`7 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 - TTS persona gateway/CLI methods now mirror OpenClaw's
@@ -8381,6 +8398,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Verified the plugin inspect runtime flag slice with the focused runtime
   inspect CLI test (`1 passed`), adjacent plugin inspect/runtime inventory
   tests (`6 passed`), `ruff check`, and `mypy`.
+- Plugin inspect runtime missing-target preflight is now landed for OpenClaw's
+  `plugins inspect --runtime` guard: native inspect checks the static metadata
+  inventory first, returns `Plugin not found` for absent targets, and only then
+  enters the runtime-inspection path for existing plugins. Checkpoint pending.
+- Progress estimates are now roughly 54.1% repo-wide while the
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
+  the remaining plugin queue head is still deeper real installed module import
+  and runtime activation wiring.
+- Verified the plugin inspect missing-target preflight slice with the focused
+  missing-target CLI test (`1 passed`), focused runtime inspect pair (`2
+  passed`), adjacent plugin inspect/runtime inventory tests (`7 passed`),
+  `ruff check`, and `mypy`.
 
 ## References
 

@@ -8515,6 +8515,35 @@ def test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state(
     assert payload["tools"] == []
 
 
+def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatch) -> None:
+    runtime_flags: list[bool] = []
+
+    async def fake_inventory(
+        _services: object,
+        *,
+        enabled_only: bool,
+        runtime_inspection: bool = False,
+    ) -> dict[str, object]:
+        assert enabled_only is False
+        runtime_flags.append(runtime_inspection)
+        return {"workspaceDir": None, "plugins": [], "diagnostics": []}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace())
+
+    monkeypatch.setattr(cli_module, "_build_plugins_inventory_payload", fake_inventory)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["plugins", "inspect", "missing-plugin", "--runtime", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "Plugin not found: missing-plugin" in result.stderr
+    assert runtime_flags == [False]
+
+
 def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) -> None:
     async def fake_inventory(
         _services: object,

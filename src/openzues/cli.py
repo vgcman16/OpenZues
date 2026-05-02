@@ -16279,24 +16279,39 @@ async def _build_plugin_inspect_payload(
     inspect_all: bool,
     runtime_inspection: bool = False,
 ) -> dict[str, object] | list[dict[str, object]]:
-    inventory = await _build_plugins_inventory_payload(
+    def parse_inventory(
+        inventory: dict[str, object],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        plugins = inventory.get("plugins")
+        plugin_rows = [
+            plugin for plugin in plugins if isinstance(plugin, dict)
+        ] if isinstance(
+            plugins,
+            list,
+        ) else []
+        raw_diagnostics = inventory.get("diagnostics")
+        diagnostics = [
+            diagnostic
+            for diagnostic in raw_diagnostics
+            if isinstance(diagnostic, dict)
+        ] if isinstance(raw_diagnostics, list) else []
+        return plugin_rows, diagnostics
+
+    static_inventory = await _build_plugins_inventory_payload(
         services,
         enabled_only=False,
-        runtime_inspection=runtime_inspection,
+        runtime_inspection=False,
     )
     runtime_specs = _plugin_runtime_specs_from_services(services)
-    plugins = inventory.get("plugins")
-    plugin_rows = [plugin for plugin in plugins if isinstance(plugin, dict)] if isinstance(
-        plugins,
-        list,
-    ) else []
-    raw_diagnostics = inventory.get("diagnostics")
-    diagnostics = [
-        diagnostic
-        for diagnostic in raw_diagnostics
-        if isinstance(diagnostic, dict)
-    ] if isinstance(raw_diagnostics, list) else []
+    plugin_rows, diagnostics = parse_inventory(static_inventory)
     if inspect_all:
+        if runtime_inspection:
+            runtime_inventory = await _build_plugins_inventory_payload(
+                services,
+                enabled_only=False,
+                runtime_inspection=True,
+            )
+            plugin_rows, diagnostics = parse_inventory(runtime_inventory)
         return [
             _plugin_inspect_report(
                 plugin,
@@ -16312,6 +16327,14 @@ async def _build_plugin_inspect_payload(
     plugin = _find_plugin_record(plugin_rows, normalized_id)
     if plugin is None:
         raise KeyError(normalized_id)
+    if runtime_inspection:
+        runtime_inventory = await _build_plugins_inventory_payload(
+            services,
+            enabled_only=False,
+            runtime_inspection=True,
+        )
+        runtime_plugin_rows, diagnostics = parse_inventory(runtime_inventory)
+        plugin = _find_plugin_record(runtime_plugin_rows, normalized_id) or plugin
     return _plugin_inspect_report(
         plugin,
         runtime_specs=runtime_specs,
