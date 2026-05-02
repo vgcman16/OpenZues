@@ -17177,20 +17177,108 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     if result is None:
         return ()
     if isinstance(result, tuple | list):
-        return tuple(
+        raw_specs = tuple(
             spec
             for spec in result
             if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
         )
-    if isinstance(result, Mapping):
+    elif isinstance(result, Mapping):
         registry = result.get("registry")
         registry_payload = registry if isinstance(registry, Mapping) else result
-        return build_plugin_runtime_executor_specs_from_active_registry(
+        raw_specs = build_plugin_runtime_executor_specs_from_active_registry(
             registry_payload,
             existing_tool_names=existing_tool_names,
             tool_allowlist=("group:plugins",),
         )
-    return ()
+    else:
+        return ()
+    return _filter_plugin_runtime_specs_by_manifest_contracts(
+        raw_specs,
+        plugin_rows=plugin_rows,
+        diagnostics=diagnostics,
+    )
+
+
+def _filter_plugin_runtime_specs_by_manifest_contracts(
+    specs: Sequence[GatewayPluginRuntimeExecutorSpec],
+    *,
+    plugin_rows: Sequence[Mapping[str, object]],
+    diagnostics: list[dict[str, object]] | None,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    declared_by_plugin: dict[str, tuple[str, ...]] = {}
+    source_by_plugin: dict[str, str | None] = {}
+    for plugin in plugin_rows:
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        if plugin_id is None:
+            continue
+        contracts = plugin.get("contracts")
+        contract_payload = contracts if isinstance(contracts, Mapping) else {}
+        declared_by_plugin[plugin_id] = tuple(
+            _plugin_manifest_string_list(contract_payload.get("tools"))
+        )
+        source_by_plugin[plugin_id] = _optional_cli_string(plugin.get("source"))
+    if not declared_by_plugin:
+        return tuple(specs)
+    accepted: list[GatewayPluginRuntimeExecutorSpec] = []
+    missing_contract_plugins: set[str] = set()
+    undeclared_by_plugin: dict[str, list[str]] = {}
+    for spec in specs:
+        plugin_id = _optional_cli_string(spec.plugin_id)
+        if plugin_id is None or plugin_id not in declared_by_plugin:
+            accepted.append(spec)
+            continue
+        declared = declared_by_plugin[plugin_id]
+        if not declared:
+            missing_contract_plugins.add(plugin_id)
+            continue
+        declared_keys = {str(tool).strip().lower() for tool in declared}
+        tool_key = spec.tool.strip().lower()
+        if tool_key not in declared_keys:
+            undeclared_by_plugin.setdefault(plugin_id, []).append(spec.tool)
+            continue
+        accepted.append(spec)
+    if diagnostics is not None:
+        for plugin_id in declared_by_plugin:
+            source = source_by_plugin.get(plugin_id)
+            if plugin_id in missing_contract_plugins:
+                _record_plugin_runtime_contract_diagnostic(
+                    diagnostics,
+                    plugin_id=plugin_id,
+                    source=source,
+                    message=(
+                        "plugin must declare contracts.tools before registering "
+                        "agent tools"
+                    ),
+                )
+            undeclared = _dedupe_cli_strings(undeclared_by_plugin.get(plugin_id, []))
+            if undeclared:
+                _record_plugin_runtime_contract_diagnostic(
+                    diagnostics,
+                    plugin_id=plugin_id,
+                    source=source,
+                    message=(
+                        "plugin must declare contracts.tools for: "
+                        f"{', '.join(undeclared)}"
+                    ),
+                )
+    return tuple(accepted)
+
+
+def _record_plugin_runtime_contract_diagnostic(
+    diagnostics: list[dict[str, object]],
+    *,
+    plugin_id: str,
+    source: str | None,
+    message: str,
+) -> None:
+    diagnostic: dict[str, object] = {
+        "level": "error",
+        "pluginId": plugin_id,
+        "message": message,
+    }
+    if source is not None:
+        diagnostic["source"] = source
+    diagnostics.append(diagnostic)
 
 
 def _record_plugin_runtime_activation_adapter_error(

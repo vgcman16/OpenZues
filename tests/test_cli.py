@@ -9632,6 +9632,93 @@ def test_plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter(
     assert [plugin["id"] for plugin in calls[0]["plugins"]] == ["installed-tools"]
 
 
+def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-contract"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-contract",
+        contracts={"tools": ["manifest_tool"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-contract",
+                        "pluginName": "Installed Contract",
+                        "source": "installed-runtime",
+                        "names": ["runtime_tool"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["diagnostics"] == [
+        {
+            "level": "error",
+            "pluginId": "installed-contract",
+            "source": str(plugin_dir / "openclaw.plugin.json"),
+            "message": "plugin must declare contracts.tools for: runtime_tool",
+        }
+    ]
+    runtime_activation = payload["runtimeActivation"]
+    assert runtime_activation["status"] == "metadata_only"
+    assert runtime_activation["runtimeExecutorPlugins"] == []
+    assert runtime_activation["missingExecutorPlugins"] == [
+        {"pluginId": "installed-contract", "tools": ["manifest_tool"]}
+    ]
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["installed-contract"]["imported"] is False
+
+
 def test_plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins(
     tmp_path,
     monkeypatch,

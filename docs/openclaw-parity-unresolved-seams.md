@@ -4,8 +4,8 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~57.9% overall, with a reasonable
-  band of ~49-58%.
+- Repo-wide OpenClaw parity is estimated at ~58.0% overall, with a reasonable
+  band of ~50-59%.
 - The active gateway/session/tool-contract family is estimated at ~99.2% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -5252,12 +5252,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   bounded paths remain ~99.9%. Verified with the focused plugin doctor
   activation adapter error test, adjacent plugin runtime CLI proof, `ruff
   check`, and `mypy`; checkpoint in `baa32232`.
+- Closed the installed activation-adapter manifest tool contract seam from
+  OpenClaw `src/plugins/registry.ts` and `src/plugins/loader.test.ts`:
+  adapter-returned runtime tools must be declared in the plugin manifest's
+  `contracts.tools`; undeclared tools are dropped from runtime executor
+  projection, manifest-declared tools remain missing until a declared executor
+  exists, and doctor diagnostics use OpenClaw's
+  `plugin must declare contracts.tools for: <tool>` message. Repo-wide parity
+  is now estimated at ~58.0%; runtime/CLI/doctor and CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused plugin doctor
+  contract test, adjacent plugin runtime CLI proof, `ruff check`, and `mypy`;
+  checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
-  import/activation queue, especially manifest `contracts.tools` enforcement
-  for installed activation-adapter runtime tools and the deeper boundary that
-  turns installed manifest/load-path registry records into native runtime
-  executor or honest unavailable activation posture. The provider-native
-  adapter breadth queue remains the next alternate after that slice.
+  import/activation queue, especially the deeper boundary that turns installed
+  manifest/load-path registry records into native runtime executor or honest
+  unavailable activation posture. The provider-native adapter breadth queue
+  remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
