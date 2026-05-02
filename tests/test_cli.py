@@ -8914,6 +8914,65 @@ def test_plugins_inspect_runtime_activation_adapter_receives_scoped_load_context
     ]
 
 
+def test_plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "runtime-load-options"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="runtime-load-options",
+        contracts={"tools": ["runtime_load_options.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    context = calls[-1]
+    assert context["rawConfig"]["plugins"]["load"]["paths"] == [str(plugin_dir)]
+    assert context["config"]["plugins"]["load"]["paths"] == [str(plugin_dir)]
+    assert context["activationSourceConfig"]["plugins"]["load"]["paths"] == [
+        str(plugin_dir)
+    ]
+    assert context["autoEnabledReasons"] == {}
+    assert context["throwOnLoadError"] is True
+
+
 def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatch) -> None:
     runtime_flags: list[bool] = []
 

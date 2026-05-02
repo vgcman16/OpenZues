@@ -17158,10 +17158,13 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     )
     context: dict[str, object] = {
         "plugins": [dict(plugin) for plugin in plugin_rows],
+        "rawConfig": dict(config_snapshot),
         "config": dict(config_snapshot),
         "activationSourceConfig": dict(config_snapshot),
+        "autoEnabledReasons": {},
         "env": dict(os.environ),
         "onlyPluginIds": only_plugin_ids,
+        "throwOnLoadError": True,
     }
     if workspace_dir is not None:
         context["workspaceDir"] = workspace_dir

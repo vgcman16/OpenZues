@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~58.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~58.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.2% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -241,6 +241,9 @@ may lag behind this tracker.
 - [x] Installed activation-adapter manifest tool contract enforcement.
   - Status: checkpointed in `aac25d80`
 
+- [x] Installed activation-adapter OpenClaw runtime load options.
+  - Status: verified; checkpoint pending
+
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
   and `capability/infer tts personas` plus `set-persona` JSON output.
@@ -457,9 +460,23 @@ may lag behind this tracker.
     runtime activation load context checkpointed in `0ebf7884`, and installed
     plugin activation adapter failure diagnostics checkpointed in `baa32232`,
     and installed activation-adapter manifest tool contract enforcement
-    checkpointed in `aac25d80`, but deeper module import/runtime activation
-    remains.
+    checkpointed in `aac25d80`, and installed activation-adapter runtime load
+    options verified with checkpoint pending, but deeper module import/runtime
+    activation remains.
   - Weight: 5
+
+- [x] Installed activation-adapter OpenClaw runtime load options.
+  - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
+    `openclaw-main/src/plugins/runtime/load-context.test.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed activation-adapter
+    load-options test (`1 passed`), adjacent plugin runtime CLI proof (`7
+    passed`), `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter manifest tool contract enforcement.
   - Source: `openclaw-main/src/plugins/registry.ts`,
