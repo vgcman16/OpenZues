@@ -10285,6 +10285,75 @@ def test_plugins_list_json_auto_enables_bundled_channel_from_manifest_env_var(
     assert plugin["activationReason"] == "external-env-channel configured"
 
 
+def test_plugins_list_json_projects_bundled_runtime_plugin_sdk_imports(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    plugin_dir = package_root / "dist" / "extensions" / "discord"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "\n".join(
+            [
+                "import { normalizeLowercaseStringOrEmpty } from "
+                '"openclaw/plugin-sdk/text-runtime";',
+                'const sdk = require("@openclaw/plugin-sdk");',
+                "export default { register() {} };",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(package_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["discord"]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["runtimeEntrySource"] == str(entry_path.resolve(strict=False))
+    assert plugin["pluginSdkImports"] == [
+        "openclaw/plugin-sdk/text-runtime",
+        "@openclaw/plugin-sdk",
+    ]
+
+
 def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
     tmp_path,
     monkeypatch,

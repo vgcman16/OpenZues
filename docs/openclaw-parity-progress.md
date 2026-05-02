@@ -9507,6 +9507,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or manifest_env_var"` (`6 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
+- Bundled runtime plugin-SDK import metadata is now landed: runtime entry
+  sources that import `openclaw/plugin-sdk` or `@openclaw/plugin-sdk` subpaths
+  now expose `pluginSdkImports` in plugin list/runtime metadata, preserving
+  exact specifiers for native adapter alias resolution without executing the
+  TypeScript/JavaScript runtime. Checkpoint pending.
+- Progress estimates are now roughly 59.1% repo-wide and 99.6% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the bundled plugin-SDK import metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_projects_bundled_runtime_plugin_sdk_imports
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+  discovers_openclaw_manifest_load_paths or bundled_plugins_disabled_by_default
+  or plugins_install_prefers_dist_runtime_bundled_tree_for_package_root or
+  runtime_text_transform_plugins"` (`6 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)

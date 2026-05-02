@@ -5394,6 +5394,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   import/activation queue, especially bundled package plugin-sdk
   import/runtime activation. The provider-native adapter breadth queue remains
   the next alternate after that slice.
+- Closed the bundled runtime plugin-SDK import metadata seam from OpenClaw
+  `src/plugins/loader.test.ts`,
+  `src/plugins/loader-sdk-import-guardrails.test.ts`, and
+  `src/plugins/sdk-alias.ts`: runtime entry sources that import
+  `openclaw/plugin-sdk` or `@openclaw/plugin-sdk` subpaths now expose
+  `pluginSdkImports` in plugin list/runtime metadata, preserving exact
+  specifiers for native adapter alias resolution without executing the
+  TypeScript/JavaScript runtime. Repo-wide parity is now estimated at ~59.1%;
+  the active gateway/session/tool-contract family is now estimated at ~99.6%,
+  and runtime/CLI/doctor plus CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused bundled plugin-SDK import metadata test,
+  adjacent runtime-entry/bundled install/text-transform proof, `ruff check`,
+  and `mypy`; checkpoint pending.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

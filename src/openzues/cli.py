@@ -17812,6 +17812,9 @@ _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS = (
     ".mjs",
     ".cjs",
 )
+_OPENCLAW_PLUGIN_SDK_IMPORT_RE = re.compile(
+    r"""["'](@?openclaw/plugin-sdk(?:/[A-Za-z0-9_.\-\/]+)?)["']"""
+)
 _OPENCLAW_RUNTIME_SIDECAR_ARTIFACTS = {
     "helper-api.js",
     "light-runtime-api.js",
@@ -18640,6 +18643,23 @@ def _plugin_runtime_entry_sources(
     return sources
 
 
+def _plugin_runtime_entry_sdk_imports(runtime_entry_sources: Sequence[str]) -> list[str]:
+    imports: list[str] = []
+    seen: set[str] = set()
+    for source in runtime_entry_sources:
+        try:
+            text = Path(source).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for match in _OPENCLAW_PLUGIN_SDK_IMPORT_RE.finditer(text):
+            specifier = match.group(1)
+            if specifier in seen:
+                continue
+            seen.add(specifier)
+            imports.append(specifier)
+    return imports
+
+
 def _plugin_package_openclaw_record_metadata(
     value: object,
     *,
@@ -18655,6 +18675,9 @@ def _plugin_package_openclaw_record_metadata(
     if runtime_entry_sources:
         metadata["runtimeEntrySource"] = runtime_entry_sources[0]
         metadata["runtimeEntrySources"] = runtime_entry_sources
+        plugin_sdk_imports = _plugin_runtime_entry_sdk_imports(runtime_entry_sources)
+        if plugin_sdk_imports:
+            metadata["pluginSdkImports"] = plugin_sdk_imports
     metadata.update(_plugin_public_surface_artifacts(plugin_root, value))
     startup = value.get("startup")
     if (
