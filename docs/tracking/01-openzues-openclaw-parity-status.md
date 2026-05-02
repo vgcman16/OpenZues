@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~57.8% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~59.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.7% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -107,6 +107,55 @@ may lag behind this tracker.
 - [x] Installed plugin slot activation reasons for config/install records,
   preserving OpenClaw's `selected memory slot` activation decision.
   - Status: checkpointed in `209dced0`
+
+- [x] Bundled plugin env discovery/default-disable gate, discovering
+  `OPENCLAW_BUNDLED_PLUGINS_DIR` manifests while keeping bundled plugins
+  disabled by default unless upstream activation rules enable them.
+  - Status: checkpointed in `3de3621e`
+
+- [x] Installed plugin runtime entry-source metadata, exposing
+  `runtimeEntrySource` / `runtimeEntrySources` from package
+  `openclaw.extensions` or default `index.*` candidates to native activation
+  adapters.
+  - Status: checkpointed in `4f732754`
+
+- [x] Bundled channel explicit activation, preserving OpenClaw's
+  `channel enabled in config` activation reason and allowlist bypass for
+  configured bundled channel plugins.
+  - Status: checkpointed in `e92cfcae`
+
+- [x] Bundled channel auto-enable activation, preserving OpenClaw's
+  `<channel> configured` auto activation reason for meaningful bundled channel
+  config without `enabled=true`.
+  - Status: checkpointed in `f1de1e28`
+
+- [x] Bundled channel manifest env-var activation, preserving
+  `channelEnvVars` as auto-enable triggers for bundled channel plugins.
+  - Status: checkpointed in `f39ca17c`
+
+- [x] Auto-enabled plugin runtime load-context reasons, preserving
+  OpenClaw's `autoEnabledReasons` map when runtime activation adapters load
+  bundled channel plugins auto-enabled from channel config/env discovery.
+  - Status: checkpointed in `b44685b1`
+
+- [x] Runtime text-transform plugin projection, preserving standalone
+  `textTransforms` registrations from activation adapter registries in plugin
+  doctor runtime activation metadata.
+  - Status: checkpointed in `5216fb70`
+
+- [x] Auto-enabled runtime resolved config, preserving OpenClaw's post-auto
+  enable `config` snapshot while keeping `activationSourceConfig` raw for
+  activation adapter loads.
+  - Status: checkpointed in `5cfbf4fe`
+
+- [x] Bundled runtime plugin-SDK import metadata, preserving
+  `openclaw/plugin-sdk` and `@openclaw/plugin-sdk` specifiers from runtime
+  entries for native adapter alias resolution.
+  - Status: checkpointed in `54fb7bf8`
+
+- [x] Bundled plugin-SDK alias context, preserving dist package SDK root and
+  extension-local alias root metadata for native activation adapters.
+  - Status: checkpointed in `e6b506db`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -237,6 +286,15 @@ may lag behind this tracker.
 
 - [x] Installed plugin activation adapter failure diagnostic projection.
   - Status: checkpointed in `baa32232`
+
+- [x] Installed activation-adapter manifest tool contract enforcement.
+  - Status: checkpointed in `aac25d80`
+
+- [x] Installed activation-adapter OpenClaw runtime load options.
+  - Status: checkpointed in `ee12d2d4`
+
+- [x] Installed-record manifest runtime activation.
+  - Status: checkpointed in `b8f39fe3`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -453,8 +511,48 @@ may lag behind this tracker.
     tool projection checkpointed in `fb4fca1b`, and installed plugin scoped
     runtime activation load context checkpointed in `0ebf7884`, and installed
     plugin activation adapter failure diagnostics checkpointed in `baa32232`,
-    but deeper module import/runtime activation remains.
+    and installed activation-adapter manifest tool contract enforcement
+    checkpointed in `aac25d80`, and installed activation-adapter runtime load
+    options checkpointed in `ee12d2d4`, and installed-record manifest runtime
+    activation checkpointed in `b8f39fe3`, but deeper module import/runtime
+    activation remains.
   - Weight: 5
+
+- [x] Installed-record manifest runtime activation.
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/discovery.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `b8f39fe3`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed-record activation test (`1
+    passed`), adjacent installed-plugin CLI proof (`7 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Installed activation-adapter OpenClaw runtime load options.
+  - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
+    `openclaw-main/src/plugins/runtime/load-context.test.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `ee12d2d4`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed activation-adapter
+    load-options test (`1 passed`), adjacent plugin runtime CLI proof (`7
+    passed`), `ruff check`, and `mypy`.
+
+- [x] Installed activation-adapter manifest tool contract enforcement.
+  - Source: `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/loader.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `aac25d80`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed activation-adapter contract
+    test (`1 passed`), adjacent plugin runtime CLI proof (`7 passed`), `ruff
+    check`, and `mypy`.
 
 - [x] Installed plugin activation adapter failure diagnostic projection.
   - Source: `openclaw-main/src/plugins/loader.ts`,
@@ -930,8 +1028,24 @@ may lag behind this tracker.
     `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`; Discord thread
     query placement checkpointed in `0d40be27`; WhatsApp document filename
     projection checkpointed in `05c4f0fc`; Discord media iteration
-    checkpointed in `b5371fd9`
+    checkpointed in `b5371fd9`; native provider result metadata passthrough
+    checkpointed in `fb9c9763`
   - Weight: 3
+
+- [x] Native provider result metadata passthrough.
+  - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/infra/outbound/message-action-param-keys.ts`,
+    `openclaw-main/src/channels/plugins/types.core.ts`, and
+    `openclaw-main/src/cli/send-runtime/channel-outbound-send.test.ts`
+  - Target: `src/openzues/services/gateway_outbound_runtime.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `fb9c9763`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata
+    -q` (`1 passed`), adjacent provider metadata/native binding proof (`3
+    passed`), `ruff check`, and `mypy`.
 
 - [x] Plugin manifest activation-plan reason projection.
   - Source: `openclaw-main/src/plugins/activation-planner.ts`,

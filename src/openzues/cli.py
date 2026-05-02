@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import copy
 import inspect
 import json
 import math
@@ -7588,10 +7589,12 @@ def _plugin_runtime_activation_payload(
                     )
             manifest_tool_plugins.append(entry)
     runtime_tool_map: dict[str, list[str]] = {}
+    runtime_text_transform_plugins: list[dict[str, object]] = []
     for spec in _plugin_runtime_specs_from_services(
         services,
         plugin_rows=active_manifest_plugins,
         config_snapshot=config_snapshot,
+        runtime_text_transform_plugins=runtime_text_transform_plugins,
     ):
         plugin_id = _optional_cli_string(spec.plugin_id)
         if plugin_id is None:
@@ -7634,6 +7637,8 @@ def _plugin_runtime_activation_payload(
     activation_plans = _plugin_manifest_activation_plans(plugin_rows)
     if activation_plans:
         payload["activationPlans"] = activation_plans
+    if runtime_text_transform_plugins:
+        payload["runtimeTextTransformPlugins"] = runtime_text_transform_plugins
     configured_channel_plan = resolve_configured_channel_plugin_plan(
         plugins=manifest_plugins,
         config=config_snapshot,
@@ -14638,6 +14643,16 @@ def _cli_bundled_plugin_root_candidates(root: Path) -> list[Path]:
 
 
 def _cli_bundled_plugin_roots() -> list[Path]:
+    disable_bundled = _optional_cli_string(
+        os.environ.get("OPENCLAW_DISABLE_BUNDLED_PLUGINS")
+    )
+    if disable_bundled is not None and disable_bundled.lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return []
     roots: list[Path] = []
     for env_key in ("OPENCLAW_BUNDLED_PLUGINS_DIR", "OPENZUES_BUNDLED_PLUGINS_DIR"):
         raw_root = _optional_cli_string(os.environ.get(env_key))
@@ -17082,6 +17097,7 @@ def _plugin_runtime_specs_from_services(
     config_snapshot: Mapping[str, object] | None = None,
     workspace_dir: str | None = None,
     diagnostics: list[dict[str, object]] | None = None,
+    runtime_text_transform_plugins: list[dict[str, object]] | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     specs: list[GatewayPluginRuntimeExecutorSpec] = []
     seen_tools: set[str] = set()
@@ -17105,6 +17121,7 @@ def _plugin_runtime_specs_from_services(
         existing_tool_names=seen_tools,
         workspace_dir=workspace_dir,
         diagnostics=diagnostics,
+        runtime_text_transform_plugins=runtime_text_transform_plugins,
     )
     _extend_plugin_runtime_specs(specs, seen_tools, adapter_specs)
     return tuple(specs)
@@ -17133,6 +17150,7 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     existing_tool_names: Iterable[str],
     workspace_dir: str | None,
     diagnostics: list[dict[str, object]] | None,
+    runtime_text_transform_plugins: list[dict[str, object]] | None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     if not plugin_rows:
         return ()
@@ -17156,12 +17174,20 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
             if (plugin_id := _optional_cli_string(plugin.get("id"))) is not None
         ]
     )
+    auto_enabled_reasons = _plugin_auto_enabled_reasons_from_rows(plugin_rows)
+    resolved_config = _plugin_runtime_resolved_config_from_rows(
+        config_snapshot,
+        plugin_rows,
+    )
     context: dict[str, object] = {
         "plugins": [dict(plugin) for plugin in plugin_rows],
-        "config": dict(config_snapshot),
+        "rawConfig": dict(config_snapshot),
+        "config": resolved_config,
         "activationSourceConfig": dict(config_snapshot),
+        "autoEnabledReasons": auto_enabled_reasons,
         "env": dict(os.environ),
         "onlyPluginIds": only_plugin_ids,
+        "throwOnLoadError": True,
     }
     if workspace_dir is not None:
         context["workspaceDir"] = workspace_dir
@@ -17177,20 +17203,266 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     if result is None:
         return ()
     if isinstance(result, tuple | list):
-        return tuple(
+        raw_specs = tuple(
             spec
             for spec in result
             if isinstance(spec, GatewayPluginRuntimeExecutorSpec)
         )
-    if isinstance(result, Mapping):
+    elif isinstance(result, Mapping):
         registry = result.get("registry")
         registry_payload = registry if isinstance(registry, Mapping) else result
-        return build_plugin_runtime_executor_specs_from_active_registry(
+        if runtime_text_transform_plugins is not None:
+            runtime_text_transform_plugins.extend(
+                _plugin_runtime_text_transform_plugins_from_registry(registry_payload)
+            )
+        raw_specs = build_plugin_runtime_executor_specs_from_active_registry(
             registry_payload,
             existing_tool_names=existing_tool_names,
             tool_allowlist=("group:plugins",),
         )
-    return ()
+    else:
+        return ()
+    return _filter_plugin_runtime_specs_by_manifest_contracts(
+        raw_specs,
+        plugin_rows=plugin_rows,
+        diagnostics=diagnostics,
+    )
+
+
+def _plugin_auto_enabled_reasons_from_rows(
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> dict[str, list[str]]:
+    reasons_by_plugin: dict[str, list[str]] = {}
+    for plugin in plugin_rows:
+        if _optional_cli_string(plugin.get("activationSource")) != "auto":
+            continue
+        plugin_id = _optional_cli_string(plugin.get("id")) or _optional_cli_string(
+            plugin.get("pluginId")
+        )
+        if plugin_id is None:
+            continue
+        reason_candidates = _plugin_manifest_string_list(
+            plugin.get("autoEnabledReasons")
+        )
+        for key in ("autoEnabledReason", "activationReason"):
+            reason = _optional_cli_string(plugin.get(key))
+            if reason is not None:
+                reason_candidates.append(reason)
+        if not reason_candidates:
+            continue
+        merged = [
+            *reasons_by_plugin.get(plugin_id, []),
+            *reason_candidates,
+        ]
+        reasons_by_plugin[plugin_id] = _dedupe_cli_strings(merged)
+    return reasons_by_plugin
+
+
+def _plugin_runtime_resolved_config_from_rows(
+    config_snapshot: Mapping[str, object],
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    resolved = copy.deepcopy(dict(config_snapshot))
+    auto_enabled_plugin_ids = _plugin_auto_enabled_plugin_ids_from_rows(plugin_rows)
+    if not auto_enabled_plugin_ids:
+        return resolved
+
+    plugins_value = resolved.get("plugins")
+    plugins = dict(plugins_value) if isinstance(plugins_value, Mapping) else {}
+    allow_value = plugins.get("allow")
+    if isinstance(allow_value, list):
+        allow = list(allow_value)
+        for plugin_id in auto_enabled_plugin_ids:
+            if plugin_id not in allow:
+                allow.append(plugin_id)
+        plugins["allow"] = allow
+        resolved["plugins"] = plugins
+
+    for plugin_id in auto_enabled_plugin_ids:
+        channel_id = _normalize_openclaw_channel_plugin_id(plugin_id)
+        if channel_id is not None:
+            _plugin_runtime_enable_channel_config(resolved, channel_id)
+        else:
+            _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
+            resolved["plugins"] = plugins
+    return resolved
+
+
+def _plugin_auto_enabled_plugin_ids_from_rows(
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> tuple[str, ...]:
+    return tuple(
+        _dedupe_cli_strings(
+            [
+                plugin_id
+                for plugin in plugin_rows
+                if _optional_cli_string(plugin.get("activationSource")) == "auto"
+                if (
+                    plugin_id := (
+                        _optional_cli_string(plugin.get("id"))
+                        or _optional_cli_string(plugin.get("pluginId"))
+                    )
+                )
+                is not None
+            ]
+        )
+    )
+
+
+def _plugin_runtime_enable_channel_config(
+    resolved_config: dict[str, object],
+    channel_id: str,
+) -> None:
+    channels_value = resolved_config.get("channels")
+    channels = dict(channels_value) if isinstance(channels_value, Mapping) else {}
+    channel_value = channels.get(channel_id)
+    channel_config = dict(channel_value) if isinstance(channel_value, Mapping) else {}
+    channel_config["enabled"] = True
+    channels[channel_id] = channel_config
+    resolved_config["channels"] = channels
+
+
+def _plugin_runtime_enable_plugin_entry(
+    plugins_config: dict[object, object],
+    plugin_id: str,
+) -> None:
+    entries_value = plugins_config.get("entries")
+    entries = dict(entries_value) if isinstance(entries_value, Mapping) else {}
+    entry_value = entries.get(plugin_id)
+    entry_config = dict(entry_value) if isinstance(entry_value, Mapping) else {}
+    entry_config["enabled"] = True
+    entries[plugin_id] = entry_config
+    plugins_config["entries"] = entries
+
+
+def _plugin_runtime_text_transform_plugins_from_registry(
+    registry: Mapping[str, object],
+) -> list[dict[str, object]]:
+    raw_entries = registry.get("textTransforms")
+    if not isinstance(raw_entries, list):
+        return []
+    plugins: list[dict[str, object]] = []
+    for entry in raw_entries:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_cli_string(
+            entry.get("pluginId", entry.get("plugin_id"))
+        )
+        if plugin_id is None:
+            continue
+        transforms = entry.get("transforms")
+        transform_payload = transforms if isinstance(transforms, Mapping) else {}
+        input_count = _plugin_runtime_text_transform_count(
+            transform_payload.get("input")
+        )
+        output_count = _plugin_runtime_text_transform_count(
+            transform_payload.get("output")
+        )
+        if input_count == 0 and output_count == 0:
+            continue
+        payload: dict[str, object] = {
+            "pluginId": plugin_id,
+            "transforms": {"input": input_count, "output": output_count},
+        }
+        plugin_name = _optional_cli_string(
+            entry.get("pluginName", entry.get("plugin_name"))
+        )
+        if plugin_name is not None:
+            payload["pluginName"] = plugin_name
+        source = _optional_cli_string(entry.get("source"))
+        if source is not None:
+            payload["source"] = source
+        root_dir = _optional_cli_string(entry.get("rootDir", entry.get("root_dir")))
+        if root_dir is not None:
+            payload["rootDir"] = root_dir
+        plugins.append(payload)
+    return plugins
+
+
+def _plugin_runtime_text_transform_count(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
+def _filter_plugin_runtime_specs_by_manifest_contracts(
+    specs: Sequence[GatewayPluginRuntimeExecutorSpec],
+    *,
+    plugin_rows: Sequence[Mapping[str, object]],
+    diagnostics: list[dict[str, object]] | None,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    declared_by_plugin: dict[str, tuple[str, ...]] = {}
+    source_by_plugin: dict[str, str | None] = {}
+    for plugin in plugin_rows:
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        if plugin_id is None:
+            continue
+        contracts = plugin.get("contracts")
+        contract_payload = contracts if isinstance(contracts, Mapping) else {}
+        declared_by_plugin[plugin_id] = tuple(
+            _plugin_manifest_string_list(contract_payload.get("tools"))
+        )
+        source_by_plugin[plugin_id] = _optional_cli_string(plugin.get("source"))
+    if not declared_by_plugin:
+        return tuple(specs)
+    accepted: list[GatewayPluginRuntimeExecutorSpec] = []
+    missing_contract_plugins: set[str] = set()
+    undeclared_by_plugin: dict[str, list[str]] = {}
+    for spec in specs:
+        plugin_id = _optional_cli_string(spec.plugin_id)
+        if plugin_id is None or plugin_id not in declared_by_plugin:
+            accepted.append(spec)
+            continue
+        declared = declared_by_plugin[plugin_id]
+        if not declared:
+            missing_contract_plugins.add(plugin_id)
+            continue
+        declared_keys = {str(tool).strip().lower() for tool in declared}
+        tool_key = spec.tool.strip().lower()
+        if tool_key not in declared_keys:
+            undeclared_by_plugin.setdefault(plugin_id, []).append(spec.tool)
+            continue
+        accepted.append(spec)
+    if diagnostics is not None:
+        for plugin_id in declared_by_plugin:
+            source = source_by_plugin.get(plugin_id)
+            if plugin_id in missing_contract_plugins:
+                _record_plugin_runtime_contract_diagnostic(
+                    diagnostics,
+                    plugin_id=plugin_id,
+                    source=source,
+                    message=(
+                        "plugin must declare contracts.tools before registering "
+                        "agent tools"
+                    ),
+                )
+            undeclared = _dedupe_cli_strings(undeclared_by_plugin.get(plugin_id, []))
+            if undeclared:
+                _record_plugin_runtime_contract_diagnostic(
+                    diagnostics,
+                    plugin_id=plugin_id,
+                    source=source,
+                    message=(
+                        "plugin must declare contracts.tools for: "
+                        f"{', '.join(undeclared)}"
+                    ),
+                )
+    return tuple(accepted)
+
+
+def _record_plugin_runtime_contract_diagnostic(
+    diagnostics: list[dict[str, object]],
+    *,
+    plugin_id: str,
+    source: str | None,
+    message: str,
+) -> None:
+    diagnostic: dict[str, object] = {
+        "level": "error",
+        "pluginId": plugin_id,
+        "message": message,
+    }
+    if source is not None:
+        diagnostic["source"] = source
+    diagnostics.append(diagnostic)
 
 
 def _record_plugin_runtime_activation_adapter_error(
@@ -17539,6 +17811,9 @@ _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS = (
     ".js",
     ".mjs",
     ".cjs",
+)
+_OPENCLAW_PLUGIN_SDK_IMPORT_RE = re.compile(
+    r"""["'](@?openclaw/plugin-sdk(?:/[A-Za-z0-9_.\-\/]+)?)["']"""
 )
 _OPENCLAW_RUNTIME_SIDECAR_ARTIFACTS = {
     "helper-api.js",
@@ -18334,6 +18609,57 @@ def _plugin_public_surface_artifacts(
     return metadata
 
 
+def _plugin_runtime_entry_sources(
+    plugin_root: Path,
+    package_openclaw: dict[str, object],
+) -> list[str]:
+    raw_extensions = package_openclaw.get("extensions")
+    raw_entries = raw_extensions if isinstance(raw_extensions, list) else []
+    entries = [
+        text
+        for entry in raw_entries
+        if (text := _optional_cli_string(entry)) is not None
+    ]
+    if not entries:
+        entries = [
+            candidate
+            for candidate in _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES
+            if (plugin_root / candidate).is_file()
+        ][:1]
+
+    sources: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        entry_path = plugin_root / entry
+        if entry_path.suffix not in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS:
+            continue
+        if not entry_path.is_file():
+            continue
+        resolved = str(entry_path.resolve(strict=False))
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        sources.append(resolved)
+    return sources
+
+
+def _plugin_runtime_entry_sdk_imports(runtime_entry_sources: Sequence[str]) -> list[str]:
+    imports: list[str] = []
+    seen: set[str] = set()
+    for source in runtime_entry_sources:
+        try:
+            text = Path(source).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for match in _OPENCLAW_PLUGIN_SDK_IMPORT_RE.finditer(text):
+            specifier = match.group(1)
+            if specifier in seen:
+                continue
+            seen.add(specifier)
+            imports.append(specifier)
+    return imports
+
+
 def _plugin_package_openclaw_record_metadata(
     value: object,
     *,
@@ -18345,6 +18671,19 @@ def _plugin_package_openclaw_record_metadata(
     setup_entry = _optional_cli_string(value.get("setupEntry"))
     if setup_entry is not None:
         metadata["setupSource"] = str((plugin_root / setup_entry).resolve(strict=False))
+    runtime_entry_sources = _plugin_runtime_entry_sources(plugin_root, value)
+    if runtime_entry_sources:
+        metadata["runtimeEntrySource"] = runtime_entry_sources[0]
+        metadata["runtimeEntrySources"] = runtime_entry_sources
+        plugin_sdk_imports = _plugin_runtime_entry_sdk_imports(runtime_entry_sources)
+        if plugin_sdk_imports:
+            metadata["pluginSdkImports"] = plugin_sdk_imports
+            metadata.update(
+                _plugin_runtime_entry_sdk_alias_metadata(
+                    plugin_root,
+                    plugin_sdk_imports,
+                )
+            )
     metadata.update(_plugin_public_surface_artifacts(plugin_root, value))
     startup = value.get("startup")
     if (
@@ -18356,6 +18695,40 @@ def _plugin_package_openclaw_record_metadata(
     if channel_catalog_meta:
         metadata["channelCatalogMeta"] = channel_catalog_meta
     return metadata
+
+
+def _plugin_runtime_entry_sdk_alias_metadata(
+    plugin_root: Path,
+    plugin_sdk_imports: Sequence[str],
+) -> dict[str, object]:
+    if not plugin_sdk_imports:
+        return {}
+    dist_root = _plugin_runtime_entry_dist_root(plugin_root)
+    if dist_root is None:
+        return {}
+    plugin_sdk_root = dist_root / "plugin-sdk"
+    if not plugin_sdk_root.is_dir():
+        return {}
+    alias_root = dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+    return {
+        "pluginSdkResolution": "dist",
+        "pluginSdkPackageRoot": str(dist_root.parent.resolve(strict=False)),
+        "pluginSdkDistRoot": str(dist_root.resolve(strict=False)),
+        "pluginSdkAliasRoot": str(alias_root.resolve(strict=False)),
+    }
+
+
+def _plugin_runtime_entry_dist_root(plugin_root: Path) -> Path | None:
+    extensions_root = plugin_root.parent
+    if extensions_root.name.lower() != "extensions":
+        return None
+    bundle_root = extensions_root.parent
+    bundle_root_name = bundle_root.name.lower()
+    if bundle_root_name == "dist":
+        return bundle_root
+    if bundle_root_name == "dist-runtime":
+        return bundle_root.parent / "dist"
+    return None
 
 
 def _plugin_semver_tuple(value: object) -> tuple[int, int, int] | None:
@@ -18503,13 +18876,52 @@ def _plugin_manifest_has_enabled_channel(
     if not channels_config:
         return False
     for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
-        normalized_channel = _normalize_openclaw_channel_plugin_id(channel_id)
+        normalized_channel = _normalize_openclaw_channel_plugin_id(
+            channel_id
+        ) or channel_id.strip().lower()
         if normalized_channel is None:
             continue
         channel_config = channels_config.get(normalized_channel)
         if isinstance(channel_config, dict) and channel_config.get("enabled") is True:
             return True
     return False
+
+
+def _plugin_manifest_configured_channel_auto_reason(
+    manifest: dict[str, object],
+    config_snapshot: dict[str, object] | None,
+) -> str | None:
+    raw_channels_config = (
+        config_snapshot.get("channels") if config_snapshot is not None else None
+    )
+    channels_config = raw_channels_config if isinstance(raw_channels_config, dict) else {}
+    channel_env_vars = _plugin_manifest_string_list_record(
+        manifest.get("channelEnvVars")
+    )
+    env_by_lower = {key.lower(): value for key, value in os.environ.items()}
+    for channel_id in _plugin_manifest_string_list(manifest.get("channels")):
+        normalized_channel = _normalize_openclaw_channel_plugin_id(
+            channel_id
+        ) or channel_id.strip().lower()
+        if normalized_channel is None:
+            continue
+        channel_config = channels_config.get(normalized_channel)
+        if isinstance(channel_config, dict) and channel_config.get("enabled") is False:
+            continue
+        if isinstance(channel_config, dict) and any(
+            str(key) != "enabled" for key in channel_config
+        ):
+            return f"{normalized_channel} configured"
+        env_vars = _plugin_manifest_string_list(
+            channel_env_vars.get(normalized_channel)
+        )
+        for env_var in env_vars:
+            env_value = os.environ.get(env_var)
+            if env_value is None:
+                env_value = env_by_lower.get(env_var.lower())
+            if isinstance(env_value, str) and env_value.strip():
+                return f"{normalized_channel} configured"
+    return None
 
 
 def _plugin_runtime_dependency_entries_from_package_json(
@@ -19170,6 +19582,7 @@ def _plugin_manifest_status(
     plugin_id: str,
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
+    origin: str = "config",
 ) -> str:
     if plugins_config.get("enabled") is False:
         return "disabled"
@@ -19187,6 +19600,17 @@ def _plugin_manifest_status(
         return "loaded"
     allow = plugins_config.get("allow")
     allow_values = {str(value) for value in allow} if isinstance(allow, list) else set()
+    if origin == "bundled":
+        if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
+            return "loaded"
+        if _plugin_manifest_configured_channel_auto_reason(
+            manifest,
+            config_snapshot,
+        ) is not None:
+            return "loaded"
+        if allow_values and plugin_id not in allow_values:
+            return "disabled"
+        return "loaded" if manifest.get("enabledByDefault") is True else "disabled"
     if plugin_id in allow_values:
         return "loaded"
     if _plugin_manifest_has_enabled_channel(manifest, config_snapshot):
@@ -19256,13 +19680,18 @@ def _plugin_activation_state_payload(
     plugin_id: str,
     plugins_config: dict[str, object],
     status: str,
+    origin: str = "config",
+    enabled_by_default: bool | None = None,
+    channel_enabled_by_config: bool = False,
+    auto_enabled_reason: str | None = None,
 ) -> dict[str, object]:
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     allow_values = _plugin_config_string_set(plugins_config, "allow")
     slot_reason = _plugin_config_slot_reason(plugins_config, plugin_id)
     explicitly_enabled = (
         entry_payload.get("enabled") is True
-        or plugin_id in allow_values
+        or (origin == "bundled" and channel_enabled_by_config)
+        or (origin != "bundled" and plugin_id in allow_values)
         or slot_reason is not None
     )
     activated = status == "loaded"
@@ -19282,14 +19711,26 @@ def _plugin_activation_state_payload(
         reason = "disabled in config"
     elif activated and slot_reason is not None:
         reason = slot_reason
-    elif allow_values and plugin_id not in allow_values:
+    elif allow_values and plugin_id not in allow_values and not (
+        origin == "bundled" and (channel_enabled_by_config or auto_enabled_reason is not None)
+    ):
         activated = False
         source = "disabled"
         reason = "not in allowlist"
     elif activated and entry_payload.get("enabled") is True:
         reason = "enabled in config"
-    elif activated and plugin_id in allow_values:
+    elif activated and origin == "bundled" and channel_enabled_by_config:
+        reason = "channel enabled in config"
+    elif activated and auto_enabled_reason is not None:
+        source = "auto"
+        reason = auto_enabled_reason
+    elif activated and origin != "bundled" and plugin_id in allow_values:
         reason = "selected in allowlist"
+    elif origin == "bundled" and activated and enabled_by_default is True:
+        reason = "bundled default enablement"
+    elif origin == "bundled" and not activated:
+        source = "disabled"
+        reason = "bundled (disabled by default)"
     elif not activated:
         source = "disabled"
 
@@ -19309,6 +19750,7 @@ def _plugin_record_from_openclaw_manifest(
     plugins_config: dict[str, object],
     config_snapshot: dict[str, object] | None = None,
     diagnostics: list[dict[str, object]] | None = None,
+    origin: str = "config",
 ) -> dict[str, object] | None:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -19344,11 +19786,20 @@ def _plugin_record_from_openclaw_manifest(
         or _optional_cli_string(package_metadata.get("description"))
         or ""
     )
+    channel_enabled_by_config = _plugin_manifest_has_enabled_channel(
+        manifest,
+        config_snapshot,
+    )
+    auto_enabled_reason = _plugin_manifest_configured_channel_auto_reason(
+        manifest,
+        config_snapshot,
+    )
     status = _plugin_manifest_status(
         manifest,
         plugin_id=plugin_id,
         plugins_config=plugins_config,
         config_snapshot=config_snapshot,
+        origin=origin,
     )
     record: dict[str, object] = {
         "id": plugin_id,
@@ -19360,7 +19811,7 @@ def _plugin_record_from_openclaw_manifest(
         "status": status,
         "format": "openclaw",
         "source": str(manifest_path),
-        "origin": "config",
+        "origin": origin,
         "description": description,
         "capabilities": capabilities,
         "parityStatus": "metadata",
@@ -19373,6 +19824,10 @@ def _plugin_record_from_openclaw_manifest(
             plugin_id=plugin_id,
             plugins_config=plugins_config,
             status=status,
+            origin=origin,
+            enabled_by_default=manifest.get("enabledByDefault") is True,
+            channel_enabled_by_config=channel_enabled_by_config,
+            auto_enabled_reason=auto_enabled_reason,
         )
     )
     version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
@@ -19484,6 +19939,89 @@ def _plugin_manifest_records_from_config_snapshot(
     return records
 
 
+def _plugin_bundled_manifest_records_from_env(
+    plugins_config: dict[str, object],
+    *,
+    config_snapshot: dict[str, object],
+    diagnostics: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    seen_paths: set[Path] = set()
+    for bundled_root in _cli_bundled_plugin_roots():
+        try:
+            children = sorted(bundled_root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            try:
+                resolved_child = child.resolve(strict=False)
+            except OSError:
+                resolved_child = child
+            if resolved_child in seen_paths:
+                continue
+            seen_paths.add(resolved_child)
+            manifest_path = _plugin_manifest_path_for_load_path(child)
+            if manifest_path is None:
+                continue
+            record = _plugin_record_from_openclaw_manifest(
+                manifest_path,
+                plugins_config=plugins_config,
+                config_snapshot=config_snapshot,
+                diagnostics=diagnostics,
+                origin="bundled",
+            )
+            if record is None:
+                continue
+            plugin_id = str(record.get("id") or "")
+            if not plugin_id or plugin_id in seen_ids:
+                continue
+            seen_ids.add(plugin_id)
+            records.append(record)
+    return records
+
+
+def _plugin_manifest_record_from_install_path(
+    plugin_id: str,
+    install_path: str | None,
+    *,
+    plugins_config: dict[str, object],
+    config_snapshot: dict[str, object],
+    diagnostics: list[dict[str, object]] | None,
+) -> dict[str, object] | None:
+    if install_path is None:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(install_path))
+    try:
+        load_path = Path(expanded).resolve(strict=False)
+    except OSError:
+        load_path = Path(expanded)
+    manifest_path = _plugin_manifest_path_for_load_path(load_path)
+    if manifest_path is not None:
+        record = _plugin_record_from_openclaw_manifest(
+            manifest_path,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+            diagnostics=diagnostics,
+        )
+    elif bundle_match := _plugin_bundle_manifest_path_for_load_path(load_path):
+        bundle_format, bundle_manifest_path, bundle_root_dir = bundle_match
+        record = _plugin_bundle_manifest_record(
+            bundle_format,
+            bundle_manifest_path,
+            bundle_root_dir,
+            plugins_config=plugins_config,
+            config_snapshot=config_snapshot,
+        )
+    else:
+        return None
+    if record is None or str(record.get("id") or "") != plugin_id:
+        return None
+    return record
+
+
 def _plugin_records_from_config_snapshot(
     snapshot: dict[str, object],
     *,
@@ -19496,11 +20034,20 @@ def _plugin_records_from_config_snapshot(
         config_snapshot=snapshot,
         diagnostics=diagnostics,
     )
+    bundled_manifest_records = _plugin_bundled_manifest_records_from_env(
+        plugins_config,
+        config_snapshot=snapshot,
+        diagnostics=diagnostics,
+    )
     records_by_id = {
         str(record.get("id") or ""): dict(record)
         for record in manifest_records
         if str(record.get("id") or "")
     }
+    for bundled_record in bundled_manifest_records:
+        plugin_id = str(bundled_record.get("id") or "")
+        if plugin_id and plugin_id not in records_by_id:
+            records_by_id[plugin_id] = dict(bundled_record)
     entries = plugins_config.get("entries")
     entry_records = entries if isinstance(entries, dict) else {}
     installs = plugins_config.get("installs")
@@ -19520,6 +20067,18 @@ def _plugin_records_from_config_snapshot(
         install_path = _optional_cli_string(install_payload.get("installPath"))
         source_path = _optional_cli_string(install_payload.get("sourcePath"))
         version = _optional_cli_string(install_payload.get("version"))
+        if plugin_id not in records_by_id:
+            for candidate_path in (install_path, source_path):
+                install_manifest_record = _plugin_manifest_record_from_install_path(
+                    plugin_id,
+                    candidate_path,
+                    plugins_config=plugins_config,
+                    config_snapshot=snapshot,
+                    diagnostics=diagnostics,
+                )
+                if install_manifest_record is not None:
+                    records_by_id[plugin_id] = install_manifest_record
+                    break
         status = _plugin_configured_record_status(
             plugin_id=plugin_id,
             plugins_config=plugins_config,
@@ -19570,6 +20129,7 @@ def _plugin_records_from_config_snapshot(
                     plugin_id=plugin_id,
                     plugins_config=plugins_config,
                     config_snapshot=snapshot,
+                    origin=_optional_cli_string(merged.get("origin")) or "config",
                 )
             )
             merged["status"] = status
@@ -19578,6 +20138,8 @@ def _plugin_records_from_config_snapshot(
                     plugin_id=plugin_id,
                     plugins_config=plugins_config,
                     status=status,
+                    origin=_optional_cli_string(merged.get("origin")) or "config",
+                    enabled_by_default=merged.get("enabledByDefault") is True,
                 )
             )
             if version is not None:

@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~57.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.7% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,14 +29,11 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The installed plugin activation adapter failure diagnostic projection slice is
-checkpointed in `baa32232`. Any follow-up changes should target the next queue
-head only:
+The bundled plugin-SDK alias context slice is checkpointed in `e6b506db`.
+Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
-- `src/openzues/services/gateway_plugin_activation.py`
 - `tests/test_cli.py`
-- `tests/test_gateway_plugin_activation.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -51,9 +48,9 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Installed plugin activation adapter failure diagnostics checkpointed in `baa32232` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled plugin-SDK alias context checkpointed in `e6b506db` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
 
@@ -1206,6 +1203,339 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_doctor_json_gates_manifest_tool_activation_on_auth_env"` (`7
     passed`), `ruff check`, and `mypy`.
 
+- [x] `OZ-PLUGIN-001AR` installed activation-adapter manifest tool contract enforcement
+  - Source: `openclaw-main/src/plugins/registry.ts` and
+    `openclaw-main/src/plugins/loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native installed-plugin activation adapter runtime tools must be
+    declared in the plugin manifest's `contracts.tools`; undeclared adapter
+    tools are dropped from runtime executor projection, manifest-declared tools
+    remain missing until a declared executor exists, and doctor diagnostics use
+    OpenClaw's `plugin must declare contracts.tools for: <tool>` message.
+  - Evidence required: focused plugin doctor contract test, adjacent plugin
+    runtime CLI tests, ruff, mypy
+  - Status: checkpointed in `aac25d80`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+    or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+    plugins_doctor_json_projects_installed_activation_adapter_errors or
+    plugins_inspect_runtime_json_uses_installed_activation_adapter_tools or
+    plugins_inspect_runtime_activation_adapter_receives_scoped_load_context or
+    plugins_doctor_json_reports_metadata_only_tool_activation"` (`7 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AS` installed activation-adapter OpenClaw runtime load options
+  - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
+    `openclaw-main/src/plugins/runtime/load-context.test.ts`,
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.ts`, and
+    `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native installed-plugin activation adapters receive the
+    OpenClaw runtime load-option envelope, including `rawConfig`,
+    `config`, `activationSourceConfig`, `autoEnabledReasons`, `env`,
+    `workspaceDir` when resolved, scoped `onlyPluginIds`, and
+    `throwOnLoadError=true`.
+  - Evidence required: focused plugin doctor load-options test, adjacent
+    plugin runtime CLI tests, ruff, mypy
+  - Status: checkpointed in `ee12d2d4`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+    or plugins_inspect_runtime_activation_adapter_receives_scoped_load_context
+    or plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+    or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+    plugins_doctor_json_projects_installed_activation_adapter_errors or
+    plugins_inspect_runtime_json_uses_installed_activation_adapter_tools"` (`7
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AT` installed-record manifest runtime activation
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/loader.ts`, and
+    `openclaw-main/src/plugins/discovery.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: persisted `plugins.installs.<id>.installPath` records are
+    discovered as manifest-backed plugin records even when the path is absent
+    from `plugins.load.paths`, preserving manifest `contracts.tools`, install
+    metadata, enabled status, and native activation-adapter runtime executor
+    projection.
+  - Evidence required: focused plugin doctor install-record activation test,
+    adjacent installed-plugin activation/list tests, ruff, mypy
+  - Status: checkpointed in `b8f39fe3`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+    or plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+    or plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_keeps_installed_plugin_allowlist_authoritative"` (`7
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AU` bundled plugin env discovery/default-disable gate
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/discovery.ts`, and
+    `openclaw-main/src/plugins/config-activation-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `OPENCLAW_BUNDLED_PLUGINS_DIR` contributes bundled manifest
+    records to native plugin list/doctor inventory, marks them
+    `origin=bundled`, and preserves OpenClaw's rule that bundled plugins
+    without `enabledByDefault=true` remain disabled even when listed in
+    `plugins.allow`.
+  - Evidence required: focused bundled plugin discovery/default-disable test,
+    adjacent bundled/install/plugin-list tests, ruff, mypy
+  - Status: checkpointed in `3de3621e`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_discovers_bundled_plugins_disabled_by_default
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "bundled_plugins_disabled_by_default or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    or plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins
+    or plugins_install_json_uses_bundled_plugin_for_bare_id or
+    plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AV` installed plugin runtime entry-source metadata
+  - Source: `openclaw-main/src/plugins/discovery.ts`,
+    `openclaw-main/src/plugins/package-entry-resolution.ts`, and
+    `openclaw-main/src/plugins/loader.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: manifest-backed plugin records discovered from install records
+    or load paths expose resolved runtime entry files from package
+    `openclaw.extensions` or default `index.*` candidates as
+    `runtimeEntrySource` and `runtimeEntrySources`, so native activation
+    adapters can import the same module entry OpenClaw would load.
+  - Evidence required: focused installed-record runtime entry-source adapter
+    context test, adjacent plugin metadata/runtime tests, ruff, mypy
+  - Status: checkpointed in `4f732754`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_installed_record_activation_context_includes_runtime_entry_source
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "runtime_entry_source or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_doctor_json_activates_installed_record_manifest_without_load_path
+    or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    bundled_plugins_disabled_by_default"` (`5 passed`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AW` bundled channel explicit activation
+  - Source: `openclaw-main/src/plugins/loader.test.ts` and
+    `openclaw-main/src/plugins/config-activation-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled channel plugin records discovered from
+    `OPENCLAW_BUNDLED_PLUGINS_DIR` are treated as explicitly activated when
+    `channels.<id>.enabled=true`, bypass restrictive `plugins.allow` lists,
+    and report `activationReason="channel enabled in config"`.
+  - Evidence required: focused bundled configured-channel activation test,
+    adjacent bundled/default/configured-channel tests, ruff, mypy
+  - Status: checkpointed in `e92cfcae`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_marks_configured_bundled_channel_as_explicit
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "configured_bundled_channel_as_explicit or
+    bundled_plugins_disabled_by_default or
+    plugins_doctor_json_projects_configured_channel_plugin_activation or
+    configured_channel_plugin_activation or
+    plugins_list_json_discovers_openclaw_manifest_load_paths"` (`4 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AX` bundled channel auto-enable activation
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/config/plugin-auto-enable.shared.ts`, and
+    `openclaw-main/src/config/channel-configured-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled channel plugin records with meaningful
+    `channels.<id>` configuration are treated as auto-enabled even without
+    `enabled=true`, remain non-explicit, bypass allowlist misses like
+    OpenClaw's materialized auto-enable config, and report
+    `<channel> configured` as the activation reason.
+  - Evidence required: focused bundled configured-channel auto-enable test,
+    adjacent bundled channel activation/default tests, ruff, mypy
+  - Status: checkpointed in `f1de1e28`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_marks_configured_bundled_channel_as_auto_enabled
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "configured_bundled_channel_as_auto_enabled or
+    configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+    or plugins_doctor_json_projects_configured_channel_plugin_activation or
+    plugins_list_json_discovers_openclaw_manifest_load_paths"` (`5 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AY` bundled channel manifest env-var activation
+  - Source: `openclaw-main/src/plugins/channel-plugin-ids.test.ts`,
+    `openclaw-main/src/config/channel-configured-shared.ts`, and
+    `openclaw-main/src/plugins/manifest-registry.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled channel plugin records with manifest `channelEnvVars`
+    are treated as auto-enabled when one declared env var is present, including
+    case-insensitive env names and external channel ids, while preserving
+    explicit channel-disable blocking.
+  - Evidence required: focused bundled manifest env-var activation test,
+    adjacent bundled env/config activation tests, ruff, mypy
+  - Status: checkpointed in `f39ca17c`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_auto_enables_bundled_channel_from_manifest_env_var
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "manifest_env_var or configured_bundled_channel_as_auto_enabled or
+    configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+    or plugins_list_json_preserves_manifest_auth_and_env_metadata"` (`5
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001AZ` auto-enabled runtime load-context reasons
+  - Source: `openclaw-main/src/plugins/activation-context.ts`,
+    `openclaw-main/src/plugins/runtime/load-context.ts`, and
+    `openclaw-main/src/plugins/loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: runtime activation adapters receive OpenClaw-shaped
+    `autoEnabledReasons` keyed by plugin id when a bundled channel plugin is
+    auto-enabled from channel config/env discovery, while preserving raw
+    config, activation source config, environment, scoped plugin ids, and
+    throw-on-load-error options.
+  - Evidence required: focused runtime load-context reason test, adjacent
+    activation adapter context and bundled auto-enable tests, ruff, mypy
+  - Status: checkpointed in `b44685b1`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_auto_enabled_channel_reasons
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "auto_enabled_channel_reasons or
+    activation_adapter_receives_openclaw_runtime_load_options or
+    configured_bundled_channel_as_auto_enabled or manifest_env_var or
+    activation_adapter_skips_disabled_manifest_plugins"` (`5 passed`), `ruff
+    check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BA` runtime text-transform plugin projection
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/registry.ts`, and
+    `openclaw-main/src/plugins/text-transforms.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: installed plugin runtime activation adapters that return an
+    active registry with standalone `textTransforms` project those plugin
+    registrations into `plugins doctor --json` runtime activation metadata,
+    preserving plugin id/name/source/root and safe input/output replacement
+    counts without requiring tool executor registrations.
+  - Evidence required: focused runtime text-transform doctor projection test,
+    adjacent runtime adapter and metadata-only activation tests, ruff, mypy
+  - Status: checkpointed in `5216fb70`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_projects_runtime_text_transform_plugins
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "runtime_text_transform_plugins or installed_plugin_runtime_activation_adapter
+    or activation_adapter_receives_openclaw_runtime_load_options or
+    auto_enabled_channel_reasons or metadata_only_tool_activation"` (`5
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BB` auto-enabled runtime resolved config
+  - Source: `openclaw-main/src/plugins/runtime/runtime-registry-loader.test.ts`,
+    `openclaw-main/src/plugins/runtime/load-context.ts`, and
+    `openclaw-main/src/config/plugin-auto-enable.shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: runtime activation adapters receive raw config as
+    `activationSourceConfig` and a resolved `config` snapshot that materializes
+    auto-enabled bundled channel plugins by setting `channels.<id>.enabled`
+    and adding the plugin id to restrictive `plugins.allow` lists, matching
+    OpenClaw's post-`applyPluginAutoEnable` load context.
+  - Evidence required: focused resolved auto-enabled config load-context test,
+    adjacent activation context/runtime transform/bundled auto-enable tests,
+    ruff, mypy
+  - Status: checkpointed in `5cfbf4fe`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "resolved_auto_enabled_config or auto_enabled_channel_reasons or
+    activation_adapter_receives_openclaw_runtime_load_options or
+    runtime_text_transform_plugins or configured_bundled_channel_as_auto_enabled
+    or manifest_env_var"` (`6 passed`), `ruff check src\openzues\cli.py
+    tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BC` bundled runtime plugin-SDK import metadata
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/loader-sdk-import-guardrails.test.ts`, and
+    `openclaw-main/src/plugins/sdk-alias.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled package runtime entries that import
+    `openclaw/plugin-sdk` or `@openclaw/plugin-sdk` subpaths expose
+    `pluginSdkImports` in plugin list/runtime metadata, preserving the exact
+    import specifiers a native activation adapter needs for SDK alias
+    resolution without executing the TypeScript/JavaScript runtime.
+  - Evidence required: focused bundled plugin-SDK import metadata test,
+    adjacent runtime-entry/bundled install/text-transform tests, ruff, mypy
+  - Status: checkpointed in `54fb7bf8`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_projects_bundled_runtime_plugin_sdk_imports
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+    discovers_openclaw_manifest_load_paths or bundled_plugins_disabled_by_default
+    or plugins_install_prefers_dist_runtime_bundled_tree_for_package_root or
+    runtime_text_transform_plugins"` (`6 passed`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BD` bundled plugin-SDK alias context
+  - Source: `openclaw-main/src/plugins/loader.test.ts`,
+    `openclaw-main/src/plugins/plugin-sdk-dist-alias.ts`, and
+    `openclaw-main/src/plugins/sdk-alias.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: bundled package runtime entries loaded from `dist/extensions`
+    or staged `dist-runtime/extensions` project `pluginSdkResolution="dist"`,
+    `pluginSdkPackageRoot`, `pluginSdkDistRoot`, and `pluginSdkAliasRoot`
+    metadata to activation adapters when SDK imports are present, allowing a
+    native adapter to resolve OpenClaw-style plugin-SDK aliases before
+    reporting runtime tools.
+  - Evidence required: focused SDK alias activation-adapter test, adjacent SDK
+    import/runtime-entry/runtime-transform tests, ruff, mypy
+  - Status: checkpointed in `e6b506db`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activation_adapter
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugin_sdk_alias_to_activation_adapter or bundled_runtime_plugin_sdk_imports
+    or runtime_entry_source or
+    plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    runtime_text_transform_plugins or
+    plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,
     `openclaw-main/src/config/types.tts.ts`, and
@@ -1396,6 +1726,34 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     "discord_native_route or discord_media or discord_thread_query or
     discord_reply_and_silent or send_direct_channel_poll_uses_discord"` (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001F` Native provider result metadata passthrough
+  - Source: `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/infra/outbound/message-action-param-keys.ts`,
+    `openclaw-main/src/channels/plugins/types.core.ts`, and
+    `openclaw-main/src/cli/send-runtime/channel-outbound-send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_outbound_runtime.py`,
+    `src/openzues/services/ops_mesh.py`
+  - Contract: shared native provider delivery results preserve
+    OpenClaw-shaped reply/thread, tracking, file, filename, and document
+    metadata in the direct send response and persisted outbound delivery
+    `provider_result` while keeping the existing structured media request
+    contract for caption-capable native providers.
+  - Evidence required: focused provider metadata test, adjacent native adapter
+    binding and provider metadata tests, ruff, mypy
+  - Status: checkpointed in `fb9c9763`
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "provider_result_persistence_keeps_native_extended_metadata or
+    provider_result_persistence_keeps_message_id_runtime_and_meta or
+    send_direct_channel_message_uses_native_adapter_binding"` (`3 passed`),
+    `ruff check src\openzues\services\gateway_outbound_runtime.py
+    src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+    src\openzues\services\gateway_outbound_runtime.py
+    src\openzues\services\ops_mesh.py`.
 
 ## Canonical Checklist Format
 

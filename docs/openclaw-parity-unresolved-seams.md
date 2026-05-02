@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~57.8% overall, with a reasonable
-  band of ~49-58%.
-- The active gateway/session/tool-contract family is estimated at ~99.1% of the
+- Repo-wide OpenClaw parity is estimated at ~58.7% overall, with a reasonable
+  band of ~50-59%.
+- The active gateway/session/tool-contract family is estimated at ~99.2% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -14,7 +14,7 @@ Current percentage rollup:
   `sessions.spawn`, sandboxed remote media staging, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -57,12 +57,12 @@ Current percentage rollup:
   installed plugin disabled activation gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~99.1% after the
-  latest Discord provider-native media iteration route slice.
+- The gateway session/tool-contract family is estimated at ~99.2% after the
+  latest native provider result metadata passthrough slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
-  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -4851,6 +4851,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~99.1%. Verified with focused and
   adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
   in `b5371fd9`.
+- Closed the native provider result metadata passthrough seam from OpenClaw
+  `src/infra/outbound/deliver.ts`,
+  `src/infra/outbound/message-action-param-keys.ts`,
+  `src/channels/plugins/types.core.ts`, and
+  `src/cli/send-runtime/channel-outbound-send.test.ts`: shared native provider
+  delivery results now preserve reply/thread, tracking, file, filename, and
+  document metadata in direct send responses and persisted outbound delivery
+  `provider_result` payloads, while caption-capable providers continue
+  receiving structured media requests. Repo-wide parity is now estimated at
+  ~57.9%; active gateway/session/tool-contract parity is ~99.2%. Verified with
+  focused and adjacent provider-native metadata/binding tests, `ruff check`,
+  and `mypy`; checkpointed in `fb9c9763`.
 - Closed the plugin manifest activation-plan reason projection seam from
   OpenClaw `src/plugins/activation-planner.ts`,
   `src/plugins/activation-planner.test.ts`, `src/plugins/cli-registry-loader.ts`,
@@ -5240,11 +5252,182 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   bounded paths remain ~99.9%. Verified with the focused plugin doctor
   activation adapter error test, adjacent plugin runtime CLI proof, `ruff
   check`, and `mypy`; checkpoint in `baa32232`.
+- Closed the installed activation-adapter manifest tool contract seam from
+  OpenClaw `src/plugins/registry.ts` and `src/plugins/loader.test.ts`:
+  adapter-returned runtime tools must be declared in the plugin manifest's
+  `contracts.tools`; undeclared tools are dropped from runtime executor
+  projection, manifest-declared tools remain missing until a declared executor
+  exists, and doctor diagnostics use OpenClaw's
+  `plugin must declare contracts.tools for: <tool>` message. Repo-wide parity
+  is now estimated at ~58.0%; runtime/CLI/doctor and CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused plugin doctor
+  contract test, adjacent plugin runtime CLI proof, `ruff check`, and `mypy`;
+  checkpointed in `aac25d80`.
+- Closed the installed activation-adapter OpenClaw runtime load-options seam
+  from OpenClaw `src/plugins/runtime/load-context.ts`,
+  `src/plugins/runtime/load-context.test.ts`,
+  `src/plugins/runtime/runtime-registry-loader.ts`, and
+  `src/plugins/runtime/runtime-registry-loader.test.ts`: native installed
+  activation adapters now receive `rawConfig`, `config`,
+  `activationSourceConfig`, `autoEnabledReasons`, `env`, scoped
+  `onlyPluginIds`, optional `workspaceDir`, and `throwOnLoadError=true`.
+  Repo-wide parity is now estimated at ~58.1%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  plugin doctor load-options test, adjacent plugin runtime CLI proof, `ruff
+  check`, and `mypy`; checkpointed in `ee12d2d4`.
+- Closed the installed-record manifest runtime activation seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/loader.ts`, and
+  `src/plugins/discovery.ts`: persisted `plugins.installs.<id>.installPath`
+  entries are now discovered as manifest-backed plugin records without
+  requiring duplicate `plugins.load.paths` entries, preserving
+  `contracts.tools`, install metadata, enabled status, and activation-adapter
+  executor projection. Repo-wide parity is now estimated at ~58.2%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused installed-record activation test, adjacent
+  installed-plugin CLI proof, `ruff check`, and `mypy`; checkpointed in
+  `b8f39fe3`.
+- Closed the bundled plugin env discovery/default-disable seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/discovery.ts`, and
+  `src/plugins/config-activation-shared.ts`: native plugin list/doctor
+  inventory now discovers manifests under `OPENCLAW_BUNDLED_PLUGINS_DIR`,
+  marks them `origin=bundled`, respects `OPENCLAW_DISABLE_BUNDLED_PLUGINS`,
+  and keeps bundled plugins disabled by default even when their id appears in
+  `plugins.allow`. Repo-wide parity is now estimated at ~58.3%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused bundled plugin default-disable test, adjacent
+  bundled/install/plugin-list proof, `ruff check`, and `mypy`; checkpointed in
+  `3de3621e`.
+- Closed the installed plugin runtime entry-source metadata seam from OpenClaw
+  `src/plugins/discovery.ts`,
+  `src/plugins/package-entry-resolution.ts`, and `src/plugins/loader.ts`:
+  manifest-backed plugin records discovered from install records or load paths
+  now expose `runtimeEntrySource` and `runtimeEntrySources` from package
+  `openclaw.extensions` or default `index.*` candidates, giving native
+  activation adapters the concrete module entry OpenClaw discovery would
+  import. Repo-wide parity is now estimated at ~58.4%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  runtime entry-source test, adjacent plugin metadata/runtime proof, `ruff
+  check`, and `mypy`; checkpointed in `4f732754`.
+- Closed the bundled channel explicit activation seam from OpenClaw
+  `src/plugins/loader.test.ts` and
+  `src/plugins/config-activation-shared.ts`: bundled channel plugin records
+  discovered from `OPENCLAW_BUNDLED_PLUGINS_DIR` are explicitly activated when
+  `channels.<id>.enabled=true`, bypass restrictive `plugins.allow` lists, and
+  report `activationReason="channel enabled in config"`. Repo-wide parity is
+  now estimated at ~58.5%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused bundled configured-channel
+  activation test, adjacent bundled/default/configured-channel proof, `ruff
+  check`, and `mypy`; checkpointed in `e92cfcae`.
+- Closed the bundled channel auto-enable activation seam from OpenClaw
+  `src/plugins/loader.test.ts`,
+  `src/config/plugin-auto-enable.shared.ts`, and
+  `src/config/channel-configured-shared.ts`: bundled channel plugin records
+  with meaningful `channels.<id>` config are treated as auto-enabled even
+  without `enabled=true`, remain non-explicit, bypass allowlist misses, and
+  report `<channel> configured` as the activation reason. Repo-wide parity is
+  now estimated at ~58.6%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused bundled configured-channel
+  auto-enable test, adjacent bundled channel activation/default proof, `ruff
+  check`, and `mypy`; checkpointed in `f1de1e28`.
+- Closed the bundled channel manifest env-var activation seam from OpenClaw
+  `src/plugins/channel-plugin-ids.test.ts`,
+  `src/config/channel-configured-shared.ts`, and
+  `src/plugins/manifest-registry.ts`: bundled channel plugin records with
+  manifest `channelEnvVars` are auto-enabled when one declared env var is
+  present, including external channel ids and case-insensitive env names, while
+  preserving explicit channel-disable blocking. Repo-wide parity is now
+  estimated at ~58.7%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused bundled manifest env-var
+  activation test, adjacent bundled env/config activation proof, `ruff check`,
+  and `mypy`; checkpointed in `f39ca17c`.
 - Next repo-wide queue head: continue the real installed plugin module
-  import/activation queue, especially the source-backed boundary that turns
-  installed manifest/load-path registry records into native runtime executor or
-  honest unavailable activation posture. The provider-native adapter breadth
-  queue remains the next alternate after that slice.
+  import/activation queue, especially bundled package plugin-sdk import/runtime
+  activation and standalone text-transform projection. The provider-native
+  adapter breadth queue remains the next alternate after that slice.
+- Closed the auto-enabled plugin runtime load-context reason seam from
+  OpenClaw `src/plugins/activation-context.ts`,
+  `src/plugins/runtime/load-context.ts`, and `src/plugins/loader.test.ts`:
+  runtime activation adapters now receive an OpenClaw-shaped
+  `autoEnabledReasons` map keyed by plugin id for bundled channel plugins
+  auto-enabled from channel config/env discovery, while retaining raw config,
+  activation source config, env, scoped plugin ids, and throw-on-load-error
+  options. Repo-wide parity is now estimated at ~58.8%; the active
+  gateway/session/tool-contract family is now estimated at ~99.3%, and
+  runtime/CLI/doctor plus CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused runtime load-context reason test, adjacent adapter
+  context and bundled auto-enable proof, `ruff check`, and `mypy`;
+  checkpointed in `b44685b1`.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk import/runtime
+  activation and standalone text-transform projection. The provider-native
+  adapter breadth queue remains the next alternate after that slice.
+- Closed the runtime text-transform plugin projection seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/registry.ts`, and
+  `src/plugins/text-transforms.runtime.ts`: activation adapters that return
+  active registry `textTransforms` now surface `runtimeTextTransformPlugins`
+  in `plugins doctor --json`, preserving plugin id/name/source/root plus safe
+  input/output replacement counts without requiring tool executor
+  registrations. Repo-wide parity is now estimated at ~58.9%; the active
+  gateway/session/tool-contract family is now estimated at ~99.4%, and
+  runtime/CLI/doctor plus CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused runtime text-transform doctor projection test,
+  adjacent runtime adapter and metadata-only activation proof, `ruff check`,
+  and `mypy`; checkpointed in `5216fb70`.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
+- Closed the auto-enabled runtime resolved-config seam from OpenClaw
+  `src/plugins/runtime/runtime-registry-loader.test.ts`,
+  `src/plugins/runtime/load-context.ts`, and
+  `src/config/plugin-auto-enable.shared.ts`: activation adapters now receive
+  raw config as `activationSourceConfig` and a resolved `config` snapshot that
+  materializes auto-enabled bundled channel plugins by setting
+  `channels.<id>.enabled` and adding the plugin id to restrictive
+  `plugins.allow` lists. Repo-wide parity is now estimated at ~59.0%; the
+  active gateway/session/tool-contract family is now estimated at ~99.5%, and
+  runtime/CLI/doctor plus CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused resolved auto-enabled config load-context test,
+  adjacent activation context/runtime transform/bundled auto-enable proof,
+  `ruff check`, and `mypy`; checkpointed in `5cfbf4fe`.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
+- Closed the bundled runtime plugin-SDK import metadata seam from OpenClaw
+  `src/plugins/loader.test.ts`,
+  `src/plugins/loader-sdk-import-guardrails.test.ts`, and
+  `src/plugins/sdk-alias.ts`: runtime entry sources that import
+  `openclaw/plugin-sdk` or `@openclaw/plugin-sdk` subpaths now expose
+  `pluginSdkImports` in plugin list/runtime metadata, preserving exact
+  specifiers for native adapter alias resolution without executing the
+  TypeScript/JavaScript runtime. Repo-wide parity is now estimated at ~59.1%;
+  the active gateway/session/tool-contract family is now estimated at ~99.6%,
+  and runtime/CLI/doctor plus CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused bundled plugin-SDK import metadata test,
+  adjacent runtime-entry/bundled install/text-transform proof, `ruff check`,
+  and `mypy`; checkpointed in `54fb7bf8`.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
+- Closed the bundled plugin-SDK alias context seam from OpenClaw
+  `src/plugins/loader.test.ts`, `src/plugins/plugin-sdk-dist-alias.ts`, and
+  `src/plugins/sdk-alias.ts`: bundled package runtime entries loaded from
+  `dist/extensions` or staged `dist-runtime/extensions` now project
+  `pluginSdkResolution="dist"`, `pluginSdkPackageRoot`, `pluginSdkDistRoot`,
+  and `pluginSdkAliasRoot` metadata to activation adapters when SDK imports
+  are present, allowing a native adapter to resolve OpenClaw-style plugin-SDK
+  aliases before reporting runtime tools. Repo-wide parity is now estimated at
+  ~59.2%; the active gateway/session/tool-contract family is now estimated at
+  ~99.7%, and runtime/CLI/doctor plus CLI/operator-control bounded paths
+  remain ~99.9%. Verified with the focused SDK alias activation-adapter test,
+  adjacent SDK import/runtime-entry/runtime-transform proof, `ruff check`, and
+  `mypy`; checkpointed in `e6b506db`.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially bundled package plugin-sdk
+  import/runtime activation. The provider-native adapter breadth queue remains
+  the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

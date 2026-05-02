@@ -3,12 +3,12 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~57.8% overall, with a reasonable band of ~49-58%.
-- Estimated active gateway/session/tool-contract family parity: ~99.1% for the bounded local OpenZues path.
+- Estimated repo-wide parity: ~58.7% overall, with a reasonable band of ~50-59%.
+- Estimated active gateway/session/tool-contract family parity: ~99.2% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -9248,6 +9248,300 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
   plugins_doctor_json_reports_metadata_only_tool_activation or
   plugins_doctor_json_gates_manifest_tool_activation_on_auth_env"` (`7
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Native provider result metadata passthrough is now landed for shared
+  outbound runtime delivery results: OpenClaw-shaped reply/thread, tracking,
+  file, filename, and document metadata are preserved in direct send responses
+  and persisted outbound delivery `provider_result` payloads, while
+  caption-capable native providers continue receiving structured media
+  requests instead of synthesized media-list text. Checkpoint in `fb9c9763`.
+- Progress estimates are now roughly 57.9% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while the runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is manifest `contracts.tools` enforcement for installed activation
+  adapter runtime tools and deeper production module import/runtime executor
+  wiring.
+- Verified the native provider metadata passthrough slice with `python -m
+  pytest
+  tests\test_ops_mesh.py::test_provider_result_persistence_keeps_native_extended_metadata
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "provider_result_persistence_keeps_native_extended_metadata or
+  provider_result_persistence_keeps_message_id_runtime_and_meta or
+  send_direct_channel_message_uses_native_adapter_binding"` (`3 passed`),
+  `ruff check src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\gateway_outbound_runtime.py
+  src\openzues\services\ops_mesh.py`.
+
+- Installed activation-adapter manifest tool contract enforcement is now
+  landed for plugin doctor/list runtime activation: adapter-returned runtime
+  tools must be declared in the plugin manifest's `contracts.tools`,
+  undeclared tools are dropped from executor projection, manifest-declared
+  tools remain missing until a declared executor exists, and doctor diagnostics
+  use OpenClaw's `plugin must declare contracts.tools for: <tool>` message.
+  Checkpoint in `aac25d80`.
+- Progress estimates are now roughly 58.0% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper production module import/runtime executor wiring.
+- Verified the installed activation-adapter manifest contract slice with
+  `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+  or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+  plugins_doctor_json_projects_installed_activation_adapter_errors or
+  plugins_inspect_runtime_json_uses_installed_activation_adapter_tools or
+  plugins_inspect_runtime_activation_adapter_receives_scoped_load_context or
+  plugins_doctor_json_reports_metadata_only_tool_activation"` (`7 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Installed activation-adapter OpenClaw runtime load options are now landed:
+  native activation adapters receive `rawConfig`, `config`,
+  `activationSourceConfig`, `autoEnabledReasons`, `env`, scoped
+  `onlyPluginIds`, optional `workspaceDir`, and `throwOnLoadError=true`,
+  matching the OpenClaw runtime loader option envelope. Checkpoint in
+  `ee12d2d4`.
+- Progress estimates are now roughly 58.1% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper production module import/runtime executor wiring.
+- Verified the installed activation-adapter load-options slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+  or plugins_inspect_runtime_activation_adapter_receives_scoped_load_context
+  or plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+  or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+  plugins_doctor_json_projects_installed_activation_adapter_errors or
+  plugins_inspect_runtime_json_uses_installed_activation_adapter_tools"` (`7
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Installed-record manifest runtime activation is now landed: persisted
+  `plugins.installs.<id>.installPath` entries are discovered as manifest-backed
+  plugin records even when absent from `plugins.load.paths`, preserving
+  manifest `contracts.tools`, install metadata, enabled status, and native
+  activation-adapter executor projection. Checkpoint in `b8f39fe3`.
+- Progress estimates are now roughly 58.2% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper production module import/runtime executor wiring.
+- Verified the installed-record manifest activation slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_doctor_json_activates_installed_record_manifest_without_load_path
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_doctor_json_activates_installed_record_manifest_without_load_path
+  or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract
+  or plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options
+  or plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+  plugins_list_json_projects_installed_plugin_activation_state or
+  plugins_list_json_keeps_installed_plugin_allowlist_authoritative"` (`7
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Bundled plugin env discovery/default-disable is now landed:
+  `OPENCLAW_BUNDLED_PLUGINS_DIR` contributes bundled manifest records to native
+  plugin list/doctor inventory, records are marked `origin=bundled`,
+  `OPENCLAW_DISABLE_BUNDLED_PLUGINS` suppresses bundled discovery, and bundled
+  plugins without `enabledByDefault=true` remain disabled even when listed in
+  `plugins.allow`. Checkpoint in `3de3621e`.
+- Progress estimates are now roughly 58.3% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the bundled plugin discovery/default-disable slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_list_json_discovers_bundled_plugins_disabled_by_default
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "bundled_plugins_disabled_by_default or
+  plugins_list_json_discovers_openclaw_manifest_load_paths or
+  plugins_doctor_json_activates_installed_record_manifest_without_load_path or
+  plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins or
+  plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Installed plugin runtime entry-source metadata is now landed:
+  manifest-backed plugin records discovered from install records or load paths
+  expose `runtimeEntrySource` and `runtimeEntrySources` from package
+  `openclaw.extensions` or default `index.*` candidates, giving native
+  activation adapters the concrete module entry OpenClaw discovery would import.
+  Checkpoint in `4f732754`.
+- Progress estimates are now roughly 58.4% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the runtime entry-source slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_installed_record_activation_context_includes_runtime_entry_source
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "runtime_entry_source or plugins_list_json_discovers_openclaw_manifest_load_paths
+  or plugins_doctor_json_activates_installed_record_manifest_without_load_path
+  or plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  bundled_plugins_disabled_by_default"` (`5 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- Bundled channel explicit activation is now landed: bundled channel plugin
+  records discovered from `OPENCLAW_BUNDLED_PLUGINS_DIR` are explicitly
+  activated when `channels.<id>.enabled=true`, bypass restrictive
+  `plugins.allow` lists, and report `activationReason="channel enabled in
+  config"`. Checkpoint in `e92cfcae`.
+- Progress estimates are now roughly 58.5% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the bundled channel activation slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_marks_configured_bundled_channel_as_explicit
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+  or plugins_doctor_json_projects_configured_channel_plugin_activation or
+  configured_channel_plugin_activation or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`4 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Bundled channel auto-enable activation is now landed: bundled channel plugin
+  records with meaningful `channels.<id>` config are treated as auto-enabled
+  even without `enabled=true`, remain non-explicit, bypass allowlist misses, and
+  report `<channel> configured` as the activation reason. Checkpoint in
+  `f1de1e28`.
+- Progress estimates are now roughly 58.6% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the bundled channel auto-enable slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_marks_configured_bundled_channel_as_auto_enabled
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "configured_bundled_channel_as_auto_enabled or
+  configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+  or plugins_doctor_json_projects_configured_channel_plugin_activation or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`5 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Bundled channel manifest env-var activation is now landed: bundled channel
+  plugin records with manifest `channelEnvVars` are auto-enabled when one
+  declared env var is present, including external channel ids and
+  case-insensitive env names, while preserving explicit channel-disable
+  blocking. Checkpoint in `f39ca17c`.
+- Progress estimates are now roughly 58.7% repo-wide and 99.2% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the bundled channel manifest env-var slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_auto_enables_bundled_channel_from_manifest_env_var
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "manifest_env_var or configured_bundled_channel_as_auto_enabled or
+  configured_bundled_channel_as_explicit or bundled_plugins_disabled_by_default
+  or plugins_list_json_preserves_manifest_auth_and_env_metadata"` (`5
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Auto-enabled plugin runtime load-context reasons are now landed: runtime
+  activation adapters receive an OpenClaw-shaped `autoEnabledReasons` map
+  keyed by plugin id for bundled channel plugins auto-enabled from channel
+  config/env discovery, while retaining raw config, activation source config,
+  env, scoped plugin ids, and throw-on-load-error options. Checkpoint in
+  `b44685b1`.
+- Progress estimates are now roughly 58.8% repo-wide and 99.3% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is bundled package plugin-sdk import/runtime activation and standalone
+  text-transform projection.
+- Verified the auto-enabled runtime load-context reason slice with `python -m
+  pytest tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_auto_enabled_channel_reasons
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "auto_enabled_channel_reasons or
+  activation_adapter_receives_openclaw_runtime_load_options or
+  configured_bundled_channel_as_auto_enabled or manifest_env_var or
+  activation_adapter_skips_disabled_manifest_plugins"` (`5 passed`), `ruff
+  check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Runtime text-transform plugin projection is now landed: activation adapters
+  that return active registry `textTransforms` now surface
+  `runtimeTextTransformPlugins` in `plugins doctor --json`, preserving plugin
+  id/name/source/root plus safe input/output replacement counts without
+  requiring tool executor registrations. Checkpoint in `5216fb70`.
+- Progress estimates are now roughly 58.9% repo-wide and 99.4% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the runtime text-transform projection slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_projects_runtime_text_transform_plugins
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "runtime_text_transform_plugins or installed_plugin_runtime_activation_adapter
+  or activation_adapter_receives_openclaw_runtime_load_options or
+  auto_enabled_channel_reasons or metadata_only_tool_activation"` (`5
+  passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+  src\openzues\cli.py`.
+
+- Auto-enabled runtime resolved config is now landed: activation adapters
+  receive raw config as `activationSourceConfig` and a resolved `config`
+  snapshot that materializes auto-enabled bundled channel plugins by setting
+  `channels.<id>.enabled` and adding the plugin id to restrictive
+  `plugins.allow` lists. Checkpoint in `5cfbf4fe`.
+- Progress estimates are now roughly 59.0% repo-wide and 99.5% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the auto-enabled resolved-config slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "resolved_auto_enabled_config or auto_enabled_channel_reasons or
+  activation_adapter_receives_openclaw_runtime_load_options or
+  runtime_text_transform_plugins or configured_bundled_channel_as_auto_enabled
+  or manifest_env_var"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- Bundled runtime plugin-SDK import metadata is now landed: runtime entry
+  sources that import `openclaw/plugin-sdk` or `@openclaw/plugin-sdk` subpaths
+  now expose `pluginSdkImports` in plugin list/runtime metadata, preserving
+  exact specifiers for native adapter alias resolution without executing the
+  TypeScript/JavaScript runtime. Checkpoint in `54fb7bf8`.
+- Progress estimates are now roughly 59.1% repo-wide and 99.6% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the bundled plugin-SDK import metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_projects_bundled_runtime_plugin_sdk_imports
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+  discovers_openclaw_manifest_load_paths or bundled_plugins_disabled_by_default
+  or plugins_install_prefers_dist_runtime_bundled_tree_for_package_root or
+  runtime_text_transform_plugins"` (`6 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- Bundled plugin-SDK alias context is now landed: bundled package runtime
+  entries loaded from `dist/extensions` or staged `dist-runtime/extensions`
+  project `pluginSdkResolution="dist"`, `pluginSdkPackageRoot`,
+  `pluginSdkDistRoot`, and `pluginSdkAliasRoot` metadata to activation
+  adapters when SDK imports are present. Checkpoint in `e6b506db`.
+- Progress estimates are now roughly 59.2% repo-wide and 99.7% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the bundled plugin-SDK alias context slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activation_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugin_sdk_alias_to_activation_adapter or bundled_runtime_plugin_sdk_imports
+  or runtime_entry_source or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  runtime_text_transform_plugins or
+  plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 

@@ -6640,6 +6640,8 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             "manifestPath": str(manifest_path),
             "configSchema": True,
             "setupSource": str((plugin_dir / "setup-entry.ts").resolve(strict=False)),
+            "runtimeEntrySource": str((plugin_dir / "index.ts").resolve(strict=False)),
+            "runtimeEntrySources": [str((plugin_dir / "index.ts").resolve(strict=False))],
             "publicSurfaceArtifacts": ["api.js", "runtime-api.js"],
             "runtimeSidecarArtifacts": ["runtime-api.js"],
             "contracts": {
@@ -8914,6 +8916,268 @@ def test_plugins_inspect_runtime_activation_adapter_receives_scoped_load_context
     ]
 
 
+def test_plugins_doctor_json_activation_adapter_receives_openclaw_runtime_load_options(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "runtime-load-options"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="runtime-load-options",
+        contracts={"tools": ["runtime_load_options.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    context = calls[-1]
+    assert context["rawConfig"]["plugins"]["load"]["paths"] == [str(plugin_dir)]
+    assert context["config"]["plugins"]["load"]["paths"] == [str(plugin_dir)]
+    assert context["activationSourceConfig"]["plugins"]["load"]["paths"] == [
+        str(plugin_dir)
+    ]
+    assert context["autoEnabledReasons"] == {}
+    assert context["throwOnLoadError"] is True
+
+
+def test_plugins_doctor_json_activation_adapter_receives_auto_enabled_channel_reasons(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "telegram"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="telegram",
+        enabled_by_default=False,
+        channels=["telegram"],
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+                "channels": {"telegram": {"botToken": "configured"}},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls
+    context = calls[-1]
+    assert [plugin["id"] for plugin in context["plugins"]] == ["telegram"]
+    assert context["autoEnabledReasons"] == {
+        "telegram": ["telegram configured"]
+    }
+
+
+def test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "telegram"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="telegram",
+        enabled_by_default=False,
+        channels=["telegram"],
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True, "allow": []},
+                "channels": {"telegram": {"botToken": "configured"}},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls
+    context = calls[-1]
+    assert context["activationSourceConfig"]["plugins"]["allow"] == []
+    assert context["activationSourceConfig"]["channels"]["telegram"] == {
+        "botToken": "configured"
+    }
+    assert context["config"]["plugins"]["allow"] == ["telegram"]
+    assert context["config"]["channels"]["telegram"] == {
+        "botToken": "configured",
+        "enabled": True,
+    }
+
+
+def test_plugins_doctor_json_projects_runtime_text_transform_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "text-shim"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="text-shim",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            return {
+                "registry": {
+                    "textTransforms": [
+                        {
+                            "pluginId": "text-shim",
+                            "pluginName": "Text Shim",
+                            "source": "openclaw-plugin",
+                            "rootDir": str(plugin_dir),
+                            "transforms": {
+                                "input": [
+                                    {"from": "red basket", "to": "blue basket"}
+                                ],
+                                "output": [
+                                    {"from": "blue basket", "to": "red basket"}
+                                ],
+                            },
+                        }
+                    ]
+                }
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["runtimeTextTransformPlugins"] == [
+        {
+            "pluginId": "text-shim",
+            "pluginName": "Text Shim",
+            "source": "openclaw-plugin",
+            "rootDir": str(plugin_dir),
+            "transforms": {"input": 1, "output": 1},
+        }
+    ]
+
+
 def test_plugins_inspect_runtime_missing_target_uses_static_inventory(monkeypatch) -> None:
     runtime_flags: list[bool] = []
 
@@ -9630,6 +9894,655 @@ def test_plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter(
     assert plugins["installed-tools"]["imported"] is True
     assert calls
     assert [plugin["id"] for plugin in calls[0]["plugins"]] == ["installed-tools"]
+
+
+def test_plugins_doctor_json_activates_installed_record_manifest_without_load_path(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-record-tools"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-record-tools",
+        contracts={"tools": ["installed_record.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"installed-record-tools": {"enabled": True}},
+                    "installs": {
+                        "installed-record-tools": {
+                            "source": "git",
+                            "spec": "git:file:///tmp/installed-record-tools.git@abc123",
+                            "installPath": str(plugin_dir),
+                            "version": "1.0.0",
+                        }
+                    },
+                },
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-record-tools",
+                        "pluginName": "Installed Record Tools",
+                        "source": "installed-runtime",
+                        "names": ["installed_record.search"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    runtime_activation = payload["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["manifestToolPlugins"] == [
+        {"pluginId": "installed-record-tools", "tools": ["installed_record.search"]}
+    ]
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "installed-record-tools", "tools": ["installed_record.search"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    plugin = plugins["installed-record-tools"]
+    assert plugin["imported"] is True
+    assert plugin["contracts"] == {"tools": ["installed_record.search"]}
+    assert plugin["install"]["installPath"] == str(plugin_dir)
+
+
+def test_plugins_doctor_json_installed_record_activation_context_includes_runtime_entry_source(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-entry-tools"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-entry-tools",
+        contracts={"tools": ["installed_entry.search"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text("module.exports = { register() {} };\n", encoding="utf-8")
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {
+                    "entries": {"installed-entry-tools": {"enabled": True}},
+                    "installs": {
+                        "installed-entry-tools": {
+                            "source": "git",
+                            "installPath": str(plugin_dir),
+                            "version": "1.0.0",
+                        }
+                    },
+                },
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls
+    plugin_rows = calls[0]["plugins"]
+    assert isinstance(plugin_rows, list)
+    plugin = plugin_rows[0]
+    assert isinstance(plugin, dict)
+    expected_entry = str(entry_path.resolve(strict=False))
+    assert plugin["rootDir"] == str(plugin_dir)
+    assert plugin["manifestPath"] == str(manifest_path)
+    assert plugin["runtimeEntrySource"] == expected_entry
+    assert plugin["runtimeEntrySources"] == [expected_entry]
+
+
+def test_plugins_list_json_discovers_bundled_plugins_disabled_by_default(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "bundled-tools"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="bundled-tools",
+        enabled_by_default=False,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": ["bundled-tools"]},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["bundled-tools"]
+    assert plugin["status"] == "disabled"
+    assert plugin["origin"] == "bundled"
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["activated"] is False
+    assert plugin["explicitlyEnabled"] is False
+    assert plugin["activationSource"] == "disabled"
+    assert plugin["activationReason"] == "bundled (disabled by default)"
+
+
+def test_plugins_list_json_marks_configured_bundled_channel_as_explicit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "telegram"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="telegram",
+        enabled_by_default=False,
+        channels=["telegram"],
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": ["browser"]},
+                "channels": {"telegram": {"enabled": True}},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["telegram"]
+    assert plugin["status"] == "loaded"
+    assert plugin["origin"] == "bundled"
+    assert plugin["activated"] is True
+    assert plugin["explicitlyEnabled"] is True
+    assert plugin["activationSource"] == "explicit"
+    assert plugin["activationReason"] == "channel enabled in config"
+
+
+def test_plugins_list_json_marks_configured_bundled_channel_as_auto_enabled(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "telegram"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="telegram",
+        enabled_by_default=False,
+        channels=["telegram"],
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+                "channels": {"telegram": {"botToken": "configured"}},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["telegram"]
+    assert plugin["status"] == "loaded"
+    assert plugin["origin"] == "bundled"
+    assert plugin["activated"] is True
+    assert plugin["explicitlyEnabled"] is False
+    assert plugin["activationSource"] == "auto"
+    assert plugin["activationReason"] == "telegram configured"
+
+
+def test_plugins_list_json_auto_enables_bundled_channel_from_manifest_env_var(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "external-env-channel"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="external-env-channel",
+        enabled_by_default=False,
+        channels=["external-env-channel"],
+    )
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["channelEnvVars"] = {
+        "external-env-channel": ["EXTERNAL_ENV_CHANNEL_TOKEN"]
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+    monkeypatch.setenv("EXTERNAL_ENV_CHANNEL_TOKEN", "configured")
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["external-env-channel"]
+    assert plugin["status"] == "loaded"
+    assert plugin["activated"] is True
+    assert plugin["explicitlyEnabled"] is False
+    assert plugin["activationSource"] == "auto"
+    assert plugin["activationReason"] == "external-env-channel configured"
+
+
+def test_plugins_list_json_projects_bundled_runtime_plugin_sdk_imports(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    plugin_dir = package_root / "dist" / "extensions" / "discord"
+    manifest_path = _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "\n".join(
+            [
+                "import { normalizeLowercaseStringOrEmpty } from "
+                '"openclaw/plugin-sdk/text-runtime";',
+                'const sdk = require("@openclaw/plugin-sdk");',
+                "export default { register() {} };",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(package_root))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(result.stdout)["plugins"]
+    }
+    plugin = plugins["discord"]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["runtimeEntrySource"] == str(entry_path.resolve(strict=False))
+    assert plugin["pluginSdkImports"] == [
+        "openclaw/plugin-sdk/text-runtime",
+        "@openclaw/plugin-sdk",
+    ]
+
+
+def test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activation_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    dist_root = package_root / "dist"
+    plugin_dir = dist_root / "extensions" / "discord"
+    (dist_root / "plugin-sdk").mkdir(parents=True)
+    (dist_root / "plugin-sdk" / "text-runtime.js").write_text(
+        "export const normalizeLowercaseStringOrEmpty = (value) => String(value).toLowerCase();\n",
+        encoding="utf-8",
+    )
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "import { normalizeLowercaseStringOrEmpty } from "
+        '"openclaw/plugin-sdk/text-runtime";\n'
+        "export default { register() {} };\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(dist_root / "extensions"))
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            plugin = context["plugins"][0]
+            expected_alias_root = (
+                dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+            )
+            if (
+                plugin.get("pluginSdkResolution") == "dist"
+                and plugin.get("pluginSdkDistRoot")
+                == str(dist_root.resolve(strict=False))
+                and plugin.get("pluginSdkAliasRoot")
+                == str(expected_alias_root.resolve(strict=False))
+                and plugin.get("pluginSdkImports")
+                == ["openclaw/plugin-sdk/text-runtime"]
+            ):
+                return {
+                    "tools": [
+                        {
+                            "pluginId": "discord",
+                            "pluginName": "discord",
+                            "source": "openclaw-plugin",
+                            "names": ["discord.send"],
+                            "executor": fake_executor,
+                        }
+                    ]
+                }
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+
+
+def test_plugins_doctor_json_rejects_installed_activation_adapter_tool_outside_manifest_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "installed-contract"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="installed-contract",
+        contracts={"tools": ["manifest_tool"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            return {
+                "tools": [
+                    {
+                        "pluginId": "installed-contract",
+                        "pluginName": "Installed Contract",
+                        "source": "installed-runtime",
+                        "names": ["runtime_tool"],
+                        "executor": fake_executor,
+                    }
+                ]
+            }
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["diagnostics"] == [
+        {
+            "level": "error",
+            "pluginId": "installed-contract",
+            "source": str(plugin_dir / "openclaw.plugin.json"),
+            "message": "plugin must declare contracts.tools for: runtime_tool",
+        }
+    ]
+    runtime_activation = payload["runtimeActivation"]
+    assert runtime_activation["status"] == "metadata_only"
+    assert runtime_activation["runtimeExecutorPlugins"] == []
+    assert runtime_activation["missingExecutorPlugins"] == [
+        {"pluginId": "installed-contract", "tools": ["manifest_tool"]}
+    ]
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["installed-contract"]["imported"] is False
 
 
 def test_plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins(
