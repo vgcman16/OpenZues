@@ -166,7 +166,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human compatibility warnings section, rendering
   compatibility rows without doctor-only severity markers.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `38b85a1a`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -361,7 +361,7 @@ may lag behind this tracker.
     plugin inspect human policy section checkpointed in `e0af8199`, and plugin
     inspect human diagnostics section checkpointed in `667182c7`, and plugin
     inspect human install section checkpointed in `5ca0a5f2`, and plugin
-    inspect human compatibility warnings section verified pending checkpoint,
+    inspect human compatibility warnings section checkpointed in `38b85a1a`,
     but deeper module import/runtime activation remains.
   - Weight: 5
 
@@ -369,7 +369,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `38b85a1a`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect human metadata test (`1
     passed`), adjacent plugin inspect/doctor proof (`10 passed`), `ruff

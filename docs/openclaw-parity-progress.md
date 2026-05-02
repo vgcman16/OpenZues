@@ -8792,7 +8792,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect human compatibility warnings section is now landed for
   OpenClaw's inspect detail surface: human `plugins inspect <id>` renders
   `Compatibility warnings` rows from native compatibility notices without the
-  doctor-only severity suffix. Checkpoint pending.
+  doctor-only severity suffix. Checkpointed in `38b85a1a`.
 - Progress estimates are now roughly 55.9% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
