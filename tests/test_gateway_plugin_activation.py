@@ -202,3 +202,29 @@ def test_resolve_configured_channel_plugin_plan_projects_activation_config() -> 
             }
         },
     }
+
+
+def test_resolve_configured_channel_plugin_plan_respects_disabled_owner() -> None:
+    plugins = _activation_plugins()
+
+    assert resolve_configured_channel_plugin_plan(
+        plugins=plugins,
+        config={
+            "plugins": {"entries": {"demo-channel": {"enabled": False}}},
+            "channels": {"telegram": {"enabled": True}},
+        },
+    ) == {
+        "scope": "configured-channels",
+        "channelIds": ["telegram"],
+        "pluginIds": [],
+        "entries": [
+            {
+                "channelId": "telegram",
+                "sources": ["explicit-config"],
+                "effective": False,
+                "pluginIds": [],
+                "blockedReasons": ["plugin-disabled"],
+            }
+        ],
+        "diagnostics": [],
+    }
