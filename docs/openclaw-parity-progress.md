@@ -9185,7 +9185,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   landed for `plugins inspect <id> --runtime --json`: target-scoped runtime
   inventory is followed by native installed-plugin activation adapter tool
   resolution, so inspect reports `capabilityMode="runtime"` and concrete
-  runtime tool rows for adapter-backed installed plugins. Checkpoint pending.
+  runtime tool rows for adapter-backed installed plugins. Checkpoint in
+  `fb4fca1b`.
 - Progress estimates are now roughly 57.6% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper production module import and
