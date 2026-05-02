@@ -12280,6 +12280,22 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
                 f"{kind}: {', '.join(ids) if ids else '(registered)'}"
             )
     _emit_plugin_inspect_section("Capabilities", capability_lines)
+    _emit_plugin_inspect_section(
+        "Commands",
+        _plugin_record_string_list(payload, "commands"),
+    )
+    _emit_plugin_inspect_section(
+        "CLI commands",
+        _plugin_record_string_list(payload, "cliCommands"),
+    )
+    _emit_plugin_inspect_section(
+        "Services",
+        _plugin_record_string_list(payload, "services"),
+    )
+    _emit_plugin_inspect_section(
+        "Gateway methods",
+        _plugin_record_string_list(payload, "gatewayMethods"),
+    )
     error = _optional_cli_string(plugin.get("error"))
     if error is not None:
         typer.echo(f"Error: {error}")

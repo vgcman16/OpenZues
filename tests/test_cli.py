@@ -9747,6 +9747,46 @@ def test_plugins_inspect_human_reports_capability_sections(monkeypatch) -> None:
     assert "- inventory: alpha, beta" in result.stdout
 
 
+def test_plugins_inspect_human_reports_runtime_surface_sections(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "surface_plugin",
+                            "label": "Surface Plugin",
+                            "status": "ready",
+                            "summary": "Surface plugin.",
+                            "commands": ["surface.command"],
+                            "cliCommands": ["surface cli"],
+                            "services": ["surface.service"],
+                            "gatewayMethods": ["surface.method"],
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "surface_plugin"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Commands:" in result.stdout
+    assert "- surface.command" in result.stdout
+    assert "CLI commands:" in result.stdout
+    assert "- surface cli" in result.stdout
+    assert "Services:" in result.stdout
+    assert "- surface.service" in result.stdout
+    assert "Gateway methods:" in result.stdout
+    assert "- surface.method" in result.stdout
+
+
 def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:
