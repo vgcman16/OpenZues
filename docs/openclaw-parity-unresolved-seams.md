@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~56.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~56.7% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -46,6 +46,7 @@ Current percentage rollup:
   sections, plugin inspect human header/bundle-format labels, plugin list
   verbose activation/import state, plugin list human enabled label, plugin list
   human enabled count, manifest load-path activation-state projection,
+  plugin public-surface/runtime-sidecar artifact metadata projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -78,6 +79,7 @@ Current percentage rollup:
   plugin inspect human header/bundle-format labels, plugin list verbose
   activation/import state, plugin list human enabled label, plugin list human
   enabled count, manifest load-path activation-state projection,
+  plugin public-surface/runtime-sidecar artifact metadata projection,
   active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
@@ -5098,6 +5100,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with the focused runtime inspect error-import test, adjacent
   loader-error/workspace-status proof, `ruff check`, and `mypy`; checkpoint
   in `cc2da90c`.
+- Closed the public-surface/runtime-sidecar artifact metadata seam from
+  OpenClaw `src/plugins/bundled-plugin-metadata.test.ts` and
+  `src/plugins/bundled-plugin-scan.ts`: manifest/load-path plugin records now
+  scan top-level public source files, rewrite them to built `.js` artifact
+  names, exclude primary extension/setup/config/test files, and project
+  `publicSurfaceArtifacts` plus `runtimeSidecarArtifacts` without importing
+  the TypeScript runtime. Repo-wide parity is now estimated at ~56.7%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused manifest load-path CLI test, adjacent
+  manifest/bundle inventory proof, `ruff check`, and `mypy`; checkpoint
+  pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

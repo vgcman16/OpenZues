@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~56.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~56.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -195,6 +195,10 @@ may lag behind this tracker.
 - [x] Errored runtime-imported plugin projection for runtime diagnostics and
   inspect paths.
   - Status: checkpointed in `cc2da90c`
+
+- [x] Public-surface/runtime-sidecar artifact metadata for manifest/load-path
+  OpenClaw plugin records.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -397,8 +401,22 @@ may lag behind this tracker.
     `bc362484`, plugin list human enabled count checkpointed in `cc9983c3`,
     manifest load-path activation-state projection checkpointed in
     `54bf33aa`, and errored runtime-imported plugin projection checkpointed
-    in `cc2da90c`, but deeper module import/runtime activation remains.
+    in `cc2da90c`, and public-surface/runtime-sidecar artifact metadata
+    verified with checkpoint pending, but deeper module import/runtime
+    activation remains.
   - Weight: 5
+
+- [x] Public-surface/runtime-sidecar artifact metadata.
+  - Source: `openclaw-main/src/plugins/bundled-plugin-metadata.test.ts`,
+    `openclaw-main/src/plugins/bundled-plugin-scan.ts`, and
+    `openclaw-main/src/plugins/public-surface-runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused manifest load-path test (`1 passed`),
+    adjacent manifest/bundle inventory proof (`7 passed`), `ruff check`, and
+    `mypy`.
 
 - [x] Errored runtime-imported plugin projection.
   - Source: `openclaw-main/src/plugins/status.test.ts`,

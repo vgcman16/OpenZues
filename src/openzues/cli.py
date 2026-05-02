@@ -17095,6 +17095,21 @@ _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES = (
     "index.cjs",
 )
 _OPENCLAW_CONTRACT_API_EXTENSIONS = (".ts", ".mts", ".cts", ".js", ".mjs", ".cjs")
+_OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS = (
+    ".ts",
+    ".mts",
+    ".cts",
+    ".js",
+    ".mjs",
+    ".cjs",
+)
+_OPENCLAW_RUNTIME_SIDECAR_ARTIFACTS = {
+    "helper-api.js",
+    "light-runtime-api.js",
+    "runtime-api.js",
+    "runtime-setter-api.js",
+    "thread-bindings-runtime.js",
+}
 _OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS = (
     "skills",
     "commands",
@@ -17717,6 +17732,62 @@ def _plugin_package_channel_catalog_meta(value: object) -> dict[str, object]:
     return metadata
 
 
+def _plugin_rewrite_public_surface_artifact(name: str) -> str:
+    stem = name.rsplit(".", 1)[0]
+    return f"{stem}.js"
+
+
+def _plugin_is_public_surface_source(name: str) -> bool:
+    if name.startswith(".") or name.startswith("test-") or ".test-" in name:
+        return False
+    if name.endswith(".d.ts"):
+        return False
+    if re.match(r"^config-api(\.[cm]?[jt]s)$", name):
+        return False
+    if re.search(r"(\.test|\.spec)(\.[cm]?[jt]s)$", name):
+        return False
+    return Path(name).suffix in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS
+
+
+def _plugin_public_surface_artifacts(
+    plugin_root: Path,
+    package_openclaw: dict[str, object],
+) -> dict[str, list[str]]:
+    excluded: set[str] = set()
+    raw_extensions = package_openclaw.get("extensions")
+    for entry in raw_extensions if isinstance(raw_extensions, list) else []:
+        text = _optional_cli_string(entry)
+        if text is not None:
+            excluded.add(Path(text).name)
+    setup_entry = _optional_cli_string(package_openclaw.get("setupEntry"))
+    if setup_entry is not None:
+        excluded.add(Path(setup_entry).name)
+    try:
+        entries = list(plugin_root.iterdir())
+    except OSError:
+        return {}
+    public_artifacts = sorted(
+        {
+            _plugin_rewrite_public_surface_artifact(entry.name)
+            for entry in entries
+            if entry.is_file()
+            and entry.name not in excluded
+            and _plugin_is_public_surface_source(entry.name)
+        }
+    )
+    metadata: dict[str, list[str]] = {}
+    if public_artifacts:
+        metadata["publicSurfaceArtifacts"] = public_artifacts
+    runtime_sidecars = [
+        artifact
+        for artifact in public_artifacts
+        if artifact in _OPENCLAW_RUNTIME_SIDECAR_ARTIFACTS
+    ]
+    if runtime_sidecars:
+        metadata["runtimeSidecarArtifacts"] = runtime_sidecars
+    return metadata
+
+
 def _plugin_package_openclaw_record_metadata(
     value: object,
     *,
@@ -17728,6 +17799,7 @@ def _plugin_package_openclaw_record_metadata(
     setup_entry = _optional_cli_string(value.get("setupEntry"))
     if setup_entry is not None:
         metadata["setupSource"] = str((plugin_root / setup_entry).resolve(strict=False))
+    metadata.update(_plugin_public_surface_artifacts(plugin_root, value))
     startup = value.get("startup")
     if (
         isinstance(startup, dict)

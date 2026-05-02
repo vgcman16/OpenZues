@@ -6538,6 +6538,28 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
     plugin_dir = tmp_path / "plugins" / "native-runtime"
     plugin_dir.mkdir(parents=True)
     manifest_path = plugin_dir / "openclaw.plugin.json"
+    (plugin_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@openzues/native-runtime",
+                "version": "0.3.0",
+                "openclaw": {
+                    "extensions": ["./index.ts"],
+                    "setupEntry": "./setup-entry.ts",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    for filename in (
+        "index.ts",
+        "setup-entry.ts",
+        "api.ts",
+        "runtime-api.ts",
+        "config-api.ts",
+        "test-helper.ts",
+    ):
+        (plugin_dir / filename).write_text("export {};\n", encoding="utf-8")
     manifest_path.write_text(
         json.dumps(
             {
@@ -6617,6 +6639,9 @@ def test_plugins_list_json_discovers_openclaw_manifest_load_paths(
             "rootDir": str(plugin_dir),
             "manifestPath": str(manifest_path),
             "configSchema": True,
+            "setupSource": str((plugin_dir / "setup-entry.ts").resolve(strict=False)),
+            "publicSurfaceArtifacts": ["api.js", "runtime-api.js"],
+            "runtimeSidecarArtifacts": ["runtime-api.js"],
             "contracts": {
                 "tools": ["native_runtime.search"],
                 "webSearchProviders": ["native-search"],
