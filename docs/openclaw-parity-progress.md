@@ -7,8 +7,8 @@
 - Estimated active gateway/session/tool-contract family parity: ~98% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98% after the latest `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, and fakeable npm install slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
-- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, and fakeable npm install; remaining CLI gaps are now dominated by npm update/failure fallback breadth, runtime activation/import depth, and packaging surfaces.
+- Estimated runtime/CLI/doctor native-bridge parity: ~98% after the runtime bridge doctor posture, provider route send/poll alias-precedence, plugin runtime executor inventory, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable npm install, and npm-not-found bundled fallback slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, and broader runtime command ergonomics.
+- Estimated CLI/operator control-plane parity: ~98% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, local path link/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit ClawHub install, preferred ClawHub fallback, fakeable npm install, and npm-not-found bundled fallback; remaining CLI gaps are now dominated by npm update/hook fallback breadth, runtime activation/import depth, and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
 ## Methodology Note
@@ -7260,6 +7260,39 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_install_link_json_persists_local_plugin_path or
   plugins_install_marketplace_json_persists_local_manifest_entry or
   plugins_install_json_resolves_known_marketplace_shortcut"` (`14 passed`),
+  `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\gateway_config.py`.
+- npm `npm_package_not_found` failures now mirror OpenClaw's bundled fallback
+  by npm spec. Bundled sources expose package `openclaw.install.npmSpec` /
+  package-name metadata, and the native CLI persists the matching bundled
+  plugin as a path install with the original npm spec plus the upstream-shaped
+  `npm package unavailable... using bundled plugin...` warning.
+- Progress estimates remain roughly 49% repo-wide and ~98% for the
+  CLI/operator control plane after this npm-failure fallback slice. Remaining
+  non-marketplace plugin parity is npm update behavior, hook-pack fallback
+  breadth, production npm installer wiring, and deeper runtime
+  activation/import depth.
+- Verified the npm-not-found bundled fallback slice with `python -m pytest
+  tests\test_cli.py::test_plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec
+  -q` (`1 failed` before implementation because the npm error surfaced
+  directly), then the same command (`1 passed`), adjacent plugin CLI proof
+  `python -m pytest tests\test_cli.py -q -k
+  "plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec or
+  plugins_install_json_uses_npm_installer_after_clawhub_miss_with_pin or
+  plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss or
+  plugins_install_json_prefers_clawhub_for_registry_npm_spec or
+  plugins_install_preferred_clawhub_not_found_falls_through_to_npm_boundary or
+  plugins_install_json_uses_clawhub_installer_for_explicit_spec or
+  plugins_install_clawhub_reports_unavailable_runtime or
+  plugins_install_json_uses_bundled_plugin_for_bare_id or
+  plugins_install_human_warns_for_bundled_bare_id or
+  plugins_install_reports_missing_absolute_local_like_spec or
+  plugins_install_reports_missing_local_like_spec or
+  plugins_install_json_copies_local_plugin_path or
+  plugins_install_link_json_persists_local_plugin_path or
+  plugins_install_marketplace_json_persists_local_manifest_entry or
+  plugins_install_json_resolves_known_marketplace_shortcut"` (`15 passed`),
   `ruff check src\openzues\cli.py src\openzues\services\gateway_config.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\gateway_config.py`.

@@ -12639,6 +12639,12 @@ class _CliClawHubInstallError(ValueError):
         self.code = code
 
 
+class _CliNpmInstallError(ValueError):
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class _CliBundledPluginSource:
     plugin_id: str
@@ -12748,12 +12754,48 @@ def _find_cli_bundled_plugin_source_by_id(plugin_id: str) -> _CliBundledPluginSo
     return None
 
 
+def _find_cli_bundled_plugin_source_by_npm_spec(
+    npm_spec: str,
+) -> _CliBundledPluginSource | None:
+    requested_spec = npm_spec.strip()
+    if not requested_spec:
+        return None
+    seen: set[Path] = set()
+    for root in _cli_bundled_plugin_roots():
+        try:
+            candidates = sorted(root.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            continue
+        for candidate in candidates:
+            try:
+                resolved_candidate = candidate.resolve(strict=False)
+            except OSError:
+                resolved_candidate = candidate
+            if resolved_candidate in seen or not candidate.is_dir():
+                continue
+            seen.add(resolved_candidate)
+            source = _read_cli_bundled_plugin_source(candidate)
+            if source is not None and source.npm_spec == requested_spec:
+                return source
+    return None
+
+
 def _resolve_cli_bundled_install_plan_before_npm(
     raw_spec: str,
 ) -> _CliBundledPluginSource | None:
     if not _is_cli_bare_npm_package_name(raw_spec):
         return None
     return _find_cli_bundled_plugin_source_by_id(raw_spec)
+
+
+def _resolve_cli_bundled_install_plan_for_npm_failure(
+    *,
+    raw_spec: str,
+    code: str | None,
+) -> _CliBundledPluginSource | None:
+    if code != "npm_package_not_found":
+        return None
+    return _find_cli_bundled_plugin_source_by_npm_spec(raw_spec)
 
 
 def _cli_bundled_install_warning(source: _CliBundledPluginSource, raw_spec: str) -> str:
@@ -13010,7 +13052,10 @@ async def _build_plugins_npm_install_payload(
         force=force,
     )
     if result.get("ok") is False:
-        raise ValueError(str(result.get("error") or "npm plugin install failed."))
+        raise _CliNpmInstallError(
+            str(result.get("error") or "npm plugin install failed."),
+            _optional_cli_string(result.get("code")),
+        )
     plugin_id = _optional_cli_string(result.get("pluginId"))
     install_path = _optional_cli_string(result.get("targetDir")) or _optional_cli_string(
         result.get("installPath")
@@ -13066,6 +13111,7 @@ async def _build_plugins_bundled_install_payload(
     raw_spec: str,
     source: _CliBundledPluginSource,
     force: bool,
+    warning: str | None = None,
 ) -> dict[str, object]:
     result = services.gateway_config.record_path_plugin_install(
         plugin_id=source.plugin_id,
@@ -13087,7 +13133,7 @@ async def _build_plugins_bundled_install_payload(
         "path": result.get("path"),
         "hash": result.get("hash"),
         "restart": result.get("restart") or "gateway",
-        "warning": _cli_bundled_install_warning(source, raw_spec),
+        "warning": warning or _cli_bundled_install_warning(source, raw_spec),
     }
 
 
@@ -20020,6 +20066,37 @@ def plugins_install_command(
 
             try:
                 payload = _run(_run_with_services(_npm_action))
+            except _CliNpmInstallError as exc:
+                bundled_fallback = _resolve_cli_bundled_install_plan_for_npm_failure(
+                    raw_spec=plugin_id,
+                    code=exc.code,
+                )
+                if bundled_fallback is None:
+                    typer.echo(str(exc), err=True)
+                    raise typer.Exit(code=1) from exc
+
+                async def _bundled_fallback_action(
+                    services: CliServices,
+                ) -> dict[str, object]:
+                    return await _build_plugins_bundled_install_payload(
+                        services,
+                        raw_spec=plugin_id,
+                        source=bundled_fallback,
+                        force=force,
+                        warning=(
+                            f"npm package unavailable for {plugin_id}; "
+                            f"using bundled plugin at {bundled_fallback.local_path}."
+                        ),
+                    )
+
+                try:
+                    payload = _run(_run_with_services(_bundled_fallback_action))
+                except ValueError as fallback_exc:
+                    typer.echo(str(fallback_exc), err=True)
+                    raise typer.Exit(code=1) from fallback_exc
+                except RuntimeError as fallback_exc:
+                    typer.echo(str(fallback_exc), err=True)
+                    raise typer.Exit(code=1) from fallback_exc
             except ValueError as exc:
                 typer.echo(str(exc), err=True)
                 raise typer.Exit(code=1) from exc

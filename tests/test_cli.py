@@ -9407,6 +9407,100 @@ def test_plugins_install_npm_reports_unavailable_runtime_after_clawhub_miss(
     assert "npm plugin install runtime is unavailable." in result.stderr
 
 
+def test_plugins_install_npm_not_found_uses_bundled_plugin_by_npm_spec(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    extensions_dir = tmp_path / "openclaw-runtime" / "dist" / "extensions"
+    plugin_dir = extensions_dir / "voice-call"
+    _write_openclaw_runtime_plugin(plugin_dir, plugin_id="voice-call")
+    (plugin_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@openclaw/voice-call",
+                "version": "1.2.3",
+                "openclaw": {"install": {"npmSpec": "@openclaw/voice-call"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(extensions_dir))
+    npm_calls: list[dict[str, object]] = []
+
+    class FakeClawHubInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "error": "Package not found on ClawHub.",
+                "code": "package_not_found",
+            }
+
+    class FakeNpmInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            npm_calls.append(dict(kwargs))
+            return {
+                "ok": False,
+                "error": "Package not found on npm: @openclaw/voice-call.",
+                "code": "npm_package_not_found",
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                plugin_clawhub_installer=FakeClawHubInstaller(),
+                plugin_npm_installer=FakeNpmInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "install", "@openclaw/voice-call", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert npm_calls == [{"spec": "@openclaw/voice-call", "mode": "install"}]
+    bundled_path = str(plugin_dir.resolve())
+    payload = json.loads(result.stdout)
+    assert payload["source"] == "path"
+    assert payload["pluginId"] == "voice-call"
+    assert payload["install"]["source"] == "path"
+    assert payload["install"]["spec"] == "@openclaw/voice-call"
+    assert payload["install"]["sourcePath"] == bundled_path
+    assert payload["install"]["installPath"] == bundled_path
+    assert payload["warning"] == (
+        "npm package unavailable for @openclaw/voice-call; "
+        f"using bundled plugin at {bundled_path}."
+    )
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    assert stored["plugins"]["load"]["paths"] == [bundled_path]
+    assert stored["plugins"]["installs"]["voice-call"]["spec"] == "@openclaw/voice-call"
+
+
 def test_plugins_install_json_resolves_known_marketplace_shortcut(
     tmp_path,
     monkeypatch,
