@@ -9284,6 +9284,95 @@ def test_plugins_doctor_json_reports_metadata_only_tool_activation(
     }
 
 
+def test_plugins_doctor_json_gates_manifest_tool_activation_on_auth_env(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "xai"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "xai",
+                "name": "xAI",
+                "description": "Manifest-owned xAI tool.",
+                "version": "1.0.0",
+                "enabledByDefault": True,
+                "configSchema": {"type": "object"},
+                "providers": ["xai"],
+                "providerAuthEnvVars": {"xai": ["XAI_API_KEY"]},
+                "contracts": {"tools": ["x_search"]},
+                "toolMetadata": {
+                    "x_search": {
+                        "authSignals": [{"provider": "xai"}],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    unavailable_result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert unavailable_result.exit_code == 0, unavailable_result.stdout
+    unavailable_payload = json.loads(unavailable_result.stdout)["runtimeActivation"]
+    assert unavailable_payload["status"] == "unavailable"
+    assert unavailable_payload["manifestToolPlugins"] == [
+        {
+            "pluginId": "xai",
+            "tools": ["x_search"],
+            "availability": "unavailable",
+            "unavailableTools": ["x_search"],
+        }
+    ]
+    assert unavailable_payload["missingExecutorPlugins"] == []
+    assert unavailable_payload["unavailableToolPlugins"] == [
+        {"pluginId": "xai", "tools": ["x_search"]}
+    ]
+
+    monkeypatch.setenv("XAI_API_KEY", "test-key")
+    available_result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert available_result.exit_code == 0, available_result.stdout
+    available_payload = json.loads(available_result.stdout)["runtimeActivation"]
+    assert available_payload["status"] == "metadata_only"
+    assert available_payload["manifestToolPlugins"] == [
+        {
+            "pluginId": "xai",
+            "tools": ["x_search"],
+            "availability": "available",
+        }
+    ]
+    assert available_payload["missingExecutorPlugins"] == [
+        {"pluginId": "xai", "tools": ["x_search"]}
+    ]
+    assert available_payload["unavailableToolPlugins"] == []
+
+
 def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(
     tmp_path,
     monkeypatch,
