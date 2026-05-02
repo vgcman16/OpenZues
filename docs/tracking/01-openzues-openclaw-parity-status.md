@@ -69,7 +69,7 @@ may lag behind this tracker.
   --json`, covering command aliases, providers, setup providers, agent
   harnesses, channels, routes, and capability triggers with upstream
   `activation-*` and `manifest-*` reason strings.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `721ec0f2`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -242,8 +242,8 @@ may lag behind this tracker.
 - [ ] Real installed plugin module import/activation.
   - Source: OpenClaw plugin lifecycle and activation runtime.
   - Status: open; manifest activation-plan reason projection child slice
-    verified and awaiting checkpoint, but deeper module import/runtime
-    activation remains.
+    checkpointed in `721ec0f2`, but deeper module import/runtime activation
+    remains.
   - Weight: 5
 
 - [~] Provider-native adapter breadth.
@@ -265,7 +265,7 @@ may lag behind this tracker.
   - Target: `src/openzues/cli.py`,
     `src/openzues/services/gateway_plugin_activation.py`
   - Test: `tests/test_cli.py`, `tests/test_gateway_plugin_activation.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `721ec0f2`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_cli.py::test_plugins_doctor_json_projects_manifest_activation_plan_reasons

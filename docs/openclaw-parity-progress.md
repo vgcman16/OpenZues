@@ -117,8 +117,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor --json` projects activation plans for command aliases, providers,
   setup providers, agent harnesses, channels, routes, and capability triggers,
   including the upstream-shaped `activation-*` and `manifest-*` reason strings
-  without importing the TypeScript plugin runtime. This slice is verified and
-  awaiting checkpoint hash.
+  without importing the TypeScript plugin runtime. This slice is checkpointed
+  in `721ec0f2`.
 - Verified the plugin activation-plan slice with `python -m pytest
   tests\test_cli.py::test_plugins_doctor_json_projects_manifest_activation_plan_reasons
   -q` (`1 passed`), service reason-plan proof `python -m pytest
@@ -8288,7 +8288,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   projects OpenClaw-shaped trigger plans and reason entries for command aliases,
   providers, setup providers, agent harnesses, channels, routes, and
   capabilities, and the CLI includes those plans under `runtimeActivation`
-  alongside manifest/runtime executor posture. Checkpoint pending.
+  alongside manifest/runtime executor posture. Checkpointed in `721ec0f2`.
 - Progress estimates are now roughly 53.7% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is deeper real installed module import and

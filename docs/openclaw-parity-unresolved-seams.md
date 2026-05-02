@@ -104,7 +104,7 @@ and capability triggers, including upstream-shaped `activation-*` and
 `manifest-*` reasons without importing the TypeScript runtime. Verified on
 2026-05-02 with the focused activation-plan CLI pytest, focused activation
 service reason-plan pytest, adjacent plugin CLI and activation service proofs,
-`ruff check`, and `mypy`; checkpoint pending.
+`ruff check`, and `mypy`; checkpointed in `721ec0f2`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4607,7 +4607,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~53.7%; runtime/CLI/doctor and CLI/operator-control bounded
   paths remain ~99.9%. Verified with focused CLI and activation service tests,
   adjacent plugin CLI and activation service proofs, `ruff check`, and `mypy`;
-  checkpoint pending.
+  checkpointed in `721ec0f2`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path records into native runtime executor or honest
