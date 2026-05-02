@@ -1054,6 +1054,50 @@ class GatewayConfigService:
         )
         return write_result
 
+    def record_npm_hook_pack_install(
+        self,
+        *,
+        hook_id: str,
+        install_path: str,
+        spec: str,
+        version: str | None = None,
+        resolved_name: str | None = None,
+        resolved_version: str | None = None,
+        resolved_spec: str | None = None,
+        integrity: str | None = None,
+        shasum: str | None = None,
+        resolved_at: str | None = None,
+        hooks: list[str] | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        config_path = self._require_config_path()
+        current = self.build_snapshot()
+        record = _record_npm_hook_pack_install_in_snapshot(
+            current,
+            hook_id=hook_id,
+            install_path=install_path,
+            spec=spec,
+            version=version,
+            resolved_name=resolved_name,
+            resolved_version=resolved_version,
+            resolved_spec=resolved_spec,
+            integrity=integrity,
+            shasum=shasum,
+            resolved_at=resolved_at,
+            hooks=hooks,
+            force=force,
+        )
+        base_hash = self._snapshot_hash(current) if config_path.exists() else None
+        write_result = self._write_snapshot(record["config"], base_hash=base_hash)
+        write_result.update(
+            {
+                "hookId": record["hookId"],
+                "install": record["install"],
+                "restart": "gateway",
+            }
+        )
+        return write_result
+
     def preview_plugin_uninstall(self, plugin_id: str) -> dict[str, Any]:
         current = self.build_snapshot()
         result = _uninstall_plugin_in_snapshot(current, plugin_id=plugin_id)
@@ -2035,6 +2079,75 @@ def _record_clawhub_plugin_install_in_snapshot(
         "pluginId": requested_id,
         "install": install_record,
         "loadPath": normalized_install_path,
+    }
+
+
+def _record_npm_hook_pack_install_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    hook_id: str,
+    install_path: str,
+    spec: str,
+    version: str | None,
+    resolved_name: str | None,
+    resolved_version: str | None,
+    resolved_spec: str | None,
+    integrity: str | None,
+    shasum: str | None,
+    resolved_at: str | None,
+    hooks: list[str] | None,
+    force: bool,
+) -> dict[str, Any]:
+    requested_id = hook_id.strip()
+    if not requested_id:
+        raise ValueError("hook pack id is required")
+    normalized_install_path = install_path.strip()
+    if not normalized_install_path:
+        raise ValueError("hook pack install path is required")
+    normalized_spec = spec.strip()
+    if not normalized_spec:
+        raise ValueError("hook pack npm spec is required")
+
+    hooks_config = snapshot.get("hooks")
+    next_hooks = dict(hooks_config) if isinstance(hooks_config, dict) else {}
+    internal = next_hooks.get("internal")
+    next_internal = dict(internal) if isinstance(internal, dict) else {}
+    installs = next_internal.get("installs")
+    next_installs = dict(installs) if isinstance(installs, dict) else {}
+    if requested_id in next_installs and not force:
+        raise ValueError(f'hook pack "{requested_id}" is already installed; pass --force to update')
+
+    install_record: dict[str, Any] = {
+        "source": "npm",
+        "spec": normalized_spec,
+        "installPath": normalized_install_path,
+        "installedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    for raw_value, key in (
+        (version, "version"),
+        (resolved_name, "resolvedName"),
+        (resolved_version, "resolvedVersion"),
+        (resolved_spec, "resolvedSpec"),
+        (integrity, "integrity"),
+        (shasum, "shasum"),
+        (resolved_at, "resolvedAt"),
+    ):
+        normalized_value = raw_value.strip() if isinstance(raw_value, str) else None
+        if normalized_value:
+            install_record[key] = normalized_value
+    normalized_hooks = _normalize_string_entries(hooks or [])
+    if normalized_hooks:
+        install_record["hooks"] = normalized_hooks
+
+    next_installs[requested_id] = install_record
+    next_internal["installs"] = next_installs
+    next_hooks["internal"] = next_internal
+    next_snapshot = dict(snapshot)
+    next_snapshot["hooks"] = next_hooks
+    return {
+        "config": next_snapshot,
+        "hookId": requested_id,
+        "install": install_record,
     }
 
 

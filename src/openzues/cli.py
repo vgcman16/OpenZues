@@ -9383,7 +9383,7 @@ def _emit_plugins_update(payload: dict[str, object], *, json_output: bool) -> No
     outcomes = payload.get("outcomes")
     outcome_rows = outcomes if isinstance(outcomes, list) else []
     if not outcome_rows:
-        typer.echo("No tracked plugins to update.")
+        typer.echo("No tracked plugins or hook packs to update.")
         return
     for outcome in outcome_rows:
         if not isinstance(outcome, dict):
@@ -9394,7 +9394,7 @@ def _emit_plugins_update(payload: dict[str, object], *, json_output: bool) -> No
     if payload.get("dryRun") is True:
         typer.echo("Dry run, no changes made.")
     elif payload.get("changed") is True:
-        typer.echo("Restart the gateway to load plugins.")
+        typer.echo("Restart the gateway to load plugins and hooks.")
 
 
 def _emit_plugins_marketplace_list(
@@ -13080,6 +13080,55 @@ def _resolve_cli_plugin_update_selection(
     return [target], {target: requested_id}
 
 
+def _resolve_cli_hook_pack_update_selection(
+    *,
+    install_records: Mapping[str, object],
+    requested_id: str | None,
+    all_packs: bool,
+) -> tuple[list[str], dict[str, str]]:
+    if all_packs:
+        return [str(hook_id) for hook_id in install_records], {}
+    if requested_id is None:
+        return [], {}
+    if requested_id in install_records:
+        return [requested_id], {}
+    parsed = _parse_cli_registry_npm_spec(requested_id)
+    if parsed is None or parsed.selector is None:
+        return [], {}
+    matches: list[str] = []
+    for hook_id, record in install_records.items():
+        if not isinstance(record, Mapping):
+            continue
+        if _cli_npm_package_name_from_install_record(record) == parsed.name:
+            matches.append(str(hook_id))
+    if len(matches) != 1:
+        return [], {}
+    target = matches[0]
+    return [target], {target: requested_id}
+
+
+async def _call_cli_hook_npm_installer(
+    services: CliServices,
+    *,
+    spec: str,
+    mode: str = "install",
+    dry_run: bool = False,
+) -> dict[str, object]:
+    installer = getattr(services, "hook_npm_installer", None)
+    install = getattr(installer, "install", None)
+    if not callable(install):
+        raise RuntimeError("hook pack npm install runtime is unavailable.")
+    params: dict[str, object] = {"spec": spec, "mode": mode}
+    if dry_run:
+        params["dryRun"] = True
+    result = install(**params)
+    if inspect.isawaitable(result):
+        result = await result
+    if not isinstance(result, dict):
+        raise RuntimeError("hook pack npm install runtime returned an invalid result.")
+    return result
+
+
 async def _build_plugins_npm_install_payload(
     services: CliServices,
     *,
@@ -13221,12 +13270,30 @@ async def _build_plugins_update_payload(
     plugins_config = plugins if isinstance(plugins, dict) else {}
     installs = plugins_config.get("installs")
     install_records = installs if isinstance(installs, dict) else {}
+    hooks = snapshot.get("hooks")
+    hooks_config = hooks if isinstance(hooks, dict) else {}
+    internal_hooks = hooks_config.get("internal")
+    internal_hooks_config = internal_hooks if isinstance(internal_hooks, dict) else {}
+    hook_installs = internal_hooks_config.get("installs")
+    hook_install_records = hook_installs if isinstance(hook_installs, dict) else {}
     targets, spec_overrides = _resolve_cli_plugin_update_selection(
         install_records=install_records,
         requested_id=requested_id,
         all_plugins=all_plugins,
     )
-    if not targets:
+    hook_targets, hook_spec_overrides = _resolve_cli_hook_pack_update_selection(
+        install_records=hook_install_records,
+        requested_id=requested_id,
+        all_packs=all_plugins,
+    )
+    if (
+        requested_id is not None
+        and not all_plugins
+        and requested_id not in install_records
+        and hook_targets
+    ):
+        targets = []
+    if requested_id is None and not all_plugins:
         raise ValueError("Provide a plugin id, or use --all.")
     outcomes: list[dict[str, object]] = []
     changed = False
@@ -13431,6 +13498,136 @@ async def _build_plugins_update_payload(
         if next_version is not None:
             outcome["nextVersion"] = next_version
         outcomes.append(outcome)
+    for target in hook_targets:
+        record = hook_install_records.get(target)
+        if not isinstance(record, dict):
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "skipped",
+                    "message": f'No install record for hook pack "{target}".',
+                }
+            )
+            continue
+        source = _optional_cli_string(record.get("source"))
+        if source != "npm":
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "skipped",
+                    "message": f'Skipping hook pack "{target}" (source: {source or "unknown"}).',
+                }
+            )
+            continue
+        spec = hook_spec_overrides.get(target) or _optional_cli_string(record.get("spec"))
+        if spec is None:
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "skipped",
+                    "message": f'Skipping hook pack "{target}" (missing npm spec).',
+                }
+            )
+            continue
+        try:
+            hook_result = await _call_cli_hook_npm_installer(
+                services,
+                spec=spec,
+                mode="update",
+                dry_run=dry_run,
+            )
+        except RuntimeError as exc:
+            phase = "check" if dry_run else "update"
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "error",
+                    "message": f'Failed to {phase} hook pack "{target}": {exc}',
+                }
+            )
+            continue
+        if hook_result.get("ok") is False:
+            phase = "check" if dry_run else "update"
+            message = str(hook_result.get("error") or "hook pack update failed.")
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "error",
+                    "message": f'Failed to {phase} hook pack "{target}": {message}',
+                }
+            )
+            continue
+        hook_id_value = _optional_cli_string(hook_result.get("hookPackId")) or target
+        install_path = _optional_cli_string(hook_result.get("targetDir")) or _optional_cli_string(
+            hook_result.get("installPath")
+        )
+        if install_path is None:
+            outcomes.append(
+                {
+                    "hookId": target,
+                    "status": "error",
+                    "message": f'Failed to update hook pack "{target}": missing targetDir.',
+                }
+            )
+            continue
+        current_version = _optional_cli_string(record.get("version"))
+        next_version = _optional_cli_string(hook_result.get("version"))
+        if not dry_run:
+            resolution = hook_result.get("npmResolution")
+            resolution_payload = resolution if isinstance(resolution, dict) else {}
+            raw_hooks = hook_result.get("hooks")
+            result = services.gateway_config.record_npm_hook_pack_install(
+                hook_id=hook_id_value,
+                install_path=install_path,
+                spec=spec,
+                version=next_version,
+                resolved_name=(
+                    _optional_cli_string(resolution_payload.get("resolvedName"))
+                    or _optional_cli_string(resolution_payload.get("name"))
+                ),
+                resolved_version=(
+                    _optional_cli_string(resolution_payload.get("resolvedVersion"))
+                    or _optional_cli_string(resolution_payload.get("version"))
+                ),
+                resolved_spec=_optional_cli_string(resolution_payload.get("resolvedSpec")),
+                integrity=_optional_cli_string(resolution_payload.get("integrity")),
+                shasum=_optional_cli_string(resolution_payload.get("shasum")),
+                resolved_at=_optional_cli_string(resolution_payload.get("resolvedAt")),
+                hooks=[str(value) for value in raw_hooks] if isinstance(raw_hooks, list) else None,
+                force=True,
+            )
+            changed = changed or result.get("ok") is True
+        current_label = current_version or "unknown"
+        next_label = next_version or "unknown"
+        same_version = (
+            current_version is not None
+            and next_version is not None
+            and current_version == next_version
+        )
+        if dry_run:
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f'Hook pack "{target}" is up to date ({current_label}).'
+                if same_version
+                else f'Would update hook pack "{target}": {current_label} -> {next_label}.'
+            )
+        else:
+            status = "unchanged" if same_version else "updated"
+            message = (
+                f'Hook pack "{target}" already at {current_label}.'
+                if same_version
+                else f'Updated hook pack "{target}": {current_label} -> {next_label}.'
+            )
+        hook_outcome: dict[str, object] = {
+            "hookId": target,
+            "status": status,
+            "message": message,
+        }
+        if current_version is not None:
+            hook_outcome["currentVersion"] = current_version
+        if next_version is not None:
+            hook_outcome["nextVersion"] = next_version
+        outcomes.append(hook_outcome)
     return {
         "ok": True,
         "action": "update",

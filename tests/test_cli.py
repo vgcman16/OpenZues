@@ -10326,6 +10326,116 @@ def test_plugins_update_json_maps_npm_spec_override_to_tracked_install(
     assert install["resolvedSpec"] == "@openclaw/demo@1.3.0-beta.1"
 
 
+def test_plugins_update_json_refreshes_hook_pack_install_record(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    install_dir = tmp_path / "hooks" / "demo-hooks"
+    install_dir.mkdir(parents=True)
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "hooks": {
+                    "internal": {
+                        "installs": {
+                            "demo-hooks": {
+                                "source": "npm",
+                                "spec": "@acme/demo-hooks@1.0.0",
+                                "installPath": str(install_dir),
+                                "version": "1.0.0",
+                                "resolvedName": "@acme/demo-hooks",
+                                "integrity": "sha512-old-hooks",
+                                "hooks": ["before-agent-start"],
+                                "installedAt": "2026-04-29T12:00:00Z",
+                            }
+                        }
+                    }
+                },
+                "plugins": {"allow": [], "entries": {}, "load": {"paths": []}},
+            }
+        )
+    )
+    hook_calls: list[dict[str, object]] = []
+
+    class FakeHookInstaller:
+        async def install(self, **kwargs: object) -> dict[str, object]:
+            hook_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "hookPackId": "demo-hooks",
+                "targetDir": str(install_dir),
+                "version": "1.1.0",
+                "hooks": ["before-agent-start", "after-agent-end"],
+                "npmResolution": {
+                    "name": "@acme/demo-hooks",
+                    "version": "1.1.0",
+                    "resolvedSpec": "@acme/demo-hooks@1.1.0",
+                    "integrity": "sha512-new-hooks",
+                    "shasum": "hooks-shasum",
+                    "resolvedAt": "2026-05-02T00:00:00Z",
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                gateway_config=gateway_config,
+                hook_npm_installer=FakeHookInstaller(),
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "update", "demo-hooks", "--json"])
+
+    assert result.exit_code == 0, result.stderr
+    assert hook_calls == [{"spec": "@acme/demo-hooks@1.0.0", "mode": "update"}]
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert payload["restart"] == "gateway"
+    assert payload["outcomes"] == [
+        {
+            "hookId": "demo-hooks",
+            "status": "updated",
+            "currentVersion": "1.0.0",
+            "nextVersion": "1.1.0",
+            "message": 'Updated hook pack "demo-hooks": 1.0.0 -> 1.1.0.',
+        }
+    ]
+
+    stored = json.loads(
+        (tmp_path / "settings" / "control-ui-config.json").read_text(encoding="utf-8")
+    )
+    install = stored["hooks"]["internal"]["installs"]["demo-hooks"]
+    assert install["source"] == "npm"
+    assert install["spec"] == "@acme/demo-hooks@1.0.0"
+    assert install["installPath"] == str(install_dir)
+    assert install["version"] == "1.1.0"
+    assert install["resolvedName"] == "@acme/demo-hooks"
+    assert install["resolvedVersion"] == "1.1.0"
+    assert install["resolvedSpec"] == "@acme/demo-hooks@1.1.0"
+    assert install["integrity"] == "sha512-new-hooks"
+    assert install["shasum"] == "hooks-shasum"
+    assert install["resolvedAt"] == "2026-05-02T00:00:00Z"
+    assert install["hooks"] == ["before-agent-start", "after-agent-end"]
+
+
 def test_plugins_update_json_refreshes_remote_marketplace_install(
     tmp_path,
     monkeypatch,
