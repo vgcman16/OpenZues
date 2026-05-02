@@ -8865,7 +8865,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin list verbose activation/import state is now landed for OpenClaw's
   list formatting surface: `plugins list --verbose` renders `activated`,
   `imported`, `explicitly enabled`, `activation source`, and sanitized
-  `activation reason` rows from native plugin records. Checkpoint pending.
+  `activation reason` rows from native plugin records. Checkpointed in
+  `83146bc1`.
 - Progress estimates are now roughly 56.2% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
