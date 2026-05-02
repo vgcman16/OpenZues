@@ -316,7 +316,7 @@ Plugin list human enabled labels now mirror OpenClaw's
 than leaking the internal OpenZues `loaded` status label, while JSON status
 fields and loaded counts remain unchanged. Verified on 2026-05-02 with the
 focused runtime-inventory CLI test, adjacent plugin list/runtime proof,
-`ruff check`, and `mypy`; checkpoint pending.
+`ruff check`, and `mypy`; checkpoint in `bc362484`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -5047,7 +5047,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and loaded counts. Repo-wide parity is now estimated at ~56.3%;
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
   Verified with the focused runtime-inventory CLI test, adjacent plugin
-  list/runtime proof, `ruff check`, and `mypy`; checkpoint pending.
+  list/runtime proof, `ruff check`, and `mypy`; checkpoint in `bc362484`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

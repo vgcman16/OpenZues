@@ -8887,7 +8887,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin list human enabled labels are now landed for OpenClaw's list
   formatting surface: active registry/plugin rows render as `enabled` instead
   of exposing the internal OpenZues `loaded` status label, while JSON status
-  fields and loaded counts remain unchanged. Checkpoint pending.
+  fields and loaded counts remain unchanged. Checkpointed in `bc362484`.
 - Progress estimates are now roughly 56.3% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
