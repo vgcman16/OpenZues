@@ -18336,6 +18336,9 @@ def _plugin_configured_record_status(
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     if entry_payload.get("enabled") is False:
         return "disabled"
+    allow_values = _plugin_config_string_set(plugins_config, "allow")
+    if allow_values and plugin_id not in allow_values:
+        return "disabled"
     return "loaded"
 
 
@@ -18367,6 +18370,10 @@ def _plugin_activation_state_payload(
         activated = False
         source = "disabled"
         reason = "disabled in config"
+    elif allow_values and plugin_id not in allow_values:
+        activated = False
+        source = "disabled"
+        reason = "not in allowlist"
     elif activated and entry_payload.get("enabled") is True:
         reason = "enabled in config"
     elif activated and plugin_id in allow_values:

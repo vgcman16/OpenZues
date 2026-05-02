@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~54.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~54.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -99,6 +99,10 @@ may lag behind this tracker.
   preserving OpenClaw-shaped `activated`, `explicitlyEnabled`,
   `activationSource`, and `activationReason` fields.
   - Status: checkpointed in `78658f29`
+
+- [x] Installed plugin allowlist activation guard for config/install records,
+  preserving OpenClaw's `not in allowlist` activation decision.
+  - Status: verified; checkpoint pending
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -277,9 +281,23 @@ may lag behind this tracker.
     checkpointed in `5fce4371`, and missing-target static preflight child
     slice checkpointed in `9a9e89f2`, and runtime target-scoped inventory
     child slice checkpointed in `c412b98b`, and installed plugin
-    activation-state child slice checkpointed in `78658f29`, but deeper module
+    activation-state child slice checkpointed in `78658f29`, and installed
+    plugin allowlist activation guard child slice verified, but deeper module
     import/runtime activation remains.
   - Weight: 5
+
+- [x] Installed plugin allowlist activation guard.
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/config-state.test.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed plugin allowlist activation
+    test (`1 passed`), adjacent plugin config/install list and doctor proof
+    (`7 passed`), `ruff check`, and `mypy`.
 
 - [x] Installed plugin activation-state projection.
   - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,

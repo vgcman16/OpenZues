@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~54.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.4% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -33,7 +33,7 @@ Current percentage rollup:
   plugin registry inspect/refresh persistence, plugin list registry-source
   projection, plugin inspect runtime-inspection flag, missing-target static
   preflight, target-scoped runtime inventory, and installed plugin
-  activation-state projection,
+  activation-state projection, installed plugin allowlist activation guard,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -53,7 +53,8 @@ Current percentage rollup:
   registry inspect/refresh persistence, plugin list registry-source projection,
   plugin inspect runtime-inspection flag, missing-target static preflight, and
   target-scoped runtime inventory, installed plugin activation-state
-  projection, active-registry executor projection, and
+  projection, installed plugin allowlist activation guard,
+  active-registry executor projection, and
   runtime activation doctor posture;
   remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
@@ -162,6 +163,14 @@ enabled installed plugins disabled while preserving explicit-selection
 metadata. Verified on 2026-05-02 with the focused installed activation-state
 CLI test, adjacent plugin config/install list and doctor proof, `ruff check`,
 and `mypy`; checkpointed in `78658f29`.
+Installed plugin allowlist activation guard now mirrors OpenClaw's
+`src/plugins/config-activation-shared.ts` decision precedence: `plugins.allow`
+remains authoritative over explicit installed plugin enablement, so
+config/install-backed rows outside the allowlist project `status="disabled"`,
+`activated=false`, `explicitlyEnabled=true`, `activationSource="disabled"`,
+and `activationReason="not in allowlist"`. Verified on 2026-05-02 with the
+focused installed allowlist activation CLI test, adjacent plugin config/install
+list and doctor proof, `ruff check`, and `mypy`; checkpoint pending.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4726,6 +4735,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   paths remain ~99.9%. Verified with the focused installed activation-state
   CLI test, adjacent plugin config/install list and doctor proof, `ruff check`,
   and `mypy`; checkpointed in `78658f29`.
+- Closed the installed plugin allowlist activation guard seam from OpenClaw
+  `src/plugins/config-activation-shared.ts`,
+  `src/plugins/config-state.test.ts`, `src/plugins/loader-records.ts`, and
+  `src/plugins/status.ts`: native config/install-backed plugin rows now keep
+  `plugins.allow` authoritative over explicit installed plugin enablement,
+  preserving `explicitlyEnabled=true` while projecting disabled status and
+  `activationReason="not in allowlist"`. Repo-wide parity is now estimated at
+  ~54.4%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused installed allowlist activation CLI test,
+  adjacent plugin config/install list and doctor proof, `ruff check`, and
+  `mypy`; checkpoint pending.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
