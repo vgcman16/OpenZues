@@ -19404,12 +19404,14 @@ def _plugin_activation_state_payload(
     status: str,
     origin: str = "config",
     enabled_by_default: bool | None = None,
+    channel_enabled_by_config: bool = False,
 ) -> dict[str, object]:
     entry_payload = _plugin_config_entry_payload(plugins_config, plugin_id)
     allow_values = _plugin_config_string_set(plugins_config, "allow")
     slot_reason = _plugin_config_slot_reason(plugins_config, plugin_id)
     explicitly_enabled = (
         entry_payload.get("enabled") is True
+        or (origin == "bundled" and channel_enabled_by_config)
         or (origin != "bundled" and plugin_id in allow_values)
         or slot_reason is not None
     )
@@ -19430,12 +19432,16 @@ def _plugin_activation_state_payload(
         reason = "disabled in config"
     elif activated and slot_reason is not None:
         reason = slot_reason
-    elif allow_values and plugin_id not in allow_values:
+    elif allow_values and plugin_id not in allow_values and not (
+        origin == "bundled" and channel_enabled_by_config
+    ):
         activated = False
         source = "disabled"
         reason = "not in allowlist"
     elif activated and entry_payload.get("enabled") is True:
         reason = "enabled in config"
+    elif activated and origin == "bundled" and channel_enabled_by_config:
+        reason = "channel enabled in config"
     elif activated and origin != "bundled" and plugin_id in allow_values:
         reason = "selected in allowlist"
     elif origin == "bundled" and activated and enabled_by_default is True:
@@ -19498,6 +19504,10 @@ def _plugin_record_from_openclaw_manifest(
         or _optional_cli_string(package_metadata.get("description"))
         or ""
     )
+    channel_enabled_by_config = _plugin_manifest_has_enabled_channel(
+        manifest,
+        config_snapshot,
+    )
     status = _plugin_manifest_status(
         manifest,
         plugin_id=plugin_id,
@@ -19530,6 +19540,7 @@ def _plugin_record_from_openclaw_manifest(
             status=status,
             origin=origin,
             enabled_by_default=manifest.get("enabledByDefault") is True,
+            channel_enabled_by_config=channel_enabled_by_config,
         )
     )
     version = _optional_cli_string(manifest.get("version")) or _optional_cli_string(
