@@ -8840,7 +8840,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Plugin inspect human header/bundle-format labels are now landed for
   OpenClaw's inspect detail surface: human `plugins inspect <id>` renders
   capitalized `Status`, `Format`, `Source`, and `Shape` labels and includes
-  `Bundle format` for bundle plugins. Checkpoint pending.
+  `Bundle format` for bundle plugins. Checkpointed in `df4d586c`.
 - Progress estimates are now roughly 56.1% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

@@ -174,7 +174,7 @@ may lag behind this tracker.
 
 - [x] Plugin inspect human header/bundle-format labels, matching OpenClaw
   capitalized label output.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `df4d586c`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -371,15 +371,15 @@ may lag behind this tracker.
     inspect human install section checkpointed in `5ca0a5f2`, and plugin
     inspect human compatibility warnings section checkpointed in `38b85a1a`,
     plugin inspect typed/custom hook sections checkpointed in `0a6e8bcd`, and
-    plugin inspect human header/bundle-format labels verified pending
-    checkpoint, but deeper module import/runtime activation remains.
+    plugin inspect human header/bundle-format labels checkpointed in
+    `df4d586c`, but deeper module import/runtime activation remains.
   - Weight: 5
 
 - [x] Plugin inspect human header/bundle-format labels.
   - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `df4d586c`.
   - Weight: 1
   - Last verified: 2026-05-02, focused plugin inspect Claude bundle test (`1
     passed`), adjacent plugin inspect/doctor proof (`12 passed`), `ruff
