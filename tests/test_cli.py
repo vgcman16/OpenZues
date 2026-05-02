@@ -19210,6 +19210,86 @@ def test_doctor_fix_runs_channel_compatibility_normalizer(
     ]
 
 
+def test_doctor_json_reports_channel_empty_allowlist_extra_warnings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeChannelDoctorAdapter:
+        def collect_empty_allowlist_extra_warnings(
+            self,
+            **kwargs: object,
+        ) -> list[str]:
+            calls.append(json.loads(json.dumps(kwargs)))
+            return [f"- extra:{kwargs['prefix']}:{kwargs['channelName']}"]
+
+    result = _invoke_doctor_json_with_config_snapshot(
+        monkeypatch,
+        {
+            "channels": {
+                "telegram": {
+                    "enabled": True,
+                    "groupPolicy": "allowlist",
+                    "accounts": {
+                        "ops": {
+                            "dmPolicy": "allowlist",
+                            "allowFrom": ["U123"],
+                        }
+                    },
+                }
+            }
+        },
+        channel_doctor_adapters={"telegram": FakeChannelDoctorAdapter()},
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channelDoctor"]["warnings"] == [
+        "- extra:channels.telegram:telegram",
+        "- extra:channels.telegram.accounts.ops:telegram",
+    ]
+    assert "- extra:channels.telegram.accounts.ops:telegram" in payload["warnings"]
+    assert calls == [
+        {
+            "account": {
+                "enabled": True,
+                "groupPolicy": "allowlist",
+                "accounts": {
+                    "ops": {
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["U123"],
+                    }
+                },
+            },
+            "channelName": "telegram",
+            "dmPolicy": None,
+            "effectiveAllowFrom": None,
+            "parent": None,
+            "prefix": "channels.telegram",
+        },
+        {
+            "account": {
+                "dmPolicy": "allowlist",
+                "allowFrom": ["U123"],
+            },
+            "channelName": "telegram",
+            "dmPolicy": "allowlist",
+            "effectiveAllowFrom": ["U123"],
+            "parent": {
+                "enabled": True,
+                "groupPolicy": "allowlist",
+                "accounts": {
+                    "ops": {
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["U123"],
+                    }
+                },
+            },
+            "prefix": "channels.telegram.accounts.ops",
+        },
+    ]
+
+
 def test_doctor_json_warns_when_codex_provider_override_shadows_configured_oauth(
     monkeypatch,
 ) -> None:

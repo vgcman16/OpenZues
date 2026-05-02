@@ -5382,6 +5382,79 @@ async def _doctor_channel_mutable_allowlist_warnings(
     return [str(item) for item in result if str(item).strip()]
 
 
+def _doctor_empty_allowlist_context(
+    *,
+    account: dict[str, object],
+    channel_id: str,
+    parent: dict[str, object] | None = None,
+    prefix: str,
+) -> dict[str, object]:
+    account_dm = _dict_config(account.get("dm"))
+    parent_dm = _dict_config(parent.get("dm")) if parent is not None else {}
+    dm_policy = (
+        _optional_cli_string(account.get("dmPolicy"))
+        or _optional_cli_string(account_dm.get("policy"))
+        or (_optional_cli_string(parent.get("dmPolicy")) if parent is not None else None)
+        or _optional_cli_string(parent_dm.get("policy"))
+    )
+    effective_allow_from = (
+        _doctor_dm_list(account.get("allowFrom"))
+        or (_doctor_dm_list(parent.get("allowFrom")) if parent is not None else [])
+        or _doctor_dm_list(account_dm.get("allowFrom"))
+        or _doctor_dm_list(parent_dm.get("allowFrom"))
+        or None
+    )
+    return {
+        "account": account,
+        "channelName": channel_id,
+        "dmPolicy": dm_policy,
+        "effectiveAllowFrom": effective_allow_from,
+        "parent": parent,
+        "prefix": prefix,
+    }
+
+
+async def _doctor_channel_empty_allowlist_extra_warnings(
+    *,
+    adapter: object,
+    channel_id: str,
+    channel_config: dict[str, object],
+) -> list[str]:
+    collect = getattr(adapter, "collect_empty_allowlist_extra_warnings", None) or getattr(
+        adapter,
+        "collectEmptyAllowlistExtraWarnings",
+        None,
+    )
+    if not callable(collect):
+        return []
+    contexts = [
+        _doctor_empty_allowlist_context(
+            account=channel_config,
+            channel_id=channel_id,
+            prefix=f"channels.{channel_id}",
+        )
+    ]
+    for account_id, raw_account in _dict_config(channel_config.get("accounts")).items():
+        if not isinstance(raw_account, dict):
+            continue
+        contexts.append(
+            _doctor_empty_allowlist_context(
+                account=raw_account,
+                channel_id=channel_id,
+                parent=channel_config,
+                prefix=f"channels.{channel_id}.accounts.{account_id}",
+            )
+        )
+    warnings: list[str] = []
+    for context in contexts:
+        result = collect(**context)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, list):
+            warnings.extend(str(item) for item in result if str(item).strip())
+    return warnings
+
+
 async def _doctor_channel_config_sequence(
     *,
     adapter: object,
@@ -5488,6 +5561,7 @@ async def _build_doctor_channel_doctor_payload(
     stale_warnings: list[str] = []
     compatibility_changes: list[str] = []
     compatibility_warnings: list[str] = []
+    empty_allowlist_warnings: list[str] = []
     adapter_count = 0
     changed = False
     next_snapshot = snapshot
@@ -5618,6 +5692,17 @@ async def _build_doctor_channel_doctor_payload(
                     snapshot=next_snapshot,
                 )
             )
+            channel_config = _dict_config(next_snapshot.get("channels")).get(channel_id)
+            if isinstance(channel_config, dict):
+                current_empty_allowlist_warnings = (
+                    await _doctor_channel_empty_allowlist_extra_warnings(
+                        adapter=adapter,
+                        channel_id=channel_id,
+                        channel_config=channel_config,
+                    )
+                )
+                empty_allowlist_warnings.extend(current_empty_allowlist_warnings)
+                warnings.extend(current_empty_allowlist_warnings)
         except Exception as exc:  # pragma: no cover - defensive adapter boundary
             warnings.append(
                 f"- channels.{channel_id} mutable allowlist doctor hook failed: {exc}"
@@ -5647,6 +5732,7 @@ async def _build_doctor_channel_doctor_payload(
         "staleWarnings": stale_warnings,
         "compatibilityChanges": compatibility_changes,
         "compatibilityWarnings": compatibility_warnings,
+        "emptyAllowlistWarnings": empty_allowlist_warnings,
         "warnings": warnings,
         "path": path,
     }
