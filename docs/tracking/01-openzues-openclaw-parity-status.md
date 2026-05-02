@@ -74,7 +74,7 @@ may lag behind this tracker.
 - [x] Plugin registry inspect/refresh CLI parity for persisted native plugin
   registry state, including `missing`/`fresh`/`stale` state projection,
   refresh reasons, and JSON-capable registry refresh persistence.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `cdb3035e`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -248,7 +248,8 @@ may lag behind this tracker.
   - Source: OpenClaw plugin lifecycle and activation runtime.
   - Status: open; manifest activation-plan reason projection child slice
     checkpointed in `721ec0f2` and plugin registry inspect/refresh child slice
-    verified, but deeper module import/runtime activation remains.
+    checkpointed in `cdb3035e`, but deeper module import/runtime activation
+    remains.
   - Weight: 5
 
 - [x] Plugin registry inspect/refresh CLI.
@@ -256,7 +257,7 @@ may lag behind this tracker.
     `openclaw-main/src/cli/plugins-cli.list.test.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `cdb3035e`.
   - Weight: 1
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry

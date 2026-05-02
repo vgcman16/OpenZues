@@ -139,7 +139,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   manifest/load-path inventory with a persisted settings index and reports
   `missing`, `fresh`, or `stale` plus refresh reasons, while `plugins registry
   --refresh --json` writes the current index and returns the refreshed
-  registry payload.
+  registry payload. This slice is checkpointed in `cdb3035e`.
 - Verified the plugin registry slice with `python -m pytest
   tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry
   -q` (`1 passed`), `python -m pytest
@@ -8317,7 +8317,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `plugins registry` surface: native plugin inventory is canonicalized into a
   persisted registry index, inspect reports `missing`/`fresh`/`stale` state
   with refresh reasons, and refresh writes the current index under the
-  OpenZues settings data directory. Checkpoint pending.
+  OpenZues settings data directory. Checkpointed in `cdb3035e`.
 - Progress estimates are now roughly 53.8% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

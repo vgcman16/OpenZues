@@ -113,7 +113,8 @@ current native manifest/load-path inventory with a persisted registry index,
 reports `missing`/`fresh`/`stale` state plus refresh reasons, and `plugins
 registry --refresh --json` writes the current index under the OpenZues settings
 data directory. Verified on 2026-05-02 with focused registry CLI tests,
-adjacent plugin CLI proof, `ruff check`, and `mypy`; checkpoint pending.
+adjacent plugin CLI proof, `ruff check`, and `mypy`; checkpointed in
+`cdb3035e`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4626,7 +4627,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~53.8%; runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%. Verified with focused
   registry CLI tests, adjacent plugin CLI proof, `ruff check`, and `mypy`;
-  checkpoint pending.
+  checkpointed in `cdb3035e`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or
