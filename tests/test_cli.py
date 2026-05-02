@@ -9787,6 +9787,68 @@ def test_plugins_inspect_human_reports_runtime_surface_sections(monkeypatch) -> 
     assert "- surface.method" in result.stdout
 
 
+def test_plugins_inspect_human_reports_runtime_tools(monkeypatch) -> None:
+    async def fake_executor(
+        _tool: str,
+        _args: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True}
+
+    plugin_runtime = GatewayPluginRuntimeService(
+        registry_executors=[
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.required",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                description="Required runtime tool.",
+            ),
+            GatewayPluginRuntimeExecutorSpec(
+                tool="native_runtime.optional",
+                executor=fake_executor,
+                plugin_id="native-runtime",
+                plugin_name="Native Runtime",
+                description="Optional runtime tool.",
+                optional=True,
+            ),
+        ]
+    )
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "native-runtime",
+                            "label": "Native Runtime",
+                            "status": "ready",
+                            "summary": "Runtime-backed native plugin.",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                hermes_platform=FakeHermesPlatform(),
+                plugin_runtime_service=plugin_runtime,
+            )
+        )
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "native-runtime"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Tools:" in result.stdout
+    assert "- native_runtime.optional [optional]" in result.stdout
+    assert "- native_runtime.required" in result.stdout
+
+
 def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

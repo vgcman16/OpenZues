@@ -12280,6 +12280,22 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
                 f"{kind}: {', '.join(ids) if ids else '(registered)'}"
             )
     _emit_plugin_inspect_section("Capabilities", capability_lines)
+    tools = payload.get("tools")
+    tool_lines: list[str] = []
+    for entry in tools if isinstance(tools, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        raw_names = entry.get("names")
+        names = [
+            str(name)
+            for name in (raw_names if isinstance(raw_names, list) else [])
+            if str(name).strip()
+        ]
+        label = ", ".join(names) if names else "(anonymous)"
+        if entry.get("optional") is True:
+            label = f"{label} [optional]"
+        tool_lines.append(label)
+    _emit_plugin_inspect_section("Tools", tool_lines)
     _emit_plugin_inspect_section(
         "Commands",
         _plugin_record_string_list(payload, "commands"),
