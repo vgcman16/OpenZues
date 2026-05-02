@@ -9119,7 +9119,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   auth/config availability signals are reported as unavailable until matching
   env/config evidence exists, unavailable tools do not count as missing runtime
   executors, and available metadata-only tools still surface as missing native
-  executors. Checkpoint pending.
+  executors. Checkpointed in `78d905c6`.
 - Progress estimates are now roughly 57.3% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
