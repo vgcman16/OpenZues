@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,11 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The WhatsApp audio/voice media send slice is checkpointed in `c27d3439`.
+The source plugin-SDK subpath alias slice is verified and awaiting checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/services/ops_mesh.py`
-- `tests/test_ops_mesh.py`
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled plugin-SDK alias context checkpointed in `e6b506db` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Source plugin-SDK subpath aliases verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled/source plugin-sdk import/runtime activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1535,6 +1535,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
     passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BE` source plugin-SDK subpath alias context
+  - Source: `openclaw-main/src/plugins/sdk-alias.ts` and
+    `openclaw-main/src/plugins/sdk-alias.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: source/git-style bundled plugin runtime entries that import
+    OpenClaw plugin-SDK subpaths project `pluginSdkResolution="src"`,
+    `pluginSdkSourceRoot`, and a `pluginSdkAliasMap` containing both scoped
+    and unscoped SDK aliases for each discovered local shim file, allowing
+    native activation adapters to resolve source runtime shims.
+  - Evidence required: focused source SDK alias activation-adapter test,
+    adjacent SDK alias/runtime-entry tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "source_plugin_sdk_subpath_aliases or plugin_sdk_alias_to_activation_adapter
+    or bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+    plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    runtime_text_transform_plugins"` (`6 passed`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,

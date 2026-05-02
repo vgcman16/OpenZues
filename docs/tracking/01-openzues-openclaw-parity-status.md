@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~59.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~59.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -156,6 +156,10 @@ may lag behind this tracker.
 - [x] Bundled plugin-SDK alias context, preserving dist package SDK root and
   extension-local alias root metadata for native activation adapters.
   - Status: checkpointed in `e6b506db`
+
+- [x] Source plugin-SDK subpath alias context, preserving source/git-style
+  bundled plugin SDK alias maps for native activation adapters.
+  - Status: verified; checkpoint pending
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -524,8 +528,11 @@ may lag behind this tracker.
     and installed activation-adapter manifest tool contract enforcement
     checkpointed in `aac25d80`, and installed activation-adapter runtime load
     options checkpointed in `ee12d2d4`, and installed-record manifest runtime
-    activation checkpointed in `b8f39fe3`, but deeper module import/runtime
-    activation remains.
+    activation checkpointed in `b8f39fe3`, bundled runtime plugin-SDK import
+    metadata checkpointed in `54fb7bf8`, bundled plugin-SDK alias context
+    checkpointed in `e6b506db`, and source plugin-SDK subpath aliases verified
+    and pending checkpoint, but deeper module import/runtime activation
+    remains.
   - Weight: 5
 
 - [x] Installed-record manifest runtime activation.
@@ -539,6 +546,18 @@ may lag behind this tracker.
   - Last verified: 2026-05-02, focused installed-record activation test (`1
     passed`), adjacent installed-plugin CLI proof (`7 passed`), `ruff check`,
     and `mypy`.
+
+- [x] Source plugin-SDK subpath alias context.
+  - Source: `openclaw-main/src/plugins/sdk-alias.ts` and
+    `openclaw-main/src/plugins/sdk-alias.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
+    -q` (`1 passed`), adjacent plugin SDK/runtime-entry proof (`6 passed`),
+    `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,

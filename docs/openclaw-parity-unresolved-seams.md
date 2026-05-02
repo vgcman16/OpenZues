@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~59.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~59.5% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest WhatsApp audio/voice media send slice.
+  latest source plugin-SDK subpath alias slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5460,6 +5460,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `mypy`; checkpointed in `c27d3439`.
 - Next repo-wide queue head: continue provider-specific send/poll/replay edge
   cases or rotate to packaging/companion/plugin breadth, whichever is the
+  strongest source-backed seam after the next discovery pass.
+- Closed the source plugin-SDK subpath alias seam from OpenClaw
+  `src/plugins/sdk-alias.ts` and `src/plugins/sdk-alias.test.ts`: source or
+  git-style bundled plugin runtime entries that import OpenClaw plugin-SDK
+  subpaths now project `pluginSdkResolution="src"`, `pluginSdkSourceRoot`, and
+  a `pluginSdkAliasMap` containing both scoped and unscoped plugin-SDK aliases
+  for native activation adapters. Repo-wide parity is now estimated at ~59.5%;
+  the active gateway/session/tool-contract family remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused source plugin-SDK alias pytest, adjacent
+  plugin SDK/runtime-entry proof, `ruff check`, and `mypy`; checkpoint pending
+  commit.
+- Next repo-wide queue head: continue deeper plugin runtime import/activation
+  breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

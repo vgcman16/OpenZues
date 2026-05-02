@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-02.
-- Estimated repo-wide parity: ~59.4% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~59.5% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9589,6 +9589,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`.
+
+- Source plugin-SDK subpath alias metadata is now landed: source/git-style
+  bundled plugin runtime entries that import OpenClaw plugin-SDK subpaths now
+  project `pluginSdkResolution="src"`, `pluginSdkSourceRoot`, and a
+  `pluginSdkAliasMap` containing both `openclaw/plugin-sdk/<subpath>` and
+  `@openclaw/plugin-sdk/<subpath>` aliases for native activation adapters.
+  Checkpoint pending commit.
+- Progress estimates are now roughly 59.5% repo-wide and 99.9% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the plugin queue
+  continues with deeper runtime activation/import breadth, and package/
+  companion/provider breadth remains open in the repo-wide tracker.
+- Verified the source plugin-SDK subpath alias slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "source_plugin_sdk_subpath_aliases or plugin_sdk_alias_to_activation_adapter
+  or bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  runtime_text_transform_plugins"` (`6 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
 
 ## References
 

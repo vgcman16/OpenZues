@@ -18704,18 +18704,90 @@ def _plugin_runtime_entry_sdk_alias_metadata(
     if not plugin_sdk_imports:
         return {}
     dist_root = _plugin_runtime_entry_dist_root(plugin_root)
-    if dist_root is None:
+    if dist_root is not None:
+        plugin_sdk_root = dist_root / "plugin-sdk"
+        if plugin_sdk_root.is_dir():
+            alias_root = (
+                dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+            )
+            return {
+                "pluginSdkResolution": "dist",
+                "pluginSdkPackageRoot": str(dist_root.parent.resolve(strict=False)),
+                "pluginSdkDistRoot": str(dist_root.resolve(strict=False)),
+                "pluginSdkAliasRoot": str(alias_root.resolve(strict=False)),
+            }
+    source_alias_map = _plugin_runtime_entry_source_sdk_alias_map(
+        plugin_root,
+        plugin_sdk_imports,
+    )
+    if not source_alias_map:
         return {}
-    plugin_sdk_root = dist_root / "plugin-sdk"
-    if not plugin_sdk_root.is_dir():
-        return {}
-    alias_root = dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+    source_root = plugin_root / "plugin-sdk"
     return {
-        "pluginSdkResolution": "dist",
-        "pluginSdkPackageRoot": str(dist_root.parent.resolve(strict=False)),
-        "pluginSdkDistRoot": str(dist_root.resolve(strict=False)),
-        "pluginSdkAliasRoot": str(alias_root.resolve(strict=False)),
+        "pluginSdkResolution": "src",
+        "pluginSdkSourceRoot": str(source_root.resolve(strict=False)),
+        "pluginSdkAliasMap": source_alias_map,
     }
+
+
+def _plugin_runtime_entry_source_sdk_alias_map(
+    plugin_root: Path,
+    plugin_sdk_imports: Sequence[str],
+) -> dict[str, object]:
+    source_root = plugin_root / "plugin-sdk"
+    if not source_root.is_dir():
+        return {}
+    alias_map: dict[str, object] = {}
+    for specifier in plugin_sdk_imports:
+        subpath = _plugin_sdk_import_subpath(specifier)
+        if subpath is None:
+            continue
+        target = _plugin_source_sdk_alias_target(source_root, subpath)
+        if target is None:
+            continue
+        if subpath:
+            aliases = (
+                f"openclaw/plugin-sdk/{subpath}",
+                f"@openclaw/plugin-sdk/{subpath}",
+            )
+        else:
+            aliases = ("openclaw/plugin-sdk", "@openclaw/plugin-sdk")
+        for alias in aliases:
+            alias_map[alias] = str(target.resolve(strict=False))
+    return alias_map
+
+
+def _plugin_sdk_import_subpath(specifier: str) -> str | None:
+    for package_name in ("openclaw/plugin-sdk", "@openclaw/plugin-sdk"):
+        if specifier == package_name:
+            return ""
+        prefix = f"{package_name}/"
+        if specifier.startswith(prefix):
+            subpath = specifier[len(prefix) :].strip("/")
+            if subpath and ".." not in Path(subpath).parts:
+                return subpath
+    return None
+
+
+def _plugin_source_sdk_alias_target(source_root: Path, subpath: str) -> Path | None:
+    candidates: list[Path]
+    if subpath:
+        candidates = [
+            source_root / f"{subpath}{extension}"
+            for extension in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS
+        ]
+    else:
+        candidates = [
+            source_root / "root-alias.cjs",
+            *(
+                source_root / f"index{extension}"
+                for extension in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS
+            ),
+        ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _plugin_runtime_entry_dist_root(plugin_root: Path) -> Path | None:
