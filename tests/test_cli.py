@@ -14490,6 +14490,81 @@ def test_capability_tts_set_provider_json_calls_native_state_method(monkeypatch)
     assert calls == [("tts.setProvider", {"provider": "edge"})]
 
 
+def test_capability_tts_personas_json_calls_native_personas_method(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {
+                "active": "alfred",
+                "personas": [
+                    {
+                        "id": "alfred",
+                        "label": "Alfred",
+                        "description": "Calm assistant voice.",
+                        "provider": "microsoft",
+                        "fallbackPolicy": "provider-defaults",
+                        "providers": ["microsoft", "openai"],
+                    }
+                ],
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["capability", "tts", "personas", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "active": "alfred",
+        "personas": [
+            {
+                "id": "alfred",
+                "label": "Alfred",
+                "description": "Calm assistant voice.",
+                "provider": "microsoft",
+                "fallbackPolicy": "provider-defaults",
+                "providers": ["microsoft", "openai"],
+            }
+        ],
+    }
+    assert calls == [("tts.personas", {})]
+
+
+def test_capability_tts_set_persona_json_calls_native_state_method(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGatewayNodeMethods:
+        async def call(
+            self,
+            method: str,
+            params: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append((method, params))
+            return {"persona": "alfred"}
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(gateway_node_methods=FakeGatewayNodeMethods()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    result = runner.invoke(
+        app,
+        ["capability", "tts", "set-persona", "--persona", "alfred", "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"persona": "alfred"}
+    assert calls == [("tts.setPersona", {"persona": "alfred"})]
+
+
 def test_infer_tts_convert_gateway_json_wraps_native_audio_result(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

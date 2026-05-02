@@ -1520,7 +1520,11 @@ class GatewayNodeMethodService:
             )
         self._talk_config_service = talk_config_service or GatewayTalkConfigService()
         self._talk_mode_service = talk_mode_service or GatewayTalkModeService()
-        self._tts_service = tts_service or GatewayTtsService()
+        self._tts_service = tts_service or GatewayTtsService(
+            config_loader=self._config_service.build_snapshot
+            if self._config_service is not None
+            else None,
+        )
         self._tts_runtime_service = tts_runtime_service
         self._tools_catalog_service = tools_catalog_service or GatewayToolsCatalogService()
         self._skill_bins_service = skill_bins_service or GatewaySkillBinsService()
@@ -2774,6 +2778,10 @@ class GatewayNodeMethodService:
         if resolved_method == "tts.providers":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
             return self._tts_service.build_provider_catalog()
+
+        if resolved_method == "tts.personas":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=())
+            return self._tts_service.build_personas()
 
         if resolved_method == "plugins.uiDescriptors":
             _validate_exact_keys(resolved_method, payload, allowed_keys=())
@@ -5396,6 +5404,20 @@ class GatewayNodeMethodService:
                 provider,
                 now_ms=_timestamp_ms(now_ms),
             )
+
+        if resolved_method == "tts.setPersona":
+            _validate_exact_keys(resolved_method, payload, allowed_keys=("persona",))
+            try:
+                return self._tts_service.set_persona(
+                    payload.get("persona"),
+                    now_ms=_timestamp_ms(now_ms),
+                )
+            except ValueError as exc:
+                raise GatewayNodeMethodError(
+                    code="INVALID_REQUEST",
+                    message=str(exc).strip() or "Invalid persona. Use a configured TTS persona id.",
+                    status_code=400,
+                ) from exc
 
         if resolved_method == "tts.convert":
             _validate_exact_keys(

@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~52.7% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~98.2% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~52.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~98.3% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
@@ -64,6 +64,11 @@ may lag behind this tracker.
   `pluginId`/`pluginName` stamping, JSON-compatible schema preservation, and
   valid required-scope projection.
   - Status: checkpointed in `9fb5098b`
+
+- [x] TTS persona gateway and CLI methods for `tts.personas`,
+  `tts.setPersona`, status persona projection, prefs-backed selected persona,
+  and `capability/infer tts personas` plus `set-persona` JSON output.
+  - Status: verified; checkpoint commit pending
 
 - [x] Native runtime seams for ACP spawn dispatch/tracking, delete/reset cleanup,
   app-wired sandbox-required child turns, route-backed thread-bound spawn
@@ -120,6 +125,22 @@ may lag behind this tracker.
     tools_invoke_uses_plugin_runtime or tools_invoke_runs_registry_plugin_executor
     or tools_invoke_keeps_registry_owner_only or sessions_plugin_patch"` (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] TTS persona gateway and CLI methods.
+  - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,
+    `openclaw-main/src/config/types.tts.ts`, and
+    `openclaw-main/src/cli/capability-cli.ts`
+  - Target: `src/openzues/services/gateway_tts.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`, `src/openzues/cli.py`
+  - Test: `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_method_policy.py`, `tests/test_cli.py`
+  - Status: verified; checkpoint commit pending.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused gateway persona tests (`2 passed`),
+    focused policy test (`1 passed`), focused CLI tests (`2 passed`),
+    adjacent gateway TTS tests (`9 passed`), adjacent CLI TTS tests (`11
+    passed`), adjacent API TTS tests (`6 passed`), `ruff check`, and `mypy`.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.

@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~52.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~98.2% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~52.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,13 +29,16 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The `plugins.uiDescriptors` plugin-host parity slice is checkpointed in
-`9fb5098b`. Any follow-up changes should target the next queue head only:
+The `tts.personas` / `tts.setPersona` gateway and CLI parity slice is verified
+and ready for checkpointing with these intended files:
 
+- `src/openzues/services/gateway_tts.py`
 - `src/openzues/services/gateway_node_methods.py`
-- `src/openzues/services/gateway_plugin_runtime.py`
 - `src/openzues/services/gateway_method_policy.py`
+- `src/openzues/cli.py`
 - `tests/test_gateway_node_methods.py`
+- `tests/test_gateway_method_policy.py`
+- `tests/test_cli.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -48,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | ID | Area | Status | Percent Impact | Next Action |
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
-| OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `e0c02761` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | `sessions.pluginPatch` done; local `chat.*` / `sessions.*` base methods rechecked |
+| OZ-RT-001 | Runtime-control hard gaps | Active | Repo-wide +0.1%, active gateway/method +0.1% | `tts.personas` / `tts.setPersona` verified; next source-backed base-method gap is `talk.realtime.*` |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
@@ -102,6 +105,32 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     tools_invoke_uses_plugin_runtime or tools_invoke_runs_registry_plugin_executor
     or tools_invoke_keeps_registry_owner_only or sessions_plugin_patch"` (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-RT-001B` TTS persona gateway and CLI methods
+  - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,
+    `openclaw-main/src/config/types.tts.ts`, and
+    `openclaw-main/src/cli/capability-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_tts.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_method_policy.py`, and
+    `src/openzues/cli.py`
+  - Contract: `tts.personas` accepts `{}` and returns the active persona plus
+    configured persona descriptors; `tts.setPersona` accepts `persona`, clears
+    on `off`/`none`/`default`, rejects unknown ids, persists selected persona
+    in TTS prefs, projects `persona`/`personas` on status, and exposes matching
+    JSON-capable Typer commands.
+  - Evidence required: focused gateway/policy/CLI tests, adjacent TTS gateway,
+    API, and CLI tests, ruff, mypy
+  - Status: verified; checkpoint commit pending
+  - Weight: 1
+  - Last verified: 2026-05-02, focused gateway persona tests (`2 passed`),
+    focused policy test (`1 passed`), focused CLI tests (`2 passed`),
+    adjacent `python -m pytest tests\test_gateway_node_methods.py -q -k
+    "tts_"` (`9 passed`), adjacent `python -m pytest tests\test_cli.py -q
+    -k "tts_"` (`11 passed`), adjacent `python -m pytest
+    tests\test_gateway_nodes_api.py -q -k "tts"` (`6 passed`), `ruff
+    check`, and `mypy`.
 
 ## Canonical Checklist Format
 

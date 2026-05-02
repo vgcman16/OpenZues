@@ -4,9 +4,9 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.8% overall, with a reasonable
   band of ~48-57%.
-- The active gateway/session/tool-contract family is estimated at ~98.2% of the
+- The active gateway/session/tool-contract family is estimated at ~98.3% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -97,6 +97,14 @@ schemas and valid required scopes are preserved, and invalid or disabled
 registrations are skipped before projection. Verified on 2026-05-02 with the
 focused `plugins.uiDescriptors` pytest, adjacent plugin-runtime proof, `ruff
 check`, and `mypy`; checkpointed in `9fb5098b`.
+TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
+`tts.setPersona` contract: native persona descriptors can come from config or
+fakeable service state, selected persona persists in TTS prefs, `status`
+projects active persona metadata, `off`/`none`/`default` clears the selection,
+unknown persona ids return the upstream invalid-persona error, and
+`capability`/`infer tts` expose JSON-capable `personas` and `set-persona`
+commands. Verified on 2026-05-02 with focused gateway, policy, and CLI tests,
+adjacent gateway/API/CLI TTS proofs, `ruff check`, and `mypy`.
 ACP `streamTo="parent"` accepted runs now continue through the same native
 tracking path as ordinary ACP spawns: child metadata is persisted, run tracking
 is registered for `agent.wait`, cleanup policy is consumed on terminal waits,
@@ -4455,12 +4463,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   session/tool-contract parity is ~97.4%. Verified with focused and adjacent
   plugin-runtime gateway proofs, `ruff check`, and `mypy`; checkpointed in
   `9fb5098b`.
-- Next repo-wide queue head: broader runtime command/packaging breadth remains
-  open while the next source-backed seam is selected. Source anchors remain
-  OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
-  and doctor/runtime owners; the next likely runtime seam is another
-  source-backed session/runtime mismatch or packaging/installed-plugin
-  activation gap from the tracking workspace.
+- Closed the TTS persona gateway/CLI seam from OpenClaw
+  `src/gateway/server-methods/tts.ts`, `src/config/types.tts.ts`, and
+  `src/cli/capability-cli.ts`: native `tts.personas` now lists configured
+  personas and active selection, `tts.setPersona` persists selected persona in
+  TTS prefs, `tts.status` projects persona metadata, invalid persona ids use
+  the upstream error, and `capability`/`infer tts personas` plus
+  `set-persona` provide JSON-capable CLI coverage. Repo-wide parity is now
+  estimated at ~52.8%; active gateway/session/tool-contract parity is ~98.3%.
+  Verified with focused gateway, policy, and CLI proofs, adjacent gateway/API/
+  CLI TTS tests, `ruff check`, and `mypy`.
+- Next repo-wide queue head: OpenClaw's `talk.realtime.*` gateway handlers are
+  now the clearest source-backed base-method gap exposed by the adjacent
+  method-policy proof. Source anchors are
+  `openclaw-main/src/gateway/server-methods/talk.ts` and OpenZues'
+  `src/openzues/services/gateway_node_methods.py` plus talk/runtime adapter
+  owners.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

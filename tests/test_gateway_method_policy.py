@@ -779,3 +779,8 @@ def test_gateway_method_policy_covers_openclaw_talk_and_tts_handlers() -> None:
         for method in extracted_methods
         if resolve_gateway_method_scope(method) == TALK_SECRETS_GATEWAY_METHOD_SCOPE
     } == set()
+
+
+def test_gateway_method_policy_covers_openclaw_tts_persona_handlers() -> None:
+    assert resolve_gateway_method_scope("tts.personas") == READ_GATEWAY_METHOD_SCOPE
+    assert resolve_gateway_method_scope("tts.setPersona") == WRITE_GATEWAY_METHOD_SCOPE

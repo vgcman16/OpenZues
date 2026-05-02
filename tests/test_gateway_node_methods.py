@@ -673,6 +673,8 @@ async def test_tts_status_and_providers_surface_disabled_empty_runtime() -> None
         "enabled": False,
         "auto": "off",
         "provider": None,
+        "persona": None,
+        "personas": [],
         "fallbackProvider": None,
         "fallbackProviders": [],
         "prefsPath": None,
@@ -747,6 +749,75 @@ async def test_tts_pref_methods_persist_local_state_and_surface_status(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_tts_personas_and_set_persona_persist_local_state(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(
+            tmp_path,
+            personas={
+                "alfred": {
+                    "label": "Alfred",
+                    "description": "Calm assistant voice.",
+                    "provider": "microsoft",
+                    "fallbackPolicy": "provider-defaults",
+                    "providers": {
+                        "microsoft": {"voice": "en-GB-RyanNeural"},
+                        "openai": {"voice": "alloy"},
+                    },
+                }
+            },
+        ),
+    )
+
+    personas = await service.call("tts.personas", {})
+    selected = await service.call("tts.setPersona", {"persona": "ALFRED"})
+    status = await service.call("tts.status", {})
+    reloaded_personas = await GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(
+            tmp_path,
+            personas={
+                "alfred": {
+                    "label": "Alfred",
+                    "description": "Calm assistant voice.",
+                    "provider": "microsoft",
+                    "fallbackPolicy": "provider-defaults",
+                    "providers": {"microsoft": {"voice": "en-GB-RyanNeural"}},
+                }
+            },
+        ),
+    ).call("tts.personas", {})
+    cleared = await service.call("tts.setPersona", {"persona": "default"})
+
+    assert personas == {
+        "active": None,
+        "personas": [
+            {
+                "id": "alfred",
+                "label": "Alfred",
+                "description": "Calm assistant voice.",
+                "provider": "microsoft",
+                "fallbackPolicy": "provider-defaults",
+                "providers": ["microsoft", "openai"],
+            }
+        ],
+    }
+    assert selected == {"persona": "alfred"}
+    assert status["persona"] == "alfred"
+    assert status["personas"] == [
+        {
+            "id": "alfred",
+            "label": "Alfred",
+            "description": "Calm assistant voice.",
+            "provider": "microsoft",
+        }
+    ]
+    assert reloaded_personas["active"] == "alfred"
+    assert cleared == {"persona": None}
+    assert (await service.call("tts.personas", {}))["active"] is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["   ", "not-a-real-provider"])
 async def test_tts_set_provider_rejects_blank_or_unknown_provider_ids(
     tmp_path,
@@ -766,6 +837,27 @@ async def test_tts_set_provider_rejects_blank_or_unknown_provider_ids(
     assert exc_info.value.code == "INVALID_REQUEST"
     assert exc_info.value.status_code == 400
     assert (await service.call("tts.status", {}))["provider"] is None
+
+
+@pytest.mark.asyncio
+async def test_tts_set_persona_rejects_unknown_persona_ids(tmp_path) -> None:
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        tts_service=GatewayTtsService(
+            tmp_path,
+            personas={"alfred": {"label": "Alfred"}},
+        ),
+    )
+
+    with pytest.raises(
+        GatewayNodeMethodError,
+        match="Invalid persona\\. Use a configured TTS persona id\\.",
+    ) as exc_info:
+        await service.call("tts.setPersona", {"persona": "moriarty"})
+
+    assert exc_info.value.code == "INVALID_REQUEST"
+    assert exc_info.value.status_code == 400
+    assert (await service.call("tts.personas", {}))["active"] is None
 
 
 @pytest.mark.asyncio
