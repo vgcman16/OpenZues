@@ -16400,6 +16400,7 @@ _OPENCLAW_DEFAULT_PLUGIN_ENTRY_CANDIDATES = (
     "index.mjs",
     "index.cjs",
 )
+_OPENCLAW_CONTRACT_API_EXTENSIONS = (".ts", ".mts", ".cts", ".js", ".mjs", ".cjs")
 _OPENCLAW_MANIFESTLESS_CLAUDE_MARKERS = (
     "skills",
     "commands",
@@ -16438,6 +16439,20 @@ def _plugin_manifest_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [text for item in value if (text := _optional_cli_string(item)) is not None]
+
+
+def _plugin_doctor_contract_api_artifact(root_dir: Path) -> dict[str, object] | None:
+    for basename in ("doctor-contract-api", "contract-api"):
+        for extension in _OPENCLAW_CONTRACT_API_EXTENSIONS:
+            candidate = root_dir / f"{basename}{extension}"
+            if not candidate.exists():
+                continue
+            return {
+                "path": str(candidate),
+                "artifact": candidate.name,
+                "kind": basename,
+            }
+    return None
 
 
 def _plugin_manifest_string_list_record(value: object) -> dict[str, object]:
@@ -17889,6 +17904,9 @@ def _plugin_record_from_openclaw_manifest(
         root_dir=manifest_path.parent,
     ).items():
         record[metadata_key] = metadata_value
+    doctor_contract_api = _plugin_doctor_contract_api_artifact(manifest_path.parent)
+    if doctor_contract_api is not None:
+        record["doctorContractApi"] = doctor_contract_api
     if contracts:
         record["contracts"] = contracts
     tool_names = contracts.get("tools")

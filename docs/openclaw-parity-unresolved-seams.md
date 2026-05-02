@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~51.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~51.3% overall, with a reasonable
   band of ~47-56%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -14,7 +14,8 @@ Current percentage rollup:
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
   runtime bridge doctor posture, provider route send/poll alias-precedence,
-  plugin runtime executor inventory, channel-plugin doctor
+  plugin runtime executor inventory, doctor-contract artifact projection,
+  channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root
   preference, and manifest command/activation/setup/auth/QA/
   channel-config/model-support/config-contract/root/package/min-host plus
@@ -30,8 +31,8 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
-  metadata mini-queue, marketplace source-shape install/update queue, exec
-  safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
+  metadata mini-queue, marketplace source-shape install/update queue,
+  doctor-contract artifact projection, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
   bundled pre-npm plus explicit/preferred ClawHub, production-wired ClawHub
@@ -1563,7 +1564,11 @@ metadata is preserved for setup/onboarding channel configuration. Manifest
 `modelSupport` metadata is preserved for pre-runtime model-family ownership
 hints, and manifest `configContracts` metadata is preserved for compatibility
 config path ownership, dangerous literal flags, and secret input materialization
-hints. Manifest root identity/classification fields are now also preserved,
+hints. Plugin records now also expose OpenClaw-shaped `doctorContractApi`
+artifact metadata by preferring `doctor-contract-api.*` over `contract-api.*`
+inside configured plugin roots for doctor-contract registry inventory without
+importing the TypeScript runtime. Manifest root identity/classification fields
+are now also preserved,
 including `enabledByDefault`, `legacyPluginIds`,
 `autoEnableWhenConfiguredProviders`, `kind`, `channels`, `providers`,
 `providerDiscoverySource` resolved from `providerDiscoveryEntry`,
@@ -4300,6 +4305,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~51.2%; runtime/CLI/doctor and CLI/operator remain
   ~99.9%. Verified with focused and adjacent CLI doctor security proofs,
   `ruff check`, and `mypy`.
+- Closed the doctor-contract artifact projection seam from OpenClaw
+  `src/plugins/doctor-contract-registry.ts` and
+  `src/plugins/doctor-contract-registry.test.ts`: metadata-only plugin
+  inventory now detects `doctor-contract-api.*` before fallback
+  `contract-api.*`, exposes the chosen path/artifact/kind under
+  `doctorContractApi`, and keeps the implementation native without importing
+  plugin JavaScript. Repo-wide parity is now estimated at ~51.3%; runtime/
+  CLI/doctor and CLI/operator remain ~99.9%. Verified with focused and
+  adjacent plugin inventory proofs, `ruff check`, and `mypy`.
 - Next repo-wide queue head: broader runtime command/packaging breadth remains
   open. Source anchors are OpenClaw CLI runtime/session/provider command
   surfaces plus OpenZues' Typer owners; OpenZues still needs deeper JSON/human
