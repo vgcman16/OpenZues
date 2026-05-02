@@ -9023,7 +9023,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Configured-channel disabled-owner policy is now landed for OpenClaw's channel
   presence and manifest-owner policy surface: explicitly disabled manifest
   owners remain blocked as `plugin-disabled`, do not enter the scoped plugin id
-  set, and do not emit temporary activation config. Checkpoint pending.
+  set, and do not emit temporary activation config. Checkpointed in
+  `d2d0e9c3`.
 - Progress estimates are now roughly 56.9% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import

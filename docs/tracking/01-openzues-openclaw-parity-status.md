@@ -205,7 +205,7 @@ may lag behind this tracker.
   - Status: checkpointed in `ae5c3986`
 
 - [x] Configured-channel disabled-owner policy in runtime activation planning.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `d2d0e9c3`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -411,7 +411,7 @@ may lag behind this tracker.
     in `cc2da90c`, and public-surface/runtime-sidecar artifact metadata
     checkpointed in `2acd2736`, and configured-channel owner activation
     projection checkpointed in `ae5c3986`, and configured-channel disabled
-    owner policy verified with checkpoint pending, but deeper module
+    owner policy checkpointed in `d2d0e9c3`, but deeper module
     import/runtime activation remains.
   - Weight: 5
 
@@ -421,7 +421,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/activation-context.ts`
   - Target: `src/openzues/services/gateway_plugin_activation.py`
   - Test: `tests/test_gateway_plugin_activation.py`, `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `d2d0e9c3`.
   - Weight: 1
   - Last verified: 2026-05-02, focused disabled-owner helper test (`1
     passed`), full activation helper suite (`6 passed`), adjacent plugin
