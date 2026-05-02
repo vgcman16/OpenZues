@@ -9036,6 +9036,72 @@ def test_plugins_doctor_json_activation_adapter_receives_auto_enabled_channel_re
     }
 
 
+def test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    bundled_root = tmp_path / "bundled" / "extensions"
+    plugin_dir = bundled_root / "telegram"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="telegram",
+        enabled_by_default=False,
+        channels=["telegram"],
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True, "allow": []},
+                "channels": {"telegram": {"botToken": "configured"}},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(bundled_root))
+
+    calls: list[dict[str, object]] = []
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, context: dict[str, object]) -> dict[str, object]:
+            calls.append(context)
+            return {"tools": []}
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert calls
+    context = calls[-1]
+    assert context["activationSourceConfig"]["plugins"]["allow"] == []
+    assert context["activationSourceConfig"]["channels"]["telegram"] == {
+        "botToken": "configured"
+    }
+    assert context["config"]["plugins"]["allow"] == ["telegram"]
+    assert context["config"]["channels"]["telegram"] == {
+        "botToken": "configured",
+        "enabled": True,
+    }
+
+
 def test_plugins_doctor_json_projects_runtime_text_transform_plugins(
     tmp_path,
     monkeypatch,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import copy
 import inspect
 import json
 import math
@@ -17174,10 +17175,14 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
         ]
     )
     auto_enabled_reasons = _plugin_auto_enabled_reasons_from_rows(plugin_rows)
+    resolved_config = _plugin_runtime_resolved_config_from_rows(
+        config_snapshot,
+        plugin_rows,
+    )
     context: dict[str, object] = {
         "plugins": [dict(plugin) for plugin in plugin_rows],
         "rawConfig": dict(config_snapshot),
-        "config": dict(config_snapshot),
+        "config": resolved_config,
         "activationSourceConfig": dict(config_snapshot),
         "autoEnabledReasons": auto_enabled_reasons,
         "env": dict(os.environ),
@@ -17251,6 +17256,83 @@ def _plugin_auto_enabled_reasons_from_rows(
         ]
         reasons_by_plugin[plugin_id] = _dedupe_cli_strings(merged)
     return reasons_by_plugin
+
+
+def _plugin_runtime_resolved_config_from_rows(
+    config_snapshot: Mapping[str, object],
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    resolved = copy.deepcopy(dict(config_snapshot))
+    auto_enabled_plugin_ids = _plugin_auto_enabled_plugin_ids_from_rows(plugin_rows)
+    if not auto_enabled_plugin_ids:
+        return resolved
+
+    plugins_value = resolved.get("plugins")
+    plugins = dict(plugins_value) if isinstance(plugins_value, Mapping) else {}
+    allow_value = plugins.get("allow")
+    if isinstance(allow_value, list):
+        allow = list(allow_value)
+        for plugin_id in auto_enabled_plugin_ids:
+            if plugin_id not in allow:
+                allow.append(plugin_id)
+        plugins["allow"] = allow
+        resolved["plugins"] = plugins
+
+    for plugin_id in auto_enabled_plugin_ids:
+        channel_id = _normalize_openclaw_channel_plugin_id(plugin_id)
+        if channel_id is not None:
+            _plugin_runtime_enable_channel_config(resolved, channel_id)
+        else:
+            _plugin_runtime_enable_plugin_entry(plugins, plugin_id)
+            resolved["plugins"] = plugins
+    return resolved
+
+
+def _plugin_auto_enabled_plugin_ids_from_rows(
+    plugin_rows: Sequence[Mapping[str, object]],
+) -> tuple[str, ...]:
+    return tuple(
+        _dedupe_cli_strings(
+            [
+                plugin_id
+                for plugin in plugin_rows
+                if _optional_cli_string(plugin.get("activationSource")) == "auto"
+                if (
+                    plugin_id := (
+                        _optional_cli_string(plugin.get("id"))
+                        or _optional_cli_string(plugin.get("pluginId"))
+                    )
+                )
+                is not None
+            ]
+        )
+    )
+
+
+def _plugin_runtime_enable_channel_config(
+    resolved_config: dict[str, object],
+    channel_id: str,
+) -> None:
+    channels_value = resolved_config.get("channels")
+    channels = dict(channels_value) if isinstance(channels_value, Mapping) else {}
+    channel_value = channels.get(channel_id)
+    channel_config = dict(channel_value) if isinstance(channel_value, Mapping) else {}
+    channel_config["enabled"] = True
+    channels[channel_id] = channel_config
+    resolved_config["channels"] = channels
+
+
+def _plugin_runtime_enable_plugin_entry(
+    plugins_config: dict[object, object],
+    plugin_id: str,
+) -> None:
+    entries_value = plugins_config.get("entries")
+    entries = dict(entries_value) if isinstance(entries_value, Mapping) else {}
+    entry_value = entries.get(plugin_id)
+    entry_config = dict(entry_value) if isinstance(entry_value, Mapping) else {}
+    entry_config["enabled"] = True
+    entries[plugin_id] = entry_config
+    plugins_config["entries"] = entries
 
 
 def _plugin_runtime_text_transform_plugins_from_registry(

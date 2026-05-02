@@ -9489,6 +9489,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
 
+- Auto-enabled runtime resolved config is now landed: activation adapters
+  receive raw config as `activationSourceConfig` and a resolved `config`
+  snapshot that materializes auto-enabled bundled channel plugins by setting
+  `channels.<id>.enabled` and adding the plugin id to restrictive
+  `plugins.allow` lists. Checkpoint pending.
+- Progress estimates are now roughly 59.0% repo-wide and 99.5% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue
+  head is deeper bundled package plugin-sdk import/runtime activation.
+- Verified the auto-enabled resolved-config slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_activation_adapter_receives_resolved_auto_enabled_config
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "resolved_auto_enabled_config or auto_enabled_channel_reasons or
+  activation_adapter_receives_openclaw_runtime_load_options or
+  runtime_text_transform_plugins or configured_bundled_channel_as_auto_enabled
+  or manifest_env_var"` (`6 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
 ## References
 
 - Primary ledger: [openclaw-parity-checkpoint-2026-04-10.md](openclaw-parity-checkpoint-2026-04-10.md)
