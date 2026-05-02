@@ -13599,6 +13599,13 @@ async def _build_plugins_inventory_payload(
         plugins,
         host_version=_plugin_report_host_version(config_snapshot),
     )
+    warnings = view_payload.get("warnings")
+    diagnostics: list[dict[str, object]] = [
+        {"level": "warn", "message": str(warning)}
+        for warning in (warnings if isinstance(warnings, list) else [])
+        if str(warning).strip()
+    ]
+    diagnostics.extend(config_diagnostics)
     if enabled_only:
         plugins = [
             plugin
@@ -13612,19 +13619,13 @@ async def _build_plugins_inventory_payload(
         ],
         config_snapshot=config_snapshot,
         workspace_dir=workspace_dir,
+        diagnostics=diagnostics,
     )
     _mark_plugin_import_state(
         plugins,
         runtime_specs,
         loaded_non_bundle_imported=runtime_inspection,
     )
-    warnings = view_payload.get("warnings")
-    diagnostics: list[dict[str, object]] = [
-        {"level": "warn", "message": str(warning)}
-        for warning in (warnings if isinstance(warnings, list) else [])
-        if str(warning).strip()
-    ]
-    diagnostics.extend(config_diagnostics)
     registry = _plugin_registry_snapshot_metadata(services, plugins)
     return {
         "workspaceDir": workspace_dir,
@@ -17080,6 +17081,7 @@ def _plugin_runtime_specs_from_services(
     plugin_rows: Sequence[Mapping[str, object]] = (),
     config_snapshot: Mapping[str, object] | None = None,
     workspace_dir: str | None = None,
+    diagnostics: list[dict[str, object]] | None = None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     specs: list[GatewayPluginRuntimeExecutorSpec] = []
     seen_tools: set[str] = set()
@@ -17102,6 +17104,7 @@ def _plugin_runtime_specs_from_services(
         config_snapshot=config_snapshot or {},
         existing_tool_names=seen_tools,
         workspace_dir=workspace_dir,
+        diagnostics=diagnostics,
     )
     _extend_plugin_runtime_specs(specs, seen_tools, adapter_specs)
     return tuple(specs)
@@ -17129,6 +17132,7 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     config_snapshot: Mapping[str, object],
     existing_tool_names: Iterable[str],
     workspace_dir: str | None,
+    diagnostics: list[dict[str, object]] | None,
 ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
     if not plugin_rows:
         return ()
@@ -17161,7 +17165,15 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
     }
     if workspace_dir is not None:
         context["workspaceDir"] = workspace_dir
-    result = _call_plugin_runtime_activation_adapter(adapter, context)
+    try:
+        result = _call_plugin_runtime_activation_adapter(adapter, context)
+    except Exception as exc:
+        _record_plugin_runtime_activation_adapter_error(
+            plugin_rows,
+            error=exc,
+            diagnostics=diagnostics,
+        )
+        return ()
     if result is None:
         return ()
     if isinstance(result, tuple | list):
@@ -17179,6 +17191,36 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
             tool_allowlist=("group:plugins",),
         )
     return ()
+
+
+def _record_plugin_runtime_activation_adapter_error(
+    plugin_rows: Sequence[Mapping[str, object]],
+    *,
+    error: Exception,
+    diagnostics: list[dict[str, object]] | None,
+) -> None:
+    message = f"failed to load plugin: {error}"
+    failed_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    for plugin in plugin_rows:
+        plugin_id = _optional_cli_string(plugin.get("id"))
+        source = _optional_cli_string(plugin.get("source"))
+        if isinstance(plugin, dict):
+            plugin["status"] = "error"
+            plugin["description"] = message
+            plugin["failurePhase"] = "load"
+            plugin["failedAt"] = failed_at
+        if diagnostics is None:
+            continue
+        diagnostic: dict[str, object] = {
+            "level": "error",
+            "message": message,
+            "failurePhase": "load",
+        }
+        if plugin_id is not None:
+            diagnostic["pluginId"] = plugin_id
+        if source is not None:
+            diagnostic["source"] = source
+        diagnostics.append(diagnostic)
 
 
 def _call_plugin_runtime_activation_adapter(

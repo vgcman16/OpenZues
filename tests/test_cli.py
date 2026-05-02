@@ -9700,6 +9700,73 @@ def test_plugins_doctor_json_activation_adapter_skips_disabled_manifest_plugins(
     assert calls == []
 
 
+def test_plugins_doctor_json_projects_installed_activation_adapter_errors(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "broken-runtime"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="broken-runtime",
+        contracts={"tools": ["broken_runtime.search"]},
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+
+    class FakeInstalledPluginRuntimeActivationAdapter:
+        def activate_installed_plugins(self, _context: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("adapter register exploded")
+
+    _patch_plugins_cli_services(
+        monkeypatch,
+        gateway_config=gateway_config,
+        installed_plugin_runtime_activation_adapter=FakeInstalledPluginRuntimeActivationAdapter(),
+    )
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["errors"] == [
+        {
+            "id": "broken-runtime",
+            "source": str(plugin_dir / "openclaw.plugin.json"),
+            "error": "failed to load plugin: adapter register exploded",
+            "failurePhase": "load",
+        }
+    ]
+    assert payload["diagnostics"] == [
+        {
+            "level": "error",
+            "pluginId": "broken-runtime",
+            "source": str(plugin_dir / "openclaw.plugin.json"),
+            "message": "failed to load plugin: adapter register exploded",
+            "failurePhase": "load",
+        }
+    ]
+
+
 def test_plugins_doctor_json_projects_manifest_activation_plan_reasons(
     tmp_path,
     monkeypatch,
