@@ -202,7 +202,7 @@ may lag behind this tracker.
 
 - [x] Configured-channel plugin owner activation projection in `plugins
   doctor --json`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `ae5c3986`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -407,7 +407,7 @@ may lag behind this tracker.
     `54bf33aa`, and errored runtime-imported plugin projection checkpointed
     in `cc2da90c`, and public-surface/runtime-sidecar artifact metadata
     checkpointed in `2acd2736`, and configured-channel owner activation
-    projection verified with checkpoint pending, but deeper module
+    projection checkpointed in `ae5c3986`, but deeper module
     import/runtime activation remains.
   - Weight: 5
 
@@ -419,7 +419,7 @@ may lag behind this tracker.
   - Target: `src/openzues/services/gateway_plugin_activation.py`,
     `src/openzues/cli.py`
   - Test: `tests/test_cli.py`, `tests/test_gateway_plugin_activation.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `ae5c3986`.
   - Weight: 1
   - Last verified: 2026-05-02, focused configured-channel doctor test (`1
     passed`), adjacent plugin doctor/manifest proof (`5 passed`), activation

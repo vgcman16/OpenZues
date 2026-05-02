@@ -5124,7 +5124,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   configured-channel doctor CLI test, adjacent plugin doctor/manifest proof,
   activation helper focused/full proof, `ruff check`, and `mypy`; checkpoint
-  pending.
+  in `ae5c3986`.
 - Next repo-wide queue head: continue the real installed plugin module
   import/activation queue, especially the source-backed boundary that turns
   installed manifest/load-path registry records into native runtime executor or

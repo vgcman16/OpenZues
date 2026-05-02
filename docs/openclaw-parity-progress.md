@@ -8996,8 +8996,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   OpenClaw's runtime scoped-load surface: `plugins doctor --json` resolves
   explicit configured channel ids to manifest-owning plugin ids, projects
   channel policy entries, and shows the temporary activation config that would
-  allow scoped owner loading while staying native to OpenZues. Checkpoint
-  pending.
+  allow scoped owner loading while staying native to OpenZues. Checkpointed in
+  `ae5c3986`.
 - Progress estimates are now roughly 56.8% repo-wide while the
   runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%;
   the remaining plugin queue head is still deeper real installed module import
