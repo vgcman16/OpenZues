@@ -9328,7 +9328,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `plugins.installs.<id>.installPath` entries are discovered as manifest-backed
   plugin records even when absent from `plugins.load.paths`, preserving
   manifest `contracts.tools`, install metadata, enabled status, and native
-  activation-adapter executor projection. Checkpoint pending.
+  activation-adapter executor projection. Checkpoint in `b8f39fe3`.
 - Progress estimates are now roughly 58.2% repo-wide and 99.2% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

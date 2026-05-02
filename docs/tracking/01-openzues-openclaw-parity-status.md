@@ -245,7 +245,7 @@ may lag behind this tracker.
   - Status: checkpointed in `ee12d2d4`
 
 - [x] Installed-record manifest runtime activation.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `b8f39fe3`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -465,8 +465,8 @@ may lag behind this tracker.
     and installed activation-adapter manifest tool contract enforcement
     checkpointed in `aac25d80`, and installed activation-adapter runtime load
     options checkpointed in `ee12d2d4`, and installed-record manifest runtime
-    activation verified with checkpoint pending, but deeper module
-    import/runtime activation remains.
+    activation checkpointed in `b8f39fe3`, but deeper module import/runtime
+    activation remains.
   - Weight: 5
 
 - [x] Installed-record manifest runtime activation.
@@ -475,7 +475,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/discovery.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `b8f39fe3`.
   - Weight: 1
   - Last verified: 2026-05-02, focused installed-record activation test (`1
     passed`), adjacent installed-plugin CLI proof (`7 passed`), `ruff check`,
