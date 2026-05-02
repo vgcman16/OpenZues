@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~53.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~54.9% overall, with a reasonable
   band of ~49-58%.
 - The active gateway/session/tool-contract family is estimated at ~99.1% of the
   bounded OpenZues-local parity path.
@@ -29,7 +29,14 @@ Current percentage rollup:
   pre-npm plus explicit/preferred ClawHub, production-wired ClawHub API/archive
   install/update, fakeable plus production-wired npm install/update, update
   spec-overrides, npm-not-found bundled fallback, hook-pack npm update,
-  hook-pack npm install fallback, native manifest activation-planner,
+  hook-pack npm install fallback, native manifest activation-planner reason projection,
+  plugin registry inspect/refresh persistence, plugin list registry-source
+  projection, plugin inspect runtime-inspection flag, missing-target static
+  preflight, target-scoped runtime inventory, and installed plugin
+  activation-state projection, installed plugin allowlist activation guard,
+  installed plugin slot activation reason, plugin doctor failure-phase
+  projection, plugin inspect failure-phase projection, plugin inspect
+  failed-at timestamp projection, plugin inspect loader error text projection,
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.1% after the
@@ -45,8 +52,17 @@ Current percentage rollup:
   API/archive install/update, fakeable plus production-wired npm install/update,
   update spec-overrides,
   npm-not-found bundled fallback, hook-pack npm update, and hook-pack npm
-  install fallback, native manifest activation planning, active-registry
-  executor projection, and runtime activation doctor posture; remaining CLI
+  install fallback, native manifest activation planning reason projection, plugin
+  registry inspect/refresh persistence, plugin list registry-source projection,
+  plugin inspect runtime-inspection flag, missing-target static preflight, and
+  target-scoped runtime inventory, installed plugin activation-state
+  projection, installed plugin allowlist activation guard, installed plugin
+  slot activation reason, plugin doctor failure-phase projection, plugin
+  inspect failure-phase projection, plugin inspect failed-at timestamp
+  projection, plugin inspect loader error text projection,
+  active-registry executor projection, and
+  runtime activation doctor posture;
+  remaining CLI
   gaps are now dominated by real installed plugin module import/activation and
   packaging surfaces.
 - Fully locked bounded slices are now tracked in
@@ -96,6 +112,107 @@ schemas and valid required scopes are preserved, and invalid or disabled
 registrations are skipped before projection. Verified on 2026-05-02 with the
 focused `plugins.uiDescriptors` pytest, adjacent plugin-runtime proof, `ruff
 check`, and `mypy`; checkpointed in `9fb5098b`.
+Plugin runtime activation doctor parity now mirrors OpenClaw's manifest
+activation planner (`src/plugins/activation-planner.ts`) reason vocabulary for
+installed manifests: `plugins doctor --json` projects activation plans for
+command aliases, providers, setup providers, agent harnesses, channels, routes,
+and capability triggers, including upstream-shaped `activation-*` and
+`manifest-*` reasons without importing the TypeScript runtime. Verified on
+2026-05-02 with the focused activation-plan CLI pytest, focused activation
+service reason-plan pytest, adjacent plugin CLI and activation service proofs,
+`ruff check`, and `mypy`; checkpointed in `721ec0f2`.
+Plugin registry inspect/refresh CLI parity now mirrors OpenClaw's
+`src/cli/plugins-cli.ts` registry surface: `plugins registry --json` compares
+current native manifest/load-path inventory with a persisted registry index,
+reports `missing`/`fresh`/`stale` state plus refresh reasons, and `plugins
+registry --refresh --json` writes the current index under the OpenZues settings
+data directory. Verified on 2026-05-02 with focused registry CLI tests,
+adjacent plugin CLI proof, `ruff check`, and `mypy`; checkpointed in
+`cdb3035e`.
+Plugin list persisted-registry source projection now mirrors OpenClaw's
+`src/cli/plugins-list-command.ts` and `src/plugins/status.ts` JSON registry
+block: `plugins list --json` reports `registry.source` as `persisted` after a
+fresh registry refresh, keeps `registry.diagnostics` empty for fresh persisted
+inventory, and falls back to derived-source diagnostics when the persisted
+index is missing or stale. Verified on 2026-05-02 with the focused plugin list
+registry-source CLI test, adjacent plugin CLI proof, `ruff check`, and `mypy`;
+checkpointed in `6468e305`.
+Plugin inspect runtime-inspection flag parity now mirrors OpenClaw's
+`src/cli/plugins-cli.ts` `--runtime` inspect surface and
+`src/plugins/status.ts` module-loading report distinction: `plugins inspect`
+and `plugins info` accept `--runtime`, default inspect stays on the static
+metadata path, and loaded non-bundle rows are marked imported only when runtime
+inspection is explicitly requested. Verified on 2026-05-02 with the focused
+plugin inspect runtime CLI test, adjacent plugin inspect/runtime inventory
+proof, `ruff check`, and `mypy`; checkpointed in `5fce4371`.
+Plugin inspect runtime missing-target preflight now mirrors OpenClaw's
+`src/cli/plugins-cli.list.test.ts` guard: `plugins inspect <missing>
+--runtime` resolves target existence from the static metadata inventory before
+runtime inspection and returns the OpenClaw-shaped missing-plugin error without
+entering the runtime-inspection path. Verified on 2026-05-02 with the focused
+missing-target runtime inspect CLI test, focused runtime inspect pair, adjacent
+plugin inspect/runtime inventory proof, `ruff check`, and `mypy`; checkpoint
+in `9a9e89f2`.
+Plugin inspect runtime target-scoped inventory now mirrors OpenClaw's
+`buildPluginDiagnosticsReport({ onlyPluginIds })` inspect behavior: once the
+static preflight confirms the target exists, native runtime-inspection
+inventory is filtered to the requested plugin id. Verified on 2026-05-02 with
+the focused scoped runtime inspect CLI test, focused runtime inspect trio,
+adjacent plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
+checkpointed in `c412b98b`.
+Installed plugin activation-state projection now mirrors OpenClaw's plugin
+record activation decision fields from `src/plugins/config-activation-shared.ts`,
+`src/plugins/loader-records.ts`, and `src/plugins/status.ts`: config/install
+plugin rows include `activated`, `explicitlyEnabled`, `activationSource`, and
+`activationReason`, and a globally disabled plugin runtime keeps explicitly
+enabled installed plugins disabled while preserving explicit-selection
+metadata. Verified on 2026-05-02 with the focused installed activation-state
+CLI test, adjacent plugin config/install list and doctor proof, `ruff check`,
+and `mypy`; checkpointed in `78658f29`.
+Installed plugin allowlist activation guard now mirrors OpenClaw's
+`src/plugins/config-activation-shared.ts` decision precedence: `plugins.allow`
+remains authoritative over explicit installed plugin enablement, so
+config/install-backed rows outside the allowlist project `status="disabled"`,
+`activated=false`, `explicitlyEnabled=true`, `activationSource="disabled"`,
+and `activationReason="not in allowlist"`. Verified on 2026-05-02 with the
+focused installed allowlist activation CLI test, adjacent plugin config/install
+list and doctor proof, `ruff check`, and `mypy`; checkpointed in `73089117`.
+Installed plugin slot activation reasons now mirror OpenClaw's explicit
+`plugins.slots.memory` and `plugins.slots.contextEngine` activation path from
+`src/plugins/config-activation-shared.ts`: slot-selected config/install-backed
+rows activate before the allowlist guard and project upstream reason text such
+as `selected memory slot`. Verified on 2026-05-02 with the focused installed
+slot activation CLI test, adjacent plugin config/install list and doctor proof,
+`ruff check`, and `mypy`; checkpointed in `209dced0`.
+Plugin doctor failure-phase projection now mirrors OpenClaw's plugin loader
+error phase reporting from `src/plugins/loader-records.ts`,
+`src/plugins/registry-types.ts`, and `src/cli/plugins-cli.ts`: native
+inventory rows preserve `failurePhase` values (`validation`, `load`,
+`register`), `plugins doctor --json` includes the phase on plugin error
+entries, and human doctor output renders the phase marker beside the plugin id.
+Verified on 2026-05-02 with the focused doctor failure-phase CLI test,
+adjacent plugin doctor/activation proof, `ruff check`, and `mypy`; checkpoint
+in `0dc9fc27`.
+Plugin inspect failure-phase projection now mirrors OpenClaw's
+`src/cli/plugins-inspect-command.ts` detail output: `plugins inspect <id>
+--json` preserves `plugin.failurePhase`, and human inspect output renders
+`Failure phase: <phase>` for error records after the status line. Verified on
+2026-05-02 with the focused inspect failure-phase CLI test, adjacent plugin
+inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `6f4d1ad8`.
+Plugin inspect failed-at timestamp projection now mirrors OpenClaw's loader
+`failedAt` error metadata from `src/plugins/loader-records.ts` and
+`src/cli/plugins-inspect-command.ts`: native inventory rows preserve the
+timestamp, `plugins inspect <id> --json` includes `plugin.failedAt`, and human
+inspect output renders `Failed at: <timestamp>` for error records. Verified on
+2026-05-02 with the focused inspect failed-at CLI test, adjacent plugin
+inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `b3bf64a5`.
+Plugin inspect loader error text projection now mirrors OpenClaw's loader
+`error` metadata from `src/plugins/loader-records.ts` and inspect detail output
+from `src/cli/plugins-inspect-command.ts`: native inventory rows preserve the
+error text, `plugins inspect <id> --json` includes `plugin.error`, and human
+inspect output renders `Error: <text>` for error records. Verified on
+2026-05-02 with the focused inspect loader-error CLI test, adjacent plugin
+inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `88ff1768`.
 TTS persona gateway/CLI methods now mirror OpenClaw's `tts.personas` and
 `tts.setPersona` contract: native persona descriptors can come from config or
 fakeable service state, selected persona persists in TTS prefs, `status`
@@ -4587,9 +4704,144 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   gateway/session/tool-contract parity is ~99.1%. Verified with focused and
   adjacent Discord native route tests, `ruff check`, and `mypy`; checkpointed
   in `b5371fd9`.
-- Next repo-wide queue head: continue the source-backed provider-native
-  adapter breadth queue, especially remaining channel/provider send, poll,
-  replay, direct announce, media, reply, thread, and result metadata behavior.
+- Closed the plugin manifest activation-plan reason projection seam from
+  OpenClaw `src/plugins/activation-planner.ts`,
+  `src/plugins/activation-planner.test.ts`, `src/plugins/cli-registry-loader.ts`,
+  `src/plugins/providers.runtime.ts`, and
+  `src/plugins/channel-presence-policy.ts`: `plugins doctor --json` now
+  includes activation plans under `runtimeActivation`, with command,
+  provider/setup-provider, agent-harness, channel, route, and capability
+  triggers plus upstream-shaped reason entries. Repo-wide parity is now
+  estimated at ~53.7%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with focused CLI and activation service tests,
+  adjacent plugin CLI and activation service proofs, `ruff check`, and `mypy`;
+  checkpointed in `721ec0f2`.
+- Closed the plugin registry inspect/refresh seam from OpenClaw
+  `src/cli/plugins-cli.ts` and `src/cli/plugins-cli.list.test.ts`: native
+  `plugins registry --json` now reports persisted plugin registry state for
+  current manifest/load-path inventory, including `missing`/`fresh`/`stale`
+  states and refresh reasons, and `plugins registry --refresh --json` writes
+  the current canonical index under the OpenZues settings data directory.
+  Repo-wide parity is now estimated at ~53.8%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with focused
+  registry CLI tests, adjacent plugin CLI proof, `ruff check`, and `mypy`;
+  checkpointed in `cdb3035e`.
+- Closed the plugin list persisted-registry source projection seam from
+  OpenClaw `src/cli/plugins-list-command.ts`, `src/plugins/status.ts`, and
+  `src/plugins/status.registry-snapshot.test.ts`: native `plugins list --json`
+  now reports a registry source block, projects `persisted` plus empty
+  diagnostics after a fresh refresh, and preserves derived-source diagnostics
+  for missing or stale persisted indexes. Repo-wide parity is now estimated at
+  ~53.9%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused plugin list registry-source CLI test,
+  adjacent plugin CLI proof, `ruff check`, and `mypy`; checkpointed in
+  `6468e305`.
+- Closed the plugin inspect runtime-inspection flag seam from OpenClaw
+  `src/cli/plugins-cli.ts`, `src/cli/plugins-cli.list.test.ts`, and
+  `src/plugins/status.ts`: native `plugins inspect --runtime --json` and
+  `plugins info --runtime --json` now use an explicit runtime-inspection
+  posture while default inspect remains metadata-only; loaded non-bundle
+  plugin rows are marked imported for the runtime inspect path without
+  importing OpenClaw's TypeScript runtime. Repo-wide parity is now estimated at
+  ~54.0%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused plugin inspect runtime CLI test, adjacent
+  plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
+  checkpointed in `5fce4371`.
+- Closed the plugin inspect runtime missing-target preflight seam from OpenClaw
+  `src/cli/plugins-cli.list.test.ts`, `src/cli/plugins-cli.ts`, and
+  `src/plugins/status.ts`: native `plugins inspect <missing> --runtime` now
+  checks static metadata inventory first, returns `Plugin not found` for absent
+  targets, and does not enter runtime-inspection inventory unless the target
+  exists. Repo-wide parity is now estimated at ~54.1%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  missing-target runtime inspect CLI test, focused runtime inspect pair,
+  adjacent plugin inspect/runtime inventory proof, `ruff check`, and `mypy`;
+  checkpointed in `9a9e89f2`.
+- Closed the plugin inspect runtime target-scoped inventory seam from OpenClaw
+  `src/cli/plugins-cli.list.test.ts` and `src/plugins/status.ts`: after static
+  target preflight succeeds, native `plugins inspect <id> --runtime` now
+  filters runtime-inspection inventory to the requested plugin id, matching
+  the upstream `onlyPluginIds` diagnostics-report call shape. Repo-wide parity
+  is now estimated at ~54.2%; runtime/CLI/doctor and CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused scoped runtime inspect
+  CLI test, focused runtime inspect trio, adjacent plugin inspect/runtime
+  inventory proof, `ruff check`, and `mypy`; checkpointed in `c412b98b`.
+- Closed the installed plugin activation-state projection seam from OpenClaw
+  `src/plugins/config-activation-shared.ts`, `src/plugins/loader-records.ts`,
+  `src/plugins/status.ts`, and `src/cli/plugins-cli.list.test.ts`: native
+  config/install-backed plugin rows now carry `activated`,
+  `explicitlyEnabled`, `activationSource`, and `activationReason`, and global
+  plugin disablement turns explicitly enabled installed records into disabled
+  rows while preserving explicit-selection metadata. Repo-wide parity is now
+  estimated at ~54.3%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused installed activation-state
+  CLI test, adjacent plugin config/install list and doctor proof, `ruff check`,
+  and `mypy`; checkpointed in `78658f29`.
+- Closed the installed plugin allowlist activation guard seam from OpenClaw
+  `src/plugins/config-activation-shared.ts`,
+  `src/plugins/config-state.test.ts`, `src/plugins/loader-records.ts`, and
+  `src/plugins/status.ts`: native config/install-backed plugin rows now keep
+  `plugins.allow` authoritative over explicit installed plugin enablement,
+  preserving `explicitlyEnabled=true` while projecting disabled status and
+  `activationReason="not in allowlist"`. Repo-wide parity is now estimated at
+  ~54.4%; runtime/CLI/doctor and CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused installed allowlist activation CLI test,
+  adjacent plugin config/install list and doctor proof, `ruff check`, and
+  `mypy`; checkpointed in `73089117`.
+- Closed the installed plugin slot activation reason seam from OpenClaw
+  `src/plugins/config-activation-shared.ts`,
+  `src/plugins/config-state.test.ts`, `src/plugins/loader-records.ts`, and
+  `src/plugins/status.ts`: native config/install-backed plugin rows now treat
+  memory/context-engine slot selection as explicit activation before the
+  allowlist guard and project upstream reason text such as
+  `selected memory slot`. Repo-wide parity is now estimated at ~54.5%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused installed slot activation CLI test, adjacent plugin
+  config/install list and doctor proof, `ruff check`, and `mypy`; checkpoint
+  in `209dced0`.
+- Closed the plugin doctor failure-phase projection seam from OpenClaw
+  `src/plugins/loader-records.ts`, `src/plugins/registry-types.ts`, and
+  `src/cli/plugins-cli.ts`: native plugin records now preserve loader
+  `failurePhase` values, `plugins doctor --json` returns the phase on error
+  entries, and human doctor output renders `[validation]`, `[load]`, or
+  `[register]` beside plugin ids when present. Repo-wide parity is now
+  estimated at ~54.6%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused doctor failure-phase CLI test,
+  adjacent plugin doctor/activation proof, `ruff check`, and `mypy`; checkpoint
+  in `0dc9fc27`.
+- Closed the plugin inspect failure-phase projection seam from OpenClaw
+  `src/cli/plugins-inspect-command.ts`, `src/plugins/loader-records.ts`, and
+  `src/plugins/registry-types.ts`: native inspect JSON payloads now preserve
+  `plugin.failurePhase`, and human inspect output renders OpenClaw's
+  `Failure phase: <phase>` detail after status. Repo-wide parity is now
+  estimated at ~54.7%; runtime/CLI/doctor and CLI/operator-control bounded
+  paths remain ~99.9%. Verified with the focused inspect failure-phase CLI
+  test, adjacent plugin inspect/doctor proof, `ruff check`, and `mypy`;
+  checkpoint in `6f4d1ad8`.
+- Closed the plugin inspect failed-at timestamp projection seam from OpenClaw
+  `src/plugins/loader-records.ts`, `src/plugins/registry-types.ts`, and
+  `src/cli/plugins-inspect-command.ts`: native plugin records now preserve
+  loader `failedAt` timestamps, JSON inspect payloads include
+  `plugin.failedAt`, and human inspect output renders
+  `Failed at: <timestamp>` for error records. Repo-wide parity is now
+  estimated at ~54.8%;
+  runtime/CLI/doctor and CLI/operator-control bounded paths remain ~99.9%.
+  Verified with the focused inspect failed-at CLI test, adjacent plugin
+  inspect/doctor proof, `ruff check`, and `mypy`; checkpoint in `b3bf64a5`.
+- Closed the plugin inspect loader error text projection seam from OpenClaw
+  `src/plugins/loader-records.ts`, `src/plugins/registry-types.ts`, and
+  `src/cli/plugins-inspect-command.ts`: native plugin records now preserve
+  loader `error` text, JSON inspect payloads include `plugin.error`, and human
+  inspect output renders `Error: <text>` for error records. Repo-wide parity
+  is now estimated at ~54.9%; runtime/CLI/doctor and CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused inspect loader-error
+  CLI test, adjacent plugin inspect/doctor proof, `ruff check`, and `mypy`;
+  checkpoint in `88ff1768`.
+- Next repo-wide queue head: continue the real installed plugin module
+  import/activation queue, especially the source-backed boundary that turns
+  installed manifest/load-path registry records into native runtime executor or
+  honest unavailable activation posture. The provider-native adapter breadth
+  queue remains the next alternate after that slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

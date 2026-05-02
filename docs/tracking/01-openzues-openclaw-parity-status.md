@@ -16,12 +16,12 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~53.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~54.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.1% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
-| Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, installed plugin activation remain |
-| CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are plugin import/activation and packaging surfaces |
+| Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
+| CLI/operator control plane | ~99.9% | High for bounded native path | Remaining gaps are deeper plugin import/activation and packaging surfaces |
 
 ## Implemented / Locked Bounded Areas
 
@@ -64,6 +64,69 @@ may lag behind this tracker.
   `pluginId`/`pluginName` stamping, JSON-compatible schema preservation, and
   valid required-scope projection.
   - Status: checkpointed in `9fb5098b`
+
+- [x] Plugin manifest activation-plan reason projection in `plugins doctor
+  --json`, covering command aliases, providers, setup providers, agent
+  harnesses, channels, routes, and capability triggers with upstream
+  `activation-*` and `manifest-*` reason strings.
+  - Status: checkpointed in `721ec0f2`
+
+- [x] Plugin registry inspect/refresh CLI parity for persisted native plugin
+  registry state, including `missing`/`fresh`/`stale` state projection,
+  refresh reasons, and JSON-capable registry refresh persistence.
+  - Status: checkpointed in `cdb3035e`
+
+- [x] Plugin list persisted-registry source projection in `plugins list
+  --json`, including persisted/derived registry source metadata and
+  OpenClaw-shaped registry diagnostics.
+  - Status: checkpointed in `6468e305`
+
+- [x] Plugin inspect runtime-inspection flag in `plugins inspect --runtime`,
+  including explicit runtime posture and imported-state projection for loaded
+  non-bundle metadata rows.
+  - Status: checkpointed in `5fce4371`
+
+- [x] Plugin inspect runtime missing-target static preflight, preserving the
+  OpenClaw guard that avoids runtime inspection when the target plugin is
+  absent.
+  - Status: checkpointed in `9a9e89f2`
+
+- [x] Plugin inspect runtime target-scoped inventory, matching OpenClaw's
+  `onlyPluginIds` diagnostics-report posture for `plugins inspect --runtime`.
+  - Status: checkpointed in `c412b98b`
+
+- [x] Installed plugin activation-state projection for config/install records,
+  preserving OpenClaw-shaped `activated`, `explicitlyEnabled`,
+  `activationSource`, and `activationReason` fields.
+  - Status: checkpointed in `78658f29`
+
+- [x] Installed plugin allowlist activation guard for config/install records,
+  preserving OpenClaw's `not in allowlist` activation decision.
+  - Status: checkpointed in `73089117`
+
+- [x] Installed plugin slot activation reasons for config/install records,
+  preserving OpenClaw's `selected memory slot` activation decision.
+  - Status: checkpointed in `209dced0`
+
+- [x] Plugin doctor failure-phase projection for loader error records,
+  preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
+  and human doctor output.
+  - Status: checkpointed in `0dc9fc27`
+
+- [x] Plugin inspect failure-phase projection for loader error records,
+  preserving `plugin.failurePhase` in JSON and printing the OpenClaw-style
+  `Failure phase: <phase>` line in human inspect output.
+  - Status: checkpointed in `6f4d1ad8`
+
+- [x] Plugin inspect failed-at timestamp projection for loader error records,
+  preserving `plugin.failedAt` in JSON and printing the OpenClaw-style
+  `Failed at: <timestamp>` line in human inspect output.
+  - Status: checkpointed in `b3bf64a5`
+
+- [x] Plugin inspect loader error text projection for loader error records,
+  preserving `plugin.error` in JSON and printing the OpenClaw-style
+  `Error: <text>` line in human inspect output.
+  - Status: checkpointed in `88ff1768`
 
 - [x] TTS persona gateway and CLI methods for `tts.personas`,
   `tts.setPersona`, status persona projection, prefs-backed selected persona,
@@ -235,15 +298,200 @@ may lag behind this tracker.
 
 - [ ] Real installed plugin module import/activation.
   - Source: OpenClaw plugin lifecycle and activation runtime.
-  - Status: open
+  - Status: open; manifest activation-plan reason projection child slice
+    checkpointed in `721ec0f2`, plugin registry inspect/refresh child slice
+    checkpointed in `cdb3035e`, and plugin list registry-source child slice
+    checkpointed in `6468e305`, plugin inspect runtime flag child slice
+    checkpointed in `5fce4371`, and missing-target static preflight child
+    slice checkpointed in `9a9e89f2`, and runtime target-scoped inventory
+    child slice checkpointed in `c412b98b`, and installed plugin
+    activation-state child slice checkpointed in `78658f29`, and installed
+    plugin allowlist activation guard child slice checkpointed in `73089117`,
+    and installed plugin slot activation reason child slice checkpointed in
+    `209dced0`, plugin doctor failure-phase projection checkpointed in
+    `0dc9fc27`, plugin inspect failure-phase projection checkpointed in
+    `6f4d1ad8`, plugin inspect failed-at timestamp projection checkpointed in
+    `b3bf64a5`, and plugin inspect loader error text projection checkpointed
+    in `88ff1768`, but deeper module import/runtime activation remains.
   - Weight: 5
+
+- [x] Plugin inspect loader error text projection.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `88ff1768`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect loader-error test (`1
+    passed`), adjacent plugin inspect/doctor proof (`8 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect failed-at timestamp projection.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `b3bf64a5`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect failed-at test (`1
+    passed`), adjacent plugin inspect/doctor proof (`7 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin inspect failure-phase projection.
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `6f4d1ad8`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin inspect failure-phase test (`1
+    passed`), adjacent plugin inspect/doctor proof (`6 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin doctor failure-phase projection.
+  - Source: `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`,
+    `openclaw-main/src/cli/plugins-cli.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `0dc9fc27`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused plugin doctor failure-phase test (`1
+    passed`), adjacent plugin doctor/activation proof (`5 passed`), `ruff
+    check`, and `mypy`.
+
+- [x] Installed plugin slot activation reason.
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/config-state.test.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `209dced0`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed plugin slot activation test
+    (`1 passed`), adjacent plugin config/install list and doctor proof (`8
+    passed`), `ruff check`, and `mypy`.
+
+- [x] Installed plugin allowlist activation guard.
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/config-state.test.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `73089117`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed plugin allowlist activation
+    test (`1 passed`), adjacent plugin config/install list and doctor proof
+    (`7 passed`), `ruff check`, and `mypy`.
+
+- [x] Installed plugin activation-state projection.
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `78658f29`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused installed plugin activation-state test
+    (`1 passed`), adjacent plugin config/install list and doctor proof (`6
+    passed`), `ruff check`, and `mypy`.
+
+- [x] Plugin inspect runtime target-scoped inventory.
+  - Source: `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `c412b98b`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused scoped runtime inspect test (`1
+    passed`), focused runtime inspect trio (`3 passed`), adjacent plugin
+    inspect/runtime inventory proof (`8 passed`), `ruff check`, and `mypy`.
+
+- [x] Plugin inspect runtime missing-target static preflight.
+  - Source: `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `9a9e89f2`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused missing-target runtime inspect test
+    (`1 passed`), focused runtime inspect pair (`2 passed`), adjacent plugin
+    inspect/runtime inventory proof (`7 passed`), `ruff check`, and `mypy`.
+
+- [x] Plugin inspect runtime-inspection flag.
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `5fce4371`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state
+    -q` (`1 passed`), adjacent plugin inspect/runtime inventory proof (`6
+    passed`), `ruff check`, and `mypy`.
+
+- [x] Plugin list persisted-registry source projection.
+  - Source: `openclaw-main/src/cli/plugins-list-command.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/status.registry-snapshot.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `6468e305`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_reports_persisted_registry_source_after_refresh
+    -q` (`1 passed`), adjacent plugin CLI proof (`6 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Plugin registry inspect/refresh CLI.
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `cdb3035e`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry
+    -q` (`1 passed`), focused `python -m pytest
+    tests\test_cli.py::test_plugins_registry_refresh_json_persists_current_index
+    -q` (`1 passed`), adjacent plugin CLI proof (`4 passed`), `ruff check`,
+    and `mypy`.
 
 - [~] Provider-native adapter breadth.
   - Source: OpenClaw channel/provider send, poll, replay, direct announce, media,
     reply, thread, and result metadata behavior.
   - Status: mapped; Slack thread timestamp fallback checkpointed in
-    `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`
+    `a461e5eb`; Slack media result checkpointed in `e3b5bbc0`; Discord thread
+    query placement checkpointed in `0d40be27`; WhatsApp document filename
+    projection checkpointed in `05c4f0fc`; Discord media iteration
+    checkpointed in `b5371fd9`
   - Weight: 3
+
+- [x] Plugin manifest activation-plan reason projection.
+  - Source: `openclaw-main/src/plugins/activation-planner.ts`,
+    `openclaw-main/src/plugins/activation-planner.test.ts`,
+    `openclaw-main/src/plugins/cli-registry-loader.ts`,
+    `openclaw-main/src/plugins/providers.runtime.ts`,
+    `openclaw-main/src/plugins/channel-presence-policy.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/gateway_plugin_activation.py`
+  - Test: `tests/test_cli.py`, `tests/test_gateway_plugin_activation.py`
+  - Status: checkpointed in `721ec0f2`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_projects_manifest_activation_plan_reasons
+    -q` (`1 passed`), service proof `python -m pytest
+    tests\test_gateway_plugin_activation.py::test_resolve_manifest_activation_plan_projects_reason_entries
+    -q` (`1 passed`), adjacent plugin CLI proof (`5 passed`), adjacent
+    activation service proof (`4 passed`), `ruff check`, and `mypy`.
 
 - [x] Slack native route `thread_ts` fallback.
   - Source: `openclaw-main/extensions/slack/src/thread-ts.ts`,

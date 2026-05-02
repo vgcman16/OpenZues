@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~53.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~54.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.1% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,13 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Discord provider-native media iteration parity slice is checkpointed in
-`b5371fd9`. Any follow-up changes should target the next queue head only:
+The plugin inspect loader error text projection slice is checkpointed in
+`88ff1768`. Any follow-up changes should target the next queue head only:
 
-- `src/openzues/services/ops_mesh.py`
-- `tests/test_ops_mesh.py`
+- `src/openzues/cli.py`
+- `src/openzues/services/gateway_plugin_activation.py`
+- `tests/test_cli.py`
+- `tests/test_gateway_plugin_activation.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -48,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Checkpointed in `9fb5098b` | Repo-wide +0.1%, gateway session/tool +0.1% | `plugins.uiDescriptors` done; continue next source-backed plugin/runtime base-method gap |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin inspect loader error text projection checkpointed in `88ff1768` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue real installed module import/activation depth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord media iteration checkpointed in `b5371fd9` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
@@ -100,6 +102,359 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     tools_invoke_uses_plugin_runtime or tools_invoke_runs_registry_plugin_executor
     or tools_invoke_keeps_registry_owner_only or sessions_plugin_patch"` (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001B` plugin manifest activation-plan reason projection
+  - Source: `openclaw-main/src/plugins/activation-planner.ts`,
+    `openclaw-main/src/plugins/activation-planner.test.ts`,
+    `openclaw-main/src/plugins/cli-registry-loader.ts`,
+    `openclaw-main/src/plugins/providers.runtime.ts`, and
+    `openclaw-main/src/plugins/channel-presence-policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/gateway_plugin_activation.py`,
+    `tests/test_cli.py`, `tests/test_gateway_plugin_activation.py`
+  - Contract: `plugins doctor --json` projects native OpenClaw-shaped
+    activation plans for installed manifest records, including command alias,
+    provider/setup-provider, agent-harness, channel, route, and capability
+    triggers with upstream reason strings such as
+    `activation-command-hint`, `manifest-provider-owner`,
+    `manifest-setup-provider-owner`, and `manifest-tool-contract`.
+  - Evidence required: focused plugin doctor activation test, adjacent plugin
+    CLI tests, ruff, mypy
+  - Status: checkpointed in `721ec0f2`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_projects_manifest_activation_plan_reasons
+    -q` (`1 passed`), `python -m pytest
+    tests\test_gateway_plugin_activation.py::test_resolve_manifest_activation_plan_projects_reason_entries
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_list_json_projects_runtime_executor_inventory or
+    plugins_list_json_marks_runtime_executor_plugins_imported"` (`5 passed`),
+    adjacent `python -m pytest tests\test_gateway_plugin_activation.py -q` (`4
+    passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001C` plugin registry inspect/refresh CLI
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins registry --json` compares current native manifest/load
+    path plugin inventory with a persisted registry index and reports
+    `missing`/`fresh`/`stale` plus refresh reasons; `plugins registry
+    --refresh --json` writes the current index under the OpenZues settings
+    data directory and returns `{refreshed: true, registry}`.
+  - Evidence required: focused registry inspect/refresh tests, adjacent plugin
+    CLI tests, ruff, mypy
+  - Status: checkpointed in `cdb3035e`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_registry_json_reports_missing_persisted_registry
+    -q` (`1 passed`), `python -m pytest
+    tests\test_cli.py::test_plugins_registry_refresh_json_persists_current_index
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_registry or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`4
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001D` plugin list persisted-registry source projection
+  - Source: `openclaw-main/src/cli/plugins-list-command.ts`,
+    `openclaw-main/src/plugins/status.ts`,
+    `openclaw-main/src/plugins/status.registry-snapshot.test.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: after `plugins registry --refresh`, `plugins list --json`
+    reports a `registry` block with `source="persisted"` and no diagnostics;
+    missing or stale persisted indexes report derived-source diagnostics while
+    keeping plugin list metadata cold and native.
+  - Evidence required: focused plugin list registry-source test, adjacent
+    plugin registry/list tests, ruff, mypy
+  - Status: checkpointed in `6468e305`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_reports_persisted_registry_source_after_refresh
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_registry or
+    plugins_list_json_reports_persisted_registry_source_after_refresh or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons or
+    plugins_list_json_discovers_openclaw_manifest_load_paths"` (`6 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001E` plugin inspect runtime-inspection flag
+  - Source: `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins inspect <id> --runtime --json` is accepted, uses the
+    native runtime-inspection posture only when explicitly requested, preserves
+    missing-target behavior, and marks loaded non-bundle metadata rows as
+    imported for runtime inspection without importing the TypeScript runtime.
+  - Evidence required: focused plugin inspect runtime test, adjacent plugin
+    inspect/runtime inventory tests, ruff, mypy
+  - Status: checkpointed in `5fce4371`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_runtime_json_uses_runtime_loaded_import_state
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_runtime_json_uses_runtime_loaded_import_state or
+    plugins_inspect_json_projects_runtime_executor_tools or
+    plugins_inspect_json_includes_plugin_scoped_diagnostics or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_list_json_projects_runtime_executor_inventory or
+    plugins_doctor_json_reports_metadata_only_tool_activation"` (`6 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001F` plugin inspect runtime missing-target static preflight
+  - Source: `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/cli/plugins-cli.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins inspect <missing> --runtime` resolves target existence
+    from the static metadata inventory first and returns the OpenClaw-shaped
+    missing-plugin error without entering the runtime-inspection path.
+  - Evidence required: focused missing-target runtime inspect test, adjacent
+    plugin inspect/runtime inventory tests, ruff, mypy
+  - Status: checkpointed in `9a9e89f2`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_runtime_missing_target_uses_static_inventory
+    -q` (`1 passed`), focused runtime inspect pair (`2 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_runtime_json_uses_runtime_loaded_import_state or
+    plugins_inspect_runtime_missing_target_uses_static_inventory or
+    plugins_inspect_json_projects_runtime_executor_tools or
+    plugins_inspect_json_includes_plugin_scoped_diagnostics or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_list_json_projects_runtime_executor_inventory or
+    plugins_doctor_json_reports_metadata_only_tool_activation"` (`7 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001G` plugin inspect runtime target-scoped inventory
+  - Source: `openclaw-main/src/cli/plugins-cli.list.test.ts`,
+    `openclaw-main/src/plugins/status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: after static target preflight, `plugins inspect <id> --runtime`
+    loads native runtime-inspection inventory scoped to the requested plugin
+    id, matching OpenClaw's `onlyPluginIds` diagnostics-report call shape.
+  - Evidence required: focused scoped runtime inspect test, adjacent plugin
+    inspect/runtime inventory tests, ruff, mypy
+  - Status: checkpointed in `c412b98b`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_runtime_scopes_runtime_inventory_to_target
+    -q` (`1 passed`), focused runtime inspect trio (`3 passed`), adjacent
+    `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_runtime_json_uses_runtime_loaded_import_state or
+    plugins_inspect_runtime_missing_target_uses_static_inventory or
+    plugins_inspect_runtime_scopes_runtime_inventory_to_target or
+    plugins_inspect_json_projects_runtime_executor_tools or
+    plugins_inspect_json_includes_plugin_scoped_diagnostics or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_list_json_projects_runtime_executor_inventory or
+    plugins_doctor_json_reports_metadata_only_tool_activation"` (`8 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001H` installed plugin activation-state projection
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/status.ts`, and
+    `openclaw-main/src/cli/plugins-cli.list.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: config/install-backed plugin rows preserve OpenClaw-shaped
+    activation decision fields: `activated`, `explicitlyEnabled`,
+    `activationSource`, `activationReason`, and disabled status when global
+    plugin activation blocks an explicitly enabled installed plugin.
+  - Evidence required: focused installed activation-state CLI test, adjacent
+    plugin config/install list and doctor tests, ruff, mypy
+  - Status: checkpointed in `78658f29`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_projects_installed_plugin_activation_state
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_list_json_includes_saved_config_install_records or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`6
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001I` installed plugin allowlist activation guard
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/config-state.test.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`, and
+    `openclaw-main/src/plugins/status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins.allow` remains authoritative over explicitly enabled
+    config/install-backed plugin records: excluded installed plugins project
+    `status="disabled"`, `activated=false`, `explicitlyEnabled=true`,
+    `activationSource="disabled"`, and `activationReason="not in allowlist"`.
+  - Evidence required: focused allowlist activation-state CLI test, adjacent
+    plugin config/install list and doctor tests, ruff, mypy
+  - Status: checkpointed in `73089117`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_keeps_installed_plugin_allowlist_authoritative
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_list_json_keeps_installed_plugin_allowlist_authoritative or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_includes_saved_config_install_records or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`7
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001J` installed plugin slot activation reason
+  - Source: `openclaw-main/src/plugins/config-activation-shared.ts`,
+    `openclaw-main/src/plugins/config-state.test.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`, and
+    `openclaw-main/src/plugins/status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins.slots.memory` and `plugins.slots.contextEngine`
+    explicitly activate matching config/install-backed plugin records before
+    the allowlist guard, preserving upstream reasons such as
+    `selected memory slot`.
+  - Evidence required: focused slot activation-state CLI test, adjacent plugin
+    config/install list and doctor tests, ruff, mypy
+  - Status: checkpointed in `209dced0`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_projects_installed_plugin_slot_activation_reason
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_list_json_projects_installed_plugin_slot_activation_reason or
+    plugins_list_json_keeps_installed_plugin_allowlist_authoritative or
+    plugins_list_json_projects_installed_plugin_activation_state or
+    plugins_list_json_includes_saved_config_install_records or
+    plugins_list_json_discovers_openclaw_manifest_load_paths or
+    plugins_list_json_marks_runtime_executor_plugins_imported or
+    plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`8
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001K` plugin doctor failure-phase projection
+  - Source: `openclaw-main/src/plugins/loader-records.ts`,
+    `openclaw-main/src/plugins/registry-types.ts`, and
+    `openclaw-main/src/cli/plugins-cli.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native plugin inventory rows preserve OpenClaw loader
+    `failurePhase` values (`validation`, `load`, `register`), `plugins doctor
+    --json` includes the phase on plugin errors, and human doctor output
+    renders the phase beside the plugin id.
+  - Evidence required: focused plugin doctor failure-phase test, adjacent
+    plugin doctor/activation tests, ruff, mypy
+  - Status: checkpointed in `0dc9fc27`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_reports_error_failure_phase -q`
+    (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_doctor_reports_error_failure_phase or
+    plugins_doctor_human_reports_error_plugins or
+    plugins_doctor_human_reports_compatibility_notices or
+    plugins_doctor_json_reports_metadata_only_tool_activation or
+    plugins_doctor_json_projects_manifest_activation_plan_reasons"` (`5
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001L` plugin inspect failure-phase projection
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`, and
+    `openclaw-main/src/plugins/registry-types.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins inspect <id> --json` preserves `plugin.failurePhase`
+    for loader error records and human `plugins inspect <id>` renders the
+    OpenClaw-style `Failure phase: <phase>` line after status.
+  - Evidence required: focused plugin inspect failure-phase test, adjacent
+    plugin inspect/doctor tests, ruff, mypy
+  - Status: checkpointed in `6f4d1ad8`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_reports_error_failure_phase -q`
+    (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_reports_error_failure_phase or
+    plugins_doctor_reports_error_failure_phase or
+    plugins_inspect_json_returns_plugin_detail or
+    plugins_info_alias_json_uses_inspect_payload or
+    plugins_inspect_json_includes_plugin_scoped_diagnostics or
+    plugins_inspect_runtime_json_uses_runtime_loaded_import_state"` (`6
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001M` plugin inspect failed-at timestamp projection
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`, and
+    `openclaw-main/src/plugins/registry-types.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native plugin inventory rows preserve OpenClaw loader
+    `failedAt` timestamps, `plugins inspect <id> --json` includes
+    `plugin.failedAt`, and human `plugins inspect <id>` renders the
+    OpenClaw-style `Failed at: <timestamp>` line.
+  - Evidence required: focused plugin inspect failed-at test, adjacent plugin
+    inspect/doctor tests, ruff, mypy
+  - Status: checkpointed in `b3bf64a5`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_reports_error_failed_at -q` (`1
+    passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_reports_error_failed_at or
+    plugins_inspect_reports_error_failure_phase or
+    plugins_doctor_reports_error_failure_phase or
+    plugins_inspect_json_returns_plugin_detail or
+    plugins_info_alias_json_uses_inspect_payload or
+    plugins_inspect_json_includes_plugin_scoped_diagnostics or
+    plugins_inspect_runtime_json_uses_runtime_loaded_import_state"` (`7
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001N` plugin inspect loader error text projection
+  - Source: `openclaw-main/src/cli/plugins-inspect-command.ts`,
+    `openclaw-main/src/plugins/loader-records.ts`, and
+    `openclaw-main/src/plugins/registry-types.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native plugin inventory rows preserve OpenClaw loader
+    `error` text, `plugins inspect <id> --json` includes `plugin.error`, and
+    human `plugins inspect <id>` renders the OpenClaw-style `Error: <text>`
+    line for errored plugin records.
+  - Evidence required: focused plugin inspect loader-error test, adjacent
+    plugin inspect/doctor tests, ruff, mypy
+  - Status: checkpointed in `88ff1768`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_inspect_reports_loader_error_text -q`
+    (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "plugins_inspect_reports_loader_error_text or
+    plugins_inspect_reports_error_failed_at or
+    plugins_inspect_reports_error_failure_phase or
+    plugins_doctor_reports_error_failure_phase or
+    plugins_inspect_json_returns_plugin_detail or
+    plugins_info_alias_json_uses_inspect_payload or
+    plugins_inspect_json_includes_plugin_scoped_diagnostics or
+    plugins_inspect_runtime_json_uses_runtime_loaded_import_state"` (`8
+    passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
+    src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,
