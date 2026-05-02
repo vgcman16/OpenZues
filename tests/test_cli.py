@@ -8447,6 +8447,63 @@ def test_plugins_inspect_json_projects_runtime_executor_tools(
     ]
 
 
+def test_plugins_inspect_json_includes_plugin_scoped_diagnostics(monkeypatch) -> None:
+    async def fake_inventory(
+        _services: object,
+        *,
+        enabled_only: bool,
+    ) -> dict[str, object]:
+        assert enabled_only is False
+        return {
+            "workspaceDir": None,
+            "plugins": [
+                {
+                    "id": "google",
+                    "name": "Google",
+                    "status": "loaded",
+                    "format": "openclaw",
+                    "source": "plugin://google",
+                    "origin": "bundled",
+                    "description": "Google provider plugin.",
+                    "capabilities": ["web-search:google"],
+                    "parityStatus": "ready",
+                    "imported": True,
+                }
+            ],
+            "diagnostics": [
+                {
+                    "level": "warn",
+                    "pluginId": "google",
+                    "message": "watch this surface",
+                },
+                {
+                    "level": "warn",
+                    "pluginId": "other",
+                    "message": "ignore this surface",
+                },
+                {"level": "warn", "message": "global diagnostic"},
+            ],
+        }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace())
+
+    monkeypatch.setattr(cli_module, "_build_plugins_inventory_payload", fake_inventory)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["plugins", "inspect", "google", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["diagnostics"] == [
+        {
+            "level": "warn",
+            "pluginId": "google",
+            "message": "watch this surface",
+        }
+    ]
+
+
 def test_plugins_inspect_json_preserves_runtime_executor_optional_metadata(
     tmp_path,
     monkeypatch,

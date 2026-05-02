@@ -16038,12 +16038,19 @@ async def _build_plugin_inspect_payload(
         plugins,
         list,
     ) else []
+    raw_diagnostics = inventory.get("diagnostics")
+    diagnostics = [
+        diagnostic
+        for diagnostic in raw_diagnostics
+        if isinstance(diagnostic, dict)
+    ] if isinstance(raw_diagnostics, list) else []
     if inspect_all:
         return [
             _plugin_inspect_report(
                 plugin,
                 runtime_specs=runtime_specs,
                 policy=_plugin_inspect_policy_from_services(services, plugin),
+                diagnostics=diagnostics,
             )
             for plugin in plugin_rows
         ]
@@ -16057,6 +16064,7 @@ async def _build_plugin_inspect_payload(
         plugin,
         runtime_specs=runtime_specs,
         policy=_plugin_inspect_policy_from_services(services, plugin),
+        diagnostics=diagnostics,
     )
 
 
@@ -16078,6 +16086,7 @@ def _plugin_inspect_report(
     *,
     runtime_specs: tuple[GatewayPluginRuntimeExecutorSpec, ...] = (),
     policy: dict[str, object] | None = None,
+    diagnostics: Sequence[dict[str, object]] = (),
 ) -> dict[str, object]:
     capabilities = plugin.get("capabilities")
     capability_ids = [
@@ -16113,12 +16122,26 @@ def _plugin_inspect_report(
         "lspServers": _plugin_record_string_list(plugin, "lspServers"),
         "httpRouteCount": _plugin_record_http_route_count(plugin),
         "policy": dict(policy) if policy is not None else {},
-        "diagnostics": [],
+        "diagnostics": _plugin_scoped_diagnostics(plugin, diagnostics),
         "install": dict(install) if isinstance(install, dict) else None,
     }
     if runtime_dependencies:
         report["runtimeDependencies"] = runtime_dependencies
     return report
+
+
+def _plugin_scoped_diagnostics(
+    plugin: dict[str, object],
+    diagnostics: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    plugin_id = _optional_cli_string(plugin.get("id"))
+    if plugin_id is None:
+        return []
+    return [
+        dict(diagnostic)
+        for diagnostic in diagnostics
+        if _optional_cli_string(diagnostic.get("pluginId")) == plugin_id
+    ]
 
 
 def _mark_plugin_import_state(

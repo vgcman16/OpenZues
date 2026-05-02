@@ -4,7 +4,7 @@ Updated: 2026-05-02
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~52.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~52.1% overall, with a reasonable
   band of ~48-57%.
 - The active gateway/session/tool-contract family is estimated at ~98% of the
   bounded OpenZues-local parity path.
@@ -13,7 +13,7 @@ Current percentage rollup:
   `sessions.patch`, `sessions.delete`, `sessions.spawn`, and `tools.invoke`
   runtime seams.
 - The runtime/CLI/doctor native-bridge family is estimated at ~99.9% after the
-  runtime bridge doctor posture, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
+  runtime bridge doctor posture, secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts, provider route send/poll alias-precedence,
   plugin runtime executor inventory, doctor-contract artifact
   projection/touched-path narrowing,
   channel-plugin doctor
@@ -33,7 +33,7 @@ Current percentage rollup:
   slices.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue,
-  secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, doctor workspaceStatus imported-state counts,
+  secrets reload CLI surface, plugin imported-state projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, plugin inspect scoped diagnostics, doctor workspaceStatus imported-state counts,
   doctor-contract artifact projection/touched-path narrowing, exec safe-bin coverage/repair/trusted-dir hints, channel-plugin doctor
   compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, packaged bundled runtime root preference, local path link/copy
   installs, missing local-looking install-spec guard, and
@@ -4376,10 +4376,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~52.0%; runtime/CLI/doctor and CLI/operator
   remain ~99.9%. Verified with focused and adjacent CLI/plugin proofs, `ruff
   check`, and `mypy`.
-- Next repo-wide queue head: `plugins inspect --json` should carry
-  plugin-scoped diagnostics. Source anchors are OpenClaw
-  `src/plugins/status.ts` inspect diagnostics filtering plus OpenZues'
-  `_build_plugin_inspect_payload` / `_plugin_inspect_report` owners.
+- Closed the plugin inspect scoped diagnostics seam from OpenClaw
+  `src/plugins/status.ts` and `src/plugins/status.test.ts`: native
+  `plugins inspect --json` now filters inventory diagnostics by inspected
+  `pluginId`, so matching plugin diagnostics are included and global or
+  other-plugin diagnostics are omitted from that report. Repo-wide parity is
+  now estimated at ~52.1%; runtime/CLI/doctor and CLI/operator remain ~99.9%.
+  Verified with focused and adjacent CLI/plugin inspect proofs, `ruff check`,
+  and `mypy`.
+- Next repo-wide queue head: broader runtime command/packaging breadth remains
+  open while the next source-backed seam is selected. Source anchors remain
+  OpenClaw CLI runtime/session/provider command surfaces plus OpenZues' Typer
+  and doctor/runtime owners.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
