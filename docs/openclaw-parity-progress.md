@@ -9511,7 +9511,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   sources that import `openclaw/plugin-sdk` or `@openclaw/plugin-sdk` subpaths
   now expose `pluginSdkImports` in plugin list/runtime metadata, preserving
   exact specifiers for native adapter alias resolution without executing the
-  TypeScript/JavaScript runtime. Checkpoint pending.
+  TypeScript/JavaScript runtime. Checkpoint in `54fb7bf8`.
 - Progress estimates are now roughly 59.1% repo-wide and 99.6% for the active
   gateway/session/tool-contract family while runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%; the remaining plugin queue

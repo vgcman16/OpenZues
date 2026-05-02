@@ -151,7 +151,7 @@ may lag behind this tracker.
 - [x] Bundled runtime plugin-SDK import metadata, preserving
   `openclaw/plugin-sdk` and `@openclaw/plugin-sdk` specifiers from runtime
   entries for native adapter alias resolution.
-  - Status: verified pending checkpoint
+  - Status: checkpointed in `54fb7bf8`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
