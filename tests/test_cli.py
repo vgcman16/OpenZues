@@ -9574,6 +9574,40 @@ def test_plugins_doctor_reports_error_failure_phase(monkeypatch) -> None:
     )
 
 
+def test_plugins_inspect_reports_error_failure_phase(monkeypatch) -> None:
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> dict[str, object]:
+            return {
+                "profile": {"hermes_source_path": None},
+                "warnings": [],
+                "plugins": {
+                    "items": [
+                        {
+                            "key": "broken_plugin",
+                            "label": "Broken Plugin",
+                            "status": "error",
+                            "summary": "failed to register plugin: boom",
+                            "failurePhase": "register",
+                        }
+                    ],
+                },
+            }
+
+    async def fake_run_with_services(action):
+        return await action(SimpleNamespace(hermes_platform=FakeHermesPlatform()))
+
+    monkeypatch.setattr("openzues.cli._run_with_services", fake_run_with_services)
+
+    json_result = runner.invoke(app, ["plugins", "inspect", "broken_plugin", "--json"])
+    human_result = runner.invoke(app, ["plugins", "inspect", "broken_plugin"])
+
+    assert json_result.exit_code == 0, json_result.stdout
+    assert human_result.exit_code == 0, human_result.stdout
+    payload = json.loads(json_result.stdout)
+    assert payload["plugin"]["failurePhase"] == "register"
+    assert "Failure phase: register" in human_result.stdout
+
+
 def test_plugins_doctor_human_reports_compatibility_notices(monkeypatch) -> None:
     class FakeHermesPlatform:
         async def get_doctor_view(self) -> dict[str, object]:

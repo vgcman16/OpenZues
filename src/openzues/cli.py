@@ -12229,6 +12229,9 @@ def _emit_plugin_inspect(payload: object, *, json_output: bool) -> None:
     status = str(plugin.get("status") or "").strip()
     if status:
         typer.echo(f"status: {status}")
+    failure_phase = _plugin_failure_phase(plugin.get("failurePhase"))
+    if failure_phase is not None:
+        typer.echo(f"Failure phase: {failure_phase}")
     format_name = str(plugin.get("format") or "").strip()
     if format_name:
         typer.echo(f"format: {format_name}")
