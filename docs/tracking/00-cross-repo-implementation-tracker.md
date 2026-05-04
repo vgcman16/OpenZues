@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-02
+Last updated: 2026-05-04
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The source plugin-SDK subpath alias slice is checkpointed in `55e1fb28`.
+The document extractor contract metadata slice is verified and awaiting checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
@@ -48,7 +48,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Source plugin-SDK subpath aliases checkpointed in `55e1fb28` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled/source plugin-sdk import/runtime activation depth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Document extractor contract metadata verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -1558,6 +1558,35 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
     runtime_text_transform_plugins"` (`6 passed`), `ruff check
     src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BF` manifest document extractor contract metadata
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    and `openclaw-main/src/plugins/document-extractors.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest `contracts.documentExtractors` values are
+    normalized into plugin inventory records, survive `plugins list --json`,
+    and project capability strings as `document-extractor:<id>` so document
+    extractor plugins are visible to native inventory/doctor surfaces.
+  - Evidence required: focused document extractor contract test, adjacent
+    plugin manifest inventory tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "document_extractor_contracts or
+    plugins_list_json_preserves_manifest_config_contracts or
+    plugins_list_json_preserves_manifest_model_support or
+    plugins_list_json_preserves_manifest_channel_configs or
+    plugins_list_json_preserves_manifest_qa_runners or
+    plugins_list_json_preserves_manifest_auth_and_env_metadata or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_list_json_preserves_manifest_command_aliases or
+    plugins_list_json_discovers_openclaw_manifest_load_paths"` (`9 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and
+    `mypy src\openzues\cli.py`.
 
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,

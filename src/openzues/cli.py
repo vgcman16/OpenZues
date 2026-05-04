@@ -17841,6 +17841,7 @@ _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "realtimeTranscriptionProviders": "realtime-transcription",
     "realtimeVoiceProviders": "realtime-voice",
     "mediaUnderstandingProviders": "media-understanding",
+    "documentExtractors": "document-extractor",
     "imageGenerationProviders": "image-generation",
     "videoGenerationProviders": "video-generation",
     "musicGenerationProviders": "music-generation",

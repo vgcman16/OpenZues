@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-02
+Last updated: 2026-05-04
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~59.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~59.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -160,6 +160,11 @@ may lag behind this tracker.
 - [x] Source plugin-SDK subpath alias context, preserving source/git-style
   bundled plugin SDK alias maps for native activation adapters.
   - Status: checkpointed in `55e1fb28`
+
+- [x] Manifest document extractor contract metadata, preserving
+  `contracts.documentExtractors` in `plugins list --json` records and
+  capability strings.
+  - Status: verified; checkpoint pending
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -530,7 +535,8 @@ may lag behind this tracker.
     options checkpointed in `ee12d2d4`, and installed-record manifest runtime
     activation checkpointed in `b8f39fe3`, bundled runtime plugin-SDK import
     metadata checkpointed in `54fb7bf8`, bundled plugin-SDK alias context
-    checkpointed in `e6b506db`, and source plugin-SDK subpath aliases verified
+    checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
+    in `55e1fb28`, and manifest document extractor contract metadata verified
     and pending checkpoint, but deeper module import/runtime activation
     remains.
   - Weight: 5
@@ -557,6 +563,19 @@ may lag behind this tracker.
   - Last verified: 2026-05-02, focused `python -m pytest
     tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
     -q` (`1 passed`), adjacent plugin SDK/runtime-entry proof (`6 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest document extractor contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/document-extractors.runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`9 passed`),
     `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.

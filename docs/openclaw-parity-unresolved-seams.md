@@ -1,10 +1,10 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-02
+Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~59.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~59.6% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest source plugin-SDK subpath alias slice.
+  latest document extractor contract metadata slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5472,6 +5472,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%. Verified with the focused source plugin-SDK alias pytest, adjacent
   plugin SDK/runtime-entry proof, `ruff check`, and `mypy`; checkpointed in
   `55e1fb28`.
+- Closed the document extractor contract metadata seam from OpenClaw
+  `src/plugins/manifest.ts`,
+  `src/plugins/contracts/inventory/bundled-capability-metadata.ts`, and
+  `src/plugins/document-extractors.runtime.ts`: manifest
+  `contracts.documentExtractors` entries now survive native `plugins list
+  --json` projection and emit `document-extractor:<id>` capability strings.
+  Repo-wide parity is now estimated at ~59.6%; the active gateway/session/tool-
+  contract family remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  document extractor contract pytest, adjacent plugin manifest inventory proof,
+  `ruff check`, and `mypy`; checkpoint pending commit.
 - Next repo-wide queue head: continue deeper plugin runtime import/activation
   breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.
