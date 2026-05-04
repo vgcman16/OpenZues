@@ -2,7 +2,7 @@
 
 Agent report source: Banach
 
-Last updated: 2026-05-02
+Last updated: 2026-05-04
 
 OpenClaw is the upstream source of truth for repo-wide parity. Each domain below
 should become one or more bounded OpenZues parity seams before it can affect the
@@ -27,7 +27,7 @@ repo-wide percentage.
 | [ ] | Control UI and web surfaces | Vite/Lit Control UI, chat, settings, agents, sessions, logs, i18n, WebChat/TUI docs | `ui/src/ui/views`, `ui/src/ui/controllers`, `ui/src/i18n`, `docs/web` |
 | [ ] | Companion apps and nodes | macOS app, iOS/Android nodes, shared OpenClawKit, pairing, node capabilities | `apps/macos`, `apps/ios`, `apps/android`, `apps/shared` |
 | [ ] | QA, tests, scenarios | unit/e2e/live/docker tests, QA Lab, scenario catalog, provider/channel regressions | `test/vitest`, `scripts/e2e`, `qa/scenarios`, `extensions/qa-lab` |
-| [ ] | Packaging, distribution, release | npm package, plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, update channels | `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
+| [~] | Packaging, distribution, release | packageDistribution doctor JSON verified; npm package, plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
 
 ## How To Use This Map

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~59.6% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~59.7% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9630,6 +9630,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_manifest_load_paths"` (`9 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `2196c65e`.
+
+- Windows-first package distribution doctor diagnostics are now exposed through
+  `openzues doctor --json` as `packageDistribution`, including package root,
+  source-checkout classification, `dist` presence, `dist/postinstall-inventory.json`
+  inventory status, platform, and OpenClaw contribution metadata. This closes
+  `OZ-PKG-001A`; repo-wide parity is now estimated at ~59.7%, while the
+  runtime/CLI/doctor bounded path remains ~99.9%.
+- Verified the package distribution doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "package_distribution_diagnostics or runtime_bridge_posture or
+  gateway_doctor_json_includes_gateway_capability_summary"` (`3 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpoint pending commit.
 
 ## References
 

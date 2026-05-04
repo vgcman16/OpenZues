@@ -560,6 +560,99 @@ def test_doctor_json_includes_runtime_bridge_posture(monkeypatch) -> None:
     }
 
 
+def test_doctor_json_includes_windows_package_distribution_diagnostics(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / "src" / "openzues").mkdir(parents=True)
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "openzues"\n',
+        encoding="utf-8",
+    )
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution == {
+        "status": "info",
+        "summary": (
+            "OpenZues is running from a source checkout; package inventory is informational."
+        ),
+        "source": "openzues-native",
+        "openClawContribution": "doctor:package-distribution",
+        "windowsFirst": True,
+        "platform": sys.platform,
+        "packageRoot": str(package_root),
+        "distribution": "source-checkout",
+        "sourceCheckout": True,
+        "distPresent": False,
+        "inventoryPath": str(package_root / "dist" / "postinstall-inventory.json"),
+        "inventoryPresent": False,
+        "inventoryRequired": False,
+        "checks": [
+            {
+                "key": "package_root",
+                "status": "ok",
+                "path": str(package_root),
+                "detail": "Package root is readable.",
+            },
+            {
+                "key": "source_checkout",
+                "status": "info",
+                "detail": "Source checkout markers are present.",
+            },
+            {
+                "key": "dist",
+                "status": "info",
+                "path": str(package_root / "dist"),
+                "detail": "Packaged dist directory is not required for source checkout runs.",
+            },
+            {
+                "key": "postinstall_inventory",
+                "status": "info",
+                "path": str(package_root / "dist" / "postinstall-inventory.json"),
+                "detail": "Package dist inventory is not required for source checkout runs.",
+            },
+        ],
+        "warnings": [],
+    }
+
+
 def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Agents Loop")
 

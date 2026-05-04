@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~59.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~59.7% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest document extractor contract metadata slice.
+  latest package distribution doctor diagnostics slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5483,6 +5483,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   document extractor contract pytest, adjacent plugin manifest inventory proof,
   `ruff check`, and `mypy`; checkpointed in `2196c65e`.
+- Closed the package distribution doctor diagnostics seam from OpenClaw
+  `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`,
+  `src/infra/update-global.ts`, and `src/infra/package-dist-inventory.ts`:
+  native `openzues doctor --json` now emits a Windows-first
+  `packageDistribution` block with package root, source-checkout
+  classification, `dist` and `dist/postinstall-inventory.json` status,
+  platform, checks, warnings, and `doctor:package-distribution` contribution
+  metadata. Repo-wide parity is now estimated at ~59.7%; runtime/CLI/doctor
+  and CLI/operator-control bounded paths remain ~99.9%. Verified with the
+  focused package distribution doctor pytest, adjacent doctor/runtime bridge
+  proof, `ruff check`, and `mypy`; checkpoint pending commit.
 - Next repo-wide queue head: continue deeper plugin runtime import/activation
   breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.

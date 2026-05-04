@@ -2028,6 +2028,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "bundledPluginRuntimeDependencies",
         "startupChannelMaintenance",
         "runtimeBridge",
+        "packageDistribution",
         "acp",
         "extras",
     ):
@@ -7975,6 +7976,140 @@ async def _with_doctor_runtime_bridge_payload(
 ) -> dict[str, object]:
     next_payload = dict(payload)
     next_payload["runtimeBridge"] = await _build_doctor_runtime_bridge_payload(services)
+    return next_payload
+
+
+_PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
+
+
+def _openzues_package_root() -> Path:
+    try:
+        return Path(__file__).resolve(strict=False).parents[2]
+    except IndexError:  # pragma: no cover - defensive fallback for unusual loaders
+        return Path.cwd()
+
+
+def _doctor_path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _doctor_package_distribution_check(
+    *,
+    key: str,
+    status: str,
+    detail: str,
+    path: Path | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "key": key,
+        "status": status,
+    }
+    if path is not None:
+        payload["path"] = str(path)
+    payload["detail"] = detail
+    return payload
+
+
+def _build_doctor_package_distribution_payload(
+    package_root: Path | None = None,
+) -> dict[str, object]:
+    root = package_root or _openzues_package_root()
+    root_exists = _doctor_path_exists(root)
+    source_checkout = (
+        root_exists
+        and _doctor_path_exists(root / "pyproject.toml")
+        and _doctor_path_exists(root / "src" / "openzues")
+    )
+    dist_path = root / "dist"
+    inventory_path = root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH
+    dist_present = _doctor_path_exists(dist_path)
+    inventory_present = _doctor_path_exists(inventory_path)
+    inventory_required = not source_checkout
+    warnings: list[str] = []
+    if not root_exists:
+        warnings.append(f"Package root not found: {root}")
+    if inventory_required and not dist_present:
+        warnings.append(f"Packaged dist directory is missing: {dist_path}")
+    if inventory_required and not inventory_present:
+        warnings.append(
+            "Package dist inventory is missing: "
+            f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+        )
+    if source_checkout:
+        status = "info"
+        summary = "OpenZues is running from a source checkout; package inventory is informational."
+        distribution = "source-checkout"
+    elif warnings:
+        status = "warning"
+        summary = "OpenZues package distribution has missing packaged runtime artifacts."
+        distribution = "packaged"
+    else:
+        status = "ok"
+        summary = "OpenZues package distribution inventory is present."
+        distribution = "packaged"
+    return {
+        "status": status,
+        "summary": summary,
+        "source": "openzues-native",
+        "openClawContribution": "doctor:package-distribution",
+        "windowsFirst": True,
+        "platform": sys.platform,
+        "packageRoot": str(root),
+        "distribution": distribution,
+        "sourceCheckout": source_checkout,
+        "distPresent": dist_present,
+        "inventoryPath": str(inventory_path),
+        "inventoryPresent": inventory_present,
+        "inventoryRequired": inventory_required,
+        "checks": [
+            _doctor_package_distribution_check(
+                key="package_root",
+                status="ok" if root_exists else "warning",
+                path=root,
+                detail="Package root is readable."
+                if root_exists
+                else "Package root is missing or unreadable.",
+            ),
+            _doctor_package_distribution_check(
+                key="source_checkout",
+                status="info" if source_checkout else "ok",
+                detail="Source checkout markers are present."
+                if source_checkout
+                else "Source checkout markers are absent.",
+            ),
+            _doctor_package_distribution_check(
+                key="dist",
+                status="ok" if dist_present else ("info" if source_checkout else "warning"),
+                path=dist_path,
+                detail="Packaged dist directory is present."
+                if dist_present
+                else "Packaged dist directory is not required for source checkout runs."
+                if source_checkout
+                else "Packaged dist directory is missing.",
+            ),
+            _doctor_package_distribution_check(
+                key="postinstall_inventory",
+                status="ok" if inventory_present else ("info" if source_checkout else "warning"),
+                path=inventory_path,
+                detail="Package dist inventory is present."
+                if inventory_present
+                else "Package dist inventory is not required for source checkout runs."
+                if source_checkout
+                else "Package dist inventory is missing.",
+            ),
+        ],
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_package_distribution_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["packageDistribution"] = _build_doctor_package_distribution_payload()
     return next_payload
 
 
@@ -29010,6 +29145,7 @@ def doctor(
             services.gateway_config,
         )
         payload = await _with_doctor_runtime_bridge_payload(payload, services)
+        payload = _with_doctor_package_distribution_payload(payload)
         payload = _with_doctor_contribution_surfaces(payload)
         return payload
 
