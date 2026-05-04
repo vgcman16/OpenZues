@@ -9643,7 +9643,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "package_distribution_diagnostics or runtime_bridge_posture or
   gateway_doctor_json_includes_gateway_capability_summary"` (`3 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and
-  `mypy src\openzues\cli.py`. Checkpoint pending commit.
+  `mypy src\openzues\cli.py`. Checkpointed in `47d73351`.
 
 ## References
 

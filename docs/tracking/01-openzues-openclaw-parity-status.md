@@ -169,7 +169,7 @@ may lag behind this tracker.
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
   `doctor --json`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `47d73351`
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -590,7 +590,7 @@ may lag behind this tracker.
     `openclaw-main/src/infra/package-dist-inventory.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `47d73351`.
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics
