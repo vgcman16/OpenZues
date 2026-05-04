@@ -164,7 +164,7 @@ may lag behind this tracker.
 - [x] Manifest document extractor contract metadata, preserving
   `contracts.documentExtractors` in `plugins list --json` records and
   capability strings.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `2196c65e`
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -536,8 +536,8 @@ may lag behind this tracker.
     activation checkpointed in `b8f39fe3`, bundled runtime plugin-SDK import
     metadata checkpointed in `54fb7bf8`, bundled plugin-SDK alias context
     checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
-    in `55e1fb28`, and manifest document extractor contract metadata verified
-    and pending checkpoint, but deeper module import/runtime activation
+    in `55e1fb28`, and manifest document extractor contract metadata
+    checkpointed in `2196c65e`, but deeper module import/runtime activation
     remains.
   - Weight: 5
 
@@ -571,7 +571,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/document-extractors.runtime.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `2196c65e`.
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts

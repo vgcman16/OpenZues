@@ -5482,7 +5482,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   contract family remains estimated at ~99.9%, and runtime/CLI/doctor plus
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   document extractor contract pytest, adjacent plugin manifest inventory proof,
-  `ruff check`, and `mypy`; checkpoint pending commit.
+  `ruff check`, and `mypy`; checkpointed in `2196c65e`.
 - Next repo-wide queue head: continue deeper plugin runtime import/activation
   breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.
