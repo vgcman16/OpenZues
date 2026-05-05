@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~69.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~69.3% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6494,8 +6494,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   peers}` directory metadata. Repo-wide parity is now estimated at ~69.2%.
   Verified with focused runtime pytest, adjacent Feishu provider proof,
   `ruff check`, and `mypy`; source/test checkpointed in `dd915f30`.
+- Closed the Feishu/Lark reaction message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/reactions.ts`:
+  native OpenZues `message.action` dispatch now supports `react` add,
+  remove-own, and `clearAll=true` bot cleanup plus `reactions` listing through
+  route-backed Feishu message-reaction endpoints, with OpenClaw-shaped
+  `{ok, added}` / `{ok, removed}` / `{ok, reactions}` projections.
+  Repo-wide parity is now estimated at ~69.3%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `1c6b44af`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, continuing Feishu/Lark reaction action breadth
+  send/poll/replay metadata gap, continuing Feishu/Lark media/card action breadth
   from `extensions/feishu/src/channel.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
