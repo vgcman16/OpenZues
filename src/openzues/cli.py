@@ -30955,6 +30955,356 @@ const directoryConfigRuntime = {
   toDirectoryEntries,
 };
 
+const THREAD_BINDING_SYSTEM_MARK = "\u2699\uFE0F";
+
+function prefixThreadBindingSystemMessage(text) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (!normalized) {
+    return normalized;
+  }
+  return normalized.startsWith(THREAD_BINDING_SYSTEM_MARK)
+    ? normalized
+    : `${THREAD_BINDING_SYSTEM_MARK} ${normalized}`;
+}
+
+function normalizeThreadBindingDurationMs(raw) {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(raw));
+}
+
+function formatThreadBindingDurationLabel(durationMs) {
+  if (durationMs <= 0) {
+    return "disabled";
+  }
+  if (durationMs < 60000) {
+    return "<1m";
+  }
+  const totalMinutes = Math.floor(durationMs / 60000);
+  if (totalMinutes % 60 === 0) {
+    return `${Math.floor(totalMinutes / 60)}h`;
+  }
+  return `${totalMinutes}m`;
+}
+
+function resolveThreadBindingConversationIdFromBindingId(params) {
+  const bindingId = normalizeOptionalString(params && params.bindingId);
+  if (!bindingId) {
+    return undefined;
+  }
+  const prefix = `${params.accountId}:`;
+  if (!bindingId.startsWith(prefix)) {
+    return undefined;
+  }
+  return normalizeOptionalString(bindingId.slice(prefix.length));
+}
+
+function resolveThreadBindingFarewellText(params) {
+  const custom = normalizeOptionalString(params && params.farewellText);
+  if (custom) {
+    return prefixThreadBindingSystemMessage(custom);
+  }
+  if (params && params.reason === "idle-expired") {
+    const label = formatThreadBindingDurationLabel(
+      normalizeThreadBindingDurationMs(params.idleTimeoutMs),
+    );
+    const message =
+      `Session ended automatically after ${label} of inactivity. ` +
+      "Messages here will no longer be routed.";
+    return prefixThreadBindingSystemMessage(
+      message,
+    );
+  }
+  if (params && params.reason === "max-age-expired") {
+    const label = formatThreadBindingDurationLabel(
+      normalizeThreadBindingDurationMs(params.maxAgeMs),
+    );
+    return prefixThreadBindingSystemMessage(
+      `Session ended automatically at max age of ${label}. Messages here will no longer be routed.`,
+    );
+  }
+  return prefixThreadBindingSystemMessage(
+    "Session ended. Messages here will no longer be routed.",
+  );
+}
+
+function normalizeThreadBindingHours(raw) {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return undefined;
+  }
+  return raw;
+}
+
+function resolveThreadBindingIdleTimeoutMs(params) {
+  const idleHours =
+    normalizeThreadBindingHours(params.channelIdleHoursRaw) ??
+    normalizeThreadBindingHours(params.sessionIdleHoursRaw) ??
+    24;
+  return Math.floor(idleHours * 60 * 60 * 1000);
+}
+
+function resolveThreadBindingMaxAgeMs(params) {
+  const maxAgeHours =
+    normalizeThreadBindingHours(params.channelMaxAgeHoursRaw) ??
+    normalizeThreadBindingHours(params.sessionMaxAgeHoursRaw) ??
+    0;
+  return Math.floor(maxAgeHours * 60 * 60 * 1000);
+}
+
+function resolveThreadBindingChannelScope(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  const accountId = normalizeAccountId(params && params.accountId);
+  const channels = (params.cfg && params.cfg.channels) || {};
+  const channelConfig = channels[channel] || {};
+  const accountConfig =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts[accountId]
+      : undefined;
+  return {
+    root: channelConfig.threadBindings,
+    account: accountConfig && accountConfig.threadBindings,
+  };
+}
+
+function resolveThreadBindingIdleTimeoutMsForChannel(params) {
+  const scope = resolveThreadBindingChannelScope(params);
+  return resolveThreadBindingIdleTimeoutMs({
+    channelIdleHoursRaw:
+      (scope.account && scope.account.idleHours) ?? (scope.root && scope.root.idleHours),
+    sessionIdleHoursRaw:
+      params.cfg && params.cfg.session && params.cfg.session.threadBindings
+        ? params.cfg.session.threadBindings.idleHours
+        : undefined,
+  });
+}
+
+function resolveThreadBindingMaxAgeMsForChannel(params) {
+  const scope = resolveThreadBindingChannelScope(params);
+  return resolveThreadBindingMaxAgeMs({
+    channelMaxAgeHoursRaw:
+      (scope.account && scope.account.maxAgeHours) ?? (scope.root && scope.root.maxAgeHours),
+    sessionMaxAgeHoursRaw:
+      params.cfg && params.cfg.session && params.cfg.session.threadBindings
+        ? params.cfg.session.threadBindings.maxAgeHours
+        : undefined,
+  });
+}
+
+function resolveThreadBindingLifecycle(params) {
+  const idleTimeoutMs =
+    typeof params.record.idleTimeoutMs === "number"
+      ? Math.max(0, Math.floor(params.record.idleTimeoutMs))
+      : params.defaultIdleTimeoutMs;
+  const maxAgeMs =
+    typeof params.record.maxAgeMs === "number"
+      ? Math.max(0, Math.floor(params.record.maxAgeMs))
+      : params.defaultMaxAgeMs;
+  const inactivityExpiresAt =
+    idleTimeoutMs > 0
+      ? Math.max(params.record.lastActivityAt, params.record.boundAt) + idleTimeoutMs
+      : undefined;
+  const maxAgeExpiresAt =
+    maxAgeMs > 0 ? params.record.boundAt + maxAgeMs : undefined;
+  if (inactivityExpiresAt != null && maxAgeExpiresAt != null) {
+    return inactivityExpiresAt <= maxAgeExpiresAt
+      ? { expiresAt: inactivityExpiresAt, reason: "idle-expired" }
+      : { expiresAt: maxAgeExpiresAt, reason: "max-age-expired" };
+  }
+  if (inactivityExpiresAt != null) {
+    return { expiresAt: inactivityExpiresAt, reason: "idle-expired" };
+  }
+  if (maxAgeExpiresAt != null) {
+    return { expiresAt: maxAgeExpiresAt, reason: "max-age-expired" };
+  }
+  return {};
+}
+
+const SESSION_BINDING_ADAPTERS = new Map();
+
+function sessionBindingAdapterKey(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params.channel);
+  const accountId = normalizeAccountId(params.accountId);
+  return `${channel}:${accountId}`;
+}
+
+function registerSessionBindingAdapter(adapter) {
+  const key = sessionBindingAdapterKey(adapter || {});
+  const entries = SESSION_BINDING_ADAPTERS.get(key) || [];
+  SESSION_BINDING_ADAPTERS.set(key, [...entries, adapter]);
+}
+
+function unregisterSessionBindingAdapter(params) {
+  const key = sessionBindingAdapterKey(params || {});
+  const entries = SESSION_BINDING_ADAPTERS.get(key) || [];
+  if (entries.length === 0) {
+    return;
+  }
+  let next = entries.slice();
+  if (params && params.adapter) {
+    const index = next.lastIndexOf(params.adapter);
+    if (index < 0) {
+      return;
+    }
+    next.splice(index, 1);
+  } else {
+    next.pop();
+  }
+  if (next.length === 0) {
+    SESSION_BINDING_ADAPTERS.delete(key);
+  } else {
+    SESSION_BINDING_ADAPTERS.set(key, next);
+  }
+}
+
+function getAccountScopedConversationBindingState(stateKey) {
+  const key = stateKey || Symbol.for("openzues.account-scoped-conversation-bindings");
+  if (!globalThis[key]) {
+    globalThis[key] = {
+      managersByAccountId: new Map(),
+      bindingsByAccountConversation: new Map(),
+    };
+  }
+  return globalThis[key];
+}
+
+function accountScopedBindingKey(params) {
+  return `${params.accountId}:${params.conversationId}`;
+}
+
+function createAccountScopedConversationBindingManager(params) {
+  const accountId = normalizeAccountId(params.accountId);
+  const state = getAccountScopedConversationBindingState(params.stateKey);
+  const existing = state.managersByAccountId.get(accountId);
+  if (existing) {
+    return existing;
+  }
+  const manager = {
+    accountId,
+    getByConversationId: (conversationId) =>
+      getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.get(
+        accountScopedBindingKey({ accountId, conversationId }),
+      ),
+    listBySessionKey: (targetSessionKey) =>
+      Array.from(
+        getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.values(),
+      ).filter(
+        (record) => record.accountId === accountId && record.targetSessionKey === targetSessionKey,
+      ),
+    bindConversation: ({ conversationId, targetKind, targetSessionKey, metadata = {} }) => {
+      const normalizedConversationId =
+        typeof conversationId === "string" ? conversationId.trim() : "";
+      const normalizedTargetSessionKey =
+        typeof targetSessionKey === "string" ? targetSessionKey.trim() : "";
+      if (!normalizedConversationId || !normalizedTargetSessionKey) {
+        return null;
+      }
+      const key = accountScopedBindingKey({
+        accountId,
+        conversationId: normalizedConversationId,
+      });
+      const existingRecord =
+        getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.get(
+          key,
+        );
+      const now = Date.now();
+      const record = {
+        accountId,
+        conversationId: normalizedConversationId,
+        targetKind: params.toStoredTargetKind(targetKind),
+        targetSessionKey: normalizedTargetSessionKey,
+        agentId:
+          normalizeOptionalString(metadata.agentId) ||
+          (existingRecord && existingRecord.agentId) ||
+          resolveAgentIdFromSessionKey(normalizedTargetSessionKey),
+        label:
+          normalizeOptionalString(metadata.label) ||
+          (existingRecord && existingRecord.label) ||
+          undefined,
+        boundBy:
+          normalizeOptionalString(metadata.boundBy) ||
+          (existingRecord && existingRecord.boundBy) ||
+          undefined,
+        boundAt: now,
+        lastActivityAt: now,
+      };
+      getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.set(
+        key,
+        record,
+      );
+      return record;
+    },
+    touchConversation: (conversationId, at = Date.now()) => {
+      const key = accountScopedBindingKey({ accountId, conversationId });
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      const existingRecord = stateRef.bindingsByAccountConversation.get(key);
+      if (!existingRecord) {
+        return null;
+      }
+      const updated = { ...existingRecord, lastActivityAt: at };
+      stateRef.bindingsByAccountConversation.set(key, updated);
+      return updated;
+    },
+    unbindConversation: (conversationId) => {
+      const key = accountScopedBindingKey({ accountId, conversationId });
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      const existingRecord = stateRef.bindingsByAccountConversation.get(key);
+      if (!existingRecord) {
+        return null;
+      }
+      stateRef.bindingsByAccountConversation.delete(key);
+      return existingRecord;
+    },
+    unbindBySessionKey: (targetSessionKey) => {
+      const removed = [];
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      for (const record of stateRef.bindingsByAccountConversation.values()) {
+        if (record.accountId !== accountId || record.targetSessionKey !== targetSessionKey) {
+          continue;
+        }
+        stateRef.bindingsByAccountConversation.delete(
+          accountScopedBindingKey({
+            accountId,
+            conversationId: record.conversationId,
+          }),
+        );
+        removed.push(record);
+      }
+      return removed;
+    },
+    stop: () => {
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      for (const key of Array.from(stateRef.bindingsByAccountConversation.keys())) {
+        if (key.startsWith(`${accountId}:`)) {
+          stateRef.bindingsByAccountConversation.delete(key);
+        }
+      }
+      stateRef.managersByAccountId.delete(accountId);
+    },
+  };
+  state.managersByAccountId.set(accountId, manager);
+  return manager;
+}
+
+function resetAccountScopedConversationBindingsForTests(params) {
+  const state = getAccountScopedConversationBindingState(params && params.stateKey);
+  state.managersByAccountId.clear();
+  state.bindingsByAccountConversation.clear();
+}
+
+const threadBindingsRuntime = {
+  createAccountScopedConversationBindingManager,
+  formatThreadBindingDurationLabel,
+  registerSessionBindingAdapter,
+  resetAccountScopedConversationBindingsForTests,
+  resolveThreadBindingConversationIdFromBindingId,
+  resolveThreadBindingFarewellText,
+  resolveThreadBindingIdleTimeoutMsForChannel,
+  resolveThreadBindingLifecycle,
+  resolveThreadBindingMaxAgeMsForChannel,
+  unregisterSessionBindingAdapter,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -31661,6 +32011,7 @@ const genericSdk = new Proxy(
     ...runtimeStoreRuntime,
     ...runtimeRuntime,
     ...directoryRuntime,
+    ...threadBindingsRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -32161,6 +32512,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/directory-config-runtime"
   ) {
     return directoryConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/thread-bindings-runtime" ||
+    request === "@openclaw/plugin-sdk/thread-bindings-runtime"
+  ) {
+    return threadBindingsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

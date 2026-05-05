@@ -14083,6 +14083,239 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_thread_bindings_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-thread-bindings-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const threadBindings = require("openclaw/plugin-sdk/thread-bindings-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.thread_bindings_runtime",
+      description: "Use OpenClaw thread bindings runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          session: { threadBindings: { idleHours: 2, maxAgeHours: 4 } },
+          channels: {
+            discord: {
+              threadBindings: { idleHours: 1, maxAgeHours: 3 },
+              accounts: {
+                work: { threadBindings: { idleHours: 0.5, maxAgeHours: 0.25 } }
+              }
+            }
+          }
+        };
+        const stateKey = Symbol.for("openzues.test.thread-bindings-runtime");
+        threadBindings.resetAccountScopedConversationBindingsForTests({ stateKey });
+        const manager = threadBindings.createAccountScopedConversationBindingManager({
+          channel: "discord",
+          cfg,
+          stateKey,
+          accountId: "work",
+          toStoredTargetKind: (kind) => kind.toUpperCase(),
+          toSessionBindingTargetKind: (kind) => kind.toLowerCase()
+        });
+        const sameManager = threadBindings.createAccountScopedConversationBindingManager({
+          channel: "discord",
+          cfg,
+          stateKey,
+          accountId: "work",
+          toStoredTargetKind: (kind) => kind.toUpperCase(),
+          toSessionBindingTargetKind: (kind) => kind.toLowerCase()
+        });
+        const bound = manager.bindConversation({
+          conversationId: " thread-1 ",
+          targetKind: "subagent",
+          targetSessionKey: " agent:child ",
+          metadata: { label: "Child", boundBy: "operator" }
+        });
+        const touched = manager.touchConversation("thread-1", 123456);
+        const listed = manager.listBySessionKey("agent:child");
+        const removed = manager.unbindConversation("thread-1");
+        const emptyBind = manager.bindConversation({
+          conversationId: " ",
+          targetKind: "subagent",
+          targetSessionKey: "agent:missing"
+        });
+        manager.stop();
+
+        return {
+          exportTypes: [
+            typeof threadBindings.resolveThreadBindingConversationIdFromBindingId,
+            typeof threadBindings.resolveThreadBindingFarewellText,
+            typeof threadBindings.resolveThreadBindingIdleTimeoutMsForChannel,
+            typeof threadBindings.createAccountScopedConversationBindingManager,
+            typeof genericSdk.createAccountScopedConversationBindingManager
+          ],
+          conversationIds: [
+            threadBindings.resolveThreadBindingConversationIdFromBindingId({
+              accountId: "work",
+              bindingId: " work:thread-1 "
+            }),
+            threadBindings.resolveThreadBindingConversationIdFromBindingId({
+              accountId: "work",
+              bindingId: "default:thread-1"
+            }) || null
+          ],
+          timeouts: {
+            idle: threadBindings.resolveThreadBindingIdleTimeoutMsForChannel({
+              cfg,
+              channel: "discord",
+              accountId: "work"
+            }),
+            maxAge: threadBindings.resolveThreadBindingMaxAgeMsForChannel({
+              cfg,
+              channel: "discord",
+              accountId: "work"
+            })
+          },
+          lifecycle: threadBindings.resolveThreadBindingLifecycle({
+            record: { boundAt: 1000, lastActivityAt: 2000 },
+            defaultIdleTimeoutMs: 50,
+            defaultMaxAgeMs: 500
+          }),
+          farewell: {
+            idle: threadBindings.resolveThreadBindingFarewellText({
+              reason: "idle-expired",
+              idleTimeoutMs: 60000,
+              maxAgeMs: 0
+            }).includes("after 1m of inactivity"),
+            custom: threadBindings.resolveThreadBindingFarewellText({
+              farewellText: "Bye now",
+              idleTimeoutMs: 0,
+              maxAgeMs: 0
+            }).endsWith("Bye now")
+          },
+          manager: {
+            accountId: manager.accountId,
+            reused: manager === sameManager,
+            bound,
+            touched,
+            listed,
+            removed,
+            emptyBind
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "thread-bindings-runtime-plugin",
+                    "name": "Thread Bindings Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-thread-bindings-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.thread_bindings_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.thread_bindings_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function", "function"],
+        "conversationIds": ["thread-1", None],
+        "timeouts": {"idle": 1800000, "maxAge": 900000},
+        "lifecycle": {"expiresAt": 1500, "reason": "max-age-expired"},
+        "farewell": {"idle": True, "custom": True},
+        "manager": {
+            "accountId": "work",
+            "reused": True,
+            "bound": {
+                "accountId": "work",
+                "conversationId": "thread-1",
+                "targetKind": "SUBAGENT",
+                "targetSessionKey": "agent:child",
+                "agentId": "main",
+                "label": "Child",
+                "boundBy": "operator",
+                "boundAt": payload["result"]["manager"]["bound"]["boundAt"],
+                "lastActivityAt": payload["result"]["manager"]["bound"]["lastActivityAt"],
+            },
+            "touched": {
+                "accountId": "work",
+                "conversationId": "thread-1",
+                "targetKind": "SUBAGENT",
+                "targetSessionKey": "agent:child",
+                "agentId": "main",
+                "label": "Child",
+                "boundBy": "operator",
+                "boundAt": payload["result"]["manager"]["bound"]["boundAt"],
+                "lastActivityAt": 123456,
+            },
+            "listed": [
+                {
+                    "accountId": "work",
+                    "conversationId": "thread-1",
+                    "targetKind": "SUBAGENT",
+                    "targetSessionKey": "agent:child",
+                    "agentId": "main",
+                    "label": "Child",
+                    "boundBy": "operator",
+                    "boundAt": payload["result"]["manager"]["bound"]["boundAt"],
+                    "lastActivityAt": 123456,
+                }
+            ],
+            "removed": {
+                "accountId": "work",
+                "conversationId": "thread-1",
+                "targetKind": "SUBAGENT",
+                "targetSessionKey": "agent:child",
+                "agentId": "main",
+                "label": "Child",
+                "boundBy": "operator",
+                "boundAt": payload["result"]["manager"]["bound"]["boundAt"],
+                "lastActivityAt": 123456,
+            },
+            "emptyBind": None,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
