@@ -24490,6 +24490,138 @@ function createPreCryptoDirectDmAuthorizer(params) {
   };
 }
 
+function resolveDirectDmAuthorizationOutcome(params) {
+  if (params.isGroup) {
+    return "allowed";
+  }
+  if (params.dmPolicy === "disabled") {
+    return "disabled";
+  }
+  if (!params.senderAllowedForCommands) {
+    return "unauthorized";
+  }
+  return "allowed";
+}
+
+async function resolveSenderCommandAuthorization(params) {
+  const shouldComputeAuth = params.shouldComputeCommandAuthorized(params.rawBody, params.cfg);
+  const storeAllowFrom =
+    !params.isGroup && params.dmPolicy !== "allowlist" && params.dmPolicy !== "open"
+      ? await params.readAllowFromStore().catch(() => [])
+      : [];
+  const channel = params.channel;
+  const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
+  let configuredAllowFrom = Array.isArray(params.configuredAllowFrom)
+    ? params.configuredAllowFrom
+    : [];
+  let configuredGroupAllowFrom = Array.isArray(params.configuredGroupAllowFrom)
+    ? params.configuredGroupAllowFrom
+    : [];
+  let dmStoreAllowFrom = storeAllowFrom;
+  if (channel) {
+    [configuredAllowFrom, configuredGroupAllowFrom] = await Promise.all([
+      expandAllowFromWithAccessGroups({
+        cfg: params.cfg,
+        allowFrom: configuredAllowFrom,
+        channel,
+        accountId,
+        senderId: params.senderId,
+        isSenderAllowed: params.isSenderAllowed,
+        resolveMembership: params.resolveAccessGroupMembership,
+      }),
+      expandAllowFromWithAccessGroups({
+        cfg: params.cfg,
+        allowFrom: configuredGroupAllowFrom,
+        channel,
+        accountId,
+        senderId: params.senderId,
+        isSenderAllowed: params.isSenderAllowed,
+        resolveMembership: params.resolveAccessGroupMembership,
+      }),
+    ]);
+    if (!params.isGroup) {
+      dmStoreAllowFrom = await expandAllowFromWithAccessGroups({
+        cfg: params.cfg,
+        allowFrom: storeAllowFrom,
+        channel,
+        accountId,
+        senderId: params.senderId,
+        isSenderAllowed: params.isSenderAllowed,
+        resolveMembership: params.resolveAccessGroupMembership,
+      });
+    }
+  }
+  const access = resolveDmGroupAccessWithLists({
+    isGroup: params.isGroup,
+    dmPolicy: params.dmPolicy,
+    groupPolicy: "allowlist",
+    allowFrom: configuredAllowFrom,
+    groupAllowFrom: configuredGroupAllowFrom,
+    storeAllowFrom: dmStoreAllowFrom,
+    isSenderAllowed: (allowFrom) => params.isSenderAllowed(params.senderId, allowFrom),
+  });
+  const effectiveAllowFrom = access.effectiveAllowFrom || [];
+  const effectiveGroupAllowFrom = access.effectiveGroupAllowFrom || [];
+  const useAccessGroups = !(
+    params.cfg &&
+    params.cfg.commands &&
+    params.cfg.commands.useAccessGroups === false
+  );
+  const senderAllowedForCommands = params.isSenderAllowed(
+    params.senderId,
+    params.isGroup ? effectiveGroupAllowFrom : effectiveAllowFrom,
+  );
+  const ownerAllowedForCommands = params.isSenderAllowed(params.senderId, effectiveAllowFrom);
+  const groupAllowedForCommands = params.isSenderAllowed(
+    params.senderId,
+    effectiveGroupAllowFrom,
+  );
+  const commandAuthorized = shouldComputeAuth
+    ? params.resolveCommandAuthorizedFromAuthorizers({
+        useAccessGroups,
+        authorizers: [
+          { configured: effectiveAllowFrom.length > 0, allowed: ownerAllowedForCommands },
+          {
+            configured: effectiveGroupAllowFrom.length > 0,
+            allowed: groupAllowedForCommands,
+          },
+        ],
+      })
+    : undefined;
+  return {
+    shouldComputeAuth,
+    effectiveAllowFrom,
+    effectiveGroupAllowFrom,
+    senderAllowedForCommands,
+    commandAuthorized,
+  };
+}
+
+async function resolveSenderCommandAuthorizationWithRuntime(params) {
+  return resolveSenderCommandAuthorization({
+    ...params,
+    shouldComputeCommandAuthorized: params.runtime.shouldComputeCommandAuthorized,
+    resolveCommandAuthorizedFromAuthorizers:
+      params.runtime.resolveCommandAuthorizedFromAuthorizers,
+  });
+}
+
+function buildHelpMessage(_cfg) {
+  return "OpenClaw commands\n\nUse /commands for full list.";
+}
+
+function buildCommandsMessage(_cfg) {
+  return "More: /tools for available capabilities\n/models - List model providers/models.";
+}
+
+function buildCommandsMessagePaginated(cfg) {
+  return {
+    text: buildCommandsMessage(cfg),
+    currentPage: 1,
+    totalPages: 1,
+  };
+}
+
 async function dispatchInboundDirectDmWithRuntime(params) {
   const channelRuntime = params.runtime && params.runtime.channel;
   if (!channelRuntime) {
@@ -25848,6 +25980,25 @@ const channelPairingRuntime = {
   resolveChannelAllowFromPath,
 };
 
+const commandAuthRuntime = {
+  ...accessGroupsRuntime,
+  createPreCryptoDirectDmAuthorizer,
+  resolveInboundDirectDmAccessWithRuntime,
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage,
+  hasControlCommand,
+  hasInlineCommandTokens,
+  isControlCommandMessage,
+  resolveCommandAuthorizedFromAuthorizers,
+  resolveDirectDmAuthorizationOutcome,
+  resolveSenderCommandAuthorization,
+  resolveSenderCommandAuthorizationWithRuntime,
+  shouldComputeCommandAuthorized,
+  ...commandDetectionRuntime,
+  ...commandPrimitivesRuntime,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -26123,6 +26274,7 @@ const genericSdk = new Proxy(
     ...directDmRuntime,
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
+    ...commandAuthRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26576,6 +26728,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-pairing"
   ) {
     return channelPairingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-auth" ||
+    request === "@openclaw/plugin-sdk/command-auth"
+  ) {
+    return commandAuthRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

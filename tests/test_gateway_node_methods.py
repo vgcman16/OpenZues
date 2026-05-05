@@ -9305,6 +9305,292 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_auth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-auth.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage,
+  createPreCryptoDirectDmAuthorizer,
+  parseAccessGroupAllowFromEntry,
+  resolveDirectDmAuthorizationOutcome,
+  resolveSenderCommandAuthorization,
+  resolveSenderCommandAuthorizationWithRuntime,
+  shouldComputeCommandAuthorized
+} = require("openclaw/plugin-sdk/command-auth");
+
+const baseCfg = { commands: { useAccessGroups: true } };
+
+async function resolveAuthorization(params) {
+  return resolveSenderCommandAuthorization({
+    cfg: params.cfg || baseCfg,
+    rawBody: params.rawBody || "/status",
+    isGroup: params.isGroup !== undefined ? params.isGroup : true,
+    dmPolicy: params.dmPolicy || "pairing",
+    configuredAllowFrom: params.configuredAllowFrom || ["dm-owner"],
+    configuredGroupAllowFrom: params.configuredGroupAllowFrom || ["group-owner"],
+    senderId: params.senderId,
+    isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId),
+    channel: params.channel === undefined ? "zalouser" : params.channel,
+    accountId: "default",
+    readAllowFromStore: async () => params.storeAllowFrom || ["paired-user"],
+    shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+    resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups, authorizers }) =>
+      useAccessGroups && authorizers.some((entry) => entry.configured && entry.allowed),
+    resolveAccessGroupMembership: async ({ name, senderId }) =>
+      name === "admins" && senderId === "group-admin"
+  });
+}
+
+function summarize(result) {
+  return {
+    shouldComputeAuth: result.shouldComputeAuth,
+    effectiveAllowFrom: result.effectiveAllowFrom,
+    effectiveGroupAllowFrom: result.effectiveGroupAllowFrom,
+    senderAllowedForCommands: result.senderAllowedForCommands,
+    commandAuthorized: result.commandAuthorized ?? null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_auth",
+      description: "Use OpenClaw command auth SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const groupOwner = summarize(
+          await resolveAuthorization({ senderId: "group-owner" })
+        );
+        const pairedGroup = summarize(
+          await resolveAuthorization({ senderId: "paired-user" })
+        );
+        const dmNonCommand = summarize(
+          await resolveAuthorization({
+            senderId: "paired-user",
+            rawBody: "hello",
+            isGroup: false,
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: [],
+            channel: undefined
+          })
+        );
+        const openDm = summarize(
+          await resolveAuthorization({
+            senderId: "paired-user",
+            rawBody: "hello",
+            isGroup: false,
+            dmPolicy: "open",
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: [],
+            channel: undefined
+          })
+        );
+        const accessGroup = summarize(
+          await resolveAuthorization({
+            senderId: "group-admin",
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: ["accessGroup:admins"],
+            cfg: {
+              commands: { useAccessGroups: true },
+              accessGroups: {
+                admins: {
+                  type: "message.senders",
+                  members: { zalouser: ["group-admin"] }
+                }
+              }
+            }
+          })
+        );
+        const runtimeWrapped = summarize(
+          await resolveSenderCommandAuthorizationWithRuntime({
+            cfg: baseCfg,
+            rawBody: "/status",
+            isGroup: false,
+            dmPolicy: "pairing",
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: [],
+            senderId: "paired-user",
+            isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId),
+            readAllowFromStore: async () => ["paired-user"],
+            runtime: {
+              shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+              resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups, authorizers }) =>
+                useAccessGroups &&
+                authorizers.some((entry) => entry.configured && entry.allowed)
+            }
+          })
+        );
+        return {
+          helpContains: buildHelpMessage({ commands: { config: false } }).includes(
+            "/commands for full list"
+          ),
+          commandsContains: [
+            buildCommandsMessage({ commands: { config: false } }).includes(
+              "More: /tools for available capabilities"
+            ),
+            buildCommandsMessage({ commands: { config: false } }).includes(
+              "/models - List model providers/models."
+            )
+          ],
+          paginated: buildCommandsMessagePaginated({ commands: { config: false } }),
+          groupOwner,
+          pairedGroup,
+          dmNonCommand,
+          openDm,
+          accessGroup,
+          runtimeWrapped,
+          outcomes: [
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: true,
+              dmPolicy: "disabled",
+              senderAllowedForCommands: false
+            }),
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "disabled",
+              senderAllowedForCommands: true
+            }),
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "pairing",
+              senderAllowedForCommands: false
+            }),
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "pairing",
+              senderAllowedForCommands: true
+            })
+          ],
+          detection: shouldComputeCommandAuthorized("/status", baseCfg),
+          accessGroupPrefix: parseAccessGroupAllowFromEntry("accessGroup:admins"),
+          directDmAuthorizerType: typeof createPreCryptoDirectDmAuthorizer,
+          exportTypes: [
+            typeof resolveSenderCommandAuthorization,
+            typeof resolveSenderCommandAuthorizationWithRuntime,
+            typeof resolveDirectDmAuthorizationOutcome
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-auth-plugin",
+                    "name": "Runtime Command Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-auth-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_auth"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "helpContains": True,
+        "commandsContains": [True, True],
+        "paginated": {
+            "text": (
+                "More: /tools for available capabilities\n"
+                "/models - List model providers/models."
+            ),
+            "currentPage": 1,
+            "totalPages": 1,
+        },
+        "groupOwner": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": ["dm-owner"],
+            "effectiveGroupAllowFrom": ["group-owner"],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "pairedGroup": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": ["dm-owner"],
+            "effectiveGroupAllowFrom": ["group-owner"],
+            "senderAllowedForCommands": False,
+            "commandAuthorized": False,
+        },
+        "dmNonCommand": {
+            "shouldComputeAuth": False,
+            "effectiveAllowFrom": ["paired-user"],
+            "effectiveGroupAllowFrom": [],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": None,
+        },
+        "openDm": {
+            "shouldComputeAuth": False,
+            "effectiveAllowFrom": [],
+            "effectiveGroupAllowFrom": [],
+            "senderAllowedForCommands": False,
+            "commandAuthorized": None,
+        },
+        "accessGroup": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": [],
+            "effectiveGroupAllowFrom": ["accessGroup:admins", "group-admin"],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "runtimeWrapped": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": ["paired-user"],
+            "effectiveGroupAllowFrom": [],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "outcomes": ["allowed", "disabled", "unauthorized", "allowed"],
+        "detection": True,
+        "accessGroupPrefix": "admins",
+        "directDmAuthorizerType": "function",
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
