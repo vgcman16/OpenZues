@@ -8048,6 +8048,65 @@ def test_plugins_list_json_preserves_manifest_external_auth_provider_contracts(
     assert plugin["capabilities"] == ["external-auth-provider:demo"]
 
 
+def test_plugins_list_json_preserves_manifest_runtime_extension_contracts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "runtime-extension-owner"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "runtime-extension-owner",
+                "configSchema": {"type": "object"},
+                "contracts": {
+                    "agentToolResultMiddleware": ["codex", ""],
+                    "embeddedExtensionFactories": ["codex-app-server", ""],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["contracts"] == {
+        "agentToolResultMiddleware": ["codex"],
+        "embeddedExtensionFactories": ["codex-app-server"],
+    }
+    assert plugin["capabilities"] == [
+        "embedded-extension-factory:codex-app-server",
+        "agent-tool-result-middleware:codex",
+    ]
+
+
 def test_plugins_list_json_prefers_doctor_contract_api_artifact(
     tmp_path,
     monkeypatch,

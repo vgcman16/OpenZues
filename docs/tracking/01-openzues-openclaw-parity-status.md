@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -180,6 +180,12 @@ may lag behind this tracker.
   `contracts.externalAuthProviders` in `plugins list --json` records and
   capability strings.
   - Status: checkpointed in `5fdfb23c`
+
+- [x] Manifest runtime-extension contract metadata, preserving
+  `contracts.embeddedExtensionFactories` and
+  `contracts.agentToolResultMiddleware` in `plugins list --json` records and
+  capability strings.
+  - Status: verified; checkpoint pending
 
 - [x] Canvas shortcode text normalization, preserving OpenClaw's visible
   assistant-message cleanup after valid `[embed ...]` removals.
@@ -667,6 +673,20 @@ may lag behind this tracker.
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_external_auth_provider_contracts
     -q` (`1 passed`), adjacent plugin manifest inventory proof (`12 passed`),
     `ruff check`, and `mypy`.
+
+- [x] Manifest runtime-extension contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/agent-tool-result-middleware-loader.ts`,
+    `openclaw-main/src/agents/codex-app-server.extensions.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_runtime_extension_contracts
+    -q` (`1 passed`), adjacent plugin manifest contract proof (`6 passed,
+    486 deselected`), `ruff check`, and `mypy`.
 
 - [x] Canvas shortcode text normalization.
   - Source: `openclaw-main/src/chat/canvas-render.ts`

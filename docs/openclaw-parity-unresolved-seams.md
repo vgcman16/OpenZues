@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.8% overall, with a reasonable
   band of ~50-61%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5585,6 +5585,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `node.pair.list`. Repo-wide parity is now estimated at ~60.7%. Verified with
   focused remote-bin pytest, adjacent node method/API/pairing-refresh proof,
   `ruff check`, and `mypy`; checkpointed in `7dcce35d`.
+- Closed the manifest runtime-extension contract seam from OpenClaw
+  `src/plugins/manifest.ts`, `src/plugins/registry.ts`,
+  `src/plugins/agent-tool-result-middleware-loader.ts`, and
+  `src/agents/codex-app-server.extensions.test.ts`: manifest
+  `contracts.embeddedExtensionFactories` and
+  `contracts.agentToolResultMiddleware` entries now survive native
+  `plugins list --json` projection and emit
+  `embedded-extension-factory:<id>` / `agent-tool-result-middleware:<id>`
+  capability strings. Repo-wide parity is now estimated at ~60.8%. Verified
+  with focused runtime-extension contract pytest, adjacent plugin manifest
+  contract proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

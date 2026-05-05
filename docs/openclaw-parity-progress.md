@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.7% overall, with a reasonable band of ~50-61%.
+- Estimated repo-wide parity: ~60.8% overall, with a reasonable band of ~50-61%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9842,6 +9842,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_pairing_refresh.py -q` (`5 passed`), `ruff check`
   on touched source/tests, and `mypy` on touched source modules. Checkpointed
   in `7dcce35d`.
+
+- Manifest runtime-extension contracts are now preserved in native
+  `plugins list --json`: OpenClaw manifest `contracts.embeddedExtensionFactories`
+  and `contracts.agentToolResultMiddleware` values are normalized, kept on the
+  plugin record, and projected as `embedded-extension-factory:<id>` and
+  `agent-tool-result-middleware:<id>` capability strings. This closes
+  `OZ-PLUGIN-001BJ`; repo-wide parity is now estimated at ~60.8%, while
+  plugin activation/import breadth remains open for deeper runtime execution
+  seams.
+- Verified the runtime-extension contract metadata slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_runtime_extension_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "runtime_extension_contracts or document_extractor_contracts or
+  web_content_extractor_contracts or migration_provider_contracts or
+  external_auth_provider_contracts or plugins_list_json_preserves_manifest_config_contracts"`
+  (`6 passed, 486 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpoint pending.
 
 ## References
 

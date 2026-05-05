@@ -18098,6 +18098,8 @@ _OPENCLAW_MIN_HOST_VERSION_FORMAT = (
 )
 _OPENCLAW_MIN_HOST_VERSION_RE = re.compile(r"^>=(\d+)\.(\d+)\.(\d+)$")
 _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
+    "embeddedExtensionFactories": "embedded-extension-factory",
+    "agentToolResultMiddleware": "agent-tool-result-middleware",
     "tools": "tool",
     "externalAuthProviders": "external-auth-provider",
     "speechProviders": "speech",
