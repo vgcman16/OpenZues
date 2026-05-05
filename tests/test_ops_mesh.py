@@ -19101,6 +19101,117 @@ async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_sessio
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_acks_msteams_signin_token_exchange_without_sso(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-1",
+            "type": "invoke",
+            "name": "signin/tokenExchange",
+            "channelId": "msteams",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+            "value": {
+                "id": "exchange-flow-1",
+                "connectionName": "GraphConnection",
+                "token": "exchangeable-token",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "unavailable",
+            "reason": "msteams_sso_not_configured",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "exchange-flow-1",
+            "tokenPresent": True,
+            "userId": "user-aad",
+            "channelId": "msteams",
+        },
+    }
+    assert "exchangeable-token" not in json.dumps(result)
+    assert await database.list_control_chat_messages(limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_acks_msteams_signin_verify_state_without_sso(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-2",
+            "type": "invoke",
+            "name": "signin/verifyState",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+            },
+            "value": {"state": "112233"},
+        }
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/verifyState",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "unavailable",
+            "reason": "msteams_sso_not_configured",
+            "kind": "verifyState",
+            "statePresent": True,
+            "userId": "user-aad",
+            "channelId": "msteams",
+        },
+    }
+    assert "112233" not in json.dumps(result)
+    assert await database.list_control_chat_messages(limit=10) == []
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

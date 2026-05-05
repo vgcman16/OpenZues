@@ -4138,6 +4138,53 @@ def _msteams_inbound_optional_string(value: object) -> str | None:
     return normalized or None
 
 
+def _msteams_signin_user(activity: Mapping[str, Any]) -> tuple[str, str]:
+    sender = _msteams_inbound_mapping(activity.get("from"))
+    user_id = (
+        _msteams_inbound_optional_string(sender.get("aadObjectId"))
+        or _msteams_inbound_optional_string(sender.get("id"))
+        or ""
+    )
+    channel_id = (
+        _msteams_inbound_optional_string(activity.get("channelId")) or "msteams"
+    )
+    return user_id, channel_id
+
+
+def _msteams_signin_sso_metadata(
+    name: str,
+    value: object,
+    *,
+    user_id: str,
+    channel_id: str,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "status": "unavailable",
+        "reason": "msteams_sso_not_configured",
+        "kind": "verifyState" if name == "signin/verifyState" else "tokenExchange",
+        "userId": user_id,
+        "channelId": channel_id,
+    }
+    value_mapping = _msteams_inbound_mapping(value)
+    if name == "signin/tokenExchange":
+        connection_name = _msteams_inbound_optional_string(
+            value_mapping.get("connectionName")
+        )
+        exchange_id = _msteams_inbound_optional_string(value_mapping.get("id"))
+        if connection_name is not None:
+            metadata["connectionName"] = connection_name
+        if exchange_id is not None:
+            metadata["exchangeId"] = exchange_id
+        metadata["tokenPresent"] = _msteams_inbound_optional_string(
+            value_mapping.get("token")
+        ) is not None
+    else:
+        metadata["statePresent"] = _msteams_inbound_optional_string(
+            value_mapping.get("state")
+        ) is not None
+    return metadata
+
+
 @dataclass(frozen=True, slots=True)
 class _MSTeamsInboundSessionContext:
     conversation_target: ConversationTargetView
@@ -8856,6 +8903,34 @@ class OpsMeshService:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
 
+    def _handle_msteams_signin_invoke(
+        self,
+        activity: Mapping[str, Any],
+    ) -> dict[str, object] | None:
+        if str(activity.get("type") or "").strip().lower() != "invoke":
+            return None
+        name = str(activity.get("name") or "").strip()
+        if name not in {"signin/tokenExchange", "signin/verifyState"}:
+            return None
+        user_id, channel_id = _msteams_signin_user(activity)
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": "invoke",
+            "name": name,
+            "action": "signin",
+            "invokeResponse": {
+                "type": "invokeResponse",
+                "value": {"status": 200, "body": {}},
+            },
+            "sso": _msteams_signin_sso_metadata(
+                name,
+                activity.get("value"),
+                user_id=user_id,
+                channel_id=channel_id,
+            ),
+        }
+
     async def _handle_msteams_feedback_invoke(
         self,
         activity: Mapping[str, Any],
@@ -8943,6 +9018,9 @@ class OpsMeshService:
         *,
         account_id: str | None = None,
     ) -> dict[str, object]:
+        signin_result = self._handle_msteams_signin_invoke(activity)
+        if signin_result is not None:
+            return signin_result
         feedback_result = await self._handle_msteams_feedback_invoke(
             activity,
             account_id=account_id,
